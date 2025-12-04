@@ -747,8 +747,9 @@
 
             // 生成美化的 Excel
             function generateBeautifiedExcel(data) {
-                // 定义列配置（团队和提交人放在最前面）
+                // 定义列配置（订单编号放在最前面）
                 const columns = [
+                    { field: 'order_no', title: '订单编号', width: 20 },
                     { field: 'team_name', title: '团队', width: 12 },
                     { field: 'at_user', title: '提交人', width: 12 },
                     { field: 'order_time', title: '成交日期', width: 15, type: 'date' },
@@ -790,11 +791,42 @@
                 
                 // 构建数据行 - 需要展开产品明细，每个产品明细一行
                 const rows = [];
+                const mergeRanges = []; // 记录需要合并的单元格范围
+                let currentRow = 1; // 从第2行开始（第1行是表头，索引为0，数据从索引1开始）
+                
                 data.forEach(item => {
                     // 获取订单明细数据（如果存在）
                     const orderItems = item.order_items || [];
                     
                     if (orderItems && orderItems.length > 0) {
+                        const itemCount = orderItems.length; // 产品数量
+                        const startRow = currentRow; // 起始行
+                        const endRow = currentRow + itemCount - 1; // 结束行
+                        
+                        // 如果有多个产品，记录需要合并的列（订单信息列）
+                        if (itemCount > 1) {
+                            // 需要合并的列索引（订单信息字段）
+                            const orderInfoColumns = ['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname',
+                                'shipping_cost', 'invoice_type', 'invoice_amount', 'tax_amount', 
+                                'debugging_cost', 'sales_commission', 'split_remarks', 
+                                'bank_account', 'source_port', 'amount_received', 'profit', 
+                                'margin_rate', 'joint_person', 'client_company', 'product_name_summary',
+                                'create_time_original', 'ut_time_original', 'old_crm_data',
+                                'create_time', 'ut_time'];
+                            
+                            orderInfoColumns.forEach(fieldName => {
+                                const colIndex = columns.findIndex(col => col.field === fieldName);
+                                if (colIndex >= 0) {
+                                    mergeRanges.push({
+                                        s: { r: startRow, c: colIndex },  // 起始单元格
+                                        e: { r: endRow, c: colIndex }     // 结束单元格
+                                    });
+                                }
+                            });
+                        }
+                        
+                        currentRow += itemCount; // 更新当前行位置
+                        
                         // 如果有产品明细，每个明细一行
                         orderItems.forEach((itemDetail, index) => {
                             const row = columns.map(col => {
@@ -803,7 +835,7 @@
                                 // 订单主表字段 - 只在第一个产品行显示
                                 if (index === 0) {
                                     // 第一行：显示订单信息
-                                    if (['team_name', 'at_user', 'order_time', 'country', 'cname', 
+                                    if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
                                          'source_port', 'amount_received', 'profit', 
@@ -839,7 +871,7 @@
                                     }
                                 } else {
                                     // 第二行及以后：订单信息留空，只显示产品信息
-                                    if (['team_name', 'at_user', 'order_time', 'country', 'cname', 
+                                    if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
                                          'source_port', 'amount_received', 'profit', 
@@ -905,7 +937,7 @@
                             let value = '';
                             
                             // 订单主表字段
-                            if (['team_name', 'at_user', 'order_time', 'country', 'cname', 
+                            if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 
                                  'shipping_cost', 'invoice_amount', 'tax_amount', 
                                  'debugging_cost', 'sales_commission', 'split_remarks', 
                                  'source_port', 'amount_received', 'profit', 
@@ -959,6 +991,7 @@
                             return value;
                         });
                         rows.push(row);
+                        currentRow++; // 没有产品明细的订单占1行
                     }
                 });
 
@@ -970,6 +1003,11 @@
                 
                 // 创建工作表
                 const ws = XLSX.utils.aoa_to_sheet(wsData);
+                
+                // 应用合并单元格
+                if (mergeRanges.length > 0) {
+                    ws['!merges'] = mergeRanges;
+                }
                 
                 // 设置列宽
                 ws['!cols'] = columns.map(col => ({ wch: col.width }));
