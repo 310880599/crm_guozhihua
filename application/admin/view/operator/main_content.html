@@ -3,8 +3,30 @@
     .table-export-select{
         border: none !important;
     }
+    /* 骨架屏样式 */
+    .skeleton {
+        background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+        background-size: 200% 100%;
+        animation: loading 1.5s ease-in-out infinite;
+    }
+    @keyframes loading {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+    .skeleton-row {
+        height: 40px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+    }
  </style>
 <div class="col-md-8">
+    <div class="row g-3 mb-3">
+        <div class="col-12">
+            <button type="button" class="btn btn-primary wukong-btn wukong-btn-primary" id="showPerformanceBtn">
+                <i class="bi bi-bar-chart-line"></i> 查看业务人员业绩表
+            </button>
+        </div>
+    </div>
     <div class="row g-3">
         <div class="col-md-6">
             <div class="wukong-table-card fold-card export">
@@ -298,6 +320,75 @@
     </div>
 </div>
 
+<!-- 业务人员业绩表弹窗 -->
+<div id="performanceModal" style="display: none; padding: 20px;">
+    <div class="wukong-table-card">
+        <div class="wukong-table-card-header">
+            <span>业务人员业绩表</span>
+        </div>
+        <div class="filter-bar" style="padding: 15px; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="margin: 0; white-space: nowrap;">业务员筛选：</label>
+                <select id="performanceUserFilter" class="form-select" style="width: 200px;">
+                    <option value="">全部业务员</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="margin: 0; white-space: nowrap;">时间筛选：</label>
+                <select id="performanceTimeFilter" class="form-select" style="width: 150px;">
+                    <option value="today">今天</option>
+                    <option value="yesterday">昨天</option>
+                    <option value="week">本周</option>
+                    <option value="month" selected>本月</option>
+                    <option value="year">本年</option>
+                    <option value="custom">自定义</option>
+                </select>
+            </div>
+            <div id="performanceCustomTimeRange" style="display: none; gap: 8px; align-items: center;">
+                <input type="date" id="performanceStartDate" class="form-control" style="width: 150px;">
+                <span>至</span>
+                <input type="date" id="performanceEndDate" class="form-control" style="width: 150px;">
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="performanceFilterBtn" style="margin-left: auto;">
+                <i class="bi bi-search"></i> 筛选
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="performanceResetBtn">
+                <i class="bi bi-arrow-counterclockwise"></i> 重置
+            </button>
+        </div>
+        <div class="wukong-table-card-body">
+            <div style="overflow-x: auto;">
+                <table id="performanceTable" class="wukong-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="rank" style="cursor: pointer; user-select: none;">
+                                排名 <i class="bi bi-arrow-down-up sort-icon"></i>
+                            </th>
+                            <th data-sort="username" style="cursor: pointer; user-select: none;">
+                                业务员姓名 <i class="bi bi-arrow-down-up sort-icon"></i>
+                            </th>
+                            <th data-sort="team_name" style="cursor: pointer; user-select: none;">
+                                所属团队 <i class="bi bi-arrow-down-up sort-icon"></i>
+                            </th>
+                            <th data-sort="profit" style="cursor: pointer; user-select: none;">
+                                利润 <i class="bi bi-arrow-down-up sort-icon"></i>
+                            </th>
+                            <th data-sort="profit_rate" style="cursor: pointer; user-select: none;">
+                                利润率 <i class="bi bi-arrow-down-up sort-icon"></i>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="performanceTableBody">
+                        <tr>
+                            <td colspan="5" class="text-center text-muted">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
 
 <script>
     function initFoldCard() {
@@ -326,6 +417,11 @@
                 ExportSelectTables.addCheckboxes();
             }
         }, 100);
+        
+        // 延迟加载非关键数据，提升首屏加载速度
+        setTimeout(function() {
+            // 可以在这里加载一些非关键的数据
+        }, 500);
     });
 
     function init(){
@@ -333,5 +429,440 @@
         if (typeof ExportSelectTables !== 'undefined') {
             ExportSelectTables.addCheckboxes();
         }
+    }
+
+    // 显示业务人员业绩表
+    $('#showPerformanceBtn').on('click', function() {
+        var $btn = $(this);
+        var originalText = $btn.html();
+        
+        // 禁用按钮，防止重复点击
+        $btn.prop('disabled', true).html('<i class="bi bi-hourglass-split"></i> 加载中...');
+        
+        // 显示加载提示
+        var loading = layer.load(2, {
+            time: 30*1000, // 增加超时时间
+            
+        });
+        
+        // 获取当前时间筛选参数（从父页面的表单中获取）
+        var timebucket = '';
+        var at_time = '';
+        
+        // 从父页面的表单中获取时间参数
+        var $timebucketSelect = $('#searchForm select[name="timebucket"], #dateRange, select[name="timebucket"]');
+        var $atTimeInput = $('#searchForm input[name="at_time"], #at_time');
+        
+        if ($timebucketSelect.length) {
+            timebucket = $timebucketSelect.val() || '';
+        }
+        if ($atTimeInput.length) {
+            at_time = $atTimeInput.val() || '';
+        }
+        
+        // 如果都没有获取到时间参数，默认使用本月
+        if (!timebucket && !at_time) {
+            timebucket = 'month';
+        }
+        
+        // 调用后端接口获取业绩数据
+        $.ajax({
+            url: '{:url("Operator/getPerformanceData")}',
+            type: 'POST',
+            data: {
+                timebucket: timebucket,
+                at_time: at_time
+            },
+            dataType: 'json',
+            timeout: 30000, // 30秒超时
+            success: function(res) {
+                layer.close(loading);
+                $btn.prop('disabled', false).html(originalText);
+                
+                if (res.code === 0 || res.code === 200) {
+                    // 存储原始数据用于排序和筛选
+                    window.performanceTableData = res.data || [];
+                    window.performanceAllData = res.data || []; // 保存全部数据用于重置
+                    
+                    // 填充业务员下拉框
+                    fillPerformanceUserFilter(window.performanceAllData);
+                    
+                    // 渲染表格数据
+                    renderPerformanceTable(window.performanceTableData);
+                    
+                    // 显示弹窗，设置最高层级
+                    var layerIndex = layer.open({
+                        type: 1,
+                        title: '业务人员业绩表',
+                        area: ['90%', '80%'],
+                        content: $('#performanceModal'),
+                        zIndex: 20000000, // 设置非常高的 z-index 确保在最顶层
+                        maxmin: true,
+                        success: function(layero, index) {
+                            // 确保弹窗在最顶层
+                            layero.css('z-index', 20000000);
+                            // 确保遮罩层也在最上层
+                            $('.layui-layer-shade').css('z-index', 19999999);
+                            $('#performanceModal').show();
+                            
+                            // 绑定表头排序事件
+                            bindTableSort();
+                            
+                            // 绑定筛选事件
+                            bindPerformanceFilter();
+                        },
+                        end: function() {
+                            $('#performanceModal').hide();
+                        }
+                    });
+                } else {
+                    layer.msg(res.msg || '获取数据失败', {icon: 2});
+                }
+            },
+            error: function(xhr, status, error) {
+                layer.close(loading);
+                $btn.prop('disabled', false).html(originalText);
+                
+                if (status === 'timeout') {
+                    layer.msg('请求超时，请稍后重试', {icon: 2});
+                } else {
+                    layer.msg('网络错误，获取数据失败', {icon: 2});
+                }
+            }
+        });
+    });
+    
+    // 渲染业绩表格
+    function renderPerformanceTable(data) {
+        var tbody = $('#performanceTableBody');
+        tbody.empty();
+        
+        if (data && data.length > 0) {
+            $.each(data, function(index, item) {
+                var row = '<tr>' +
+                    '<td>' + (item.rank || (index + 1)) + '</td>' +
+                    '<td>' + (item.username || '') + '</td>' +
+                    '<td>' + (item.team_name || '') + '</td>' +
+                    '<td>' + (item.profit || '0.00') + '</td>' +
+                    '<td>' + (item.profit_rate || '0.00') + '%</td>' +
+                    '</tr>';
+                tbody.append(row);
+            });
+        } else {
+            tbody.append('<tr><td colspan="5" class="text-center text-muted">暂无数据</td></tr>');
+        }
+    }
+    
+    // 绑定表头排序功能
+    function bindTableSort() {
+        var currentSort = {
+            field: 'profit',
+            order: 'desc' // desc: 降序, asc: 升序
+        };
+        
+        // 更新排序图标
+        function updateSortIcons(field, order) {
+            $('#performanceTable thead th').each(function() {
+                var $th = $(this);
+                var $icon = $th.find('.sort-icon');
+                var sortField = $th.data('sort');
+                
+                if (sortField === field) {
+                    if (order === 'desc') {
+                        $icon.removeClass('bi-arrow-down bi-arrow-up bi-arrow-down-up')
+                            .addClass('bi-arrow-down');
+                    } else {
+                        $icon.removeClass('bi-arrow-down bi-arrow-up bi-arrow-down-up')
+                            .addClass('bi-arrow-up');
+                    }
+                } else {
+                    $icon.removeClass('bi-arrow-down bi-arrow-up')
+                        .addClass('bi-arrow-down-up');
+                }
+            });
+        }
+        
+        // 排序函数
+        function sortTable(field, order) {
+            if (!window.performanceTableData || window.performanceTableData.length === 0) {
+                return;
+            }
+            
+            var data = window.performanceTableData.slice(); // 复制数组
+            
+            data.sort(function(a, b) {
+                var aVal, bVal;
+                
+                // 根据字段获取值
+                switch(field) {
+                    case 'rank':
+                        aVal = parseInt(a.rank || 0);
+                        bVal = parseInt(b.rank || 0);
+                        break;
+                    case 'username':
+                        aVal = (a.username || '').toLowerCase();
+                        bVal = (b.username || '').toLowerCase();
+                        break;
+                    case 'team_name':
+                        aVal = (a.team_name || '').toLowerCase();
+                        bVal = (b.team_name || '').toLowerCase();
+                        break;
+                    case 'profit':
+                        aVal = parseFloat(a.profit || 0);
+                        bVal = parseFloat(b.profit || 0);
+                        break;
+                    case 'profit_rate':
+                        aVal = parseFloat(a.profit_rate || 0);
+                        bVal = parseFloat(b.profit_rate || 0);
+                        break;
+                    default:
+                        return 0;
+                }
+                
+                // 比较值
+                if (typeof aVal === 'string') {
+                    if (order === 'asc') {
+                        return aVal.localeCompare(bVal);
+                    } else {
+                        return bVal.localeCompare(aVal);
+                    }
+                } else {
+                    if (order === 'asc') {
+                        return aVal - bVal;
+                    } else {
+                        return bVal - aVal;
+                    }
+                }
+            });
+            
+            // 重新计算排名
+            if (field === 'rank') {
+                // 如果按排名排序，不需要重新计算
+            } else {
+                // 其他排序需要重新计算排名
+                $.each(data, function(index, item) {
+                    item.rank = index + 1;
+                });
+            }
+            
+            // 重新渲染表格
+            renderPerformanceTable(data);
+            updateSortIcons(field, order);
+        }
+        
+        // 绑定表头点击事件
+        $('#performanceTable thead th[data-sort]').off('click').on('click', function() {
+            var $th = $(this);
+            var field = $th.data('sort');
+            
+            // 如果点击的是当前排序字段，切换排序方向
+            if (currentSort.field === field) {
+                currentSort.order = currentSort.order === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort.field = field;
+                currentSort.order = 'desc'; // 默认降序
+            }
+            
+            sortTable(currentSort.field, currentSort.order);
+        });
+        
+        // 初始化排序图标
+        updateSortIcons(currentSort.field, currentSort.order);
+    }
+    
+    // 填充业务员下拉框
+    function fillPerformanceUserFilter(data) {
+        var $select = $('#performanceUserFilter');
+        $select.empty();
+        $select.append('<option value="">全部业务员</option>');
+        
+        if (data && data.length > 0) {
+            // 获取所有唯一的业务员
+            var users = [];
+            var userMap = {};
+            $.each(data, function(index, item) {
+                if (item.username && !userMap[item.username]) {
+                    userMap[item.username] = true;
+                    users.push({
+                        username: item.username,
+                        team_name: item.team_name || ''
+                    });
+                }
+            });
+            
+            // 按团队和姓名排序
+            users.sort(function(a, b) {
+                if (a.team_name !== b.team_name) {
+                    return (a.team_name || '').localeCompare(b.team_name || '');
+                }
+                return (a.username || '').localeCompare(b.username || '');
+            });
+            
+            // 填充下拉框
+            $.each(users, function(index, user) {
+                var displayName = user.username;
+                if (user.team_name) {
+                    displayName += ' (' + user.team_name + ')';
+                }
+                $select.append('<option value="' + user.username + '">' + displayName + '</option>');
+            });
+        }
+    }
+    
+    // 绑定筛选功能
+    function bindPerformanceFilter() {
+        // 时间筛选下拉框变化
+        $('#performanceTimeFilter').off('change').on('change', function() {
+            var value = $(this).val();
+            if (value === 'custom') {
+                $('#performanceCustomTimeRange').css('display', 'flex');
+            } else {
+                $('#performanceCustomTimeRange').css('display', 'none');
+            }
+        });
+        
+        // 筛选按钮点击
+        $('#performanceFilterBtn').off('click').on('click', function() {
+            filterPerformanceTable();
+        });
+        
+        // 重置按钮点击
+        $('#performanceResetBtn').off('click').on('click', function() {
+            resetPerformanceFilter();
+        });
+        
+        // 回车键触发筛选
+        $('#performanceUserFilter, #performanceTimeFilter, #performanceStartDate, #performanceEndDate').off('keypress').on('keypress', function(e) {
+            if (e.which === 13) {
+                filterPerformanceTable();
+            }
+        });
+    }
+    
+    // 筛选表格
+    function filterPerformanceTable() {
+        var selectedUser = $('#performanceUserFilter').val();
+        var timeFilter = $('#performanceTimeFilter').val();
+        var startDate = $('#performanceStartDate').val();
+        var endDate = $('#performanceEndDate').val();
+        
+        // 如果选择了自定义时间或时间筛选改变，需要重新请求数据
+        if (timeFilter === 'custom' && startDate && endDate) {
+            // 使用自定义时间范围重新请求数据
+            loadPerformanceData(selectedUser, '', startDate + ',' + endDate);
+        } else if (timeFilter && timeFilter !== 'custom') {
+            // 使用预设时间范围重新请求数据
+            loadPerformanceData(selectedUser, timeFilter, '');
+        } else {
+            // 只做前端筛选（业务员筛选）- 显示加载提示
+            var loading = layer.load(2, {
+                time: 5000,
+                content: '<div style="padding: 20px; text-align: center;"><i class="bi bi-hourglass-split" style="font-size: 24px;"></i><br><br>正在筛选数据...</div>'
+            });
+            
+            // 使用 setTimeout 让 UI 有时间显示加载提示
+            setTimeout(function() {
+                var filteredData = window.performanceAllData || [];
+                
+                if (selectedUser) {
+                    filteredData = filteredData.filter(function(item) {
+                        return item.username === selectedUser;
+                    });
+                }
+                
+                window.performanceTableData = filteredData;
+                renderPerformanceTable(filteredData);
+                
+                // 重新计算排名
+                $.each(window.performanceTableData, function(index, item) {
+                    item.rank = index + 1;
+                });
+                
+                // 更新排序图标
+                if (window.performanceTableData.length > 0) {
+                    bindTableSort();
+                }
+                
+                layer.close(loading);
+            }, 50); // 50ms 延迟，确保加载提示显示
+        }
+    }
+    
+    // 重置筛选
+    function resetPerformanceFilter() {
+        $('#performanceUserFilter').val('');
+        $('#performanceTimeFilter').val('month');
+        $('#performanceCustomTimeRange').css('display', 'none');
+        $('#performanceStartDate').val('');
+        $('#performanceEndDate').val('');
+        
+        // 重新加载数据（使用默认时间）
+        loadPerformanceData('', 'month', '');
+    }
+    
+    // 加载业绩数据
+    function loadPerformanceData(username, timebucket, at_time) {
+        // 禁用筛选按钮，防止重复点击
+        var $filterBtn = $('#performanceFilterBtn');
+        var $resetBtn = $('#performanceResetBtn');
+        var originalFilterText = $filterBtn.html();
+        var originalResetText = $resetBtn.html();
+        
+        $filterBtn.prop('disabled', true).html('<i class="bi bi-hourglass-split"></i> 加载中...');
+        $resetBtn.prop('disabled', true);
+        
+        var loading = layer.load(2, {
+            time: 30*1000,
+          
+        });
+        
+        $.ajax({
+            url: '{:url("Operator/getPerformanceData")}',
+            type: 'POST',
+            data: {
+                username: username,
+                timebucket: timebucket,
+                at_time: at_time
+            },
+            dataType: 'json',
+            timeout: 30000,
+            success: function(res) {
+                layer.close(loading);
+                $filterBtn.prop('disabled', false).html(originalFilterText);
+                $resetBtn.prop('disabled', false).html(originalResetText);
+                
+                if (res.code === 0 || res.code === 200) {
+                    window.performanceTableData = res.data || [];
+                    window.performanceAllData = res.data || [];
+                    
+                    // 更新业务员下拉框
+                    fillPerformanceUserFilter(window.performanceAllData);
+                    
+                    // 如果筛选了业务员，设置下拉框值
+                    if (username) {
+                        $('#performanceUserFilter').val(username);
+                    }
+                    
+                    // 渲染表格
+                    renderPerformanceTable(window.performanceTableData);
+                    
+                    // 重新绑定排序
+                    bindTableSort();
+                } else {
+                    layer.msg(res.msg || '获取数据失败', {icon: 2});
+                }
+            },
+            error: function(xhr, status, error) {
+                layer.close(loading);
+                $filterBtn.prop('disabled', false).html(originalFilterText);
+                $resetBtn.prop('disabled', false).html(originalResetText);
+                
+                if (status === 'timeout') {
+                    layer.msg('请求超时，请稍后重试', {icon: 2});
+                } else {
+                    layer.msg('网络错误，获取数据失败', {icon: 2});
+                }
+            }
+        });
     }
 </script>

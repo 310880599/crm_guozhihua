@@ -82,13 +82,13 @@ class Common extends Controller
     {
 
         //清除缓存
-        if ($flush) cache('teamList', null);
-        $teamList = cache('teamList');
-        if ($teamList) {
-            return $teamList;
-        }
+        // if ($flush) cache('teamList', null);
+        // $teamList = cache('teamList');
+        // if ($teamList) {
+        //     return $teamList;
+        // }
         $teamList = Db::name('admin')->group('team_name')->column('team_name');
-        cache('teamList', $teamList);
+        // cache('teamList', $teamList);
         return $teamList;
     }
 
