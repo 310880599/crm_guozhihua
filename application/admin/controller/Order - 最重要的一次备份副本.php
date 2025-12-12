@@ -2171,12 +2171,13 @@ class Order extends Common
         // 确保只显示当前用户的订单：自己创建的或自己是负责人的
         if (!empty($pr_user)) {
             $where[] = function($query) use ($pr_user) {
-                $query->where('pr_user', '=', $pr_user);
+                $query->where('at_user', '=', $pr_user)
+                      ->whereOr('pr_user', '=', $pr_user);
             };
         } else {
+            // 如果没有用户名，返回空结果
             $where[] = ['id', '=', 0];
         }
-
         
         $client_where[] = ['pr_user', '=', $pr_user];
         //判断权限

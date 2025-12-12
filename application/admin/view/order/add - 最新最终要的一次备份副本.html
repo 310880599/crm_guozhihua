@@ -189,81 +189,86 @@
                         // 获取客户负责人名称
                         var prUserName = result['msg']['pr_user'] || '';
                         
-                        // 添加客户负责人选项
-                        if (prUserName) {
-                            $prUserSelect.append('<option value="' + prUserName + '">' + prUserName + '</option>');
+                        // 保存初始的客户负责人和协同人数据（用于联动）
+                        window.originalPrUserName = prUserName;
+                        window.originalJointPersonNames = [];
+                        var jointPersonNames = result['msg']['joint_person_names'] || [];
+                        if (jointPersonNames && jointPersonNames.length > 0) {
+                            jointPersonNames.forEach(function(person) {
+                                var personName = person.name || person.username || person;
+                                var personId = person.id || person;
+                                // 保存协同人数据（名称和ID的映射）
+                                window.originalJointPersonNames.push({
+                                    name: personName,
+                                    id: personId
+                                });
+                            });
                         }
                         
-                        // 添加协同人选项
-                        var jointPersonNames = result['msg']['joint_person_names'] || [];
+                        // 构建所有人员列表（客户负责人 + 协同人）
+                        var allPersons = [];
+                        if (prUserName) {
+                            // 需要从collaboratorData中找到客户负责人的ID
+                            var prUserId = null;
+                            if (window.collaboratorData && window.collaboratorData.length > 0) {
+                                for (var i = 0; i < window.collaboratorData.length; i++) {
+                                    if (window.collaboratorData[i].name === prUserName) {
+                                        prUserId = window.collaboratorData[i].value;
+                                        break;
+                                    }
+                                }
+                            }
+                            allPersons.push({
+                                name: prUserName,
+                                id: prUserId
+                            });
+                        }
+                        // 添加协同人
                         if (jointPersonNames && jointPersonNames.length > 0) {
                             jointPersonNames.forEach(function(person) {
                                 var personName = person.name || person.username || person;
                                 var personId = person.id || person;
                                 // 避免重复添加（如果协同人名字和客户负责人相同）
                                 if (personName && personName !== prUserName) {
-                                    $prUserSelect.append('<option value="' + personName + '">' + personName + '</option>');
+                                    allPersons.push({
+                                        name: personName,
+                                        id: personId
+                                    });
                                 }
                             });
                         }
                         
+                        // 保存所有人员列表到全局变量
+                        window.allPersonsList = allPersons;
+                        
+                        // 添加所有人员到客户负责人下拉选项
+                        allPersons.forEach(function(person) {
+                            $prUserSelect.append('<option value="' + person.name + '">' + person.name + '</option>');
+                        });
+                        
                         // 默认选中客户负责人
                         if (prUserName) {
                             $prUserSelect.val(prUserName);
-                        } else if (jointPersonNames && jointPersonNames.length > 0) {
-                            // 如果没有客户负责人，默认选中第一个协同人
-                            var firstPerson = jointPersonNames[0];
-                            var firstPersonName = firstPerson.name || firstPerson.username || firstPerson;
-                            if (firstPersonName) {
-                                $prUserSelect.val(firstPersonName);
-                            }
+                        } else if (allPersons.length > 0) {
+                            // 如果没有客户负责人，默认选中第一个人员
+                            $prUserSelect.val(allPersons[0].name);
                         }
                         
                         // 重新渲染下拉框
                         layui.form.render('select');
                         
-                        // ====== 客户负责人 / 协同人联动初始化 ======
-                        // 构建 username -> admin_id 映射
-                        var peopleMap = {};
-                        var jointPersonNames = result['msg']['joint_person_names'] || [];
-                        jointPersonNames.forEach(function (person) {
-                            var personName = person.name || person.username || '';
-                            var personId = person.id || '';
-                            if (personName) {
-                                peopleMap[personName] = personId;
-                            }
-                        });
-                        // 补充协同人下拉的全量数据（collaboratorData）映射
-                        if (window.collaboratorData && window.collaboratorData.length > 0) {
-                            window.collaboratorData.forEach(function (item) {
-                                if (item.name && item.value && !peopleMap[item.name]) {
-                                    peopleMap[item.name] = item.value;
-                                }
-                            });
+                        // 初始化协同人选项（显示除客户负责人外的所有人）
+                        if (typeof window.updateCollaboratorOptions === 'function') {
+                            setTimeout(function() {
+                                window.updateCollaboratorOptions(prUserName);
+                            }, 100);
                         }
-                        // 当前负责人ID
-                        var prUserId = prUserName && peopleMap[prUserName] ? String(peopleMap[prUserName]) : '';
-                        // 协同人ID列表（后端返回的 joint_person）
-                        var jointPersonIds = result['msg']['joint_person'] || [];
-                        // 构建集合的全量ID（负责人+协同人）
-                        var allPersonIds = [];
-                        if (prUserId) {
-                            allPersonIds.push(String(prUserId));
-                        }
-                        jointPersonIds.forEach(function (id) {
-                            if (id !== undefined && id !== null && id !== '' && allPersonIds.indexOf(String(id)) === -1) {
-                                allPersonIds.push(String(id));
-                            }
-                        });
-                        // 持久化到全局，供后续轮转使用
-                        window.__peopleMap = peopleMap;          // username -> id
-                        window.__allPersonIds = allPersonIds;     // 全量id集合
-                        window.__lastPrUserName = prUserName || '';
                         
                         // 渲染完成后，自动获取团队名称（如果已选中客户负责人）
                         setTimeout(function() {
                             var selectedPrUser = $prUserSelect.val();
                             if (selectedPrUser) {
+                                // 直接调用获取团队名称的函数
                                 if (typeof window.updateTeamNameByPrUser === 'function') {
                                     window.updateTeamNameByPrUser(selectedPrUser);
                                 }
@@ -336,19 +341,13 @@
                             }
                         }
                         
-                        // 自动填充协同人
+                        // 自动填充协同人（初始状态：显示协同人，不显示客户负责人）
                         var jointPersonIds = result['msg']['joint_person'] || [];
                         if (jointPersonIds && jointPersonIds.length > 0) {
                             // 确保协同人ID是字符串或数字格式
                             var jointPersonValues = jointPersonIds.map(function(id) {
                                 return String(id);
                             });
-                            // 初始过滤：协同人中去除当前负责人
-                            if (prUserId) {
-                                jointPersonValues = jointPersonValues.filter(function(id) {
-                                    return String(id) !== String(prUserId);
-                                });
-                            }
                             // 使用 setTimeout 确保 xmSelect 已初始化
                             setTimeout(function() {
                                 // 重新渲染 xmSelect 组件，设置初始值
@@ -357,6 +356,8 @@
                                     if (window.collaboratorSelectInstance.destroy) {
                                         window.collaboratorSelectInstance.destroy();
                                     }
+                                    // 获取更新后的协同人选项数据
+                                    var collaboratorOptions = getCollaboratorOptionsData(prUserName);
                                     // 重新渲染并设置初始值
                                     window.collaboratorSelectInstance = xmSelect.render({
                                         el: '#collaboratorSelect',
@@ -366,8 +367,15 @@
                                         filterable: true,
                                         clickClose: false,
                                         initValue: jointPersonValues,
-                                        data: window.collaboratorData || []
+                                        data: collaboratorOptions
                                     });
+                                }
+                            }, 200);
+                        } else {
+                            // 如果没有初始协同人，也要更新选项
+                            setTimeout(function() {
+                                if (typeof window.updateCollaboratorOptions === 'function') {
+                                    window.updateCollaboratorOptions(prUserName);
                                 }
                             }, 200);
                         }
@@ -1186,7 +1194,7 @@
             }
         });
         
-            // 根据客户负责人更新团队名称的通用函数（移到全局作用域，以便 changeyewu 函数可以访问）
+        // 根据客户负责人更新团队名称的通用函数（移到全局作用域，以便 changeyewu 函数可以访问）
         window.updateTeamNameByPrUser = function(prUser) {
             var $teamSelect = $('#team_name');
             
@@ -1233,54 +1241,105 @@
             });
         };
         
-        // 客户负责人选择变化时的处理 - 自动填充团队名称 + 协同人轮转
-        form.on('select(pr_user)', function (data) {
-            var newPrUserName = data.value;
-            window.updateTeamNameByPrUser(newPrUserName);
+        // 根据选中的客户负责人更新协同人选项的函数（移到全局作用域）
+        window.getCollaboratorOptionsData = function(selectedPrUserName) {
+            if (!window.allPersonsList || window.allPersonsList.length === 0) {
+                return window.collaboratorData || [];
+            }
             
-            // 协同人轮转逻辑
-            // 需要的全局变量：__peopleMap, __allPersonIds, __lastPrUserName, collaboratorSelectInstance
-            if (!window.collaboratorSelectInstance || !window.__peopleMap || !window.__allPersonIds) {
-                window.__lastPrUserName = newPrUserName || '';
+            // 构建协同人选项：包括除选中客户负责人外的所有人
+            var collaboratorOptions = [];
+            window.allPersonsList.forEach(function(person) {
+                // 排除被选为客户负责人的人
+                if (person.name !== selectedPrUserName) {
+                    // 从collaboratorData中找到对应的完整数据
+                    var found = false;
+                    if (window.collaboratorData && window.collaboratorData.length > 0) {
+                        for (var i = 0; i < window.collaboratorData.length; i++) {
+                            if (window.collaboratorData[i].name === person.name) {
+                                collaboratorOptions.push(window.collaboratorData[i]);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                    // 如果在collaboratorData中找不到，使用person的数据
+                    if (!found && person.id) {
+                        collaboratorOptions.push({
+                            name: person.name,
+                            value: person.id
+                        });
+                    }
+                }
+            });
+            
+            return collaboratorOptions.length > 0 ? collaboratorOptions : (window.collaboratorData || []);
+        };
+        
+        // 更新协同人选项的函数（移到全局作用域）
+        window.updateCollaboratorOptions = function(selectedPrUserName) {
+            if (!window.collaboratorSelectInstance) {
                 return;
             }
             
-            var peopleMap = window.__peopleMap || {};
-            var allIds = window.__allPersonIds || [];
-            var lastPrName = window.__lastPrUserName || '';
+            // 获取更新后的协同人选项数据
+            var collaboratorOptions = window.getCollaboratorOptionsData(selectedPrUserName);
             
-            var newPrId = newPrUserName && peopleMap[newPrUserName] ? String(peopleMap[newPrUserName]) : '';
-            var lastPrId = lastPrName && peopleMap[lastPrName] ? String(peopleMap[lastPrName]) : '';
-            
-            // 目标协同人 = 集合中除当前负责人外的所有人，并加入旧负责人
-            var targetSet = [];
-            allIds.forEach(function(id) {
-                if (!newPrId || String(id) !== String(newPrId)) {
-                    targetSet.push(String(id));
+            // 获取当前选中的协同人值
+            var currentValues = [];
+            if (window.collaboratorSelectInstance && window.collaboratorSelectInstance.getValue) {
+                var currentValue = window.collaboratorSelectInstance.getValue();
+                if (currentValue && currentValue.length > 0) {
+                    currentValues = currentValue;
                 }
-            });
-            // 确保旧负责人在集合内（如果有值且不等于新负责人）
-            if (lastPrId && String(lastPrId) !== String(newPrId) && targetSet.indexOf(String(lastPrId)) === -1) {
-                targetSet.push(String(lastPrId));
             }
             
-            // 去重、过滤空
-            var unique = [];
-            targetSet.forEach(function(id) {
-                if (id !== undefined && id !== null && id !== '' && unique.indexOf(String(id)) === -1) {
-                    unique.push(String(id));
+            // 过滤掉被选为客户负责人的人（如果他们在当前选中值中）
+            var filteredValues = [];
+            if (selectedPrUserName && window.allPersonsList) {
+                // 找到被选为客户负责人的人的ID
+                var selectedPrUserId = null;
+                for (var i = 0; i < window.allPersonsList.length; i++) {
+                    if (window.allPersonsList[i].name === selectedPrUserName) {
+                        selectedPrUserId = window.allPersonsList[i].id;
+                        break;
+                    }
                 }
-            });
-            
-            // 应用到协同人多选
-            try {
-                window.collaboratorSelectInstance.setValue(unique);
-            } catch (e) {
-                // 忽略 setValue 异常，避免影响用户
+                
+                // 过滤当前选中值，排除被选为客户负责人的人
+                currentValues.forEach(function(val) {
+                    if (String(val) !== String(selectedPrUserId)) {
+                        filteredValues.push(val);
+                    }
+                });
+            } else {
+                filteredValues = currentValues;
             }
             
-            // 更新上一次负责人
-            window.__lastPrUserName = newPrUserName || '';
+            // 销毁旧实例
+            if (window.collaboratorSelectInstance.destroy) {
+                window.collaboratorSelectInstance.destroy();
+            }
+            
+            // 重新渲染协同人选择器
+            window.collaboratorSelectInstance = xmSelect.render({
+                el: '#collaboratorSelect',
+                name: 'joint_person',
+                tips: '请选择协同人员',
+                filterable: true,
+                clickClose: false,
+                initValue: filteredValues,
+                data: collaboratorOptions
+            });
+        };
+        
+        // 客户负责人选择变化时的处理 - 自动填充团队名称和更新协同人选项
+        form.on('select(pr_user)', function (data) {
+            var selectedPrUserName = data.value;
+            // 更新团队名称
+            window.updateTeamNameByPrUser(selectedPrUserName);
+            // 更新协同人选项
+            window.updateCollaboratorOptions(selectedPrUserName);
         });
 
         // **为新增产品行准备选项HTML** 
