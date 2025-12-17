@@ -722,6 +722,7 @@
                                 title: '客户跟进 - ' + clientData.kh_name,
                                 area: ['90%', '80%'],
                                 content: $('#follow-dialog'),
+                                closeBtn: 1, // 显式启用关闭按钮
                                 zIndex: 20000000, // 设置更高的z-index值，确保在最上层
                                 success: function(layero, index) {
                                     // 确保弹窗内容正确显示
@@ -730,6 +731,11 @@
                                     layero.css('z-index', 20000000);
                                     // 确保遮罩层也在最上层
                                     $('.layui-layer-shade').css('z-index', 19999999);
+                                    // 确保关闭按钮可以点击
+                                    layero.find('.layui-layer-close').css({
+                                        'z-index': 20000001,
+                                        'pointer-events': 'auto'
+                                    });
                                 },
                                 end: function() {
                                     // 弹窗完全关闭后，确保元素被正确隐藏并移除遮挡
