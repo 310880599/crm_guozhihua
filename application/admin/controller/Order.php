@@ -2200,22 +2200,77 @@ class Order extends Common
             ])
             ->toArray();
         
-        // 如果订单主表的 product_name 为空，尝试从订单明细表中获取产品名称
-        // 这样可以确保即使产品被删除，订单的产品名称仍然可以显示
-        foreach ($list['data'] as &$order) {
-            if (empty($order['product_name'])) {
-                $firstItem = Db::name('crm_order_item')
-                    ->where('order_id', $order['id'])
-                    ->where('product_name', '<>', '')
-                    ->order('line_no asc')
-                    ->field('product_name')
-                    ->find();
-                if ($firstItem && !empty($firstItem['product_name'])) {
-                    $order['product_name'] = $firstItem['product_name'];
+        // 收集所有需要查询的admin_id（协同人）
+        $allAdminIds = [];
+        foreach ($list['data'] as $order) {
+            // 收集协同人ID
+            if (!empty($order['joint_person'])) {
+                $ids = explode(',', $order['joint_person']);
+                foreach ($ids as $id) {
+                    $id = trim($id);
+                    if (is_numeric($id)) {
+                        $allAdminIds[] = $id;
+                    }
                 }
             }
-            
-            // 转换收款账户ID为账户名称
+        }
+        $allAdminIds = array_unique($allAdminIds);
+
+        // 批量查询admin表获取用户名映射
+        $adminMap = [];
+        if (!empty($allAdminIds)) {
+            $admins = Db::name('admin')
+                ->whereIn('admin_id', $allAdminIds)
+                ->column('username', 'admin_id');
+            $adminMap = $admins;
+        }
+
+        // 查询订单对应的产品明细，便于前端一次性展示
+        $orderIds = array_column($list['data'], 'id');
+        $orderItemsMap = [];
+        if (!empty($orderIds)) {
+            $items = Db::table('crm_order_item')
+                ->alias('oi')
+                ->leftJoin('crm_products p', 'oi.product_id = p.id')
+                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
+                ->whereIn('oi.order_id', $orderIds)
+                ->order('oi.order_id asc, oi.line_no asc')
+                ->field('oi.*, c.category_name as supplier')
+                ->select();
+
+            // 组装产品经理映射
+            $managerIds = [];
+            foreach ($items as $item) {
+                if (!empty($item['manager_id'])) {
+                    $managerIds[] = $item['manager_id'];
+                }
+            }
+            $managerIds = array_unique($managerIds);
+            $managerMap = [];
+            if (!empty($managerIds)) {
+                $managers = Db::table('admin')
+                    ->whereIn('admin_id', $managerIds)
+                    ->field('admin_id, username')
+                    ->select();
+                foreach ($managers as $manager) {
+                    $managerMap[$manager['admin_id']] = $manager['username'];
+                }
+            }
+
+            foreach ($items as &$item) {
+                $item['manager_name'] = isset($managerMap[$item['manager_id']]) ? $managerMap[$item['manager_id']] : '';
+                $item['supplier'] = $item['supplier'] ?? '';
+            }
+            unset($item);
+
+            foreach ($items as $item) {
+                $orderItemsMap[$item['order_id']][] = $item;
+            }
+        }
+        
+        // 转换收款账户ID为账户名称 和 协同人ID为用户名
+        foreach ($list['data'] as &$order) {
+            // 转换收款账户
             if (!empty($order['bank_account'])) {
                 $accountInfo = Db::name('crm_receive_account')
                     ->where('id', $order['bank_account'])
@@ -2224,6 +2279,27 @@ class Order extends Common
                 if ($accountInfo) {
                     $order['bank_account_name'] = $accountInfo['account'];
                 }
+            }
+            
+            // 转换协同人ID为用户名
+            if (!empty($order['joint_person'])) {
+                $ids = explode(',', $order['joint_person']);
+                $names = [];
+                foreach ($ids as $id) {
+                    $id = trim($id);
+                    if (isset($adminMap[$id])) {
+                        $names[] = $adminMap[$id];
+                    }
+                }
+                if (!empty($names)) {
+                    $order['joint_person_names'] = implode(',', $names);
+                }
+            }
+
+            // 绑定订单的产品明细，便于前端一次渲染
+            $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
+            if (empty($order['product_name']) && !empty($order['order_items'])) {
+                $order['product_name'] = $order['order_items'][0]['product_name'];
             }
         }
         unset($order);

@@ -326,6 +326,43 @@
         .layui-layer-loading {
             border-radius: 50%;
         }
+
+        /* 产品明细样式 */
+        .product-cell {
+            display: block;
+            width: 100%;
+            background: #f5f7fb;
+            padding: 10px 12px;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+
+        .product-row {
+            display: block;
+            padding: 10px 12px;
+            line-height: 22px;
+            border: 1px dashed #d6dbe6;
+            border-radius: 6px;
+            background: #fff;
+            margin-bottom: 8px;
+            box-sizing: border-box;
+        }
+
+        .product-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .product-field {
+            display: inline-block;
+            margin-right: 12px;
+            margin-bottom: 6px;
+            padding: 3px 6px;
+            border-radius: 4px;
+            background: #e8f4ff;
+            color: #1890ff;
+            font-size: 12px;
+            line-height: 1.5;
+        }
     </style>
 
 </head>
@@ -530,24 +567,30 @@
                 toolbar: '#topBtn',
                 defaultToolbar: defaultToolbar,
                 cols: [[
-                    { field: 'id', title: 'ID', width: 180, fixed: true, hide: true },
-                    { field: 'order_no', title: '订单编号', totalRowText: '合计：', width: 180 },
-                    { field: 'cname', title: '客户名称' , width: 180},
+                    { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
+                    { field: 'order_no', title: '订单编号', totalRowText: '合计：' , width: 180},
+                    { field: 'order_time', title: '成交时间' , width: 180},
+                    { field: 'country', title: '成交地址' , width: 280},
                     { field: 'contact', title: '联系方式' , width: 180},
-                    { field: 'customer_type_flag', title: '用户属性' , width: 180, templet: function (res) {
-                            return res.customer_type_flag == 1 ? '个人' : '公司';
+                    { field: 'order_items', title: '产品明细', width: 480, templet: function(d){
+                        if (!d.order_items || d.order_items.length === 0) {
+                            return '';
                         }
-                    },
+                        return d.order_items.map(function(item){
+                            return item.product_name || '';
+                        }).filter(function(name){
+                            return name;
+                        }).join('<br>');
+                    }},
                     { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
-                    { field: 'profit', title: '利润', totalRow: true , width: 180},
-                    { field: 'margin_rate', title: '利润率(%)', totalRow: true, width: 180 },
-                    { field: 'order_time', title: '成交时间', width: 180 },
-                    { field: 'source', title: '运营渠道', width: 180 },
-                    { field: 'source_port', title: '运营端口', width: 180 },
+                    { field: 'profit', title: '利润', totalRow: true, width: 180 },
+                    { field: 'source', title: '运营渠道' , width: 180},
+                    { field: 'source_port', title: '运营端口' , width: 180},
                     { field: 'pr_user', title: '负责人', hide: false , width: 180},
-                    { field: 'team_name', title: '团队', hide: false , width: 180},
-                    { field: 'create_time', title: '创建时间' ,hide: false , width: 180},
-                    { title: '操作', toolbar: '#action', width: 320, minWidth: 320, fixed: 'right', align: 'left' }
+                    { field: 'joint_person', title: '协同人', width: 180, templet: function(d){
+                        return d.joint_person_names || d.joint_person || '';
+                    }},
+                    { width: 200, title: '操作', toolbar: '#action' }
                 ]],
                 limit: 10, //每页默认显示的数量
 

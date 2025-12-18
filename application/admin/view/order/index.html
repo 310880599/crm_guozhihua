@@ -551,21 +551,32 @@
                 defaultToolbar: defaultToolbar,
                 cols: [[
                     { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
-                    { field: 'order_no', title: '订单编号', totalRowText: '合计：' },
-                    { field: 'cname', title: '客户名称' },
-                    { field: 'contact', title: '联系方式' },
-                    { field: 'customer_type_flag', title: '用户属性', width: 100, templet: function(d) {
-                        return d.customer_type_flag == 1 ? '个人' : '公司';
+                    { field: 'order_no', title: '订单编号', totalRowText: '合计：' , width: 180},
+                    { field: 'order_time', title: '成交时间' , width: 180},
+                    { field: 'country', title: '成交地址' , width: 280},
+                    { field: 'contact', title: '联系方式' , width: 180},
+                    { field: 'order_items', title: '产品明细', width: 480, templet: function(d){
+                        if (!d.order_items || d.order_items.length === 0) {
+                            return '';
                         }
-                    },
-                    { field: 'money', title: '成交金额(￥)', totalRow: true },
-                    { field: 'profit', title: '利润', totalRow: true },
-                    { field: 'margin_rate', title: '利润率(%)', totalRowText: '' },
-                    { field: 'order_time', title: '成交时间' },
-                    { field: 'source', title: '运营渠道' },
-                    { field: 'source_port', title: '运营端口' },
-                    { field: 'pr_user', title: '负责人', hide: false },
-                    { field: 'team_name', title: '团队', hide: false },
+                        const rows = d.order_items.map(function(item){
+                            const detailParts = [];
+                            if (item.product_name) detailParts.push('产品名称：' + item.product_name);
+                            const fields = detailParts.map(function(text){
+                                return '<span class="product-field">' + text + '</span>';
+                            }).join('');
+                            return '<div class="product-row">' + fields + '</div>';
+                        }).join('');
+                        return '<div class="product-cell">' + rows + '</div>';
+                    }},
+                    { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
+                    { field: 'profit', title: '利润', totalRow: true, width: 180 },
+                    { field: 'source', title: '运营渠道' , width: 180},
+                    { field: 'source_port', title: '运营端口' , width: 180},
+                    { field: 'pr_user', title: '负责人', hide: false , width: 180},
+                    { field: 'joint_person', title: '协同人', width: 180, templet: function(d){
+                        return d.joint_person_names || d.joint_person || '';
+                    }},
                     { width: 200, title: '操作', toolbar: '#action' }
                 ]],
                 limit: 10,
