@@ -41,6 +41,110 @@
   .input-box {
     width: 100% !important;
   }
+
+  /* 响应式样式 */
+  .pc-only {
+    display: block;
+  }
+
+  .m-only {
+    display: none;
+  }
+
+  /* 手机端样式 */
+  @media screen and (max-width: 768px) {
+    .pc-only {
+      display: none;
+    }
+
+    .m-only {
+      display: block;
+    }
+
+    /* 表单在手机端全宽 */
+    .layui-form-item .layui-inline {
+      display: block;
+      width: 100%;
+      margin-right: 0;
+    }
+
+    .layui-form-item .layui-input-inline {
+      width: 100%;
+    }
+
+    .layui-form-item .layui-inline.box-search {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .layui-form-item .layui-inline.box-search .layui-input-inline {
+      width: 100%;
+    }
+
+    .layui-form-item .layui-inline.box-search > div:last-child {
+      width: 100%;
+      float: none;
+    }
+
+    .layui-form-item .layui-inline.box-search button {
+      width: 100%;
+    }
+
+    /* 卡片样式 */
+    .m-card {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      padding: 15px;
+      margin-bottom: 15px;
+      border: 1px solid #e8e8e8;
+    }
+
+    .m-row {
+      display: flex;
+      padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0;
+      flex-wrap: wrap;
+    }
+
+    .m-row:last-child {
+      border-bottom: none;
+    }
+
+    .m-k {
+      font-weight: 600;
+      color: #666;
+      min-width: 80px;
+      font-size: 14px;
+      margin-right: 10px;
+    }
+
+    .m-v {
+      flex: 1;
+      color: #333;
+      font-size: 14px;
+      word-break: break-all;
+      line-height: 1.6;
+    }
+
+    .m-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #1890ff;
+      color: #fff;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-left: 5px;
+    }
+
+    .m-empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: #999;
+      font-size: 14px;
+    }
+  }
 </style>
 </head>
 
@@ -69,7 +173,16 @@
 
           </div>
     </fieldset>
-    <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+    
+    <!-- PC端表格 -->
+    <div class="pc-only">
+      <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+    </div>
+    
+    <!-- 手机端卡片列表 -->
+    <div class="m-only" id="mobile-list">
+      <div class="m-empty">暂无数据</div>
+    </div>
   </div>
 
   {include file="common/foot"/}
@@ -79,6 +192,33 @@
       var form = layui.form;
       var $ = layui.$;
       var layer = layui.layer;
+
+      /* ===== 渲染手机端卡片列表 ===== */
+      function renderMobileList(data) {
+        var $mobileList = $('#mobile-list');
+        if (!data || data.length === 0) {
+          $mobileList.html('<div class="m-empty">暂无数据</div>');
+          return;
+        }
+        
+        var html = '';
+        data.forEach(function(item) {
+          var prUser = (item.pr_gh_type && item.pr_gh_type.trim() !== '') ? item.pr_gh_type : (item.pr_user || '');
+          html += '<div class="m-card">';
+          html += '<div class="m-row"><span class="m-k">客户名称：</span><span class="m-v">' + (item.kh_name || '') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">客户ID：</span><span class="m-v">' + (item.id || '') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">国家/地区：</span><span class="m-v">' + (item.xs_area || '') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">客户等级：</span><span class="m-v">' + (item.kh_rank || '') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">客户来源：</span><span class="m-v">' + (item.kh_status || '') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">客户归属人：</span><span class="m-v">' + prUser + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">添加时间：</span><span class="m-v">' + (item.at_time || '') + '</span></div>';
+          if (item.repeat_info) {
+            html += '<div class="m-row"><span class="m-k">重复类型：</span><span class="m-v"><span class="m-badge">' + item.repeat_info + '</span></span></div>';
+          }
+          html += '</div>';
+        });
+        $mobileList.html(html);
+      }
 
       /* ===== ① 首次渲染：本地数据模式，data 为空数组 ===== */
       var tableIns = table.render({
@@ -114,7 +254,11 @@
           //            : '';
           //   }
           // }
-        ]]
+        ]],
+        done: function(res, curr, count) {
+          // 渲染手机端卡片列表
+          renderMobileList(res.data || []);
+        }
       });
 
         
@@ -174,7 +318,11 @@
               tableIns.reload({
                 url  : '',
                 data : [],
-                page : { curr: 1 }
+                page : { curr: 1 },
+                done: function(res, curr, count) {
+                  // 渲染手机端卡片列表
+                  renderMobileList([]);
+                }
               });
               return;
             }
@@ -188,7 +336,11 @@
             tableIns.reload({
               url  : '',
               data : res2.data || [],
-              page : { curr: 1 }
+              page : { curr: 1 },
+              done: function(res, curr, count) {
+                // 渲染手机端卡片列表
+                renderMobileList(res.data || []);
+              }
             });
           });
         }, 1000);
