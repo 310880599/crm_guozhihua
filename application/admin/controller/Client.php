@@ -3770,20 +3770,18 @@ class Client extends Common
         if ($status === 'done') {
             $resultData = $redis->get($resultKey);
             $resultList = json_decode($resultData, true);
+            // 注意：不在这里删除 Redis key，依靠 expire 自动过期（5分钟）
             return json([
                 'code'  => 0,
                 'msg'   => '获取成功',
-                'data'  => $resultList,
-                'count' => count($resultList)
+                'data'  => $resultList ?: [],
+                'count' => count($resultList ?: [])
             ]);
         } elseif ($status === 'processing') {
             return json(['code' => 202, 'msg' => '查重处理中，请稍后...', 'data' => []]);
         } else {
             return json(['code' => 404, 'msg' => '查重失败，请再次尝试搜索', 'data' => []]);
         }
-        // 自动清除已完成的 Redis 记录
-        $redis->del($statusKey);
-        $redis->del($resultKey);
     }
 
 

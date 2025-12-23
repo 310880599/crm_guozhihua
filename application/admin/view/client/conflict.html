@@ -203,15 +203,17 @@
         
         var html = '';
         data.forEach(function(item) {
-          var prUser = (item.pr_gh_type && item.pr_gh_type.trim() !== '') ? item.pr_gh_type : (item.pr_user || '');
+          var prUser = (item.pr_gh_type && item.pr_gh_type.trim() !== '') ? item.pr_gh_type : (item.pr_user || '—');
           html += '<div class="m-card">';
-          html += '<div class="m-row"><span class="m-k">客户名称：</span><span class="m-v">' + (item.kh_name || '') + '</span></div>';
-          html += '<div class="m-row"><span class="m-k">客户ID：</span><span class="m-v">' + (item.id || '') + '</span></div>';
-          html += '<div class="m-row"><span class="m-k">国家/地区：</span><span class="m-v">' + (item.xs_area || '') + '</span></div>';
-          html += '<div class="m-row"><span class="m-k">客户等级：</span><span class="m-v">' + (item.kh_rank || '') + '</span></div>';
-          html += '<div class="m-row"><span class="m-k">客户来源：</span><span class="m-v">' + (item.kh_status || '') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">客户名称：</span><span class="m-v">' + (item.kh_name || '—') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">客户ID：</span><span class="m-v">' + (item.id || '—') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">电话：</span><span class="m-v">' + (item.main_phone || '—') + '</span></div>';
+          var assist = (item.assist_phone !== null && item.assist_phone !== undefined && String(item.assist_phone).trim() !== '') ? item.assist_phone : '—';
+          html += '<div class="m-row"><span class="m-k">辅助电话：</span><span class="m-v">' + assist + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">所属渠道：</span><span class="m-v">' + (item.channel_name || '—') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">运营端口：</span><span class="m-v">' + (item.port_name || '—') + '</span></div>';
           html += '<div class="m-row"><span class="m-k">客户归属人：</span><span class="m-v">' + prUser + '</span></div>';
-          html += '<div class="m-row"><span class="m-k">添加时间：</span><span class="m-v">' + (item.at_time || '') + '</span></div>';
+          html += '<div class="m-row"><span class="m-k">添加时间：</span><span class="m-v">' + (item.at_time || '—') + '</span></div>';
           if (item.repeat_info) {
             html += '<div class="m-row"><span class="m-k">重复类型：</span><span class="m-v"><span class="m-badge">' + item.repeat_info + '</span></span></div>';
           }
@@ -231,14 +233,25 @@
           { checkbox: true, fixed: true },
           { field: 'id',        title: '客户id'    },
           { field: 'kh_name',   title: '客户名称'  },
-          { field: 'xs_area',   title: '国家'      },
-          { field: 'kh_rank',   title: '客户等级'  },
-          { field: 'kh_status', title: '客户来源'  },
+          { field: 'main_phone', title: '电话',
+            templet: function (res) { return res.main_phone || '—' }
+          },
+          { field: 'assist_phone', title: '辅助电话',
+            templet: function (res) { 
+              return (res.assist_phone !== null && res.assist_phone !== undefined && String(res.assist_phone).trim() !== '') ? res.assist_phone : '—';
+            }
+          },
+          { field: 'channel_name', title: '所属渠道',
+            templet: function (res) { return res.channel_name || '—' }
+          },
+          { field: 'port_name', title: '运营端口',
+            templet: function (res) { return res.port_name || '—' }
+          },
           { field: 'pr_user',   title: '客户归属人',
             templet: function (res) {
               return res.pr_gh_type && res.pr_gh_type.trim() !== ''
                      ? res.pr_gh_type
-                     : res.pr_user;
+                     : (res.pr_user || '—');
             }
           },
           { field: 'at_time', title: '添加时间' },
