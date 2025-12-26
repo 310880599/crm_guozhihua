@@ -199,6 +199,22 @@
             color: #fff !important;
         }
 
+        /* 行内浮动操作面板样式 */
+        .row-action-panel {
+            position: absolute;
+            display: none;
+            background: #fff;
+            border: 1px solid #e6e6e6;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+            border-radius: 6px;
+            padding: 6px 10px;
+            z-index: 2000;
+        }
+
+        .row-action-panel .layui-btn {
+            margin: 2px 4px;
+        }
+
         /* 产品明细展示样式 */
         .product-cell {
             display: block;
@@ -609,6 +625,12 @@
         </div>
 
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+        <div id="row-action-panel" class="row-action-panel">
+            {if condition="session('aid') eq 1 OR session('gid') eq 15"}
+            <button type="button" class="layui-btn layui-btn-xs" data-action="edit"><i class="layui-icon">&#xe642;</i>编辑</button>
+            <button type="button" class="layui-btn layui-btn-danger layui-btn-xs" data-action="del"><i class="layui-icon">&#xe640;</i>删除</button>
+            {/if}
+        </div>
     </div>
     <script type="text/html" id="action">
         <!-- 是否审核通过 -->
@@ -632,6 +654,123 @@
     <script>
         layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element'], function () {
             const { table, form, laydate, $, upload, util, element } = layui;
+            const actionPanel = $('#row-action-panel');
+
+            const handleDelete = function (data) {
+                layer.confirm('您确定要删除这个客户吗？', { icon: 3, title: '提示' }, (index) => {
+                    const loading = layer.load(1, { shade: [0.1, '#fff'] });
+                    $.post("{:url('del')}", { id: data.id }, (res) => {
+                        layer.close(loading);
+                        if (res.code === 0) {
+                            layer.msg(res.msg, { time: 1000, icon: 1 });
+                            tableIn.reload();
+                        } else {
+                            layer.msg('操作失败！', { time: 1000, icon: 2 });
+                        }
+                    });
+                    layer.close(index);
+                });
+            };
+
+            const handleShenhe = function (data) {
+                layer.confirm('确认金额和客户信息,确认审核业绩吗？', { icon: 3, title: '提示' }, (index) => {
+                    const loading = layer.load(1, { shade: [0.1, '#fff'] });
+                    $.post("{:url('shenhe')}", { id: data.id }, (res) => {
+                        layer.close(loading);
+                        if (res.code === 0) {
+                            layer.msg(res.msg, { time: 1000, icon: 1 });
+                            tableIn.reload();
+                        } else {
+                            layer.msg(res.msg, { time: 2000, icon: 2 });
+                        }
+                    });
+                    layer.close(index);
+                });
+            };
+
+            const handleEdit = function (data) {
+                layer.open({
+                    type: 2,
+                    title: '编辑订单',
+                    closeBtn: 1,
+                    area: ['100%', '86%'],
+                    anim: 2,
+                    shadeClose: false,
+                    maxmin: false,
+                    content: ["{:url('Order/edit')}?id=" + data.id]
+                });
+            };
+
+            const actionHandlers = {
+                del: handleDelete,
+                shenhe: handleShenhe,
+                edit: handleEdit
+            };
+
+            function bindRowActionPanel(res) {
+                const $tableBody = $('.layui-table-body.layui-table-main');
+
+                if (!res || !res.data || res.data.length === 0 || actionPanel.find('[data-action]').length === 0) {
+                    actionPanel.hide();
+                    return;
+                }
+
+                const positionPanel = function ($tr) {
+                    const $main = $tr.closest('.layui-table-main');
+                    const mainOffset = $main.offset();
+                    const trOffset = $tr.offset();
+                    if (!mainOffset || !trOffset) return;
+                    const panelWidth = actionPanel.outerWidth() || 160;
+                    const panelHeight = actionPanel.outerHeight() || 40;
+                    const left = mainOffset.left + $main.outerWidth() - panelWidth - 8;
+                    const top = trOffset.top + ($tr.outerHeight() - panelHeight) / 2;
+                    actionPanel.css({
+                        left,
+                        top: Math.max(mainOffset.top + 4, top)
+                    });
+                };
+
+                $tableBody.off('scroll.rowAction').on('scroll.rowAction', function () {
+                    actionPanel.hide();
+                });
+
+                $tableBody.find('tr').each(function () {
+                    const $tr = $(this);
+                    const index = $tr.attr('data-index');
+                    const rowData = res.data[index];
+                    if (!rowData) return;
+
+                    const showPanel = function () {
+                        actionPanel.data('rowData', rowData);
+                        positionPanel($tr);
+                        actionPanel.show();
+                    };
+
+                    $tr.off('mouseenter.rowAction click.rowAction')
+                        .on('mouseenter.rowAction', showPanel)
+                        .on('click.rowAction', function (e) {
+                            showPanel();
+                            e.stopPropagation();
+                        });
+                });
+
+                $(document).off('click.rowAction').on('click.rowAction', function () {
+                    actionPanel.hide();
+                });
+
+                actionPanel.off('click.rowActionPanel').on('click.rowActionPanel', function (e) {
+                    e.stopPropagation();
+                });
+
+                actionPanel.off('click.rowActionBtn').on('click.rowActionBtn', '[data-action]', function (e) {
+                    e.stopPropagation();
+                    const action = $(this).data('action');
+                    const rowData = actionPanel.data('rowData');
+                    if (rowData && actionHandlers[action]) {
+                        actionHandlers[action](rowData);
+                    }
+                });
+            }
 
             // 自定义美化导出函数 - 导出当前表格显示的数据（应用搜索条件）
             function exportBeautifiedExcel() {
@@ -1183,7 +1322,7 @@
                     { field: 'ut_time', title: '更新时间', width: 180 },
                     { field: 'status', title: '业绩状态', width: 180 },
                     { field: 'remark', title: '备注', width: 180 },
-                    { width: 200, title: '操作', toolbar: '#action' }
+                    { title: '操作', toolbar: '#action', hide: true }
                 ]],
                 limit: 10,
                 page: { limits: [10, 20, 30, 40, 50, 100, 200, 500,9999999] },
@@ -1208,54 +1347,15 @@
                     // 为产品明细列添加专用样式，确保有足够的展示空间
                     $('.layui-table-body td[data-field="order_items"]').addClass('product-detail-cell');
 
+                    bindRowActionPanel(res);
                 }
             });
 
             // 表格操作事件监听
             table.on('tool(table-list)', function (obj) {
-                const data = obj.data;
-                const { event } = obj;
-
-                if (event === 'del') {
-                    layer.confirm('您确定要删除这个客户吗？', { icon: 3, title: '提示' }, (index) => {
-                        const loading = layer.load(1, { shade: [0.1, '#fff'] });
-                        $.post("{:url('del')}", { id: data.id }, (res) => {
-                            layer.close(loading);
-                            if (res.code === 0) {
-                                layer.msg(res.msg, { time: 1000, icon: 1 });
-                                tableIn.reload();
-                            } else {
-                                layer.msg('操作失败！', { time: 1000, icon: 2 });
-                            }
-                        });
-                        layer.close(index);
-                    });
-                } else if (event === 'shenhe') {
-                    layer.confirm('确认金额和客户信息,确认审核业绩吗？', { icon: 3, title: '提示' }, (index) => {
-                        const loading = layer.load(1, { shade: [0.1, '#fff'] });
-                        $.post("{:url('shenhe')}", { id: data.id }, (res) => {
-                            layer.close(loading);
-                            if (res.code === 0) {
-                                layer.msg(res.msg, { time: 1000, icon: 1 });
-                                tableIn.reload();
-                            } else {
-                                layer.msg(res.msg, { time: 2000, icon: 2 });
-                            }
-                        });
-                        layer.close(index);
-                    });
-                } else if (event === 'edit') {
-                    // 编辑功能已屏蔽
-                    var indexOpen = layer.open({
-                        type: 2,
-                        title: '编辑订单',
-                        closeBtn: 1,
-                        area: ['100%', '86%'],
-                        anim: 2,
-                        shadeClose: false,
-                        maxmin: false,
-                        content: ["{:url('Order/edit')}?id=" + data.id]
-                    });
+                const { data, event } = obj;
+                if (actionHandlers[event]) {
+                    actionHandlers[event](data);
                 }
             });
 
