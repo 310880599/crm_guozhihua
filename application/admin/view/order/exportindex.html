@@ -657,7 +657,7 @@
             const actionPanel = $('#row-action-panel');
 
             const handleDelete = function (data) {
-                layer.confirm('您确定要删除这个客户吗？', { icon: 3, title: '提示' }, (index) => {
+                layer.confirm('您确定要删除这个订单吗？', { icon: 3, title: '提示' }, (index) => {
                     const loading = layer.load(1, { shade: [0.1, '#fff'] });
                     $.post("{:url('del')}", { id: data.id }, (res) => {
                         layer.close(loading);
@@ -746,12 +746,9 @@
                         actionPanel.show();
                     };
 
-                    $tr.off('mouseenter.rowAction click.rowAction')
-                        .on('mouseenter.rowAction', showPanel)
-                        .on('click.rowAction', function (e) {
-                            showPanel();
-                            e.stopPropagation();
-                        });
+                    $tr.off('mouseenter.rowAction')
+                      .on('mouseenter.rowAction', showPanel);
+
                 });
 
                 $(document).off('click.rowAction').on('click.rowAction', function () {
@@ -894,6 +891,7 @@
                     { field: 'order_time', title: '成交日期', width: 15, type: 'date' },
                     { field: 'country', title: '发货详细地址', width: 18 },
                     { field: 'cname', title: '客户姓名', width: 15 },
+                    { field: 'contact', title: '联系方式' , width: 15},
                     { field: 'product_manager', title: '产品经理', width: 12 },
                     { field: 'product_name', title: '产品名称', width: 20 },
                     { field: 'spec_model', title: '规格型号', width: 15 },
@@ -945,7 +943,7 @@
                         // 如果有多个产品，记录需要合并的列（订单信息列）
                         if (itemCount > 1) {
                             // 需要合并的列索引（订单信息字段）
-                            const orderInfoColumns = ['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname',
+                            const orderInfoColumns = ['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                 'shipping_cost', 'invoice_type', 'invoice_amount', 'tax_amount', 
                                 'debugging_cost', 'sales_commission', 'split_remarks', 
                                 'bank_account', 'source_port', 'amount_received', 'profit', 
@@ -974,7 +972,7 @@
                                 // 订单主表字段 - 只在第一个产品行显示
                                 if (index === 0) {
                                     // 第一行：显示订单信息
-                                    if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 
+                                    if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
                                          'source_port', 'amount_received', 'profit', 
@@ -1010,7 +1008,7 @@
                                     }
                                 } else {
                                     // 第二行及以后：订单信息留空，只显示产品信息
-                                    if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 
+                                    if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
                                          'source_port', 'amount_received', 'profit', 
@@ -1076,7 +1074,7 @@
                             let value = '';
                             
                             // 订单主表字段
-                            if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 
+                            if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                  'shipping_cost', 'invoice_amount', 'tax_amount', 
                                  'debugging_cost', 'sales_commission', 'split_remarks', 
                                  'source_port', 'amount_received', 'profit', 
@@ -1264,7 +1262,6 @@
                     { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
                     { field: 'order_no', title: '订单编号', width: 180, totalRowText: '合计：' },
                     { field: 'contact', title: '联系方式', width: 180 },
-                    { field: 'contact', title: '联系方式' , width: 180},
                     { field: 'customer_type_flag', title: '用户属性' , width: 180, templet: function (res) {
                             return res.customer_type_flag == 1 ? '个人' : '公司';
                         }
