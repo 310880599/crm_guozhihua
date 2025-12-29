@@ -501,7 +501,7 @@
     <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="details"><i class="layui-icon">&#xe615;</i> 详情</a>
     <!-- {/if} -->
     
-    {if session('aid') eq 1}
+    {if condition="session('aid') eq 1 OR session('gid') eq 15 OR session('gid') eq 13"}
     <!-- 审核通过 -->
     <a class="layui-btn layui-btn-xs" lay-event="pass"><i class="layui-icon">&#xe605;</i> 通过</a>
 

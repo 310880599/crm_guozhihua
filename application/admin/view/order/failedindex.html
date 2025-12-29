@@ -503,7 +503,7 @@
     <a class="layui-btn layui-btn-warm layui-btn-xs" lay-event="reason">
         <i class="layui-icon">&#xe60b;</i> 原因
     </a>
-    {if session('aid') eq 1} 
+    {if condition="session('aid') eq 1 OR session('gid') eq 15"}
     <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
     <!-- ★★★ 新增：重新提交按钮 ★★★ -->
     <a class="layui-btn layui-btn-xs layui-btn-normal" lay-event="resubmit">

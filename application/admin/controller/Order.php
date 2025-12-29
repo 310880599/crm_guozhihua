@@ -1904,7 +1904,12 @@ class Order extends Common
         $updatearr = [];
         $updatearr['issuccess'] = 1;
 
-        $result = Db::table('crm_client_order')->where('id', $id)->update(['check_status' => 2]);
+        $result = Db::table('crm_client_order')->where('id', $id)->update([
+            'check_status' => 2,
+            'audit_user_id' => Session::get('aid'),
+            'audit_time' => date('Y-m-d H:i:s'),
+            'audit_remark' => '审核通过'
+        ]);
 
         if ($result) {
             Db::table('crm_leads')->where('id', $custinfo['id'])->update($updatearr);
@@ -2870,28 +2875,28 @@ class Order extends Common
     {
         $where = [];
         $client_where = [];
+        $aid = Session::get('aid');
         $pr_user = Session::get('username') ?? '';
         
-        // 确保只显示当前用户的订单：自己创建的或自己是负责人的
-        // if (!empty($pr_user)) {
-        //     $where[] = function($query) use ($pr_user) {
-        //         $query->where('at_user', '=', $pr_user)
-        //               ->whereOr('pr_user', '=', $pr_user);
-        //     };
-        // } else {
-        //     // 如果没有用户名，返回空结果
-        //     $where[] = ['id', '=', 0];
-        // }
-        if (empty($pr_user)) { $where[] = ['id', '=', 0]; }
+        // 判断是否"可看全部"
+        $groupId = Db::name('admin')->where('admin_id', $aid)->value('group_id');
+        $canViewAll = ($aid == 1) || in_array(intval($groupId), [13, 15]);
         
-        $client_where[] = ['pr_user', '=', $pr_user];
-        //判断权限
-        // $team_name = session('team_name') ?? '';
-        // if ($team_name) {
-        //     $where[] = ['team_name', '=', $team_name];
-        //     $usernames = Db::table('admin')->where('team_name', $team_name)->column('username');
-        //     $client_where[] = ['pr_user', 'in', $usernames];
-        // }
+        // 如果 $pr_user 为空：直接让 where 返回空（保持现有逻辑 id=0）
+        if (empty($pr_user)) {
+            $where[] = ['id', '=', 0];
+        } else {
+            // 如果不是 $canViewAll（普通用户）：在 $where 里追加闭包条件，限制只能看到自己的订单
+            if (!$canViewAll) {
+                $where[] = function($q) use ($pr_user) {
+                    $q->where('pr_user', '=', $pr_user)
+                      ->whereOr('at_user', '=', $pr_user);
+                };
+                // $client_where 维持只统计自己
+                $client_where[] = ['pr_user', '=', $pr_user];
+            }
+            // 如果是 $canViewAll（aid=1 或 group_id=13/15）：不要加 pr_user/at_user 限制，$client_where 也不要加 pr_user 限制
+        }
         $page = input('page') ?? 1;
         $limit = input('limit') ?? config('pageSize');
         $keyword = Request::param('keyword');
@@ -2999,28 +3004,28 @@ class Order extends Common
     {
         $where = [];
         $client_where = [];
+        $aid = Session::get('aid');
         $pr_user = Session::get('username') ?? '';
         
-        // 确保只显示当前用户的订单：自己创建的或自己是负责人的
-        // if (!empty($pr_user)) {
-        //     $where[] = function($query) use ($pr_user) {
-        //         $query->where('at_user', '=', $pr_user)
-        //               ->whereOr('pr_user', '=', $pr_user);
-        //     };
-        // } else {
-        //     // 如果没有用户名，返回空结果
-        //     $where[] = ['id', '=', 0];
-        // }
-        if (empty($pr_user)) { $where[] = ['id', '=', 0]; }
+        // 判断是否"可看全部"
+        $groupId = Db::name('admin')->where('admin_id', $aid)->value('group_id');
+        $canViewAll = ($aid == 1) || in_array(intval($groupId), [13, 15]);
         
-        $client_where[] = ['pr_user', '=', $pr_user];
-        //判断权限
-        // $team_name = session('team_name') ?? '';
-        // if ($team_name) {
-        //     $where[] = ['team_name', '=', $team_name];
-        //     $usernames = Db::table('admin')->where('team_name', $team_name)->column('username');
-        //     $client_where[] = ['pr_user', 'in', $usernames];
-        // }
+        // 如果 $pr_user 为空：直接让 where 返回空（保持现有逻辑 id=0）
+        if (empty($pr_user)) {
+            $where[] = ['id', '=', 0];
+        } else {
+            // 如果不是 $canViewAll（普通用户）：在 $where 里追加闭包条件，限制只能看到自己的订单
+            if (!$canViewAll) {
+                $where[] = function($q) use ($pr_user) {
+                    $q->where('pr_user', '=', $pr_user)
+                      ->whereOr('at_user', '=', $pr_user);
+                };
+                // $client_where 维持只统计自己
+                $client_where[] = ['pr_user', '=', $pr_user];
+            }
+            // 如果是 $canViewAll（aid=1 或 group_id=13/15）：不要加 pr_user/at_user 限制，$client_where 也不要加 pr_user 限制
+        }
         $page = input('page') ?? 1;
         $limit = input('limit') ?? config('pageSize');
         $keyword = Request::param('keyword');
