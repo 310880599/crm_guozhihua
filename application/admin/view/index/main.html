@@ -450,6 +450,231 @@
         var $ = layui.jquery;
         var layer = layui.layer;
     
+        // ========================= 【新增】轮询相关全局状态变量 =========================
+        var notifyTimer = null;        // 轮询定时器
+        var lastStamp = '';             // 上次的变化标识
+        var failCount = 0;              // 连续失败次数
+        var isPolling = false;          // 是否正在轮询中（防止并发请求）
+    
+        // ========================= 【新增】获取下一次轮询延迟时间（带退避策略） =========================
+        function getNextDelay() {
+            if (failCount === 0) {
+                // 正常情况：8秒 ± 1秒随机抖动
+                return 8000 + Math.floor(Math.random() * 2000) - 1000; // 7000-9000ms
+            } else if (failCount === 1) {
+                return 15000; // 15秒
+            } else if (failCount === 2) {
+                return 30000; // 30秒
+            } else {
+                return 60000; // 60秒（failCount >= 3）
+            }
+        }
+    
+        // ========================= 【新增】加载通知列表并渲染到DOM =========================
+        function loadNotificationsAndRender() {
+            $.ajax({
+                url: "{:url('Index/getNotifications')}?_t=" + Date.now(),
+                type: "GET",
+                dataType: "json",
+                cache: false,
+                success: function (res) {
+                    if (!res || res.code != 1 || !res.data) {
+                        console.warn('获取通知列表失败:', res ? res.msg : '未知错误');
+                        return;
+                    }
+    
+                    var unreadList = res.data.unread || [];
+                    var readList = res.data.read || [];
+    
+                    // 渲染未读通知
+                    var $unreadList = $('.notice-unread .notice-list').first();
+                    $unreadList.empty();
+    
+                    if (unreadList.length === 0) {
+                        $unreadList.append('<p style="color: #999; font-size: 12px;">暂无未读通知</p>');
+                    } else {
+                        unreadList.forEach(function(notice) {
+                            var typeColor = notice.type == 1 ? '#5FB878' : '#FF5722';
+                            var borderColor = notice.type == 1 ? 'green' : 'red';
+                            var createTime = notice.create_time || '';
+                            // 格式化时间：如果是完整格式则提取 m-d H:i，否则直接使用
+                            var timeText = '';
+                            if (createTime.match(/^\d{4}-\d{2}-\d{2}/)) {
+                                timeText = createTime.substring(5, 16); // Y-m-d H:i:s -> m-d H:i
+                            } else {
+                                timeText = createTime;
+                            }
+    
+                            var html = '<p class="notice-item notice-item-unread" ' +
+                                'data-id="' + escapeHtml(notice.id) + '" ' +
+                                'data-type="' + escapeHtml(notice.type) + '" ' +
+                                'data-time="' + escapeHtml(timeText) + '" ' +
+                                'data-msg="' + escapeHtml(notice.message) + '" ' +
+                                'style="margin: 5px 0; padding: 6px; border-left: 3px solid ' + borderColor + '; display:flex; align-items:center; justify-content:space-between; gap:10px;">' +
+                                '<span style="flex:1; min-width:0;">' +
+                                '<span style="color: ' + typeColor + ';">' + escapeHtml(notice.message) + '</span>' +
+                                '<span style="color: #999; font-size: 12px; margin-left: 10px;">(' + escapeHtml(timeText) + ')</span>' +
+                                '</span>' +
+                                '<button type="button" class="btn-read notice-mark-read-btn" data-id="' + escapeHtml(notice.id) + '">已读</button>' +
+                                '</p>';
+                            $unreadList.append(html);
+                        });
+                    }
+    
+                    // 渲染已读通知
+                    var $readList = $('.notice-read .notice-list').first();
+                    $readList.empty();
+    
+                    if (readList.length === 0) {
+                        $readList.append('<p style="color: #999; font-size: 12px;">暂无已读通知</p>');
+                    } else {
+                        readList.forEach(function(notice) {
+                            var time = '';
+                            if (notice.read_time) {
+                                time = formatDateTime(notice.read_time);
+                            } else if (notice.audit_time) {
+                                time = formatDateTime(notice.audit_time);
+                            } else if (notice.create_time) {
+                                time = formatDateTime(notice.create_time);
+                            }
+    
+                            var html = '<p class="notice-item-read" data-id="' + escapeHtml(notice.id) + '" ' +
+                                'style="margin: 5px 0; padding: 6px; border-left: 3px solid #ccc;">' +
+                                '<span class="msg-text">' + escapeHtml(notice.message) + '</span>' +
+                                '<span class="msg-time">' + escapeHtml(time) + '</span>' +
+                                '<button type="button" class="notif-del-btn" data-id="' + escapeHtml(notice.id) + '">删除</button>' +
+                                '</p>';
+                            $readList.append(html);
+                        });
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.warn('加载通知列表网络错误:', error);
+                }
+            });
+        }
+    
+        // ========================= 【新增】轮询核心函数：执行一次心跳检测 =========================
+        function pollOnce() {
+            // 如果页面不可见，直接返回，不安排下一次
+            if (document.visibilityState !== 'visible') {
+                return;
+            }
+    
+            // 防止并发请求
+            if (isPolling === true) {
+                return;
+            }
+    
+            isPolling = true;
+    
+            $.ajax({
+                url: "{:url('Index/notifyHeartbeat')}?_t=" + Date.now(),
+                type: "GET",
+                dataType: "json",
+                cache: false,
+                success: function (res) {
+                    isPolling = false;
+    
+                    // 检查登录状态
+                    if (!res || res.code != 1) {
+                        // 未登录或其他错误，停止轮询
+                        if (res && res.code == 0 && res.msg && res.msg.indexOf('未登录') !== -1) {
+                            stopNotifyPolling();
+                            return;
+                        }
+                        // 其他错误，增加失败计数并安排下一次
+                        failCount++;
+                        scheduleNextPoll();
+                        return;
+                    }
+    
+                    var data = res.data || {};
+                    var currentStamp = data.stamp || '';
+    
+                    // 如果 stamp 与上次相同，说明没有变化，只安排下一次轮询
+                    if (currentStamp === lastStamp) {
+                        failCount = 0; // 重置失败计数
+                        scheduleNextPoll();
+                        return;
+                    }
+    
+                    // stamp 不同，说明有变化，拉取完整列表并刷新DOM
+                    lastStamp = currentStamp;
+                    failCount = 0; // 重置失败计数
+                    loadNotificationsAndRender();
+    
+                    // 刷新后安排下一次轮询
+                    scheduleNextPoll();
+                },
+                error: function(xhr, status, error) {
+                    isPolling = false;
+                    failCount++;
+                    console.warn('轮询心跳请求失败:', error);
+                    scheduleNextPoll();
+                }
+            });
+        }
+    
+        // ========================= 【新增】安排下一次轮询 =========================
+        function scheduleNextPoll() {
+            // 如果页面不可见，不安排下一次
+            if (document.visibilityState !== 'visible') {
+                return;
+            }
+    
+            // 清除之前的定时器
+            if (notifyTimer !== null) {
+                clearTimeout(notifyTimer);
+                notifyTimer = null;
+            }
+    
+            // 计算延迟时间
+            var delay = getNextDelay();
+    
+            // 安排下一次轮询
+            notifyTimer = setTimeout(function() {
+                pollOnce();
+            }, delay);
+        }
+    
+        // ========================= 【新增】启动轮询 =========================
+        function startNotifyPolling() {
+            // 先停止之前的轮询
+            stopNotifyPolling();
+            // 立即触发一次
+            pollOnce();
+        }
+    
+        // ========================= 【新增】停止轮询 =========================
+        function stopNotifyPolling() {
+            if (notifyTimer !== null) {
+                clearTimeout(notifyTimer);
+                notifyTimer = null;
+            }
+            isPolling = false;
+        }
+    
+        // ========================= 【新增】监听页面可见性变化 =========================
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'hidden') {
+                // 页面切到后台，立即停止轮询
+                stopNotifyPolling();
+            } else if (document.visibilityState === 'visible') {
+                // 页面切回前台，立刻触发一次刷新
+                startNotifyPolling();
+            }
+        });
+    
+        // ========================= 【新增】页面卸载时停止轮询 =========================
+        window.addEventListener('beforeunload', function() {
+            stopNotifyPolling();
+        });
+    
+        // ========================= 【新增】页面初始化时启动轮询 =========================
+        // 在 layui ready 后启动
+        startNotifyPolling();
+    
         // ✅【新增】点击"已读"
         $(document).on('click', '.notice-mark-read-btn', function () {
             var id = $(this).data('id');

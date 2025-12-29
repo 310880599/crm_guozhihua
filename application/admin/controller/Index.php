@@ -442,6 +442,115 @@ class Index extends Common
             return json(['code' => 0, 'msg' => '删除失败：' . $e->getMessage()]);
         }
     }
+
+    // ========================= 【新增】轮询心跳接口：轻量级变化检测 =========================
+    /**
+     * 轮询心跳接口，用于检测通知是否有变化
+     * 只返回变化标识（stamp），不返回完整列表，降低带宽和负载
+     * 访问路径：/admin/index/notifyHeartbeat
+     */
+    public function notifyHeartbeat()
+    {
+        if (!request()->isAjax()) {
+            return json(['code' => 0, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $currentUsername = Session::get('username');
+        if (empty($currentUsername)) {
+            return json(['code' => 0, 'msg' => '未登录', 'data' => []]);
+        }
+
+        try {
+            // 只查询统计信息，不查询完整列表（轻量查询）
+            // 未读数量
+            $unreadCount = Db::name('crm_order_notifications')
+                ->where('target_user', $currentUsername)
+                ->where('is_deleted', 0)
+                ->where('is_read', 0)
+                ->count();
+
+            // 已读数量（最多统计5条范围内的，因为已读区只显示5条）
+            $readCount = Db::name('crm_order_notifications')
+                ->where('target_user', $currentUsername)
+                ->where('is_deleted', 0)
+                ->where('is_read', 1)
+                ->count();
+
+            // 获取最大ID（用于变化检测）
+            $maxId = Db::name('crm_order_notifications')
+                ->where('target_user', $currentUsername)
+                ->where('is_deleted', 0)
+                ->max('id');
+
+            $maxId = $maxId ? (int)$maxId : 0;
+
+            // 生成变化标识 stamp（使用 md5 生成轻量标识）
+            $stamp = md5($unreadCount . '|' . $readCount . '|' . $maxId);
+
+            return json([
+                'code' => 1,
+                'msg' => 'success',
+                'data' => [
+                    'stamp' => $stamp,
+                    'unread_count' => (int)$unreadCount,
+                    'read_count' => (int)$readCount
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            return json(['code' => 0, 'msg' => '查询失败：' . $e->getMessage(), 'data' => []]);
+        }
+    }
+
+    // ========================= 【新增】获取通知列表接口（用于轮询检测到变化后拉取完整列表） =========================
+    /**
+     * 获取当前用户的通知列表（未读10条 + 已读5条）
+     * 访问路径：/admin/index/getNotifications
+     */
+    public function getNotifications()
+    {
+        if (!request()->isAjax()) {
+            return json(['code' => 0, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $currentUsername = Session::get('username');
+        if (empty($currentUsername)) {
+            return json(['code' => 0, 'msg' => '未登录', 'data' => []]);
+        }
+
+        try {
+            // 先执行自动归档/软删除处理（维护未读上限10条、已读上限5条）
+            $this->autoTrimNotifications($currentUsername);
+
+            // 未读：最多 10 条
+            $unreadNotifications = Db::name('crm_order_notifications')
+                ->where('target_user', $currentUsername)
+                ->where('is_deleted', 0)
+                ->where('is_read', 0)
+                ->order('create_time desc')
+                ->limit(10)
+                ->select();
+
+            // 已读：最多 5 条
+            $readNotifications = Db::name('crm_order_notifications')
+                ->where('target_user', $currentUsername)
+                ->where('is_deleted', 0)
+                ->where('is_read', 1)
+                ->order('create_time desc')
+                ->limit(5)
+                ->select();
+
+            return json([
+                'code' => 1,
+                'msg' => 'success',
+                'data' => [
+                    'unread' => $unreadNotifications ?: [],
+                    'read' => $readNotifications ?: []
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            return json(['code' => 0, 'msg' => '查询失败：' . $e->getMessage(), 'data' => []]);
+        }
+    }
     
 
     public function navbar()
