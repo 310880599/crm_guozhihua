@@ -291,14 +291,16 @@ class Index extends Common
     public function markNotificationRead()
     {
         if (!request()->isPost()) {
-            return json(['success' => false, 'msg' => '非法请求']);
+            // 【修改】统一返回结构为 code/msg/data
+            return json(['code' => 0, 'msg' => '非法请求', 'data' => []]);
         }
 
         $id = (int)Request::param('id', 0);
         $currentUsername = Session::get('username');
 
         if ($id <= 0 || empty($currentUsername)) {
-            return json(['success' => false, 'msg' => '参数错误']);
+            // 【修改】统一返回结构为 code/msg/data
+            return json(['code' => 0, 'msg' => '参数错误', 'data' => []]);
         }
 
         Db::startTrans();
@@ -312,7 +314,8 @@ class Index extends Common
 
             if (!$notice) {
                 Db::rollback();
-                return json(['success' => false, 'msg' => '通知不存在或无权限']);
+                // 【修改】统一返回结构为 code/msg/data
+                return json(['code' => 0, 'msg' => '通知不存在或无权限', 'data' => []]);
             }
 
             // 2) 如果未读，则更新为已读（写入 read_time）
@@ -336,7 +339,7 @@ class Index extends Common
             if ($readCount > 5) {
                 $needDel = $readCount - 5;
 
-                // 取“最早”的已读消息（按 create_time 正序）
+                // 取"最早"的已读消息（按 create_time 正序）
                 $oldest = Db::name('crm_order_notifications')
                     ->where('target_user', $currentUsername)
                     ->where('is_deleted', 0)
@@ -354,22 +357,91 @@ class Index extends Common
                 }
             }
 
-            // 4) 返回给前端：用于“挤到已读区”的展示数据
-            // 说明：create_time 你表里是 datetime 的话，这里直接格式化；如果是时间戳请改一下
+            // 4) 返回给前端：用于"挤到已读区"的展示数据
+            // 说明：优先返回 read_time，否则返回 create_time，格式化为完整时间 Y-m-d H:i:s
+            $timeField = '';
+            if (!empty($notice['read_time'])) {
+                $timeField = date('Y-m-d H:i:s', strtotime($notice['read_time']));
+            } else if (!empty($notice['audit_time'])) {
+                $timeField = date('Y-m-d H:i:s', strtotime($notice['audit_time']));
+            } else {
+                $timeField = date('Y-m-d H:i:s', strtotime($notice['create_time']));
+            }
+            
             $payload = [
                 'id'          => $id,
                 'message'     => $notice['message'],
                 'type'        => (int)$notice['type'],
                 'create_time' => $notice['create_time'],
-                'time_text'   => date('m-d H:i', strtotime($notice['create_time'])),
+                'read_time'   => !empty($notice['read_time']) ? $notice['read_time'] : '',
+                'audit_time'  => !empty($notice['audit_time']) ? $notice['audit_time'] : '',
+                'time_text'   => $timeField, // 完整时间格式
                 'deleted_ids' => $deletedIds,
             ];
 
             Db::commit();
-            return json(['success' => true, 'data' => $payload]);
+            // 【修改】统一返回结构为 code/msg/data，成功返回 code=1
+            return json(['code' => 1, 'msg' => '已标记为已读', 'data' => $payload]);
         } catch (\Throwable $e) {
             Db::rollback();
-            return json(['success' => false, 'msg' => '操作失败：' . $e->getMessage()]);
+            // 【修改】统一返回结构为 code/msg/data，失败返回 code=0
+            return json(['code' => 0, 'msg' => '操作失败：' . $e->getMessage(), 'data' => []]);
+        }
+    }
+
+    // ========================= 【新增】删除已读通知 =========================
+    public function deleteNotification()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 0, 'msg' => '非法请求']);
+        }
+
+        $id = (int)Request::param('id', 0);
+        $currentUsername = Session::get('username');
+
+        if ($id <= 0 || empty($currentUsername)) {
+            return json(['code' => 0, 'msg' => '参数错误']);
+        }
+
+        try {
+            // 1) 查这条通知（必须是当前用户的、未删除）
+            $notice = Db::name('crm_order_notifications')
+                ->where('id', $id)
+                ->where('target_user', $currentUsername)
+                ->where('is_deleted', 0)
+                ->find();
+
+            if (!$notice) {
+                return json(['code' => 0, 'msg' => '无权限或记录不存在']);
+            }
+
+            // 2) 软删除：更新 is_deleted = 1
+            $updateData = ['is_deleted' => 1];
+            
+            // 3) 如果表有 delete_time 字段，则写入当前时间
+            // 先尝试获取表结构，检查是否有 delete_time 字段
+            try {
+                $tableInfo = Db::query("SHOW COLUMNS FROM `crm_order_notifications` LIKE 'delete_time'");
+                if (!empty($tableInfo)) {
+                    // 字段存在，写入删除时间
+                    $updateData['delete_time'] = date('Y-m-d H:i:s');
+                }
+            } catch (\Exception $e) {
+                // 如果查询失败，忽略，只更新 is_deleted
+            }
+
+            // 4) 执行更新
+            $result = Db::name('crm_order_notifications')
+                ->where('id', $id)
+                ->update($updateData);
+
+            if ($result) {
+                return json(['code' => 1, 'msg' => '删除成功']);
+            } else {
+                return json(['code' => 0, 'msg' => '删除失败']);
+            }
+        } catch (\Throwable $e) {
+            return json(['code' => 0, 'msg' => '删除失败：' . $e->getMessage()]);
         }
     }
     

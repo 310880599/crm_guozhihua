@@ -37,6 +37,85 @@
       overflow: auto;
       padding-right: 4px;
     }
+    /* 【新增】已读按钮美化样式 */
+    .btn-read {
+      display: inline-block;
+      padding: 4px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #52c41a;
+      background-color: #f6ffed;
+      border: 1px solid #b7eb8f;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      font-weight: 400;
+    }
+    .btn-read:hover {
+      background-color: #d9f7be;
+      border-color: #95de64;
+      box-shadow: 0 2px 4px rgba(82, 196, 26, 0.15);
+    }
+    .btn-read:active {
+      background-color: #b7eb8f;
+      transform: scale(0.98);
+    }
+    /* 【新增】删除按钮样式 */
+    .notif-del-btn {
+      display: inline-block;
+      padding: 4px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #ff4d4f;
+      background-color: #fff1f0;
+      border: 1px solid #ffccc7;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+      font-weight: 400;
+      margin-left: 8px;
+    }
+    .notif-del-btn:hover {
+      background-color: #ffccc7;
+      border-color: #ff7875;
+      box-shadow: 0 2px 4px rgba(255, 77, 79, 0.15);
+    }
+    .notif-del-btn:active {
+      background-color: #ffa39e;
+      transform: scale(0.98);
+    }
+    /* 【新增】已读通知行容器样式 */
+    .notice-item-read {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    /* 已读通知 - 消息文字区域 */
+    .notice-item-read .msg-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      white-space: normal;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+      text-overflow: initial;
+      overflow: visible;
+      color: #666;
+    }
+    /* 已读通知 - 时间区域 */
+    .notice-item-read .msg-time {
+      flex: 0 0 auto;
+      white-space: normal;
+      word-break: break-all;
+      text-overflow: initial;
+      overflow: visible;
+      color: #999;
+      font-size: 12px;
+      max-width: 180px;
+    }
 </style>
 <link rel="stylesheet" type="text/css" href="/static/admin/css/admin.css" />
 
@@ -276,7 +355,7 @@
                         
                             <!-- ✅【新增】已读按钮 -->
                             <button type="button"
-                                    class="layui-btn layui-btn-xs layui-btn-primary notice-mark-read-btn"
+                                    class="btn-read notice-mark-read-btn"
                                     data-id="{$notice.id}">
                                 已读
                             </button>
@@ -298,13 +377,21 @@
                     
                         <div class="notice-list" style="max-height: 160px;">
                         {volist name='readNotifications' id='notice'}
-                        <p style="margin: 5px 0; padding: 6px; border-left: 3px solid #ccc;">
-                            <span style="color: #666;">
+                        <p class="notice-item-read" data-id="{$notice.id}" style="margin: 5px 0; padding: 6px; border-left: 3px solid #ccc;">
+                            <span class="msg-text">
                             {$notice.message}
                             </span>
-                            <span style="color: #999; font-size: 12px; margin-left: 10px;">
-                            ({$notice.create_time|date='m-d H:i'})
+                            <span class="msg-time">
+                            {if condition="!empty($notice.audit_time)"}
+                            {$notice.audit_time|date='Y-m-d H:i:s'}
+                            {elseif condition="!empty($notice.read_time)"}
+                            {$notice.read_time|date='Y-m-d H:i:s'}
+                            {else /}
+                            {$notice.create_time|date='Y-m-d H:i:s'}
+                            {/if}
                             </span>
+                            <!-- 【新增】删除按钮 -->
+                            <button type="button" class="notif-del-btn" data-id="{$notice.id}">删除</button>
                         </p>
                         {/volist}    
                     
@@ -363,14 +450,15 @@
         var $ = layui.jquery;
         var layer = layui.layer;
     
-        // ✅【新增】点击“已读”
+        // ✅【新增】点击"已读"
         $(document).on('click', '.notice-mark-read-btn', function () {
             var id = $(this).data('id');
             var $item = $(this).closest('.notice-item');
+            var $btn = $(this);
     
             // 防止重复点
-            if ($(this).data('loading')) return;
-            $(this).data('loading', 1).text('处理中...');
+            if ($btn.data('loading')) return;
+            $btn.data('loading', 1).text('处理中...');
     
             $.ajax({
                 url: "{:url('Index/markNotificationRead')}",
@@ -378,45 +466,83 @@
                 dataType: "json",
                 data: { id: id },
                 success: function (res) {
+                    // 【修改】判断改为 res.code == 1
                     if (!res || res.code != 1) {
                         layer.msg((res && res.msg) ? res.msg : '标记已读失败');
-                        $item.find('.notice-mark-read-btn').data('loading', 0).text('已读');
+                        $btn.data('loading', 0).text('已读');
                         return;
                     }
     
-                    // ✅ 前端移动：从未读挪到已读
-                    var msg = $item.attr('data-msg') || '';
-                    var time = $item.attr('data-time') || '';
+                    // 【修改】使用后端返回的 data 来渲染已读项（不再依赖 data-msg/data-time）
+                    var d = res.data || {};
+                    var msg = d.message || '';
+                    // 优先使用 read_time，否则使用 create_time，格式化为完整时间
+                    var time = '';
+                    if (d.read_time) {
+                        time = formatDateTime(d.read_time);
+                    } else if (d.audit_time) {
+                        time = formatDateTime(d.audit_time);
+                    } else if (d.create_time) {
+                        time = formatDateTime(d.create_time);
+                    } else if (d.time_text) {
+                        // 兼容旧格式，但尝试转换为完整时间
+                        time = formatDateTime(d.time_text);
+                    }
                     var readHtml =
-                        '<p class="notice-item notice-item-read" data-id="'+id+'" ' +
+                        '<p class="notice-item notice-item-read" data-id="'+d.id+'" ' +
                         'style="margin: 5px 0; padding: 6px; border-left: 3px solid #ccc;">' +
-                        '  <span style="color: #666;">'+ escapeHtml(msg) +'</span>' +
-                        '  <span style="color: #999; font-size: 12px; margin-left: 10px;">(' + escapeHtml(time) + ')</span>' +
+                        '  <span class="msg-text">'+ escapeHtml(msg) +'</span>' +
+                        '  <span class="msg-time">' + escapeHtml(time) + '</span>' +
+                        '  <button type="button" class="notif-del-btn" data-id="'+d.id+'">删除</button>' +
                         '</p>';
     
                     // 已读列表容器（你的已读区域 .notice-read 里第一个 .notice-list）
                     var $readList = $('.notice-read .notice-list').first();
+                    // 未读列表容器
+                    var $unreadList = $('.notice-unread .notice-list').first();
     
-                    // 如果“暂无已读通知”存在，先删掉
+                    // 【新增】如果"暂无已读通知"存在，先删掉
                     $readList.find('p:contains("暂无已读通知")').remove();
     
-                    // 插入到已读最顶部
+                    // 【新增】已读超 5 条时：优先按 deleted_ids 精准删除
+                    if (d.deleted_ids && d.deleted_ids.length > 0) {
+                        d.deleted_ids.forEach(function(deletedId) {
+                            // 精准删除：找到对应的已读项并移除（但要排除当前点击的这条，避免误删）
+                            if (deletedId != d.id) {
+                                $readList.find('p.notice-item-read[data-id="' + deletedId + '"]').remove();
+                            }
+                        });
+                    }
+    
+                    // 【新增】插入到已读最顶部
                     $readList.prepend(readHtml);
     
-                    // 删除未读项本身
-                    $item.remove();
-    
-                    // ✅ 如果已读超过 5 条：前端也删掉最旧的（最后一条）
+                    // 【新增】如果已读超过 5 条：前端也删掉最旧的（最后一条，作为兜底逻辑）
                     var $reads = $readList.find('p.notice-item-read');
                     if ($reads.length > 5) {
                         $reads.last().remove();
                     }
     
+                    // 【新增】删除未读项本身
+                    $item.remove();
+    
+                    // 【新增】如果未读区被移空了：自动插入"暂无未读通知"
+                    var $unreadItems = $unreadList.find('p.notice-item-unread');
+                    if ($unreadItems.length === 0) {
+                        if ($unreadList.find('p:contains("暂无未读通知")').length === 0) {
+                            $unreadList.append('<p style="color: #999; font-size: 12px;">暂无未读通知</p>');
+                        }
+                    }
+    
+                    // 【修改】点击后按钮文字"处理中..."结束后不用恢复，因为该条会被移走/删除
+                    // 所以这里不需要恢复按钮状态
+    
+                    // 【修改】立即显示成功提示
                     layer.msg('已标记为已读');
                 },
                 error: function () {
                     layer.msg('网络异常，标记失败');
-                    $item.find('.notice-mark-read-btn').data('loading', 0).text('已读');
+                    $btn.data('loading', 0).text('已读');
                 }
             });
         });
@@ -431,6 +557,77 @@
               .replace(/"/g, '&quot;')
               .replace(/'/g, '&#039;');
         }
+        
+        // ✅【新增】格式化日期时间函数
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '';
+            // 如果是完整日期时间格式，直接返回
+            if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+                return dateStr;
+            }
+            // 如果是 m-d H:i 格式，转换为 Y-m-d H:i:s（需要年份）
+            var now = new Date();
+            var year = now.getFullYear();
+            if (dateStr.match(/^\d{2}-\d{2} \d{2}:\d{2}$/)) {
+                return year + '-' + dateStr + ':00';
+            }
+            return dateStr;
+        }
+
+        // ✅【新增】点击"删除"按钮
+        $(document).on('click', '.notif-del-btn', function (e) {
+            e.stopPropagation(); // 阻止事件冒泡，避免触发行点击
+            
+            var id = $(this).data('id');
+            var $item = $(this).closest('.notice-item-read');
+            var $btn = $(this);
+            
+            // 防止重复点击
+            if ($btn.data('loading')) return;
+            
+            // 弹出确认框
+            layer.confirm('确定删除这条已读通知吗？', {
+                icon: 3,
+                title: '提示'
+            }, function(index) {
+                // 确认删除
+                $btn.data('loading', 1).text('删除中...');
+                
+                $.ajax({
+                    url: "{:url('Index/deleteNotification')}",
+                    type: "POST",
+                    dataType: "json",
+                    data: { id: id },
+                    success: function (res) {
+                        layer.close(index); // 关闭确认框
+                        
+                        if (!res || res.code != 1) {
+                            layer.msg((res && res.msg) ? res.msg : '删除失败');
+                            $btn.data('loading', 0).text('删除');
+                            return;
+                        }
+                        
+                        // 删除成功：移除该行
+                        $item.remove();
+                        layer.msg('删除成功');
+                        
+                        // 如果已读区被移空了：自动插入"暂无已读通知"
+                        var $readList = $('.notice-read .notice-list').first();
+                        var $readItems = $readList.find('p.notice-item-read');
+                        if ($readItems.length === 0) {
+                            if ($readList.find('p:contains("暂无已读通知")').length === 0) {
+                                $readList.append('<p style="color: #999; font-size: 12px;">暂无已读通知</p>');
+                            }
+                        }
+                    },
+                    error: function () {
+                        layer.close(index); // 关闭确认框
+                        layer.msg('网络异常，删除失败');
+                        $btn.data('loading', 0).text('删除');
+                    }
+                });
+            });
+        });
     });
     
     // 原来的函数保留
