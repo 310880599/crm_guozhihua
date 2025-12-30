@@ -2011,18 +2011,15 @@ class Order extends Common
             return json(['code' => 0, 'msg' => '参数错误']);
         }
 
-        // 权限校验：目前简单限制为超级管理员，后续你可以扩展为财务等
+        // 【修改】A. 获取当前登录用户信息
         $adminId = (int)session('aid');
-        $groupId = (int)session('gid');   // 若你在登录时有写入 gid，可用它区分财务
+        $currentUsername = (string)Session::get('username');  // 当前登录用户名，用于对比 pr_user/at_user
 
-        if ($adminId !== 1 && $groupId !== 15) {
-            return json(['code' => 0, 'msg' => '您没有重新提交的权限']);
-        }
-
-        // 先确认这条订单确实是“审核失败”状态
+        // 【修改】B. 查询订单时补充 pr_user 和 at_user 字段
+        // 先确认这条订单确实是"审核失败"状态，并获取 pr_user 和 at_user
         $order = Db::name('crm_client_order')
             ->where('id', $id)
-            ->field('id,check_status')
+            ->field('id,check_status,pr_user,at_user')
             ->find();
 
         if (!$order) {
@@ -2033,6 +2030,40 @@ class Order extends Common
             return json(['code' => 0, 'msg' => '只有审核失败的订单才能重新提交']);
         }
 
+        // 【修改】C. 权限判断逻辑（替换原 admin/group 判断）
+        // 【删除】原来的判断：if ($adminId !== 1 && $groupId !== 15)
+        // 【新增】新的权限规则：
+        // 1. 超级管理员(aid==1)可以放行
+        // 2. 否则必须满足：order.pr_user == 当前用户 或 order.at_user == 当前用户（或包含当前用户）
+        $hasPermission = false;
+        if ($adminId === 1) {
+            // 超级管理员可以放行
+            $hasPermission = true;
+        } else {
+            // 检查 pr_user 是否等于当前用户
+            if (!empty($order['pr_user']) && $order['pr_user'] == $currentUsername) {
+                $hasPermission = true;
+            }
+            // 检查 at_user 是否等于当前用户或包含当前用户（支持多人字符串，如逗号分隔）
+            if (!$hasPermission && !empty($order['at_user'])) {
+                if ($order['at_user'] == $currentUsername) {
+                    $hasPermission = true;
+                } elseif (strpos($order['at_user'], $currentUsername) !== false) {
+                    // 支持 at_user 为多人字符串的情况（如："user1,user2,user3"）
+                    // 使用精确匹配避免部分匹配问题（例如 "user1" 不应该匹配 "user10"）
+                    $atUserArray = array_map('trim', explode(',', $order['at_user']));
+                    if (in_array($currentUsername, $atUserArray)) {
+                        $hasPermission = true;
+                    }
+                }
+            }
+        }
+
+        if (!$hasPermission) {
+            return json(['code' => 0, 'msg' => '您没有重新提交该订单的权限']);
+        }
+
+        // 【保持不变】D. 重新提交更新逻辑保持不变
         // 更新为待审核状态
         $updateData = [
             'check_status'  => 1,                 // 待审核

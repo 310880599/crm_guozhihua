@@ -493,25 +493,20 @@
     </div>
 
 
-    <!-- <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a> -->
     <script type="text/html" id="action">
-    <!-- 是否审核通过 -->
-    <!-- {//if $Think.session.aid == 1} -->
-    <!-- <a class="layui-btn  layui-btn-xs" lay-event="shenhe"><i class="layui-icon">&#xe642;</i>审核通过</a> -->
     <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="details"><i class="layui-icon">&#xe615;</i> 详情</a>
     <!-- 【新增】审核失败原因按钮，所有人都能看到 -->
     <a class="layui-btn layui-btn-warm layui-btn-xs" lay-event="reason">
         <i class="layui-icon">&#xe60b;</i> 原因
     </a>
-    {if condition="session('aid') eq 1 OR session('gid') eq 15"}
     <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
     <!-- ★★★ 新增：重新提交按钮 ★★★ -->
     <a class="layui-btn layui-btn-xs layui-btn-normal" lay-event="resubmit">
         <i class="layui-icon">&#xe669;</i> 重新提交
     </a>
+    {if condition="session('aid') eq 1 OR session('gid') eq 15"}
     <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
     {/if}
-    <!-- {/if} -->
 
     </script>
 
