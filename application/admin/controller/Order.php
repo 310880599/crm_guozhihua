@@ -2019,7 +2019,7 @@ class Order extends Common
         // 先确认这条订单确实是"审核失败"状态，并获取 pr_user 和 at_user
         $order = Db::name('crm_client_order')
             ->where('id', $id)
-            ->field('id,check_status,pr_user,at_user')
+            ->field('id,check_status,pr_user,at_user,create_time,first_create_time')
             ->find();
 
         if (!$order) {
@@ -2063,8 +2063,11 @@ class Order extends Common
             return json(['code' => 0, 'msg' => '您没有重新提交该订单的权限']);
         }
 
-        // 【保持不变】D. 重新提交更新逻辑保持不变
-        // 更新为待审核状态
+        // 【修改】D. 重新提交更新逻辑，加入 create_time / first_create_time 处理
+        // 生成当前时间
+        $now = date('Y-m-d H:i:s');
+        
+        // 构造更新数据
         $updateData = [
             'check_status'  => 1,                 // 待审核
             'status'        => '待审核',          // 文本字段，兼容历史逻辑
@@ -2074,16 +2077,38 @@ class Order extends Common
             // 是否清空上一次的审核意见，看你业务需求：
             // 想保留历史就不要清空；想让下一次审核写新的理由就清空
             'audit_remark'  => null,
+            'create_time'   => $now,              // 更新为当前时间
         ];
+        
+        // 处理 first_create_time：如果为空，则把旧的 create_time 写入 first_create_time
+        if (empty($order['first_create_time'])) {
+            // 如果 first_create_time 为空，把旧的 create_time 写入 first_create_time
+            if (!empty($order['create_time'])) {
+                $updateData['first_create_time'] = $order['create_time'];
+            } else {
+                // 如果旧的 create_time 也为空，则使用当前时间
+                $updateData['first_create_time'] = $now;
+            }
+        }
+        // 如果 first_create_time 不为空，则不修改它（只更新 create_time）
 
-        $res = Db::name('crm_client_order')
-            ->where('id', $id)
-            ->update($updateData);
+        // 使用数据库事务包裹更新操作
+        Db::startTrans();
+        try {
+            $res = Db::name('crm_client_order')
+                ->where('id', $id)
+                ->update($updateData);
 
-        if ($res !== false) {
-            return json(['code' => 1, 'msg' => '重新提交成功，该订单已回到待审核列表']);
-        } else {
-            return json(['code' => 0, 'msg' => '重新提交失败，请重试']);
+            if ($res !== false) {
+                Db::commit();
+                return json(['code' => 1, 'msg' => '重新提交成功，该订单已回到待审核列表']);
+            } else {
+                Db::rollback();
+                return json(['code' => 0, 'msg' => '重新提交失败，请重试']);
+            }
+        } catch (\Exception $e) {
+            Db::rollback();
+            return json(['code' => 0, 'msg' => '重新提交失败：' . $e->getMessage()]);
         }
     }
 
