@@ -113,209 +113,186 @@
 </head>
 <body class="skin-{$Think.cookie.skin|default='0'}">
     <div class="admin-main layui-anim layui-anim-upbit">
-        <form class="layui-form layui-form-pane">
-            <!-- 隐藏域：订单ID -->
+        <form class="layui-form layui-form-pane" lay-filter="orderForm">
+            <!-- 【修改】隐藏域：订单ID -->
             <input type="hidden" name="id" value="{$orderInfo.id}">
-            <!-- 订单编号 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">订单编号</label>
-                <div class="layui-input-4">
-                    <input type="text" name="order_no" value="{$orderInfo.order_no|default=''|htmlentities}" 
-                           placeholder="订单编号" class="layui-input" readonly>
-                </div>
-            </div>
-            <!-- 客户联系方式 -->
+            <!-- 【修改】客户联系方式（与 edit.html 对齐，移除订单编号，调整顺序） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">联系方式<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="contact" name="contact" lay-verify="required" onchange="changeyewu()"
+                    <input type="text" id="contact" name="contact" lay-verify="required" readonly
                            value="{$orderInfo.contact|htmlentities}" placeholder="请输入客户联系方式" class="layui-input">
                 </div>
             </div>
-            <!-- 客户手机号 -->
+            <!-- 【新增】省市选择（与 edit.html 对齐，使用下拉选择） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">客户手机号</label>
+                <label class="layui-form-label">所在省市<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" name="cphone" value="{$orderInfo.cphone|default=''|htmlentities}" 
-                           placeholder="客户手机号" class="layui-input" readonly>
+                    <div style="display: flex; gap: 10px;">
+                        <div style="flex: 1;">
+                            <select name="province" id="province" lay-search disabled>
+                                <option value="">请选择省份</option>
+                                {if condition="!empty($orderInfo.province)"}
+                                <option value="{$orderInfo.province|htmlentities}" selected>{$orderInfo.province|htmlentities}</option>
+                                {/if}
+                            </select>
+                        </div>
+                        <div style="flex: 1;">
+                            <select name="city" id="city" lay-search disabled>
+                                <option value="">请选择城市</option>
+                                {if condition="!empty($orderInfo.city)"}
+                                <option value="{$orderInfo.city|htmlentities}" selected>{$orderInfo.city|htmlentities}</option>
+                                {/if}
+                            </select>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <!-- 发货地址 -->
+            <!-- 【修改】收货地址（与 edit.html 对齐，改名为收货地址） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">发货地址<span style="color:red;">*</span></label>
+                <label class="layui-form-label">收货地址<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <textarea id="country" name="country" lay-verify="required" placeholder="请输入发货详细地址"
+                    <textarea id="country" name="country" placeholder="请输入发货详细地址" readonly
                               class="layui-textarea">{:htmlentities($orderInfo.country)}</textarea>
                 </div>
             </div>
-            <!-- 省份 -->
+            <!-- 【新增】用户属性选择（与 edit.html 对齐） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">省份</label>
+                <label class="layui-form-label">用户属性<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" name="province" value="{$orderInfo.province|default=''|htmlentities}" 
-                           placeholder="省份" class="layui-input" readonly>
+                    <select name="customer_type_flag" id="customer_type_flag" lay-verify="required" disabled>
+                        <option value="">请选择用户属性</option>
+                        <option value="0" {if $orderInfo.customer_type_flag == 0}selected{/if}>公司</option>
+                        <option value="1" {if $orderInfo.customer_type_flag == 1}selected{/if}>个人</option>
+                    </select>
                 </div>
             </div>
-            <!-- 城市 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">城市</label>
+            <!-- 【修改】客户公司（与 edit.html 对齐，条件显示） -->
+            <div class="layui-form-item" id="client_company_item" {if condition="$orderInfo.customer_type_flag == 1"}style="display: none;"{/if}>
+                <label class="layui-form-label">客户公司<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" name="city" value="{$orderInfo.city|default=''|htmlentities}" 
-                           placeholder="城市" class="layui-input" readonly>
-                </div>
-            </div>
-            <!-- 客户名称 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">客户名称<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
-                    <input type="text" id="cname" name="cname" lay-verify="required"
-                           value="{$orderInfo.cname|htmlentities}" placeholder="请输入客户名称" class="layui-input">
-                </div>
-            </div>
-            <!-- 客户公司 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">客户公司</label>
-                <div class="layui-input-4">
-                    <input type="text" id="client_company" name="client_company" lay-verify="required"
+                    <input type="text" id="client_company" name="client_company" readonly
                            value="{$orderInfo.client_company|htmlentities}" placeholder="请输入客户公司" class="layui-input">
                 </div>
             </div>
-            <!-- 客户负责人 -->
+            <!-- 【新增】客户名称（详情页显示，edit.html 中通过联系方式自动获取，不单独显示） -->
+            {if condition="!empty($orderInfo.cname)"}
             <div class="layui-form-item">
-                <label class="layui-form-label">客户负责人</label>
+                <label class="layui-form-label">客户名称</label>
                 <div class="layui-input-4">
-                    <input type="text" id="pr_user" name="pr_user" lay-verify="required"
+                    <input type="text" id="cname" name="cname" readonly
+                           value="{$orderInfo.cname|htmlentities}" placeholder="客户名称" class="layui-input">
+                </div>
+            </div>
+            {/if}
+            <!-- 【修改】客户负责人（与 edit.html 对齐） -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">客户负责人<span style="color:red;">*</span></label>
+                <div class="layui-input-4">
+                    <input type="text" id="pr_user" name="pr_user" lay-verify="required" readonly
                            value="{$orderInfo.pr_user|default=''}" class="layui-input">
                 </div>
             </div>
-            <!-- 运营渠道（询盘来源） -->
+            <!-- 【修改】询盘来源（与 edit.html 对齐，改为下拉） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">运营渠道</label>
+                <label class="layui-form-label">询盘来源<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" name="source" id="source" value="{$orderInfo.source|default=''|htmlentities}" 
-                           placeholder="运营渠道" class="layui-input" readonly>
-                </div>
-            </div>
-            <!-- 运营端口 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">运营端口</label>
-                <div class="layui-input-4">
-                    <input type="text" name="source_port" id="source_port" value="{$orderInfo.source_port|default=''|htmlentities}" 
-                           placeholder="运营端口" class="layui-input" readonly>
-                </div>
-            </div>
-            <!-- 收款账户 (Receiving Account) -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">收款账户</label>
-                <div class="layui-input-4">
-                    <select name="bank_account" id="bank_account" lay-verify="required" lay-search>
-                        <option value="">请选择收款账户</option>
-                        {volist name="accountList" id="acc"}
-                        <option value="{$acc.id}" {if $acc.id == $orderInfo.bank_account}selected{/if}>{$acc.account}</option>
+                    <select name="source" id="source" lay-search disabled>
+                        <option value="">请选择询盘来源</option>
+                        {volist name='sourceList' id='vo'}
+                        <option value="{$vo|htmlentities}" {if $vo == $orderInfo.source}selected{/if}>{$vo|htmlentities}</option>
                         {/volist}
                     </select>
                 </div>
             </div>
-            <!-- 协同人 -->
+            <!-- 【修改】运营端口（与 edit.html 对齐，改为下拉） -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">运营端口<span style="color:red;">*</span></label>
+                <div class="layui-input-4">
+                    <select name="source_port" id="source_port" lay-search disabled>
+                        <option value="">请先选择询盘来源（选择后可搜索端口）</option>
+                        {if condition="!empty($orderInfo.source_port)"}
+                        <option value="{$orderInfo.source_port|htmlentities}" selected>{$orderInfo.source_port|htmlentities}</option>
+                        {/if}
+                    </select>
+                </div>
+            </div>
+            <!-- 【修改】收款账户（与 edit.html 对齐） -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">收款账户</label>
+                <div class="layui-input-4">
+                    <select name="bank_account" id="bank_account" lay-verify="required" lay-search disabled>
+                        <option value="">请选择收款账户</option>
+                        {volist name="accountList" id="acc"}
+                        <option value="{$acc.id}" {if $acc.id == $orderInfo.bank_account}selected{/if}>{$acc.account|htmlentities}</option>
+                        {/volist}
+                    </select>
+                </div>
+            </div>
+            <!-- 【修改】协同人（与 edit.html 对齐） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">协同人</label>
                 <div class="layui-input-4">
                     <div id="collaboratorSelect"></div>
                 </div>
             </div>
-            <!-- 团队名称 -->
+            <!-- 【修改】团队名称（与 edit.html 对齐） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">团队名称</label>
+                <label class="layui-form-label">团队名称<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <select name="team_name" id="team_name" lay-verify="required" lay-search>
+                    <select name="team_name" id="team_name" lay-verify="required" lay-search disabled>
                         <option value="">请选择团队名称</option>
-                        {volist name="teamList" id="vo"}
-                        <option value="{$vo}" {if $vo == $orderInfo.team_name} selected {/if}>{$vo}</option>
+                        {volist name='teamList' id='vo'}
+                        <option value="{$vo}" {if $vo == $orderInfo.team_name}selected{/if}>{$vo}</option>
                         {/volist}
                     </select>
                 </div>
             </div>
-            <!-- 客户性质 -->
+            <!-- 【修改】客户性质（与 edit.html 对齐） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">客户性质</label>
+                <label class="layui-form-label">客户性质<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search>
+                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search disabled>
                         <option value="">请选择客户性质</option>
-                        {volist name="customer_type" id="vo"}
-                        <option value="{$vo}" {if $vo == $orderInfo.customer_type} selected {/if}>{$vo}</option>
+                        {volist name='customer_type' id='vo'}
+                        <option value="{$vo}" {if $vo == $orderInfo.customer_type}selected{/if}>{$vo}</option>
                         {/volist}
                     </select>
                 </div>
             </div>
-            <!-- 用户属性 -->
+            <!-- 【修改】成交时间（与 edit.html 对齐） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">用户属性</label>
+                <label class="layui-form-label">成交时间<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" name="customer_type_flag_display" 
-                           value="{if $orderInfo.customer_type_flag == 1}个人{else}公司{/if}" 
-                           class="layui-input" readonly>
+                    <input type="text" id="orderTime" name="order_time" value="{$orderInfo.order_time}" readonly
+                           placeholder="请选择成交时间" class="layui-input" autocomplete="off">
                 </div>
             </div>
-            <!-- 成交时间 -->
+            <!-- 【修改】产品明细表格（与 edit.html 对齐：单位改为 select，列名改为"利润"，添加操作列但隐藏） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">成交时间</label>
-                <div class="layui-input-4">
-                    <input type="text" id="orderTime" name="order_time" value="{$orderInfo.order_time}"
-                           placeholder="请选择成交时间" class="layui-input">
-                </div>
-            </div>
-            <!-- 订单类型 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">订单类型</label>
-                <div class="layui-input-4">
-                    <input type="text" name="order_type_display" 
-                           value="{if $orderInfo.order_type == 2}返单{else}新单{/if}" 
-                           class="layui-input" readonly>
-                </div>
-            </div>
-            <!-- 返单次数 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">返单次数</label>
-                <div class="layui-input-4">
-                    <input type="text" name="return_count" value="{$orderInfo.return_count|default='0'}" 
-                           placeholder="返单次数" class="layui-input" readonly>
-                </div>
-            </div>
-            <!-- 产品明细表格 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">产品明细</label>
+                <label class="layui-form-label">产品明细<span style="color:red;">*</span></label>
                 <div class="layui-input-block">
-                    {if condition="session('aid') == 1"}
-                    <div style="margin-bottom: 10px;">
-                        <button type="button" class="layui-btn layui-btn-sm" id="printBtn">
-                            <i class="layui-icon">&#xe66f;</i>打印
-                        </button>
-                        <button type="button" class="layui-btn layui-btn-sm" id="exportBtn">
-                            <i class="layui-icon layui-icon-export"></i>导出
-                        </button>
-                    </div>
-                    {/if}
                     <table id="product-table" class="layui-table">
                         <thead>
                             <tr>
-                                <th>产品名称</th>
-                                <th>产品经理</th>
+                                <th>产品名称<span style="color:red;">*</span></th>
+                                <th>产品经理<span style="color:red;">*</span></th>
                                 <th>规格型号</th>
-                                <th>单位</th>
-                                <th>数量</th>
-                                <th>销售单价</th>
-                                <th>销售价合计</th>
-                                <th>进价合计</th>
-                                <th>子项利润</th>
+                                <th>单位<span style="color:red;">*</span></th>
+                                <th>数量<span style="color:red;">*</span></th>
+                                <th>销售单价<span style="color:red;">*</span></th>
+                                <th>销售价合计<span style="color:red;">*</span></th>
+                                <th>进价合计<span style="color:red;">*</span></th>
+                                <th>利润<span style="color:red;">*</span></th>
                                 <th>行备注</th>
-                                <!-- <th>操作</th> -->
+                                <th style="display: none;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="productTableBody">
                             {volist name="orderItems" id="item"}
                             <tr>
                                 <td>
-                                    <select name="product_name[]" lay-search lay-verify="required">
+                                    <select name="product_name[]" lay-search lay-verify="required" disabled>
                                         <option value="">请选择产品名称</option>
                                         {volist name="productList" id="vo"}
                                         <option value="{$vo.id}" {if $vo.id == $item.product_id} selected {/if}>{$vo.product_name} ({$vo.category_name|default='无'})</option>
@@ -323,155 +300,171 @@
                                     </select>
                                 </td>
                                 <td>
-                                    <select name="product_manager[]" lay-search lay-verify="required">
+                                    <select name="product_manager[]" lay-search lay-verify="required" disabled>
                                         <option value="">请选择产品经理</option>
                                         {volist name="managerList" id="vo"}
                                         <option value="{$vo.admin_id}" {if $vo.admin_id == $item.manager_id} selected {/if}>{$vo.username}</option>
                                         {/volist}
                                     </select>
                                 </td>
-                                <td><input type="text" name="spec_model[]" value="{$item.spec_model|htmlentities}" class="layui-input"></td>
-                                <td><input type="text" name="unit[]" value="{$item.unit|htmlentities}" class="layui-input"></td>
-                                <td><input type="number" name="qty[]" value="{$item.qty}" class="layui-input" lay-verify="required|number"></td>
-                                <td><input type="number" name="unit_price[]" value="{$item.unit_price}" class="layui-input" lay-verify="required|number" step="0.01"></td>
+                                <td><input type="text" name="spec_model[]" value="{$item.spec_model|htmlentities}" class="layui-input" readonly></td>
+                                <td>
+                                    <select name="unit[]" lay-search lay-verify="required" disabled>
+                                        <option value="">请选择单位</option>
+                                        <option value="台" {if $item.unit == '台'}selected{/if}>台</option>
+                                        <option value="套" {if $item.unit == '套'}selected{/if}>套</option>
+                                        <option value="件" {if $item.unit == '件'}selected{/if}>件</option>
+                                        <option value="个" {if $item.unit == '个'}selected{/if}>个</option>
+                                        <option value="批" {if $item.unit == '批'}selected{/if}>批</option>
+                                        <option value="根" {if $item.unit == '根'}selected{/if}>根</option>
+                                        <option value="米" {if $item.unit == '米'}selected{/if}>米</option>
+                                        <option value="吨" {if $item.unit == '吨'}selected{/if}>吨</option>
+                                        <option value="箱" {if $item.unit == '箱'}selected{/if}>箱</option>
+                                        <option value="包" {if $item.unit == '包'}selected{/if}>包</option>
+                                        <option value="卷" {if $item.unit == '卷'}selected{/if}>卷</option>
+                                        <option value="片" {if $item.unit == '片'}selected{/if}>片</option>
+                                        <option value="块" {if $item.unit == '块'}selected{/if}>块</option>
+                                        <option value="组" {if $item.unit == '组'}selected{/if}>组</option>
+                                        <option value="束" {if $item.unit == '束'}selected{/if}>束</option>
+                                        <option value="副" {if $item.unit == '副'}selected{/if}>副</option>
+                                        <option value="双" {if $item.unit == '双'}selected{/if}>双</option>
+                                        <option value="袋" {if $item.unit == '袋'}selected{/if}>袋</option>
+                                        <option value="桶" {if $item.unit == '桶'}selected{/if}>桶</option>
+                                        <option value="支" {if $item.unit == '支'}selected{/if}>支</option>
+                                        <option value="kg" {if $item.unit == 'kg'}selected{/if}>kg</option>
+                                        <option value="g" {if $item.unit == 'g'}selected{/if}>g</option>
+                                        <option value="t" {if $item.unit == 't'}selected{/if}>t</option>
+                                        <option value="千克" {if $item.unit == '千克'}selected{/if}>千克</option>
+                                        <option value="公斤" {if $item.unit == '公斤'}selected{/if}>公斤</option>
+                                        <option value="mm" {if $item.unit == 'mm'}selected{/if}>mm</option>
+                                        <option value="cm" {if $item.unit == 'cm'}selected{/if}>cm</option>
+                                        <option value="m" {if $item.unit == 'm'}selected{/if}>m</option>
+                                        <option value="km" {if $item.unit == 'km'}selected{/if}>km</option>
+                                        <option value="丝" {if $item.unit == '丝'}selected{/if}>丝</option>
+                                        <option value="㎡" {if $item.unit == '㎡'}selected{/if}>㎡</option>
+                                        <option value="cm²" {if $item.unit == 'cm²'}selected{/if}>cm²</option>
+                                        <option value="mm²" {if $item.unit == 'mm²'}selected{/if}>mm²</option>
+                                        <option value="L" {if $item.unit == 'L'}selected{/if}>L</option>
+                                        <option value="m³" {if $item.unit == 'm³'}selected{/if}>m³</option>
+                                        <option value="ml" {if $item.unit == 'ml'}selected{/if}>ml</option>
+                                        <option value="套装" {if $item.unit == '套装'}selected{/if}>套装</option>
+                                        <option value="车" {if $item.unit == '车'}selected{/if}>车</option>
+                                        <option value="架" {if $item.unit == '架'}selected{/if}>架</option>
+                                        <option value="头" {if $item.unit == '头'}selected{/if}>头</option>
+                                        <option value="盘" {if $item.unit == '盘'}selected{/if}>盘</option>
+                                        <option value="排" {if $item.unit == '排'}selected{/if}>排</option>
+                                        <option value="平方" {if $item.unit == '平方'}selected{/if}>平方</option>
+                                        <option value="立方" {if $item.unit == '立方'}selected{/if}>立方</option>
+                                        <option value="节" {if $item.unit == '节'}selected{/if}>节</option>
+                                        <option value="段" {if $item.unit == '段'}selected{/if}>段</option>
+                                        <option value="条" {if $item.unit == '条'}selected{/if}>条</option>
+                                        <option value="木箱" {if $item.unit == '木箱'}selected{/if}>木箱</option>
+                                        <option value="纸箱" {if $item.unit == '纸箱'}selected{/if}>纸箱</option>
+                                        <option value="托盘" {if $item.unit == '托盘'}selected{/if}>托盘</option>
+                                        <option value="编织袋" {if $item.unit == '编织袋'}selected{/if}>编织袋</option>
+                                        <option value="板" {if $item.unit == '板'}selected{/if}>板</option>
+                                        <option value="柱" {if $item.unit == '柱'}selected{/if}>柱</option>
+                                        <option value="瓶" {if $item.unit == '瓶'}selected{/if}>瓶</option>
+                                        <option value="罐" {if $item.unit == '罐'}selected{/if}>罐</option>
+                                    </select>
+                                </td>
+                                <td><input type="number" name="qty[]" value="{$item.qty}" class="layui-input" lay-verify="required|number" readonly></td>
+                                <td><input type="number" name="unit_price[]" value="{$item.unit_price}" class="layui-input" lay-verify="required|number" step="0.01" readonly></td>
                                 <td><input type="number" name="total_price[]" value="{$item.total_price}" class="layui-input" readonly></td>
-                                <td><input type="number" name="purchase_price[]" value="{$item.purchase_price}" class="layui-input" lay-verify="required|number" step="0.01"></td>
+                                <td><input type="number" name="purchase_price[]" value="{$item.purchase_price}" class="layui-input" lay-verify="required|number" step="0.01" readonly></td>
                                 <td><input type="number" name="sub_profit[]" value="{$item.sub_profit}" class="layui-input" readonly></td>
-                                <td><input type="text" name="item_remark[]" value="{$item.remark|htmlentities}" class="layui-input"></td>
-                                <!-- <td><button type="button" class="layui-btn layui-btn-danger layui-btn-sm delete-row">删除</button></td> -->
+                                <td><input type="text" name="item_remark[]" value="{$item.remark|htmlentities}" class="layui-input" readonly></td>
+                                <td style="display: none;"><button type="button" class="layui-btn layui-btn-danger layui-btn-sm delete-row" disabled>删除</button></td>
                             </tr>
                             {/volist}
-                            {if condition="!isset($orderItems) or count($orderItems) == 0"}
-                            <tr>
-                                <td>
-                                    <select name="product_name[]" lay-search lay-verify="required">
-                                        <option value="">请选择产品名称</option>
-                                        {volist name="productList" id="vo"}
-                                        <option value="{$vo.id}">{$vo.product_name} ({$vo.category_name|default='无'})</option>
-                                        {/volist}
-                                    </select>
-                                </td>
-                                <td>
-                                    <select name="product_manager[]" lay-search lay-verify="required">
-                                        <option value="">请选择产品经理</option>
-                                        {volist name="managerList" id="vo"}
-                                        <option value="{$vo.admin_id}">{$vo.username}</option>
-                                        {/volist}
-                                    </select>
-                                </td>
-                                <td><input type="text" name="spec_model[]" class="layui-input"></td>
-                                <td><input type="text" name="unit[]" class="layui-input"></td>
-                                <td><input type="number" name="qty[]" class="layui-input" lay-verify="required|number"></td>
-                                <td><input type="number" name="unit_price[]" class="layui-input" lay-verify="required|number" step="0.01"></td>
-                                <td><input type="number" name="total_price[]" class="layui-input" readonly></td>
-                                <td><input type="number" name="purchase_price[]" class="layui-input" lay-verify="required|number" step="0.01"></td>
-                                <td><input type="number" name="sub_profit[]" class="layui-input" readonly></td>
-                                <td><input type="text" name="item_remark[]" class="layui-input"></td>
-                                <!-- <td><button type="button" class="layui-btn layui-btn-danger layui-btn-sm delete-row">删除</button></td> -->
-                            </tr>
-                            {/if}
                         </tbody>
                     </table>
-                    <!-- <button type="button" id="addRow" class="layui-btn layui-btn-normal">新增一行</button> -->
                 </div>
             </div>
-            <!-- 费用和金额字段 -->
+            <!-- 【修改】费用和金额字段（与 edit.html 对齐） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">估算运费<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="shipping_cost" name="shipping_cost" lay-verify="required"
+                    <input type="text" id="shipping_cost" name="shipping_cost" lay-verify="required" readonly
                            value="{$orderInfo.shipping_cost|default='0'}" placeholder="请输入估算运费" class="layui-input">
                 </div>
             </div>
-            <!-- 票种性质 -->
+            <!-- 【修改】票种性质（与 edit.html 对齐，改为下拉） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">票种性质</label>
+                <label class="layui-form-label">票种性质<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" name="invoice_type_display" 
-                           value="{$orderInfo.invoice_type|default=''|htmlentities}" 
-                           placeholder="票种性质（普票、专票、不开票）" class="layui-input" readonly>
+                    <select name="invoice_type" id="invoice_type" lay-verify="required" disabled>
+                        <option value="">请选择票种性质</option>
+                        <option value="普票" {if $orderInfo.invoice_type == '普票'}selected{/if}>普票</option>
+                        <option value="专票" {if $orderInfo.invoice_type == '专票'}selected{/if}>专票</option>
+                        <option value="不开票" {if $orderInfo.invoice_type == '不开票'}selected{/if}>不开票</option>
+                    </select>
                 </div>
             </div>
-            <div class="layui-form-item">
+            <!-- 【修改】票种/票金额（与 edit.html 对齐，条件显示） -->
+            <div class="layui-form-item" id="invoice_amount_item" {if condition="$orderInfo.invoice_type == '不开票'"}style="display: none;"{/if}>
                 <label class="layui-form-label">票种/票金额<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="invoice_amount" name="invoice_amount" lay-verify="required"
+                    <input type="text" id="invoice_amount" name="invoice_amount" lay-verify="" readonly
                            value="{$orderInfo.invoice_amount|default='0'}" placeholder="请输入开票金额" class="layui-input">
                 </div>
             </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">税费金额<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="tax_amount" name="tax_amount" lay-verify="required"
+                    <input type="text" id="tax_amount" name="tax_amount" lay-verify="required" readonly
                            value="{$orderInfo.tax_amount|default='0'}" placeholder="请输入税费金额" class="layui-input">
                 </div>
             </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">调试费<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="debugging_cost" name="debugging_cost" lay-verify="required"
+                    <input type="text" id="debugging_cost" name="debugging_cost" lay-verify="required" readonly
                            value="{$orderInfo.debugging_cost|default='0'}" placeholder="请输入调试费" class="layui-input">
                 </div>
             </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">佣金<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="sales_commission" name="sales_commission" lay-verify="required"
+                    <input type="text" id="sales_commission" name="sales_commission" lay-verify="required" readonly
                            value="{$orderInfo.sales_commission|default='0'}" placeholder="请输入佣金" class="layui-input">
                 </div>
             </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">分成备注<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="split_remarks" name="split_remarks" lay-verify="required"
+                    <input type="text" id="split_remarks" name="split_remarks" lay-verify="required" readonly
                            value="{$orderInfo.split_remarks|default=''}" placeholder="请输入分成备注" class="layui-input">
                 </div>
             </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">已收款金额<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="amount_received" name="amount_received" lay-verify="required"
+                    <input type="text" id="amount_received" name="amount_received" lay-verify="required" readonly
                            value="{$orderInfo.amount_received|default='0'}" placeholder="请输入已收款金额" class="layui-input">
                 </div>
             </div>
-            <!-- 订单金额、利润、利润率 -->
+            <!-- 【修改】订单金额、利润、利润率（与 edit.html 对齐） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">订单金额(￥)</label>
+                <label class="layui-form-label">订单金额(￥)<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="money" name="money" lay-verify="number|required"
-                           value="{$orderInfo.money|default='0'}" placeholder="订单总金额" class="layui-input">
+                    <input type="text" id="money" name="money" lay-verify="number|required" readonly
+                           value="{$orderInfo.money|default='0'}" placeholder="请输入订单总金额" class="layui-input">
                 </div>
             </div>
             <div class="layui-form-item">
-                <label class="layui-form-label">利润(￥)</label>
+                <label class="layui-form-label">利润(￥)<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="profit" name="profit" lay-verify="required"
-                           value="{$orderInfo.profit|default='0'}" placeholder="利润额" class="layui-input">
+                    <input type="text" id="profit" name="profit" lay-verify="required" readonly
+                           value="{$orderInfo.profit|default='0'}" placeholder="请输入利润" class="layui-input">
                 </div>
             </div>
             <div class="layui-form-item">
-                <label class="layui-form-label">利润率(%)</label>
+                <label class="layui-form-label">利润率(%)<span style="color:red;">*</span></label>
                 <div class="layui-input-4" style="position: relative;">
-                    <input type="text" id="margin_rate" name="margin_rate" lay-verify="required"
-                           value="{$orderInfo.margin_rate|default='0'}" placeholder="利润率" class="layui-input">
+                    <input type="text" id="margin_rate" name="margin_rate" lay-verify="required" readonly
+                           value="{$orderInfo.margin_rate|default='0'}" placeholder="请输入利润率" class="layui-input">
                     <span style="position: absolute; right: 5px; top: 50%; transform: translateY(-50%);">%</span>
-                </div>
-            </div>
-            <!-- 提成金额 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">提成金额</label>
-                <div class="layui-input-4">
-                    <input type="text" name="ticheng" value="{$orderInfo.ticheng|default='0.00'}" 
-                           placeholder="提成金额" class="layui-input" readonly>
-                </div>
-            </div>
-            <!-- 业绩状态 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">业绩状态</label>
-                <div class="layui-input-4">
-                    <input type="text" name="status_display" 
-                           value="{if $orderInfo.status == '1'}待审核{elseif $orderInfo.status == '2'}审核不通过{elseif $orderInfo.status == '3'}审核通过{else}{$orderInfo.status}{/if}" 
-                           class="layui-input" readonly>
                 </div>
             </div>
             <!-- 备注 -->
@@ -533,59 +526,16 @@
     </div>
     {include file="common/foot"/}
     <script type="text/javascript">
-        // 根据联系方式自动获取客户信息
-        function changeyewu() {
-            var contact = $("#contact").val();
-            $('#cname').val('');
-            $.ajax({
-                type: "GET",
-                dataType: "json",
-                url: "{:url('Order/changeyewu')}" + "?contact=" + encodeURIComponent(contact),
-                success: function (result) {
-                    if (result['msg']['code'] == 0) {
-                        $('#checklabel').css('color', 'red');
-                    } else {
-                        $('#checklabel').css('color', 'green');
-                        // 填充返回的客户信息
-                        $('#cname').val(result['msg']['custname']);
-                        $('#pr_user').val(result['msg']['pr_user']);
-                        $('#oper_user_input').val(result['msg']['oper_user']);
-                        $('#country').val(result['msg']['country']);
-                        $('#kh_username').val(result['msg']['kh_username']);
-                        // 根据返回的来源文本匹配下拉选中项
-                        var sourceValue = result['msg']['source'] || "";
-                        var lowerSourceValue = sourceValue.toLowerCase();
-                        var $sourceSelect = $('#source');
-                        var matched = false;
-                        $sourceSelect.find('option').each(function () {
-                            var optionValue = $(this).val();
-                            if (optionValue !== '' && lowerSourceValue.includes(optionValue.toLowerCase())) {
-                                $sourceSelect.val(optionValue);
-                                matched = true;
-                                return false;
-                            }
-                        });
-                        if (!matched) {
-                            $sourceSelect.val('');
-                        }
-                        layui.form.render('select');
-                        fixSelectAlign(); // 渲染后调整下拉框对齐
-                    }
-                    $('#checklabel').html(result['msg']['msg']);
-                },
-                error: function () {
-                    alert("异常！");
-                }
-            });
-        }
+        // 【删除】changeyewu 函数（详情页不需要自动获取客户信息）
         layui.use(['form', 'layer', 'laydate'], function () {
             var form = layui.form, layer = layui.layer, $ = layui.jquery, laydate = layui.laydate;
-            // 成交时间选择器
-            laydate.render({
-                elem: '#orderTime',
-                type: 'datetime',
-                format: 'yyyy-MM-dd HH:mm:ss'
-            });
+            // 【修改】成交时间选择器：详情页不初始化日期控件，防止弹窗
+            // 详情页只显示日期值，不提供日期选择功能
+            // laydate.render({
+            //     elem: '#orderTime',
+            //     type: 'datetime',
+            //     format: 'yyyy-MM-dd HH:mm:ss'
+            // });
             // 自定义验证规则：数值验证
             form.verify({
                 number: function (value) {
@@ -594,23 +544,64 @@
                     }
                 }
             });
-            // 协同人多选下拉初始化
+            // 【修改】协同人多选下拉初始化（详情页：初始化后立即禁用，但保持显示已选值）
             var collaboratorData = {$collaboratorList|raw};
-            xmSelect.render({
+            // 获取当前订单的协同人ID列表
+            var currentJpIds = [];
+            {if condition="!empty($orderInfo.joint_person)"}
+            var jpStr = '{$orderInfo.joint_person}';
+            if (jpStr) {
+                if (jpStr.trim().charAt(0) === '[') {
+                    try {
+                        currentJpIds = JSON.parse(jpStr);
+                    } catch(e) {
+                        currentJpIds = jpStr.split(',').filter(function(v) { return v !== ''; });
+                    }
+                } else {
+                    currentJpIds = jpStr.split(',').filter(function(v) { return v !== ''; });
+                }
+            }
+            {/if}
+            // 初始化 xm-select，设置初始值
+            var collaboratorSelectInstance = xmSelect.render({
                 el: '#collaboratorSelect',
                 name: 'joint_person',
-                layVerify: 'required',
                 tips: '请选择协同人员',
                 filterable: true,
                 clickClose: false,
+                initValue: currentJpIds.map(function(id) { return String(id); }),
                 data: collaboratorData
             });
+            // 立即禁用协同人组件
+            setTimeout(function() {
+                try {
+                    if (collaboratorSelectInstance && collaboratorSelectInstance.update) {
+                        collaboratorSelectInstance.update({ disabled: true });
+                    }
+                    $('#collaboratorSelect').addClass('xm-select-disabled');
+                } catch(e) {
+                    console.log('禁用协同人组件失败:', e);
+                }
+            }, 100);
 
 
 
-            // 渲染表单
+            // 【修改】渲染表单（详情页：先渲染，再禁用）
             form.render('select');
             fixSelectAlign(); // 首次渲染后调整下拉框文本左对齐
+            
+            // 【新增】详情页只读逻辑：渲染后立即禁用所有 select
+            setTimeout(function() {
+                // 禁用所有 select（包括产品明细表格中的）
+                $('select').each(function() {
+                    $(this).attr('disabled', true);
+                });
+                // 重新渲染以应用禁用状态
+                form.render('select');
+                // 给渲染后的下拉容器加禁用样式
+                $('.layui-form-select').addClass('layui-disabled');
+                fixSelectAlign(); // 再次调整对齐
+            }, 200);
 
 
 
@@ -688,32 +679,9 @@
                 var marginRate = (sumTotal > 0) ? (finalProfit / sumTotal) * 100 : 0;
                 $('#margin_rate').val(marginRate.toFixed(2));
             }
-            // 数量、单价或进价改变时，更新对应行和总计
-            $('#productTableBody').on('input', 'input[name="qty[]"], input[name="unit_price[]"], input[name="purchase_price[]"]', function () {
-                updateRow($(this).closest('tr'));
-                updateTotals();
-            });
-            // 页面初始时计算总计
+            // 【删除】详情页不需要自动计算和表单提交逻辑
+            // 页面初始时计算总计（仅用于显示，不绑定事件）
             updateTotals();
-            // 运费、税费、调试费、佣金改变时，更新总利润和利润率
-            $('#shipping_cost, #tax_amount, #debugging_cost, #sales_commission').on('input', updateTotals);
-            // 表单提交监听
-            form.on('submit(submit)', function (data) {
-
-                // 提交前先更新总计，避免遗漏最新数据
-                updateTotals();
-                $.post("{:url('Order/edit')}", data.field, function (res) {
-                    if (res.code === 0) {
-                        layer.msg(res.msg, { time: 2000 }, function () {
-                            layer.close(layer.index);
-                            window.parent.location.reload();
-                        });
-                    } else {
-                        layer.msg(res.msg, { time: 2000 });
-                    }
-                }, 'json');
-                return false;
-            });
             // 工具函数：修正下拉框文本左对齐
             function fixSelectAlign(ctx) {
                 var $ctx = ctx ? $(ctx) : $(document);
@@ -790,76 +758,54 @@
                 layer.msg('导出成功！', { icon: 1, time: 1500 });
             });
 
-            // —— 全页只读/禁用 开关（如需恢复编辑，把它改为 false 并重载页面）——
-            var FORCE_READONLY = true;
-
+            // 【修改】详情页全量只读逻辑（优化版）
             (function lockAllWhenReady(){
-            if(!FORCE_READONLY) return;
+                var $ = layui.$;
+                var form = layui.form;
 
-            // 这里的 form / $ 使用外层 layui.use 中的变量，
-            // 若你的作用域不同，可用 window.layui.form 与 window.layui.$ 取用
-            var $ = layui.$;
-            var form = layui.form;
+                // 1) 输入框与文本域：统一 readonly（已在 HTML 中添加，这里确保所有都只读）
+                $('input:not([type=hidden]):not([readonly]), textarea:not([readonly])').each(function(){
+                    $(this).attr('readonly', true);
+                    // 避免日期/时间控件弹窗
+                    $(this).off('click.laydate focus.laydate');
+                });
 
-            // 1) 输入框与文本域：统一 readonly（readonly 会提交值；select 无 readonly 概念，见下）
-            $('input:not([type=hidden]), textarea').each(function(){
-                // 不动隐藏域；其它统一只读
-                $(this).attr('readonly', true);
-                // 避免日期/时间控件弹窗
-                $(this).off('click.laydate focus.laydate');
-            });
+                // 2) 禁止日期控件手动触发（详情页不允许弹窗）
+                $('#orderTime').attr('readonly', true).off('click focus').on('click focus', function(e) {
+                    e.preventDefault();
+                    return false;
+                });
 
-            // 2) 所有原生 select 禁用（select 没有 readonly，只能 disabled）
-            //    注意：disabled 的 select 提交时不会带值；若你未来需要“不可改但仍提交值”，
-            //    可增加一个同名隐藏域镜像当前值，这里先按“彻底禁止修改”为目标。
-            $('select').each(function(){
-                $(this).attr('disabled', true);
-            });
-            // 让 LayUI 按禁用态重新渲染
-            form.render('select');
-            // 给渲染后的下拉容器加禁用样式（彻底阻断交互）
-            $('.layui-form-select').addClass('layui-disabled');
+                // 3) 产品明细表格里的所有输入/下拉也一并锁定（已在 HTML 中添加，这里确保）
+                $('#productTableBody').find('input:not([readonly]), textarea:not([readonly])').attr('readonly', true);
+                $('#productTableBody').find('select:not([disabled])').attr('disabled', true);
+                form.render('select');
+                $('#productTableBody').find('.layui-form-select').addClass('layui-disabled');
 
-            // 3) 禁止日期控件手动触发（已给 input readonly，上面也 off 掉 laydate 事件；此处双保险）
-            $('#orderTime').attr('readonly', true).off('click focus');
+                // 4) 确保所有 select 都已禁用（包括产品明细表格外的）
+                $('select:not([disabled])').attr('disabled', true);
+                form.render('select');
+                $('.layui-form-select').addClass('layui-disabled');
+                fixSelectAlign(); // 调整对齐
 
-            // 4) 产品明细表格里的所有输入/下拉也一并锁定
-            $('#productTableBody').find('input, textarea').attr('readonly', true);
-            $('#productTableBody').find('select').attr('disabled', true);
-            form.render('select');
-            $('#productTableBody').find('.layui-form-select').addClass('layui-disabled');
+                // 5) 禁用 xm-select 协同人组件（已在上面处理，这里做二次确认）
+                setTimeout(function() {
+                    try {
+                        var collabIns = xmSelect.get('#collaboratorSelect', true);
+                        if (collabIns && collabIns.update) {
+                            collabIns.update({ disabled: true });
+                        }
+                        $('#collaboratorSelect').addClass('xm-select-disabled');
+                    } catch(e) {
+                        // 忽略错误
+                    }
+                }, 300);
 
-            // 5) 关掉你之前绑定的“数值变化 -> 自动计算”的监听，防止被动改动
-            $('#productTableBody').off('input', 'input[name="qty[]"]');
-            $('#productTableBody').off('input', 'input[name="unit_price[]"]');
-            $('#productTableBody').off('input', 'input[name="purchase_price[]"]');
-            $('#shipping_cost, #tax_amount, #debugging_cost, #sales_commission').off('input');
-
-            // 6) 禁用 xm-select 协同人组件
-            try{
-                // 获取 #collaboratorSelect 的 xm-select 实例（无需改你原始 render 代码）
-                var collabIns = xmSelect.get('#collaboratorSelect', true);
-                if(collabIns){
-                collabIns.update({ disabled: true });
-                // 给容器加禁用样式（pointer-events:none）
-                $(collabIns.el).addClass('xm-select-disabled');
-                }
-            }catch(e){ /* 忽略 */ }
-
-            // 7) 若页面上有按钮（比如你之后恢复了"提交"按钮），统一置灰禁用
-            // 但保留打印和导出按钮的功能（仅超级管理员可见）
-            $('button, .layui-btn').each(function(){
-                var $btn = $(this);
-                // 如果是打印或导出按钮，不禁用
-                if ($btn.attr('id') === 'printBtn' || $btn.attr('id') === 'exportBtn') {
-                    return; // 跳过打印和导出按钮
-                }
-                // 只读模式下屏蔽其他按钮点击
-                $btn.attr('disabled', true).addClass('layui-btn-disabled').off('click');
-            });
-
-            // 8) 防止任何表单提交（若你未来要保留“只读查看但允许提交”，注释掉本段）
-            $('form.layui-form').on('submit', function(){ return false; });
+                // 6) 防止任何表单提交
+                $('form.layui-form').on('submit', function(e) {
+                    e.preventDefault();
+                    return false;
+                });
 
             })();
         });

@@ -34,10 +34,10 @@ class Products extends Common
         if (!empty($category_id)) {
             $query->where('p.category_id', $category_id);
         }
-        // 只显示启用状态的产品（status = 0），不显示已删除的（status = -1）
+        // soft delete by is_deleted: 只显示正常状态的产品（is_deleted = 0）
         $list = $query->field('p.*, c.category_name')
             ->where([$this->getOrgWhere($current_admin['org'], 'p')])
-            ->where('p.status', '=', 0)
+            ->where('p.is_deleted', '=', 0)
             ->order('p.id desc')
             ->paginate([
                 'list_rows' => $pageSize,
@@ -65,33 +65,40 @@ class Products extends Common
             
             $current_admin = Admin::getMyInfo();
             
-            // 检查是否存在相同名称且已删除的产品（status = -1）
+            // soft delete by is_deleted: 检查是否存在相同名称且已删除的产品（is_deleted = 1）
             $deletedProduct = Db::name('crm_products')
                 ->where('product_name', $product_name)
                 ->where('category_id', $category_id)
                 ->where([$this->getOrgWhere($current_admin['org'])])
-                ->where('status', -1)
+                ->where('is_deleted', 1)
                 ->find();
             
             if ($deletedProduct) {
-                // 如果存在已删除的相同产品，恢复它（将 status 改为 0）
+                // 如果存在已删除的相同产品，恢复它
                 Db::name('crm_products')
                     ->where('id', $deletedProduct['id'])
                     ->update([
-                        'status' => 0,
+                        'is_deleted' => 0,
+                        'deleted_time' => null,
+                        'deleted_by' => null,
                         'edit_time' => time(),
                         'submit_person' => $current_admin['username']
                     ]);
                 return $this->result([], 200, '操作成功（已恢复已删除的产品）');
             }
             
-            // 检查是否存在相同名称且启用的产品（status = 0）
-            $product = $this->checkProductCategory($product_name, $category_id);
+            // soft delete by is_deleted: 检查是否存在相同名称且正常的产品（is_deleted = 0）
+            $product = Db::name('crm_products')
+                ->where('product_name', $product_name)
+                ->where('category_id', $category_id)
+                ->where([$this->getOrgWhere($current_admin['org'])])
+                ->where('is_deleted', 0)
+                ->find();
             if (!$product) {
                 $data['org'] = $current_admin['org'];
                 $data['product_name'] = $product_name;
                 $data['category_id'] = $category_id;
-                $data['status'] = 0; // 明确设置为启用状态
+                $data['is_deleted'] = 0; // 明确设置为正常状态
                 $data['add_time'] = time();
                 $data['edit_time'] = time();
                 $data['submit_person'] = $current_admin['username'];
@@ -125,6 +132,11 @@ class Products extends Common
             return $this->result([], 500, '参数错误');
         }
 
+        // soft delete by is_deleted: 如果该产品已删除，不允许编辑
+        if (isset($result['is_deleted']) && $result['is_deleted'] == 1) {
+            return $this->result([], 500, '产品已删除/不可编辑');
+        }
+
         // 权限判定
         $current_admin = Admin::getMyInfo();
         $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin') || ($current_admin['group_id'] == 13);
@@ -137,13 +149,13 @@ class Products extends Common
                 return $this->result([], 500, '商品名称不能为空');
             }
 
-            // 同组织 + 同供应商 下产品名不可重复（排除当前ID和已删除的记录）
+            // soft delete by is_deleted: 同组织 + 同供应商 下产品名不可重复（排除当前ID和已删除的记录）
             $exists = Db::name('crm_products')
                 ->where('product_name', $product_name)
                 ->where('category_id', '=', $category_id)
                 ->where([$this->getOrgWhere($current_admin['org'])])
                 ->where('id', '<>', $id)
-                ->where('status', '=', 0) // 只检查启用状态的产品
+                ->where('is_deleted', '=', 0) // 只检查正常状态的产品
                 ->find();
             if ($exists) {
                 return $this->result([], 500, '商品已存在');
@@ -206,12 +218,19 @@ class Products extends Common
         $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin');
 
         $query = Db::name('crm_products')->where('id', $id);
+        // soft delete by is_deleted: 只允许删除正常状态的产品，避免重复删除
+        $query->where('is_deleted', 0);
         if (!$isSuper) {
             $query->where('submit_person', $current_admin['username']);
         }
 
-        // 软删除：更新 status 为 -1，而不是真正删除记录
-        $aff = $query->update(['status' => -1, 'edit_time' => time()]);
+        // soft delete by is_deleted: 软删除，更新 is_deleted 字段
+        $aff = $query->update([
+            'is_deleted' => 1,
+            'deleted_time' => date('Y-m-d H:i:s'),
+            'deleted_by' => session('aid'),
+            'edit_time' => time()
+        ]);
         if ($aff) {
             return $this->result([], 200, '删除成功');
         } else {
@@ -235,12 +254,21 @@ class Products extends Common
         $current_admin = Admin::getMyInfo();
         $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin');
 
+        // soft delete by is_deleted: 使用事务保证数据一致性
+        Db::startTrans();
         try {
             if ($isSuper) {
-                // 软删除：更新 status 为 -1
+                // soft delete by is_deleted: 超管批量软删除（只更新 is_deleted=0 的）
                 $delCount = Db::name('crm_products')
                     ->whereIn('id', $ids)
-                    ->update(['status' => -1, 'edit_time' => time()]);
+                    ->where('is_deleted', 0)
+                    ->update([
+                        'is_deleted' => 1,
+                        'deleted_time' => date('Y-m-d H:i:s'),
+                        'deleted_by' => session('aid'),
+                        'edit_time' => time()
+                    ]);
+                Db::commit();
                 if ($delCount > 0) {
                     return json(['code' => 0, 'msg' => '删除成功', 'data' => ['count' => $delCount]]);
                 }
@@ -250,17 +278,25 @@ class Products extends Common
                 $ownIds = Db::name('crm_products')
                     ->whereIn('id', $ids)
                     ->where('submit_person', $current_admin['username'])
+                    ->where('is_deleted', 0)
                     ->column('id');
 
                 if (empty($ownIds)) {
+                    Db::rollback();
                     return json(['code' => -200, 'msg' => '无可删除的记录（仅能删除本人提交的记录）']);
                 }
 
-                // 软删除：更新 status 为 -1
+                // soft delete by is_deleted: 批量软删除
                 $delCount = Db::name('crm_products')
                     ->whereIn('id', $ownIds)
-                    ->update(['status' => -1, 'edit_time' => time()]);
+                    ->update([
+                        'is_deleted' => 1,
+                        'deleted_time' => date('Y-m-d H:i:s'),
+                        'deleted_by' => session('aid'),
+                        'edit_time' => time()
+                    ]);
                 $skipped  = count($ids) - $delCount;
+                Db::commit();
 
                 if ($delCount > 0) {
                     $msg = '删除成功：' . $delCount . ' 条';
@@ -270,6 +306,7 @@ class Products extends Common
                 return json(['code' => -200, 'msg' => '删除失败或记录不存在（或无权限）']);
             }
         } catch (\Throwable $e) {
+            Db::rollback();
             return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
         }
     }
@@ -397,9 +434,6 @@ class Products extends Common
                 continue;
             }
 
-            // 解析 status（可选，默认0）
-            $status = ($status_raw === '' ? 0 : (int)$status_raw);
-
             // 解析 category_id：优先C列ID，否则用B列名称在当前组织下查找/创建
             $category_id = 0;
             if ($category_id_raw !== '' && is_numeric($category_id_raw)) {
@@ -408,6 +442,7 @@ class Products extends Common
                 $cat = \think\Db::name('crm_product_category')
                     ->where('category_name', $category_name)
                     ->where([$this->getOrgWhere($org)])
+                    ->where('is_deleted', 0)
                     ->find();
 
                 if (!$cat) {
@@ -415,6 +450,7 @@ class Products extends Common
                     $cid = \think\Db::name('crm_product_category')->insertGetId([
                         'category_name' => $category_name,
                         'org'           => $org,
+                        'is_deleted'    => 0,
                         'add_time'      => $now,
                         'edit_time'     => $now,
                         'submit_person' => $user,
@@ -446,21 +482,23 @@ class Products extends Common
                 continue;
             }
 
-            // DB去重：同 org 范围 + category_id + product_name
-            // 先检查是否有已删除的相同产品（status = -1）
+            // soft delete by is_deleted: DB去重：同 org 范围 + category_id + product_name
+            // 先检查是否有已删除的相同产品（is_deleted = 1）
             $deletedProduct = \think\Db::name('crm_products')
                 ->where('product_name', $product_name)
                 ->where('category_id', $category_id)
                 ->where([$this->getOrgWhere($org)])
-                ->where('status', -1)
+                ->where('is_deleted', 1)
                 ->find();
             
             if ($deletedProduct) {
-                // 如果存在已删除的相同产品，恢复它（将 status 改为 0）
+                // 如果存在已删除的相同产品，恢复它
                 \think\Db::name('crm_products')
                     ->where('id', $deletedProduct['id'])
                     ->update([
-                        'status' => 0,
+                        'is_deleted' => 0,
+                        'deleted_time' => null,
+                        'deleted_by' => null,
                         'edit_time' => $now,
                         'submit_person' => $user
                     ]);
@@ -469,24 +507,24 @@ class Products extends Common
                 continue;
             }
             
-            // 检查是否存在启用的相同产品（status = 0）
+            // soft delete by is_deleted: 检查是否存在正常的相同产品（is_deleted = 0）
             $exists = \think\Db::name('crm_products')
                 ->where('product_name', $product_name)
                 ->where('category_id', $category_id)
                 ->where([$this->getOrgWhere($org)])
-                ->where('status', 0)
+                ->where('is_deleted', 0)
                 ->find();
             if ($exists) {
                 $skippedExist++;
                 continue;
             }
 
-            // 插入新记录
+            // soft delete by is_deleted: 插入新记录，显式写 is_deleted=0
             $ok = \think\Db::name('crm_products')->insert([
                 'product_name'  => $product_name,
                 'org'           => $org,
                 'category_id'   => $category_id,
-                'status'        => $status,
+                'is_deleted'    => 0,
                 'add_time'      => $now,
                 'edit_time'     => $now,
                 'submit_person' => $user,
@@ -607,7 +645,8 @@ class Products extends Common
             ->join('crm_products p', 'l.product_name = p.id', 'LEFT')
             ->where($l_where)
             ->where('l.product_name', '<>', '')
-            ->where('l.product_name', '<>', null);
+            ->where('l.product_name', '<>', null)
+            ->where('p.is_deleted', 0); // soft delete by is_deleted: 排除已删除产品
         
         // 如果有运营人员，添加运营人员匹配条件；否则查询所有数据
         if (!empty($yy_admins)) {
@@ -881,7 +920,9 @@ class Products extends Common
             ->where('l.product_name', '<>', '')
             ->where('l.product_name', '<>', null)
             ->where('c.category_name', '<>', '')
-            ->where('c.category_name', '<>', null);
+            ->where('c.category_name', '<>', null)
+            ->where('p.is_deleted', 0) // soft delete by is_deleted: 排除已删除产品
+            ->where('c.is_deleted', 0); // soft delete by is_deleted: 排除已删除分类
         
         if (!empty($yy_conditions_oper)) {
             $yy_where_raw = '(' . implode(' OR ', $yy_conditions_oper) . ')';
@@ -910,7 +951,9 @@ class Products extends Common
             ->where('o.product_name', '<>', '')
             ->where('o.product_name', '<>', null)
             ->where('c.category_name', '<>', '')
-            ->where('c.category_name', '<>', null);
+            ->where('c.category_name', '<>', null)
+            ->where('p.is_deleted', 0) // soft delete by is_deleted: 排除已删除产品
+            ->where('c.is_deleted', 0); // soft delete by is_deleted: 排除已删除分类
         
         if ($yy_where_raw_order) {
             $query1->whereRaw($yy_where_raw_order);
@@ -934,7 +977,9 @@ class Products extends Common
             ->where('oi.product_name', '<>', '')
             ->where('oi.product_name', '<>', null)
             ->where('c.category_name', '<>', '')
-            ->where('c.category_name', '<>', null);
+            ->where('c.category_name', '<>', null)
+            ->where('p.is_deleted', 0) // soft delete by is_deleted: 排除已删除产品
+            ->where('c.is_deleted', 0); // soft delete by is_deleted: 排除已删除分类
         
         if ($yy_where_raw_order) {
             $query2->whereRaw($yy_where_raw_order);
@@ -1073,7 +1118,8 @@ class Products extends Common
             ->where($l_where)
             ->where('l.product_name', '<>', '')
             ->where('l.product_name', '<>', null)
-            ->where('l.xs_area', '<>', '');
+            ->where('l.xs_area', '<>', '')
+            ->where('p.is_deleted', 0); // soft delete by is_deleted: 排除已删除产品
         
         if (!empty($yy_conditions_oper)) {
             $yy_where_raw = '(' . implode(' OR ', $yy_conditions_oper) . ')';
@@ -1097,7 +1143,9 @@ class Products extends Common
             ->where('l.product_name', '<>', null)
             ->where('c.category_name', '<>', '')
             ->where('c.category_name', '<>', null)
-            ->where('l.xs_area', '<>', '');
+            ->where('l.xs_area', '<>', '')
+            ->where('p.is_deleted', 0) // soft delete by is_deleted: 排除已删除产品
+            ->where('c.is_deleted', 0); // soft delete by is_deleted: 排除已删除分类
         
         if (!empty($yy_conditions_oper)) {
             $yy_where_raw = '(' . implode(' OR ', $yy_conditions_oper) . ')';
@@ -1241,7 +1289,9 @@ class Products extends Common
             ->where('o.product_name', '<>', null)
             ->where('c.category_name', '<>', '')
             ->where('c.category_name', '<>', null)
-            ->where('o.country', '<>', '');
+            ->where('o.country', '<>', '')
+            ->where('p.is_deleted', 0) // soft delete by is_deleted: 排除已删除产品
+            ->where('c.is_deleted', 0); // soft delete by is_deleted: 排除已删除分类
         
         if ($yy_where_raw_order) {
             $query_cat1->whereRaw($yy_where_raw_order);
@@ -1266,7 +1316,9 @@ class Products extends Common
             ->where('oi.product_name', '<>', null)
             ->where('c.category_name', '<>', '')
             ->where('c.category_name', '<>', null)
-            ->where('o.country', '<>', '');
+            ->where('o.country', '<>', '')
+            ->where('p.is_deleted', 0) // soft delete by is_deleted: 排除已删除产品
+            ->where('c.is_deleted', 0); // soft delete by is_deleted: 排除已删除分类
         
         if ($yy_where_raw_order) {
             $query_cat2->whereRaw($yy_where_raw_order);

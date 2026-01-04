@@ -172,8 +172,8 @@
                             { id: data.id },
                             function (res) {
                                 layer.close(loading);
-                                // 后端：成功 code=200；失败 code=500，msg里已带阻止原因与名称
-                                if (res.code === 200) {
+                                // 后端：成功 code=1；失败 code=0，msg里已带阻止原因与名称
+                                if (res.code === 1) {
                                     layer.msg(res.msg || '删除成功', { time: 1000, icon: 1 }, function () {
                                         tableIn.reload({ page: { curr: 1 } });
                                     });

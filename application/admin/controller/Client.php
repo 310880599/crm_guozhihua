@@ -1691,6 +1691,29 @@ class Client extends Common
             $data['kh_contact']   = Request::param('kh_contact');
             $data['kh_status']    = Request::param('kh_status');
             $data['product_name'] = Request::param('product_name');
+            
+            // 3.1) 校验产品/供应商有效性（新增时必须选择未删除的产品）
+            $productId = (int)$data['product_name'];
+            if ($productId > 0) {
+                $productInfo = Db::name('crm_products')->alias('p')
+                    ->leftJoin('crm_product_category c', 'p.category_id = c.id')
+                    ->where('p.id', $productId)
+                    ->field('p.id, p.is_deleted as p_deleted, c.id as c_id, c.is_deleted as c_deleted')
+                    ->find();
+                if (!$productInfo) {
+                    $this->redisUnLock();
+                    return fail('所选产品不存在，请重新选择');
+                }
+                if ($productInfo['p_deleted'] != 0) {
+                    $this->redisUnLock();
+                    return fail('所选产品已删除，请重新选择');
+                }
+                if (!$productInfo['c_id'] || $productInfo['c_deleted'] != 0) {
+                    $this->redisUnLock();
+                    return fail('所选产品的供应商已删除，请重新选择');
+                }
+            }
+            
             $data['oper_user']    = Request::param('oper_user');
             $data['remark']       = Request::param('remark', '');
             $data['inquiry_id'] = Request::param('inquiry_id'); // 单选渠道
@@ -1844,15 +1867,19 @@ class Client extends Common
             }
         }
 
-        // GET：渲染新增页面所需下拉数据（保持不变）
+        // GET：渲染新增页面所需下拉数据（使用新的软删除字段 is_deleted）
         $currentAdmin = \app\admin\model\Admin::getMyInfo();
-        $where = [];
-        if ($currentAdmin['org'] && strpos($currentAdmin['org'], 'admin') === false) {
-            $where[] = $this->getOrgWhere($currentAdmin['org'], 'p');
-        }
         $productRows = Db::name('crm_products')->alias('p')
-            ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-            ->where($where)
+            ->leftJoin('crm_product_category c', 'p.category_id = c.id');
+        if ($currentAdmin['org'] && strpos($currentAdmin['org'], 'admin') === false) {
+            $productRows->where($this->getOrgWhere($currentAdmin['org'], 'p'));
+        }
+        // 添加新的软删除过滤条件：只显示未删除的产品和供应商
+        $productRows->where([
+            'p.is_deleted' => 0,
+            'c.is_deleted' => 0,
+        ]);
+        $productRows = $productRows
             ->group('p.product_name, c.category_name')
             ->field('MIN(p.id) as id, p.product_name, c.category_name')
             ->order('p.product_name', 'asc')
@@ -1974,6 +2001,10 @@ class Client extends Common
                 return fail($require_check);
             }
 
+            // 2) 获取旧数据的产品ID，用于判断是否改了产品
+            $oldRow = Db::table('crm_leads')->where('id', $id)->field('product_name')->find();
+            $oldPid = $oldRow ? (int)$oldRow['product_name'] : 0;
+            
             // 2) 组装 leads 数据
             $data = [];
             $data['id']           = $id;
@@ -1981,6 +2012,33 @@ class Client extends Common
             $data['kh_contact']   = \think\facade\Request::param('kh_contact', '');
             $data['kh_status']    = \think\facade\Request::param('kh_status');      // 询盘来源ID
             $data['product_name'] = \think\facade\Request::param('product_name');   // 产品ID
+            $newPid = (int)$data['product_name'];
+            
+            // 2.1) 校验产品/供应商有效性
+            // 如果用户没有改产品ID，允许保存原产品（即使它已软删，用于历史数据保留）
+            // 如果用户改了产品ID，则必须选择未软删的产品/供应商
+            if ($newPid > 0 && $newPid != $oldPid) {
+                // 用户改了产品ID，必须校验新产品/供应商均未删除
+                $productInfo = Db::name('crm_products')->alias('p')
+                    ->leftJoin('crm_product_category c', 'p.category_id = c.id')
+                    ->where('p.id', $newPid)
+                    ->field('p.id, p.is_deleted as p_deleted, c.id as c_id, c.is_deleted as c_deleted')
+                    ->find();
+                if (!$productInfo) {
+                    $this->redisUnLock();
+                    return fail('所选产品不存在，请重新选择');
+                }
+                if ($productInfo['p_deleted'] != 0) {
+                    $this->redisUnLock();
+                    return fail('所选产品已删除，请重新选择');
+                }
+                if (!$productInfo['c_id'] || $productInfo['c_deleted'] != 0) {
+                    $this->redisUnLock();
+                    return fail('所选产品的供应商已删除，请重新选择');
+                }
+            }
+            // 如果 $newPid == $oldPid，允许保存（即使该产品现在 is_deleted=1，用于保留历史）
+            
             $data['oper_user']    = \think\facade\Request::param('oper_user');      // 运营人员ID（与你的 add 保持一致）
             $data['remark']       = \think\facade\Request::param('remark', '');
             $data['ut_time']      = date("Y-m-d H:i:s");
@@ -2235,19 +2293,53 @@ class Client extends Common
             }
         }
 
-        // 产品列表（与 add 一致）
+        // 产品列表（使用新的软删除字段 is_deleted，并处理已删除产品的回显）
         $currentAdmin = \app\admin\model\Admin::getMyInfo();
-        $where = [];
-        if (!empty($currentAdmin['org']) && strpos($currentAdmin['org'], 'admin') === false) {
-            $where[] = $this->getOrgWhere($currentAdmin['org'], 'p');
-        }
         $productRows = \think\Db::name('crm_products')->alias('p')
-            ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-            ->where($where)
+            ->leftJoin('crm_product_category c', 'p.category_id = c.id');
+        if (!empty($currentAdmin['org']) && strpos($currentAdmin['org'], 'admin') === false) {
+            $productRows->where($this->getOrgWhere($currentAdmin['org'], 'p'));
+        }
+        // 添加新的软删除过滤条件：只显示未删除的产品和供应商
+        $productRows->where([
+            'p.is_deleted' => 0,
+            'c.is_deleted' => 0,
+        ]);
+        $productRows = $productRows
             ->group('p.product_name, c.category_name')
             ->field('MIN(p.id) as id, p.product_name, c.category_name')
             ->order('p.product_name', 'asc')
             ->select();
+        
+        // 处理已删除产品的回显：如果当前客户绑定的产品已删除，需要追加到列表中
+        $currentPid = (int)$result['product_name'];
+        if ($currentPid > 0) {
+            // 检查当前产品ID是否已在列表中
+            $existsInList = false;
+            foreach ($productRows as $row) {
+                if ($row['id'] == $currentPid) {
+                    $existsInList = true;
+                    break;
+                }
+            }
+            
+            // 如果不在列表中，说明该产品或供应商已被删除，需要单独查询并追加
+            if (!$existsInList) {
+                $deletedProduct = \think\Db::name('crm_products')->alias('p')
+                    ->leftJoin('crm_product_category c', 'p.category_id = c.id')
+                    ->where('p.id', $currentPid)
+                    ->field('p.id, p.product_name, c.category_name, p.is_deleted as p_deleted, c.is_deleted as c_deleted')
+                    ->find();
+                
+                if ($deletedProduct) {
+                    // 标记为已删除，并在文案中添加标识
+                    $deletedProduct['category_name'] = ($deletedProduct['category_name'] ?: '无') . '【已删除】';
+                    // 将已删除的产品插入到列表开头，确保能回显
+                    array_unshift($productRows, $deletedProduct);
+                }
+            }
+        }
+        
         $this->assign('productList', $productRows);
 
         // 检查shop_names字段是否存在

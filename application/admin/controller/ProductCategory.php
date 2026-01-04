@@ -19,11 +19,15 @@ class ProductCategory extends Common
 
     public function categorySearch()
     {
+        // ★软删除改造 start
         $current_admin = Admin::getMyInfo();
         $category_name = Request::param('category_name');
         $pageSize = Request::param('limit', 10);
         $page = Request::param('page', 1);
         $query = Db::name('crm_product_category');
+
+        // 只查询未删除的记录
+        $query->where('is_deleted', 0);
 
         if (!empty($category_name)) {
             $query->where('category_name', 'like', '%' . $category_name . '%');
@@ -33,6 +37,7 @@ class ProductCategory extends Common
             'list_rows' => $pageSize,
             'page' => $page
         ])->toArray();
+        // ★软删除改造 end
 
         return json([
             'code'  => 0,
@@ -46,31 +51,61 @@ class ProductCategory extends Common
     public function add()
     {
         if (request()->isPost()) {
+            // ★软删除改造 start
             $category_name = Request::param('category_name');
             $current_admin = Admin::getMyInfo();
             if (empty($category_name)) {
                 return $this->result([], 500, '供应商不能为空');
             }
 
-            $current_admin = Admin::getMyInfo();
+            // 唯一性校验：只在 is_deleted=0 范围内判重
             $exists = Db::name('crm_product_category')
                 ->where('category_name', $category_name)
+                ->where('is_deleted', 0)
                 ->where([$this->getOrgWhere($current_admin['org'])])
                 ->find();
 
-            if (!$exists) {
-                $data = [
-                    'category_name' => $category_name,
-                    'org' => $current_admin['org'],
-                    'add_time' => time(),
-                    'edit_time' => time(),
-                    'submit_person' => $current_admin['username']
-                ];
-                Db::name('crm_product_category')->insert($data);
-                return $this->result([], 200, '操作成功');
-            } else {
+            if ($exists) {
                 return $this->result([], 500, '供应商已存在');
             }
+
+            // 检查是否存在同名但已删除的记录（is_deleted=1）
+            $deletedExists = Db::name('crm_product_category')
+                ->where('category_name', $category_name)
+                ->where('is_deleted', 1)
+                ->where([$this->getOrgWhere($current_admin['org'])])
+                ->find();
+
+            if ($deletedExists) {
+                // 恢复已删除的记录
+                $aff = Db::name('crm_product_category')
+                    ->where('id', $deletedExists['id'])
+                    ->update([
+                        'is_deleted' => 0,
+                        'deleted_time' => null,
+                        'deleted_by' => null,
+                        'edit_time' => time(),
+                        'submit_person' => $current_admin['username']
+                    ]);
+                if ($aff) {
+                    return $this->result([], 200, '操作成功（已恢复）');
+                } else {
+                    return $this->result([], 500, '恢复失败');
+                }
+            }
+
+            // 插入新记录
+            $data = [
+                'category_name' => $category_name,
+                'org' => $current_admin['org'],
+                'add_time' => time(),
+                'edit_time' => time(),
+                'submit_person' => $current_admin['username'],
+                'is_deleted' => 0
+            ];
+            Db::name('crm_product_category')->insert($data);
+            return $this->result([], 200, '操作成功');
+            // ★软删除改造 end
         }
         return $this->fetch();
     }
@@ -87,27 +122,42 @@ class ProductCategory extends Common
             return $this->result([], 500, '参数错误');
         }
 
+        // ★软删除改造 start
+        // 禁止编辑已删除的数据
+        if (isset($result['is_deleted']) && $result['is_deleted'] == 1) {
+            return $this->result([], 500, '记录已删除，无法编辑');
+        }
+        // ★软删除改造 end
 
         // 权限判定
         $current_admin = Admin::getMyInfo();
         $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin') || ($current_admin['group_id'] == 13);
 
         if (request()->isPost()) {
+            // ★软删除改造 start
             $category_name = Request::param('category_name');
             if (empty($category_name)) {
                 return $this->result([], 500, '供应商不能为空');
             }
 
+            // 禁止编辑已删除的数据
+            if (isset($result['is_deleted']) && $result['is_deleted'] == 1) {
+                return $this->result([], 500, '记录已删除，无法编辑');
+            }
+
             $current_admin = Admin::getMyInfo();
+            // 唯一性校验：只在 is_deleted=0 范围内判重
             $exists = Db::name('crm_product_category')
                 ->where('category_name', $category_name)
                 ->where('id', '<>', $id)
+                ->where('is_deleted', 0)
                 ->where([$this->getOrgWhere($current_admin['org'])])
                 ->find();
 
             if ($exists) {
                 return $this->result([], 500, '供应商已存在');
             }
+            // ★软删除改造 end
 
             $current_time = time();
 
@@ -145,9 +195,10 @@ class ProductCategory extends Common
 
     public function del()
     {
+        // ★软删除改造 start
         $id = (int)\think\facade\Request::param('id');
         if ($id <= 0) {
-            return $this->result([], 500, '参数错误');
+            return json(['code' => 0, 'msg' => '参数错误']);
         }
 
         $current_admin = \app\admin\model\Admin::getMyInfo();
@@ -160,22 +211,50 @@ class ProductCategory extends Common
         }
         $row = $rowQuery->find();
         if (!$row) {
-            return $this->result([], 500, '无权限或记录不存在');
+            return json(['code' => 0, 'msg' => '无权限或记录不存在']);
         }
 
-        // 被产品引用则禁止删除，并提示供应商名称
-        $hasProduct = \think\Db::name('crm_products')->where('category_id', $id)->limit(1)->value('id');
-        if ($hasProduct) {
-            $name = $row['category_name'] ?: ('ID#' . $id);
-            return $this->result([
-                'blocked_ids'   => [$id],
-                'blocked_names' => [$name],
-            ], 500, '该供应商下存在产品，禁止删除：' . $name);
-        }
+        // 使用事务进行软删除（供应商 + 级联产品）
+        \think\Db::startTrans();
+        try {
+            $current_time = time();
+            $current_aid = session('aid') ?: 0;
 
-        $aff = \think\Db::name('crm_product_category')->where('id', $id)->delete();
-        return $aff ? $this->result([], 200, '删除成功')
-            : $this->result([], 500, '删除失败');
+            // 1. 软删除供应商
+            $aff1 = \think\Db::name('crm_product_category')
+                ->where('id', $id)
+                ->where('is_deleted', 0)
+                ->update([
+                    'is_deleted' => 1,
+                    'deleted_time' => date('Y-m-d H:i:s'),
+                    'deleted_by' => $current_aid,
+                    'edit_time' => $current_time
+                ]);
+
+            if ($aff1 === false) {
+                throw new \Exception('软删除供应商失败');
+            }
+
+            // 2. 级联软删除该供应商下的所有产品（只软删除 is_deleted=0 的产品）
+            $aff2 = \think\Db::name('crm_products')
+                ->where('category_id', $id)
+                ->where('is_deleted', 0)
+                ->update([
+                    'is_deleted' => 1,
+                    'deleted_time' => date('Y-m-d H:i:s'),
+                    'deleted_by' => $current_aid,
+                    'edit_time' => $current_time
+                ]);
+
+            // 提交事务
+            \think\Db::commit();
+            return json(['code' => 1, 'msg' => '删除成功']);
+        } catch (\Throwable $e) {
+            // 回滚事务
+            \think\Db::rollback();
+            return json(['code' => 0, 'msg' => '删除失败：' . $e->getMessage()]);
+        }
+        // ★软删除改造 end
     }
 
 
@@ -184,6 +263,7 @@ class ProductCategory extends Common
     // 批量删除
     public function batchDel()
     {
+        // ★软删除改造 start
         if (!request()->isPost()) {
             return json(['code' => -200, 'msg' => '非法请求']);
         }
@@ -199,8 +279,8 @@ class ProductCategory extends Common
         $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin');
 
         try {
-            // 1) 按权限过滤：只保留“存在且自己提交（或超管）”的ID
-            $base = \think\Db::name('crm_product_category')->whereIn('id', $ids);
+            // 1) 按权限过滤：只保留"存在且自己提交（或超管）"的ID
+            $base = \think\Db::name('crm_product_category')->whereIn('id', $ids)->where('is_deleted', 0);
             if (!$isSuper) {
                 $base->where('submit_person', $current_admin['username']);
             }
@@ -211,56 +291,45 @@ class ProductCategory extends Common
                 return json(['code' => -200, 'msg' => '无可删除的记录（仅能删除本人提交的记录）']);
             }
 
-            // 2) 找出被产品引用的分类（这些不得删除）
-            $usedMap = \think\Db::name('crm_products')
+            // 开启事务
+            \think\Db::startTrans();
+
+            $current_time = time();
+            $current_aid = session('aid') ?: 0;
+
+            // 2) 一次性软删除供应商
+            $deletedSuppliers = \think\Db::name('crm_product_category')
+                ->whereIn('id', $allowedIds)
+                ->update([
+                    'is_deleted' => 1,
+                    'deleted_time' => date('Y-m-d H:i:s'),
+                    'deleted_by' => $current_aid,
+                    'edit_time' => $current_time
+                ]);
+
+            if ($deletedSuppliers === false) {
+                throw new \Exception('软删除供应商失败');
+            }
+
+            // 3) 一次性级联软删除产品（只软删除 is_deleted=0 的产品）
+            $deletedProducts = \think\Db::name('crm_products')
                 ->whereIn('category_id', $allowedIds)
-                ->group('category_id')
-                ->column('COUNT(1)', 'category_id'); // [category_id => cnt]
-            $usedIds = array_map('intval', array_keys($usedMap));
+                ->where('is_deleted', 0)
+                ->update([
+                    'is_deleted' => 1,
+                    'deleted_time' => date('Y-m-d H:i:s'),
+                    'deleted_by' => $current_aid,
+                    'edit_time' => $current_time
+                ]);
 
-            // 被阻止的名称（完整）
-            $blockedNames = [];
-            if (!empty($usedIds)) {
-                foreach ($usedIds as $uid) {
-                    if (isset($allowedMap[$uid])) {
-                        $blockedNames[] = (string)$allowedMap[$uid];
-                    }
-                }
-            }
+            // 提交事务
+            \think\Db::commit();
 
-            // 预览最多 30 个名称
-            $previewLimit = 30;
-            $blockedPreview = array_slice($blockedNames, 0, $previewLimit);
-            $blockedPreviewText = implode('、', $blockedPreview);
-            $hasMoreBlocked = count($blockedNames) > $previewLimit;
-
-            // 3) 计算可删除ID = 有权限IDs - 被引用IDs
-            $deletableIds = array_values(array_diff($allowedIds, $usedIds));
-
-            // 4) 执行删除
-            $deleted = 0;
-            if (!empty($deletableIds)) {
-                $deleted = \think\Db::name('crm_product_category')->whereIn('id', $deletableIds)->delete();
-            }
-
-            // 5) 统计与消息
+            // 4) 统计与消息
             $skippedPermission = count($ids) - count($allowedIds);
-            $skippedUsed       = count($usedIds);
 
             $parts = [];
-            $parts[] = '删除成功：' . $deleted . ' 条';
-            if ($skippedUsed > 0) {
-                $p = '跳过(存在产品)：' . $skippedUsed . ' 条';
-                if ($blockedPreviewText !== '') {
-                    // 名称预览附在消息里；完整数组放 data
-                    if ($hasMoreBlocked) {
-                        $p .= '（' . $blockedPreviewText . ' 等' . count($blockedNames) . '个）';
-                    } else {
-                        $p .= '（' . $blockedPreviewText . '）';
-                    }
-                }
-                $parts[] = $p;
-            }
+            $parts[] = '删除成功：供应商' . $deletedSuppliers . '条，产品' . $deletedProducts . '条';
             if ($skippedPermission > 0) {
                 $parts[] = '跳过(无权限/不存在)：' . $skippedPermission . ' 条';
             }
@@ -269,18 +338,17 @@ class ProductCategory extends Common
                 'code' => 0,
                 'msg'  => implode('，', $parts),
                 'data' => [
-                    'deleted'                    => (int)$deleted,
-                    'skipped_used'               => $skippedUsed,
-                    'skipped_permission'         => $skippedPermission,
-                    'blocked_ids'                => array_values($usedIds),
-                    'blocked_names'              => $blockedNames,       // 完整名称数组
-                    'blocked_names_preview'      => $blockedPreview,     // 预览名称数组（<=30个）
-                    'blocked_names_preview_limit' => $previewLimit,
+                    'deleted_suppliers' => (int)$deletedSuppliers,
+                    'deleted_products'  => (int)$deletedProducts,
+                    'skipped_permission' => $skippedPermission,
                 ],
             ]);
         } catch (\Throwable $e) {
+            // 回滚事务
+            \think\Db::rollback();
             return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
         }
+        // ★软删除改造 end
     }
 
 
@@ -400,6 +468,7 @@ class ProductCategory extends Common
         };
 
         foreach ($rows as $row) {
+            // ★软删除改造 start
             list($category_name, $orgFromFile) = $row;
 
             if ($category_name === '') {
@@ -410,9 +479,10 @@ class ProductCategory extends Common
             $orgToUse = $orgFromFile !== '' ? $normalizeOrg($orgFromFile) : $loginOrg;
             if ($orgToUse === '') $orgToUse = $loginOrg;
 
-            // 去重：同组织 + 同供应商名称
+            // 去重：只在 is_deleted=0 范围内判重
             $exists = \think\Db::name('crm_product_category')
                 ->where('category_name', $category_name)
+                ->where('is_deleted', 0)
                 ->where([$this->getOrgWhere($orgToUse)])
                 ->find();
             if ($exists) {
@@ -420,14 +490,38 @@ class ProductCategory extends Common
                 continue;
             }
 
-            $ok = \think\Db::name('crm_product_category')->insert([
-                'category_name' => $category_name,
-                'org'           => $orgToUse,
-                'add_time'      => $now,
-                'edit_time'     => $now,
-                'submit_person' => $user,
-            ]);
-            if ($ok) $inserted++;
+            // 检查是否存在同名但已删除的记录（is_deleted=1）
+            $deletedExists = \think\Db::name('crm_product_category')
+                ->where('category_name', $category_name)
+                ->where('is_deleted', 1)
+                ->where([$this->getOrgWhere($orgToUse)])
+                ->find();
+
+            if ($deletedExists) {
+                // 恢复已删除的记录
+                $ok = \think\Db::name('crm_product_category')
+                    ->where('id', $deletedExists['id'])
+                    ->update([
+                        'is_deleted' => 0,
+                        'deleted_time' => null,
+                        'deleted_by' => null,
+                        'edit_time' => $now,
+                        'submit_person' => $user
+                    ]);
+                if ($ok) $inserted++;
+            } else {
+                // 插入新记录
+                $ok = \think\Db::name('crm_product_category')->insert([
+                    'category_name' => $category_name,
+                    'org'           => $orgToUse,
+                    'add_time'      => $now,
+                    'edit_time'     => $now,
+                    'submit_person' => $user,
+                    'is_deleted' => 0
+                ]);
+                if ($ok) $inserted++;
+            }
+            // ★软删除改造 end
         }
 
         return json([

@@ -484,21 +484,37 @@ class Order extends Common
                 $idArr = array_values(array_unique($idArr));
             }
 
-            // 1次查询构建 id => 产品名称 的映射
+            // 【订单快照改造】批量查询产品信息，构建产品名称、供应商ID、供应商名称的映射
             // 注意：这里不过滤 status，因为历史订单可能引用已删除的产品，需要保留产品名称
-            $idNameMap = [];
+            $prodMap = [];      // product_id => product_name
+            $supIdMap = [];     // product_id => category_id (供应商ID)
+            $supNameMap = [];   // product_id => category_name (供应商名称)
             if (!empty($idArr)) {
                 $rows = Db::name('crm_products')->alias('p')
                     ->leftJoin('crm_product_category c', 'p.category_id = c.id')
                     ->where('p.id', 'in', $idArr)
-                    ->field('p.id, p.product_name, c.category_name')
+                    ->field('p.id, p.product_name, p.category_id, c.category_name')
                     ->select();
                 foreach ($rows as $r) {
-                    $idNameMap[$r['id']] = $r['product_name']; // 也可拼分类：$r['product_name'].' ('.$r['category_name'].')'
+                    $prodMap[$r['id']] = $r['product_name'];
+                    $supIdMap[$r['id']] = $r['category_id'] ?? 0;
+                    $supNameMap[$r['id']] = $r['category_name'] ?? '';
+                }
+                
+                // 【兼容校验】如果某些产品ID查询不到（异常/被删/数据脏），直接返回错误
+                $missingPids = [];
+                foreach ($idArr as $pid) {
+                    if (!isset($prodMap[$pid])) {
+                        $missingPids[] = $pid;
+                    }
+                }
+                if (!empty($missingPids)) {
+                    $this->redisUnLock();
+                    return json(['code' => -200, 'msg' => '产品ID ' . implode(', ', $missingPids) . ' 不存在或已删除，无法保存']);
                 }
             }
 
-            // 计算并组装明细数据
+            // 计算并组装明细数据（包含供应商快照信息）
             $sumTotal = 0;
             $sumProfit = 0;
             $itemsData = [];
@@ -506,8 +522,11 @@ class Order extends Common
                 foreach ($productIds as $index => $pid) {
                     $pid = (int)$pid;
                     if ($pid <= 0) continue;  // 跳过空行
-                    // 产品名称文本
-                    $pnameText = $idNameMap[$pid] ?? '';
+                    // 产品名称文本（从映射获取，不使用前端传来的文本）
+                    $pnameText = $prodMap[$pid] ?? '';
+                    // 供应商ID和名称（从映射获取）
+                    $supplierId = $supIdMap[$pid] ?? 0;
+                    $supplierName = $supNameMap[$pid] ?? '';
                     // 获取当前行的数量、价格、成本
                     $qty    = isset($qtys[$index]) ? floatval($qtys[$index]) : 0;
                     $price  = isset($unitPrices[$index]) ? floatval($unitPrices[$index]) : 0;
@@ -522,12 +541,14 @@ class Order extends Common
                     if (!empty($managerIds[$index])) {
                         $managerId = intval($managerIds[$index]);
                     }
-                    // 组装该行明细数组，包括 manager_id 字段
+                    // 组装该行明细数组，包括 supplier_id 和 supplier_name 快照字段
                     $itemsData[] = [
                         'order_id'       => 0,                   // 稍后插入主表后会回填
                         'line_no'        => $index + 1,          // 行号
                         'product_id'     => (string)$pid,        // 产品ID
-                        'product_name'   => $pnameText,          // 产品名称文本
+                        'product_name'   => $pnameText,          // 产品名称快照（从产品表查询，不使用前端文本）
+                        'supplier_id'    => (string)$supplierId, // 供应商ID快照（分类ID）
+                        'supplier_name'  => $supplierName,       // 供应商名称快照（分类名称）
                         'spec_model'     => $specModels[$index] ?? '',
                         'unit'           => $units[$index] ?? '',
                         'qty'            => (int)$qty,
@@ -558,7 +579,7 @@ class Order extends Common
             // 主表 product_name（存第一个产品名称，非ID）
             if (!empty($productIds)) {
                 $firstPid   = (int)($productIds[0] ?? 0);
-                $firstName  = $idNameMap[$firstPid] ?? '';
+                $firstName  = $prodMap[$firstPid] ?? '';
                 if ($firstName !== '') {
                     $data['product_name'] = $firstName . (count($productIds) > 1 ? ' 等' : '');
                 }
@@ -670,15 +691,17 @@ class Order extends Common
 
         // 产品列表（与客户新增页一致，分组、取最小ID、带分类名）
         $currentAdmin = \app\admin\model\Admin::getMyInfo();
-        $where = [];
-        if ($currentAdmin['org'] && strpos($currentAdmin['org'], 'admin') === false) {
-            $where[] = $this->getOrgWhere($currentAdmin['org'], 'p');
-        }
-        // 只获取启用状态的产品（status = 0）
         $productRows = Db::name('crm_products')->alias('p')
-            ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-            ->where($where)
-            ->where('p.status', '=', 0)
+            ->leftJoin('crm_product_category c', 'p.category_id = c.id');
+        if ($currentAdmin['org'] && strpos($currentAdmin['org'], 'admin') === false) {
+            $productRows->where($this->getOrgWhere($currentAdmin['org'], 'p'));
+        }
+        // 使用新的软删除字段：只获取未删除的产品和供应商（is_deleted = 0）
+        $productRows->where([
+            'p.is_deleted' => 0,
+            'c.is_deleted' => 0,
+        ]);
+        $productRows = $productRows
             ->group('p.product_name, c.category_name')
             ->field('MIN(p.id) as id, p.product_name, c.category_name')
             ->order('p.product_name', 'asc')
@@ -1157,7 +1180,7 @@ class Order extends Common
             $subProfits     = Request::param('sub_profit/a');
             $itemRemarks    = Request::param('item_remark/a');
 
-            // 查询涉及的产品名称（用于获取产品名称文本及分类名）
+            // 【订单快照改造】批量查询产品信息，构建产品名称、供应商ID、供应商名称的映射
             $idArr = [];
             if (!empty($productIds) && is_array($productIds)) {
                 foreach ($productIds as $pid) {
@@ -1166,38 +1189,36 @@ class Order extends Common
                 }
                 $idArr = array_values(array_unique($idArr));
             }
-            $idNameMap = [];
+            $prodMap = [];      // product_id => product_name
+            $supIdMap = [];     // product_id => category_id (供应商ID)
+            $supNameMap = [];   // product_id => category_name (供应商名称)
             if (!empty($idArr)) {
-                // 从产品表获取名称和分类，用于展示和计算
+                // 从产品表获取名称和分类，用于快照保存
                 // 注意：这里不过滤 status，因为历史订单可能引用已删除的产品，需要保留产品名称
                 $rows = Db::name('crm_products')->alias('p')
                     ->leftJoin('crm_product_category c', 'p.category_id = c.id')
                     ->where('p.id', 'in', $idArr)
-                    ->field('p.id, p.product_name, c.category_name')
+                    ->field('p.id, p.product_name, p.category_id, c.category_name')
                     ->select();
                 foreach ($rows as $r) {
-                    // 拼接名称和分类（如需）：$r['product_name'].' ('.$r['category_name'].')'
-                    $idNameMap[$r['id']] = $r['product_name'];
+                    $prodMap[$r['id']] = $r['product_name'];
+                    $supIdMap[$r['id']] = $r['category_id'] ?? 0;
+                    $supNameMap[$r['id']] = $r['category_name'] ?? '';
                 }
                 
-                // 如果某些产品ID查询不到（可能已被删除），尝试从订单明细表中获取产品名称
+                // 【兼容校验】如果某些产品ID查询不到（异常/被删/数据脏），直接返回错误
+                $missingPids = [];
                 foreach ($idArr as $pid) {
-                    if (!isset($idNameMap[$pid])) {
-                        // 尝试从订单明细表中获取该产品ID对应的产品名称（如果有历史记录）
-                        $item = Db::name('crm_order_item')
-                            ->where('product_id', $pid)
-                            ->where('product_name', '<>', '')
-                            ->order('id desc')
-                            ->field('product_name')
-                            ->find();
-                        if ($item && !empty($item['product_name'])) {
-                            $idNameMap[$pid] = $item['product_name'];
-                        }
+                    if (!isset($prodMap[$pid])) {
+                        $missingPids[] = $pid;
                     }
+                }
+                if (!empty($missingPids)) {
+                    return json(['code' => -200, 'msg' => '产品ID ' . implode(', ', $missingPids) . ' 不存在或已删除，无法保存']);
                 }
             }
 
-            // 计算订单总金额和利润，并构建明细数据数组
+            // 计算订单总金额和利润，并构建明细数据数组（包含供应商快照信息）
             $sumTotal = 0;
             $sumProfit = 0;
             $itemsData = [];
@@ -1205,8 +1226,11 @@ class Order extends Common
                 foreach ($productIds as $index => $pid) {
                     $pid = (int)$pid;
                     if ($pid <= 0) continue;  // 跳过无效行（如空行）
-                    // 产品名称文本（用于主表摘要显示）
-                    $pnameText = $idNameMap[$pid] ?? '';
+                    // 产品名称文本（从映射获取，不使用前端传来的文本）
+                    $pnameText = $prodMap[$pid] ?? '';
+                    // 供应商ID和名称（从映射获取）
+                    $supplierId = $supIdMap[$pid] ?? 0;
+                    $supplierName = $supNameMap[$pid] ?? '';
                     // 当前行的数量、单价、成本
                     $qty      = isset($qtys[$index]) ? floatval($qtys[$index]) : 0;
                     $price    = isset($unitPrices[$index]) ? floatval($unitPrices[$index]) : 0;
@@ -1221,12 +1245,14 @@ class Order extends Common
                     if (!empty($managerIds[$index])) {
                         $managerId = intval($managerIds[$index]);
                     }
-                    // 汇总构建当前明细行数据
+                    // 汇总构建当前明细行数据，包括 supplier_id 和 supplier_name 快照字段
                     $itemsData[] = [
                         'order_id'       => $id,                  // 关联订单ID
                         'line_no'        => $index + 1,           // 行号
                         'product_id'     => (string)$pid,         // 产品ID（字符串存储）
-                        'product_name'   => $pnameText,           // 产品名称文本
+                        'product_name'   => $pnameText,           // 产品名称快照（从产品表查询，不使用前端文本）
+                        'supplier_id'    => (string)$supplierId,  // 供应商ID快照（分类ID）
+                        'supplier_name'  => $supplierName,        // 供应商名称快照（分类名称）
                         'spec_model'     => $specModels[$index] ?? '',
                         'unit'           => $units[$index] ?? '',
                         'qty'            => (int)$qty,
@@ -1250,10 +1276,10 @@ class Order extends Common
             $data['profit']      = round($finalProfit, 2);
             $data['margin_rate'] = ($sumTotal > 0) ? round($finalProfit / $sumTotal * 100, 2) : 0;
 
-            // 更新主表产品名称摘要（存入第一个产品名称，多个则加“等”字样）
+            // 更新主表产品名称摘要（存入第一个产品名称，多个则加"等"字样）
             if (!empty($productIds)) {
                 $firstPid   = (int)($productIds[0] ?? 0);
-                $firstName  = $idNameMap[$firstPid] ?? '';
+                $firstName  = $prodMap[$firstPid] ?? '';
                 if ($firstName !== '') {
                     $data['product_name'] = $firstName . (count($productIds) > 1 ? ' 等' : '');
                 }
@@ -1328,26 +1354,24 @@ class Order extends Common
         $this->assign('yyList', json_encode($yyData['yyList'], JSON_UNESCAPED_UNICODE));
 
         // 产品列表（含分类名）。无组织限制时查询所有产品
-        $where = [];
-        if (!empty($currentAdmin['org']) && strpos($currentAdmin['org'], 'admin') === false) {
-            // 有组织限制时构造过滤条件
-            $where[] = $this->getOrgWhere($currentAdmin['org'], 'p');
-        }
-        // 只获取启用状态的产品（status = 0）
         $productQuery = Db::name('crm_products')->alias('p')
             ->leftJoin('crm_product_category c', 'p.category_id = c.id');
-        if (!empty($where)) {
-            $productQuery->where($where);
+        if (!empty($currentAdmin['org']) && strpos($currentAdmin['org'], 'admin') === false) {
+            // 有组织限制时构造过滤条件
+            $productQuery->where($this->getOrgWhere($currentAdmin['org'], 'p'));
         }
+        // 使用新的软删除字段：只获取未删除的产品和供应商（is_deleted = 0）
+        $productQuery->where([
+            'p.is_deleted' => 0,
+            'c.is_deleted' => 0,
+        ]);
         $productRows = $productQuery
-            ->where('p.status', '=', 0)
             ->group('p.product_name, c.category_name')
             ->field('MIN(p.id) as id, p.product_name, c.category_name')
             ->order('p.product_name', 'asc')
             ->select();
         
-        // 获取订单中已有的产品ID，检查是否有已删除的产品（status=-1）
-        // 如果有，需要添加到产品列表中以便显示，但标记为已废弃
+        // 处理已删除产品的回显：如果当前订单绑定的产品已删除，需要追加到列表中
         if (isset($items) && !empty($items)) {
             $existingProductIds = [];
             foreach ($items as $item) {
@@ -1357,20 +1381,34 @@ class Order extends Common
             }
             $existingProductIds = array_unique($existingProductIds);
             
-            // 检查这些产品是否已被删除（status=-1）
+            // 检查订单中的产品是否在未删除列表中
             if (!empty($existingProductIds)) {
-                // 先查询所有可能的产品（包括已删除的），不受组织限制（因为历史订单需要显示）
+                // 获取未删除列表中的产品ID
+                $activeProductIds = array_column($productRows, 'id');
+                
+                // 查询订单中所有产品（包括已删除的），不加 is_deleted 限制
                 $allProducts = Db::name('crm_products')->alias('p')
                     ->leftJoin('crm_product_category c', 'p.category_id = c.id')
                     ->where('p.id', 'in', $existingProductIds)
-                    ->field('p.id, p.product_name, c.category_name, p.status')
+                    ->field('p.id, p.product_name, c.category_name, p.is_deleted as p_deleted, c.is_deleted as c_deleted')
                     ->select();
                 
-                // 找出已删除的产品（status=-1）
+                // 找出已删除的产品（is_deleted = 1），追加到列表中用于回显
                 foreach ($allProducts as $product) {
-                    if (isset($product['status']) && $product['status'] == -1) {
+                    $productId = $product['id'];
+                    // 如果产品不在未删除列表中，说明已被删除
+                    if (!in_array($productId, $activeProductIds)) {
+                        // 标记为已删除，并在分类名称中添加标识
+                        $categoryName = $product['category_name'] ?: '无';
+                        if (isset($product['p_deleted']) && $product['p_deleted'] == 1) {
+                            $categoryName = '【已删除】' . $categoryName;
+                        } elseif (isset($product['c_deleted']) && $product['c_deleted'] == 1) {
+                            $categoryName = '【已删除】' . $categoryName;
+                        }
+                        $product['category_name'] = $categoryName;
                         $product['is_deleted'] = true; // 标记为已删除
-                        $productRows[] = $product;
+                        // 将已删除的产品插入到列表开头，确保能回显
+                        array_unshift($productRows, $product);
                     }
                 }
                 
@@ -1380,12 +1418,14 @@ class Order extends Common
                     if (!empty($item['product_id']) && !in_array($item['product_id'], $foundProductIds)) {
                         // 产品不存在于产品表中，但从订单明细中获取信息
                         if (!empty($item['product_name'])) {
-                            $productRows[] = [
+                            $deletedProduct = [
                                 'id' => $item['product_id'],
                                 'product_name' => $item['product_name'],
-                                'category_name' => '无',
+                                'category_name' => '【已删除】无',
                                 'is_deleted' => true
                             ];
+                            // 将已删除的产品插入到列表开头
+                            array_unshift($productRows, $deletedProduct);
                         }
                     }
                 }
@@ -1757,28 +1797,24 @@ class Order extends Common
         $this->assign('operUserList', $operUserList);
         $this->assign('yyList', json_encode($yyData['yyList'], JSON_UNESCAPED_UNICODE));
 
-        // 产品列表（含分类名）。无组织限制时查询所有产品
-        // 不添加status过滤，所有产品数据都进行展示
-        $where = [];
-        if (!empty($currentAdmin['org']) && strpos($currentAdmin['org'], 'admin') === false) {
-            // 有组织限制时构造过滤条件
-            $where[] = $this->getOrgWhere($currentAdmin['org'], 'p');
-        }
-        // 查询所有产品（不限制status状态）
+        // 产品列表（含分类名）。详情页需要显示所有产品（包括已删除的），用于展示历史订单
+        // 详情页查询所有产品（不加 is_deleted 限制），用于显示历史数据
         $productQuery = Db::name('crm_products')->alias('p')
             ->leftJoin('crm_product_category c', 'p.category_id = c.id');
-        if (!empty($where)) {
-            $productQuery->where($where);
+        if (!empty($currentAdmin['org']) && strpos($currentAdmin['org'], 'admin') === false) {
+            // 有组织限制时构造过滤条件
+            $productQuery->where($this->getOrgWhere($currentAdmin['org'], 'p'));
         }
         $productRows = $productQuery
-            ->group('p.product_name, c.category_name, p.status')
-            ->field('MIN(p.id) as id, p.product_name, c.category_name, p.status')
+            ->group('p.product_name, c.category_name')
+            ->field('MIN(p.id) as id, p.product_name, c.category_name, MAX(p.is_deleted) as p_deleted, MAX(c.is_deleted) as c_deleted')
             ->order('p.product_name', 'asc')
             ->select();
         
-        // 标记已删除的产品（status=-1）
+        // 标记已删除的产品（is_deleted = 1）
         foreach ($productRows as &$product) {
-            if (isset($product['status']) && $product['status'] == -1) {
+            if ((isset($product['p_deleted']) && $product['p_deleted'] == 1) || 
+                (isset($product['c_deleted']) && $product['c_deleted'] == 1)) {
                 $product['is_deleted'] = true; // 标记为已删除
             }
         }
@@ -1806,7 +1842,8 @@ class Order extends Common
                                 'id' => $item['product_id'],
                                 'product_name' => $item['product_name'],
                                 'category_name' => '无',
-                                'status' => -1,
+                                'p_deleted' => 1,
+                                'c_deleted' => 1,
                                 'is_deleted' => true
                             ];
                         }
@@ -2347,48 +2384,9 @@ class Order extends Common
             $adminMap = $admins;
         }
 
-        // 查询订单对应的产品明细，便于前端一次性展示
+        // 【订单快照模式】查询订单对应的产品明细，统一使用快照字段
         $orderIds = array_column($list['data'], 'id');
-        $orderItemsMap = [];
-        if (!empty($orderIds)) {
-            $items = Db::table('crm_order_item')
-                ->alias('oi')
-                ->leftJoin('crm_products p', 'oi.product_id = p.id')
-                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-                ->whereIn('oi.order_id', $orderIds)
-                ->order('oi.order_id asc, oi.line_no asc')
-                ->field('oi.*, c.category_name as supplier')
-                ->select();
-
-            // 组装产品经理映射
-            $managerIds = [];
-            foreach ($items as $item) {
-                if (!empty($item['manager_id'])) {
-                    $managerIds[] = $item['manager_id'];
-                }
-            }
-            $managerIds = array_unique($managerIds);
-            $managerMap = [];
-            if (!empty($managerIds)) {
-                $managers = Db::table('admin')
-                    ->whereIn('admin_id', $managerIds)
-                    ->field('admin_id, username')
-                    ->select();
-                foreach ($managers as $manager) {
-                    $managerMap[$manager['admin_id']] = $manager['username'];
-                }
-            }
-
-            foreach ($items as &$item) {
-                $item['manager_name'] = isset($managerMap[$item['manager_id']]) ? $managerMap[$item['manager_id']] : '';
-                $item['supplier'] = $item['supplier'] ?? '';
-            }
-            unset($item);
-
-            foreach ($items as $item) {
-                $orderItemsMap[$item['order_id']][] = $item;
-            }
-        }
+        $orderItemsMap = $this->buildOrderItemsSnapshotMap($orderIds);
         
         // 转换收款账户ID为账户名称 和 协同人ID为用户名
         foreach ($list['data'] as &$order) {
@@ -2418,59 +2416,14 @@ class Order extends Common
                 }
             }
 
-            // 绑定订单的产品明细，便于前端一次渲染
+            // 绑定订单的产品明细（快照数据），便于前端一次渲染
             $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
+            // 如果订单主表的 product_name 为空，从明细快照中取第一个产品名称
             if (empty($order['product_name']) && !empty($order['order_items'])) {
-                $order['product_name'] = $order['order_items'][0]['product_name'];
+                $order['product_name'] = $order['order_items'][0]['product_name'] ?? '';
             }
         }
         unset($order);
-
-        // 追加订单明细，便于在列表中展示每个订单的产品信息
-        $orderIds = array_column($list['data'], 'id');
-        if (!empty($orderIds)) {
-            // 查询订单明细并关联产品、品类以获取供应商
-            $items = Db::table('crm_order_item')
-                ->alias('oi')
-                ->leftJoin('crm_products p', 'oi.product_id = p.id')
-                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-                ->where('oi.order_id', 'in', $orderIds)
-                ->order('oi.order_id asc, oi.line_no asc')
-                ->field('oi.*, c.category_name as supplier')
-                ->select();
-
-            // 批量获取产品经理名称
-            $managerIds = [];
-            foreach ($items as $item) {
-                if (!empty($item['manager_id'])) {
-                    $managerIds[] = $item['manager_id'];
-                }
-            }
-            $managerIds = array_unique($managerIds);
-
-            $managerMap = [];
-            if (!empty($managerIds)) {
-                $managerMap = Db::table('admin')
-                    ->where('admin_id', 'in', $managerIds)
-                    ->column('username', 'admin_id');
-            }
-
-            $itemsMap = [];
-            foreach ($items as &$item) {
-                $item['manager_name'] = $managerMap[$item['manager_id']] ?? '';
-                // 如果没有从产品表获取到供应商，尝试使用明细中的供应商字段
-                if (empty($item['supplier']) && isset($item['supplier'])) {
-                    $item['supplier'] = $item['supplier'] ?? '';
-                }
-                $itemsMap[$item['order_id']][] = $item;
-            }
-            unset($item);
-
-            foreach ($list['data'] as &$order) {
-                $order['order_items'] = $itemsMap[$order['id']] ?? [];
-            }
-            unset($order);
-        }
 
         //成单率
 
@@ -2509,6 +2462,56 @@ class Order extends Common
         return Db::table('crm_client_order')
             ->where($where)
             ->sum($field);
+    }
+
+    /**
+     * 订单明细快照聚合方法（核心）
+     * 统一从 crm_order_item 表读取快照字段，禁止从 crm_products、crm_product_category 动态 JOIN
+     * @param array $orderIds 订单ID数组
+     * @return array 返回格式：$map[order_id] = [ ['product_name'=>..., 'supplier_name'=>..., ...], ... ]
+     */
+    private function buildOrderItemsSnapshotMap(array $orderIds): array
+    {
+        if (empty($orderIds)) {
+            return [];
+        }
+
+        // 只查询 crm_order_item 表，使用快照字段
+        $items = Db::table('crm_order_item')
+            ->whereIn('order_id', $orderIds)
+            ->order('order_id asc, line_no asc, id asc')
+            ->field('order_id, product_name, supplier_name, spec_model, unit, qty, unit_price AS price, purchase_price AS purchase, remark, manager_id, line_no')
+            ->select();
+
+        // 组装产品经理映射
+        $managerIds = [];
+        foreach ($items as $item) {
+            if (!empty($item['manager_id'])) {
+                $managerIds[] = $item['manager_id'];
+            }
+        }
+        $managerIds = array_unique($managerIds);
+        $managerMap = [];
+        if (!empty($managerIds)) {
+            $managers = Db::table('admin')
+                ->whereIn('admin_id', $managerIds)
+                ->field('admin_id, username')
+                ->select();
+            foreach ($managers as $manager) {
+                $managerMap[$manager['admin_id']] = $manager['username'];
+            }
+        }
+
+        // 按 order_id 聚合，并添加产品经理名称
+        $orderItemsMap = [];
+        foreach ($items as $item) {
+            $item['manager_name'] = isset($managerMap[$item['manager_id']]) ? $managerMap[$item['manager_id']] : '';
+            // 为了兼容前端，将 supplier_name 也映射为 supplier
+            $item['supplier'] = $item['supplier_name'] ?? '';
+            $orderItemsMap[$item['order_id']][] = $item;
+        }
+
+        return $orderItemsMap;
     }
 
 
@@ -2656,48 +2659,9 @@ class Order extends Common
             $adminMap = $admins;
         }
 
-        // 查询订单对应的产品明细，便于前端一次性展示
+        // 【订单快照模式】查询订单对应的产品明细，统一使用快照字段
         $orderIds = array_column($list['data'], 'id');
-        $orderItemsMap = [];
-        if (!empty($orderIds)) {
-            $items = Db::table('crm_order_item')
-                ->alias('oi')
-                ->leftJoin('crm_products p', 'oi.product_id = p.id')
-                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-                ->whereIn('oi.order_id', $orderIds)
-                ->order('oi.order_id asc, oi.line_no asc')
-                ->field('oi.*, c.category_name as supplier')
-                ->select();
-
-            // 组装产品经理映射
-            $managerIds = [];
-            foreach ($items as $item) {
-                if (!empty($item['manager_id'])) {
-                    $managerIds[] = $item['manager_id'];
-                }
-            }
-            $managerIds = array_unique($managerIds);
-            $managerMap = [];
-            if (!empty($managerIds)) {
-                $managers = Db::table('admin')
-                    ->whereIn('admin_id', $managerIds)
-                    ->field('admin_id, username')
-                    ->select();
-                foreach ($managers as $manager) {
-                    $managerMap[$manager['admin_id']] = $manager['username'];
-                }
-            }
-
-            foreach ($items as &$item) {
-                $item['manager_name'] = isset($managerMap[$item['manager_id']]) ? $managerMap[$item['manager_id']] : '';
-                $item['supplier'] = $item['supplier'] ?? '';
-            }
-            unset($item);
-
-            foreach ($items as $item) {
-                $orderItemsMap[$item['order_id']][] = $item;
-            }
-        }
+        $orderItemsMap = $this->buildOrderItemsSnapshotMap($orderIds);
         
         // 转换收款账户ID为账户名称 和 协同人ID为用户名
         foreach ($list['data'] as &$order) {
@@ -2727,10 +2691,11 @@ class Order extends Common
                 }
             }
 
-            // 绑定订单的产品明细，便于前端一次渲染
+            // 绑定订单的产品明细（快照数据）
             $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
+            // 如果订单主表的 product_name 为空，从明细快照中取第一个产品名称
             if (empty($order['product_name']) && !empty($order['order_items'])) {
-                $order['product_name'] = $order['order_items'][0]['product_name'];
+                $order['product_name'] = $order['order_items'][0]['product_name'] ?? '';
             }
         }
         unset($order);
@@ -2839,48 +2804,9 @@ class Order extends Common
             $adminMap = $admins;
         }
 
-        // 查询订单对应的产品明细，便于前端一次性展示
+        // 【订单快照模式】查询订单对应的产品明细，统一使用快照字段
         $orderIds = array_column($list['data'], 'id');
-        $orderItemsMap = [];
-        if (!empty($orderIds)) {
-            $items = Db::table('crm_order_item')
-                ->alias('oi')
-                ->leftJoin('crm_products p', 'oi.product_id = p.id')
-                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-                ->whereIn('oi.order_id', $orderIds)
-                ->order('oi.order_id asc, oi.line_no asc')
-                ->field('oi.*, c.category_name as supplier')
-                ->select();
-
-            // 组装产品经理映射
-            $managerIds = [];
-            foreach ($items as $item) {
-                if (!empty($item['manager_id'])) {
-                    $managerIds[] = $item['manager_id'];
-                }
-            }
-            $managerIds = array_unique($managerIds);
-            $managerMap = [];
-            if (!empty($managerIds)) {
-                $managers = Db::table('admin')
-                    ->whereIn('admin_id', $managerIds)
-                    ->field('admin_id, username')
-                    ->select();
-                foreach ($managers as $manager) {
-                    $managerMap[$manager['admin_id']] = $manager['username'];
-                }
-            }
-
-            foreach ($items as &$item) {
-                $item['manager_name'] = isset($managerMap[$item['manager_id']]) ? $managerMap[$item['manager_id']] : '';
-                $item['supplier'] = $item['supplier'] ?? '';
-            }
-            unset($item);
-
-            foreach ($items as $item) {
-                $orderItemsMap[$item['order_id']][] = $item;
-            }
-        }
+        $orderItemsMap = $this->buildOrderItemsSnapshotMap($orderIds);
         
         // 转换收款账户ID为账户名称 和 协同人ID为用户名
         foreach ($list['data'] as &$order) {
@@ -2910,10 +2836,11 @@ class Order extends Common
                 }
             }
 
-            // 绑定订单的产品明细，便于前端一次渲染
+            // 绑定订单的产品明细（快照数据）
             $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
+            // 如果订单主表的 product_name 为空，从明细快照中取第一个产品名称
             if (empty($order['product_name']) && !empty($order['order_items'])) {
-                $order['product_name'] = $order['order_items'][0]['product_name'];
+                $order['product_name'] = $order['order_items'][0]['product_name'] ?? '';
             }
         }
         unset($order);
@@ -3200,47 +3127,18 @@ class Order extends Common
             return json(['code' => 0, 'msg' => '参数错误', 'data' => []]);
         }
         
-        // 查询订单明细，关联产品表获取供应商信息（category_name）
-        $items = Db::table('crm_order_item')
-            ->alias('oi')
-            ->leftJoin('crm_products p', 'oi.product_id = p.id')
-            ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-            ->where('oi.order_id', 'in', $orderIds)
-            ->order('oi.order_id asc, oi.line_no asc')
-            ->field('oi.*, c.category_name as supplier')
-            ->select();
+        // 【订单快照模式】统一使用快照聚合方法，只从 crm_order_item 读取快照字段
+        $orderItemsMap = $this->buildOrderItemsSnapshotMap($orderIds);
         
-        // 获取产品经理名称
-        $managerIds = [];
-        foreach ($items as $item) {
-            if (!empty($item['manager_id'])) {
-                $managerIds[] = $item['manager_id'];
+        // 将 map 转换为扁平数组返回
+        $items = [];
+        foreach ($orderItemsMap as $orderId => $orderItems) {
+            foreach ($orderItems as $item) {
+                // 为了兼容前端，将 supplier_name 也映射为 supplier
+                $item['supplier'] = $item['supplier_name'] ?? '';
+                $items[] = $item;
             }
         }
-        $managerIds = array_unique($managerIds);
-        
-        $managerMap = [];
-        if (!empty($managerIds)) {
-            $managers = Db::table('admin')
-                ->where('admin_id', 'in', $managerIds)
-                ->field('admin_id, username')
-                ->select();
-            foreach ($managers as $manager) {
-                $managerMap[$manager['admin_id']] = $manager['username'];
-            }
-        }
-        
-        // 为每个明细添加产品经理名称
-        foreach ($items as &$item) {
-            $item['manager_name'] = isset($managerMap[$item['manager_id']]) 
-                ? $managerMap[$item['manager_id']] 
-                : '';
-            // 如果没有从产品表获取到供应商，尝试从明细表本身获取
-            if (empty($item['supplier']) && isset($item['supplier'])) {
-                $item['supplier'] = $item['supplier'] ?? '';
-            }
-        }
-        unset($item);
         
         return json(['code' => 0, 'msg' => '获取成功', 'data' => $items]);
     }
