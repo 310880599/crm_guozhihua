@@ -416,7 +416,7 @@
                 <label class="layui-form-label">客户公司<span style="color:red;">*</span></label>
                 <div class="layui-input-4" style="position: relative;"><!-- 替换：增加 position: relative; 以定位下拉列表 -->
                     <input type="text" id="client_company" name="client_company" value=""
-                        placeholder="请输入客户公司" class="layui-input">
+                        placeholder="请输入客户公司" class="layui-input" lay-verify="required|chinaCompany">
                     <div id="companyList" class="suggestion-list" 
                         style="position:absolute; top:38px; left:0; z-index:9999; background:#FFF; border:1px solid #ccc; display:none;"><!-- 新增：联想下拉列表容器 -->
                     </div>
@@ -803,6 +803,13 @@
                     if (!/^\d+(\.\d+)?$/.test(value)) {
                         return '请输入有效的数字';
                     }
+                },
+                chinaCompany: function(value) {
+                    if(!value){ return '客户公司名称不能为空'; }
+                    var reg = /^[\u4e00-\u9fa5]{2,}$/;
+                    if(!reg.test(value)){
+                        return '客户公司名称只能填写2个及以上中文汉字';
+                    }
                 }
             });
             // 初始化协同人多选下拉
@@ -1135,7 +1142,7 @@
             if (customerTypeFlag === '0') {
                 // 选择"公司"：显示客户公司字段并设置为必填
                 $clientCompanyItem.show();
-                $clientCompanyInput.attr('lay-verify', 'required');
+                $clientCompanyInput.attr('lay-verify', 'required|chinaCompany');
                 // 重新渲染表单验证
                 form.render();
             } else if (customerTypeFlag === '1') {
@@ -1295,7 +1302,7 @@
             // 用户属性联动显示客户公司
             if (ctf === '0') {
                 $('#client_company_item').show();
-                $('#client_company').attr('lay-verify', 'required');
+                $('#client_company').attr('lay-verify', 'required|chinaCompany');
             } else if (ctf === '1') {
                 $('#client_company_item').hide();
                 $('#client_company').removeAttr('lay-verify');

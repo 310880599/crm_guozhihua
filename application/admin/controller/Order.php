@@ -363,10 +363,15 @@ class Order extends Common
             $clientCompany = Request::param('client_company', '');
             if ($data['customer_type_flag'] == 0) {
                 // 公司类型，客户公司必填
-                if (empty(trim($clientCompany))) {
-                    return json(['code' => -200, 'msg' => '选择"公司"时，客户公司为必填项']);
+                $clientCompany = trim($clientCompany);
+                if ($clientCompany === '') {
+                    return json(['code' => 0, 'msg' => '客户公司名称不能为空']);
                 }
-                $data['client_company'] = trim($clientCompany);
+                // 校验：只能填写2个及以上中文汉字
+                if (!preg_match('/^[\x{4e00}-\x{9fa5}]{2,}$/u', $clientCompany)) {
+                    return json(['code' => 0, 'msg' => '客户公司名称只能填写2个及以上中文汉字']);
+                }
+                $data['client_company'] = $clientCompany;
             } else {
                 // 个人类型，客户公司可以为空
                 $data['client_company'] = '';
@@ -1089,10 +1094,15 @@ class Order extends Common
             $clientCompany = Request::param('client_company', '');
             if ($data['customer_type_flag'] == 0) {
                 // 公司类型，客户公司必填
-                if (empty(trim($clientCompany))) {
-                    return json(['code' => -200, 'msg' => '选择"公司"时，客户公司为必填项']);
+                $clientCompany = trim($clientCompany);
+                if ($clientCompany === '') {
+                    return json(['code' => 0, 'msg' => '客户公司名称不能为空']);
                 }
-                $data['client_company'] = trim($clientCompany);
+                // 校验：只能填写2个及以上中文汉字
+                if (!preg_match('/^[\x{4e00}-\x{9fa5}]{2,}$/u', $clientCompany)) {
+                    return json(['code' => 0, 'msg' => '客户公司名称只能填写2个及以上中文汉字']);
+                }
+                $data['client_company'] = $clientCompany;
             } else {
                 // 个人类型，客户公司可以为空
                 $data['client_company'] = '';
