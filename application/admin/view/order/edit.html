@@ -743,7 +743,7 @@
                             <i class="layui-icon">&#xe67c;</i>上传图片
                         </button>
                         <div class="layui-upload-list">
-                            <img class="layui-upload-img" id="wechat_receipt_preview" style="max-width: 200px; max-height: 200px; display: none;">
+                            <img class="layui-upload-img js-img-preview" id="wechat_receipt_preview" style="max-width: 200px; max-height: 200px; display: none; cursor: zoom-in;">
                             <p id="wechat_receipt_text"></p>
                             <input type="hidden" name="wechat_receipt_image" id="wechat_receipt_image" value="" lay-verify="required">
                         </div>
@@ -759,7 +759,7 @@
                             <i class="layui-icon">&#xe67c;</i>上传图片
                         </button>
                         <div class="layui-upload-list">
-                            <img class="layui-upload-img" id="inquiry_assign_preview" style="max-width: 200px; max-height: 200px; display: none;">
+                            <img class="layui-upload-img js-img-preview" id="inquiry_assign_preview" style="max-width: 200px; max-height: 200px; display: none; cursor: zoom-in;">
                             <p id="inquiry_assign_text"></p>
                             <input type="hidden" name="inquiry_assign_image" id="inquiry_assign_image" value="" lay-verify="required">
                         </div>
@@ -1778,7 +1778,21 @@
                 });
             });
 
-
+            // 图片预览功能：点击图片放大查看
+            $(document).on('click', '.js-img-preview', function() {
+                var imgSrc = $(this).attr('src');
+                if (!imgSrc) return;
+                layer.open({
+                    type: 1,
+                    closeBtn: 1,
+                    shadeClose: true,
+                    area: ['90vw', '90vh'],
+                    content:
+                        '<div style="text-align:center; padding:20px; height:100%; display:flex; align-items:center; justify-content:center; background:#000;">' +
+                        '<img src="' + imgSrc + '" style="max-width:100%; max-height:100%; object-fit:contain;" />' +
+                        '</div>'
+                });
+            });
 
         // 表单提交监听
         form.on('submit(submit)', function (data) {
