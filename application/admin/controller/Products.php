@@ -215,7 +215,7 @@ class Products extends Common
         }
 
         $current_admin = Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin');
+        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin') || ($current_admin['group_id'] == 13);
 
         $query = Db::name('crm_products')->where('id', $id);
         // soft delete by is_deleted: 只允许删除正常状态的产品，避免重复删除
@@ -252,7 +252,7 @@ class Products extends Common
         }
 
         $current_admin = Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin');
+        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin') || ($current_admin['group_id'] == 13);
 
         // soft delete by is_deleted: 使用事务保证数据一致性
         Db::startTrans();

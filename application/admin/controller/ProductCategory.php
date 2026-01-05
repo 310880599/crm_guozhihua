@@ -202,7 +202,7 @@ class ProductCategory extends Common
         }
 
         $current_admin = \app\admin\model\Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin');
+        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin') || ($current_admin['group_id'] == 13);
 
         // 查记录 + 按权限限制
         $rowQuery = \think\Db::name('crm_product_category')->where('id', $id);
@@ -276,7 +276,7 @@ class ProductCategory extends Common
         $ids = array_values(array_unique(array_map('intval', $ids)));
 
         $current_admin = \app\admin\model\Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin');
+        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin') || ($current_admin['group_id'] == 13);
 
         try {
             // 1) 按权限过滤：只保留"存在且自己提交（或超管）"的ID
