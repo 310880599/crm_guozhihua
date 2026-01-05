@@ -26,15 +26,15 @@
             overflow: hidden !important;
         }
         .layui-elem-field legend {
-    margin-left: 20px;
-    padding: 0 10px;
-    font-size: 20px;
-    font-weight: 300;
-    background: #4285f4;
-    color: #fff;
-    padding: 10px 15px;
-    border-radius: 10px;
-}
+            margin-left: 20px;
+            padding: 0 10px;
+            font-size: 20px;
+            font-weight: 300;
+            background: #4285f4;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 10px;
+        }
         .filtrate-warp .title {
             padding: 5px 12px 7px 12px;
             font-size: 14px;
@@ -62,6 +62,24 @@
         .filtrate-warp .layui-badge:hover {
             color: white !important;
         }
+        /* ✅ 让高级查询下拉框能盖住表格 */
+        .admin-main .layui-elem-field{
+            overflow: visible !important;   /* 关键：不要 hidden */
+            position: relative;
+            z-index: 10;                    /* 把高级查询区域抬高一层 */
+        }
+
+        /* 可选：再把下拉面板 z-index 拉满，防止被其它层压住 */
+        .admin-main .layui-form-select dl{
+            z-index: 9999;
+        }
+
+        /* 可选：表格层不要压太高 */
+        .admin-main .layui-table-view{
+            position: relative;
+            z-index: 1;
+        }
+
     </style>
 
 </head>
