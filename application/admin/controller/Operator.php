@@ -463,7 +463,10 @@ private function exportToExcel($data)
             if (!isset($params['keyword'])) {
                 $params['keyword'] = [];
             }
-            $params['keyword']['timebucket'] = 'month';
+            // 只在前端没传 timebucket/at_time 的情况下，默认设置 timebucket = month
+            if (!isset($params['keyword']['timebucket']) && !isset($params['keyword']['at_time'])) {
+                $params['keyword']['timebucket'] = 'month';
+            }
             Request::merge($params);
             return $this->personOrderSearch();
         }
@@ -484,6 +487,14 @@ private function exportToExcel($data)
             ->select();
         $portList = array_column($portList, 'port_name');
         
+        //查询所有管理员（去除admin，排除 group_id=1 的 admin）
+        $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
+        $this->assign('adminResult', $adminResult);
+        
+        //查询所有团队
+        $teamList = $this->getTeamList();
+        $this->assign('teamList', $teamList);
+        
         $this->assign('customer_type', Order::CUSTOMER_TYPE);
         $this->assign('channelList', $channelList);
         $this->assign('portList', $portList);
@@ -496,6 +507,10 @@ private function exportToExcel($data)
         $client_where = [];
         
         //判断权限
+        $user = \app\admin\model\Admin::getMyInfo();
+        $team_name = $user['team_name'] ?? '';
+        if ($team_name) $where[] = ['team_name', '=', $team_name];
+        
         $page = input('page') ?? 1;
         $limit = input('limit') ?? config('pageSize');
         $keyword = Request::param('keyword');
@@ -504,15 +519,25 @@ private function exportToExcel($data)
 
         // if (isset($keyword['status'])) $where[] = ['status', '=', $keyword['status']];
         if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
-        if (isset($keyword['timebucket'])) {
-            $where[] = $this->buildTimeWhere($keyword['timebucket'], 'order_time');
-
-            $timeWhere['at_time'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
-            $timeWhere['to_kh_time'] = $this->buildTimeWhere($keyword['timebucket'], 'to_kh_time');
-            $client_where[] =  function ($query) use ($timeWhere) {
-                $query->where([$timeWhere['at_time']])->whereOr([$timeWhere['to_kh_time']]);
+        
+        // 时间筛选逻辑：如果 keyword['timebucket'] 有值（today/week/month…），用 buildTimeWhere；如果为空（自定义）且 keyword['at_time'] 有值，用 buildTimeWhere
+        $timeCondition = null;
+        if (isset($keyword['timebucket']) && $keyword['timebucket'] !== '') {
+            $timeCondition = $keyword['timebucket'];
+        } elseif (isset($keyword['at_time']) && $keyword['at_time'] !== '') {
+            $timeCondition = $keyword['at_time'];
+        }
+        
+        if ($timeCondition) {
+            $where[] = $this->buildTimeWhere($timeCondition, 'order_time');
+            $timeWhere['at_time'] = $this->buildTimeWhere($timeCondition, 'at_time');
+            $timeWhere['to_kh_time'] = $this->buildTimeWhere($timeCondition, 'to_kh_time');
+            $client_where[] = function ($query) use ($timeWhere) {
+                $query->where(...$timeWhere['at_time']);
+                $query->whereOr(...$timeWhere['to_kh_time']);
             };
         }
+        
         if (isset($keyword['min_money'])) $where[] = ['money', '>', $keyword['min_money']];
         if (isset($keyword['max_money'])) $where[] = ['money', '<', $keyword['max_money']];
         if (isset($keyword['min_profit'])) $where[] = ['profit', '>', $keyword['min_profit']];
@@ -532,6 +557,42 @@ private function exportToExcel($data)
         if (isset($keyword['product_name'])) {
             $where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
         }
+        
+        // 团队名称筛选
+        if (!$team_name && isset($keyword['team_name'])) {
+            $where[] = ['team_name', '=', $keyword['team_name']];
+            $team_name = $keyword['team_name'];
+        }
+        
+        // 组织过滤
+        $org_where = [];
+        if ($user['org']) {
+            $org_where[] = $this->getOrgWhere($user['org']);
+        }
+        if (!empty($keyword['org'])) {
+            $org_where[] = $this->getOrgWhere($keyword['org']);
+        }
+        
+        // 根据团队名称和组织过滤得到业务员列表
+        if ($team_name) {
+            $usernames = Db::table('admin')->where('team_name', $team_name)->where($org_where)->column('username');
+        } else {
+            if (!empty($org_where)) {
+                $usernames = Db::table('admin')->where($org_where)->column('username');
+            }
+        }
+        
+        // 当 team_name/组织过滤导致 username 为空时，要让查询返回空（用一个不可能命中的条件）
+        if (isset($usernames)) {
+            if (!$usernames) {
+                $client_where[] = ['pr_user', '=', time()];
+                $where[] = ['pr_user', '=', time()];
+            } else {
+                $client_where[] = ['pr_user', 'in', $usernames];
+                $where[] = ['pr_user', 'in', $usernames];
+            }
+        }
+        
         // 询盘渠道查询
         if (isset($keyword['source'])) {
             $where[] = ['source', '=', $keyword['source']];
@@ -542,6 +603,12 @@ private function exportToExcel($data)
         // 询盘端口查询
         if (isset($keyword['source_port'])) {
             $where[] = ['source_port', '=', $keyword['source_port']];
+        }
+        
+        // 业务员筛选：若传了 pr_user，则追加 ['pr_user','=',$keyword['pr_user']]
+        if (isset($keyword['pr_user'])) {
+            $where[] = ['pr_user', '=', $keyword['pr_user']];
+            $client_where[] = ['pr_user', '=', $keyword['pr_user']];
         }
         
         // 客户查询条件：只查询启用状态的客户
