@@ -175,6 +175,18 @@
                            value="{$orderInfo.client_company|htmlentities}" placeholder="请输入客户公司" class="layui-input">
                 </div>
             </div>
+            <!-- 【修改】客户性质（与 edit.html 对齐） -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">客户性质<span style="color:red;">*</span></label>
+                <div class="layui-input-4">
+                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search disabled>
+                        <option value="">请选择客户性质</option>
+                        {volist name='customer_type' id='vo'}
+                        <option value="{$vo}" {if $vo == $orderInfo.customer_type}selected{/if}>{$vo}</option>
+                        {/volist}
+                    </select>
+                </div>
+            </div>
             <!-- 【新增】客户名称（详情页显示，edit.html 中通过联系方式自动获取，不单独显示） -->
             {if condition="!empty($orderInfo.cname)"}
             <div class="layui-form-item">
@@ -244,18 +256,6 @@
                         <option value="">请选择团队名称</option>
                         {volist name='teamList' id='vo'}
                         <option value="{$vo}" {if $vo == $orderInfo.team_name}selected{/if}>{$vo}</option>
-                        {/volist}
-                    </select>
-                </div>
-            </div>
-            <!-- 【修改】客户性质（与 edit.html 对齐） -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">客户性质<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
-                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search disabled>
-                        <option value="">请选择客户性质</option>
-                        {volist name='customer_type' id='vo'}
-                        <option value="{$vo}" {if $vo == $orderInfo.customer_type}selected{/if}>{$vo}</option>
                         {/volist}
                     </select>
                 </div>

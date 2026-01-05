@@ -422,7 +422,18 @@
                     </div>
                 </div>
             </div>
-        
+            <!-- 客户性质 -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">客户性质<span style="color:red;">*</span></label>
+                <div class="layui-input-4">
+                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search="">
+                        <option value="">请选择客户性质</option>
+                        {volist name='customer_type' id='vo'}
+                        <option value="{$vo}" {if $vo==$customer_type} selected {/if}>{$vo}</option>
+                        {/volist}
+                    </select>
+                </div>
+            </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">客户负责人<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
@@ -480,18 +491,6 @@
                         <option value="">请选择团队名称</option>
                         {volist name='teamList' id='vo'}
                         <option value="{$vo}" {if $vo==$team_name} selected {/if}>{$vo}</option>
-                        {/volist}
-                    </select>
-                </div>
-            </div>
-            <!-- 客户性质 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">客户性质<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
-                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search="">
-                        <option value="">请选择客户性质</option>
-                        {volist name='customer_type' id='vo'}
-                        <option value="{$vo}" {if $vo==$customer_type} selected {/if}>{$vo}</option>
                         {/volist}
                     </select>
                 </div>
