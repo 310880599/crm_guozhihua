@@ -479,7 +479,7 @@
             <div class="layui-form-item">
                 <label class="layui-form-label">客户微信回执图</label>
                 <div class="layui-input-4">
-                    <img src="{$orderInfo.wechat_receipt_image}" alt="客户微信回执图" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px;">
+                    <img src="{$orderInfo.wechat_receipt_image}" alt="客户微信回执图" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
                 </div>
             </div>
             {/if}
@@ -488,7 +488,7 @@
             <div class="layui-form-item">
                 <label class="layui-form-label">产品询盘分配图</label>
                 <div class="layui-input-4">
-                    <img src="{$orderInfo.inquiry_assign_image}" alt="产品询盘分配图" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px;">
+                    <img src="{$orderInfo.inquiry_assign_image}" alt="产品询盘分配图" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
                 </div>
             </div>
             {/if}
@@ -694,6 +694,21 @@
             }
             // 将对齐修正函数暴露到全局，便于在其他异步回调中调用
             window.fixSelectAlign = fixSelectAlign;
+
+            // 图片预览功能：点击图片放大查看
+            $(document).on('click', '.js-img-preview', function() {
+                var imgSrc = $(this).attr('src');
+                if (!imgSrc) {
+                    return;
+                }
+                layer.open({
+                    type: 1,
+                    closeBtn: 1,
+                    shadeClose: true,
+                    area: ['90vw', '90vh'],
+                    content: '<div style="text-align: center; padding: 20px; height: 100%; display: flex; align-items: center; justify-content: center; background: #000;"><img src="' + imgSrc + '" style="max-width: 100%; max-height: 100%; object-fit: contain;" /></div>'
+                });
+            });
 
             // 打印按钮事件（仅超级管理员可见）
             $('#printBtn').on('click', function() {
