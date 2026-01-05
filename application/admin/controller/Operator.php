@@ -506,10 +506,15 @@ private function exportToExcel($data)
         $where = [];
         $client_where = [];
         
-        //判断权限
-        $user = \app\admin\model\Admin::getMyInfo();
-        $team_name = $user['team_name'] ?? '';
-        if ($team_name) $where[] = ['team_name', '=', $team_name];
+        // 获取当前登录用户信息
+        $current_admin = Admin::getMyInfo();
+        
+        // 统一的权限判断变量 $isSuper
+        $isSuper = (
+            (int)session('aid') === 1
+            || ($current_admin['username'] ?? '') === 'admin'
+            || (int)($current_admin['group_id'] ?? 0) === 12
+        );
         
         $page = input('page') ?? 1;
         $limit = input('limit') ?? config('pageSize');
@@ -558,38 +563,61 @@ private function exportToExcel($data)
             $where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
         }
         
-        // 团队名称筛选
-        if (!$team_name && isset($keyword['team_name'])) {
-            $where[] = ['team_name', '=', $keyword['team_name']];
-            $team_name = $keyword['team_name'];
+        // 权限过滤逻辑
+        $current_username = $current_admin['username'] ?? '';
+        
+        if ($isSuper === true) {
+            // 超级管理员：不添加任何权限过滤条件，可以查看所有成交订单
+            // 但保留用户主动筛选条件（team_name、org、pr_user）
+        } else {
+            // 普通员工：只能查看自己创建/负责的成交订单
+            if ($current_username) {
+                $where[] = ['pr_user', '=', $current_username];
+                $client_where[] = ['pr_user', '=', $current_username];
+            }
         }
         
-        // 组织过滤
-        $org_where = [];
-        if ($user['org']) {
-            $org_where[] = $this->getOrgWhere($user['org']);
+        // 用户主动筛选：团队名称筛选（仅当用户主动选择时）
+        if (isset($keyword['team_name']) && !empty($keyword['team_name'])) {
+            $where[] = ['team_name', '=', $keyword['team_name']];
         }
+        
+        // 用户主动筛选：组织过滤（仅当用户主动选择时）
+        $org_where = [];
         if (!empty($keyword['org'])) {
             $org_where[] = $this->getOrgWhere($keyword['org']);
         }
         
-        // 根据团队名称和组织过滤得到业务员列表
-        if ($team_name) {
-            $usernames = Db::table('admin')->where('team_name', $team_name)->where($org_where)->column('username');
-        } else {
-            if (!empty($org_where)) {
-                $usernames = Db::table('admin')->where($org_where)->column('username');
+        // 如果用户主动筛选了团队名称或组织，需要根据筛选条件进一步过滤业务员列表
+        $filter_team_name = $keyword['team_name'] ?? '';
+        if ($filter_team_name || !empty($org_where)) {
+            $filter_query = Db::table('admin');
+            if ($filter_team_name) {
+                $filter_query->where('team_name', $filter_team_name);
             }
-        }
-        
-        // 当 team_name/组织过滤导致 username 为空时，要让查询返回空（用一个不可能命中的条件）
-        if (isset($usernames)) {
-            if (!$usernames) {
+            if (!empty($org_where)) {
+                $filter_query->where($org_where);
+            }
+            $filtered_usernames = $filter_query->column('username');
+            
+            // 如果筛选后没有匹配的业务员，返回空结果
+            if (empty($filtered_usernames)) {
                 $client_where[] = ['pr_user', '=', time()];
                 $where[] = ['pr_user', '=', time()];
             } else {
-                $client_where[] = ['pr_user', 'in', $usernames];
-                $where[] = ['pr_user', 'in', $usernames];
+                if ($isSuper) {
+                    // 超级管理员：使用筛选后的业务员列表
+                    $client_where[] = ['pr_user', 'in', $filtered_usernames];
+                    $where[] = ['pr_user', 'in', $filtered_usernames];
+                } else {
+                    // 普通员工：检查当前用户是否在筛选范围内
+                    if (!in_array($current_username, $filtered_usernames)) {
+                        // 当前用户不在筛选范围内，返回空结果
+                        $client_where[] = ['pr_user', '=', time()];
+                        $where[] = ['pr_user', '=', time()];
+                    }
+                    // 如果当前用户在筛选范围内，保持原有权限过滤（pr_user = 当前登录用户名）
+                }
             }
         }
         
@@ -607,8 +635,18 @@ private function exportToExcel($data)
         
         // 业务员筛选：若传了 pr_user，则追加 ['pr_user','=',$keyword['pr_user']]
         if (isset($keyword['pr_user'])) {
-            $where[] = ['pr_user', '=', $keyword['pr_user']];
-            $client_where[] = ['pr_user', '=', $keyword['pr_user']];
+            if ($isSuper) {
+                // 超级管理员：可以使用筛选的业务员
+                $where[] = ['pr_user', '=', $keyword['pr_user']];
+                $client_where[] = ['pr_user', '=', $keyword['pr_user']];
+            } else {
+                // 普通员工：只能查看自己的订单，如果筛选的不是自己，返回空结果
+                if ($keyword['pr_user'] !== $current_username) {
+                    $client_where[] = ['pr_user', '=', time()];
+                    $where[] = ['pr_user', '=', time()];
+                }
+                // 如果筛选的是自己，保持原有权限过滤（pr_user = 当前登录用户名）
+            }
         }
         
         // 客户查询条件：只查询启用状态的客户
@@ -3116,3 +3154,4 @@ private function exportToExcel($data)
     }
 
 }
+
