@@ -2494,9 +2494,8 @@ class Order extends Common
         $items = Db::table('crm_order_item')
             ->whereIn('order_id', $orderIds)
             ->order('order_id asc, line_no asc, id asc')
-            ->field('order_id, product_name, supplier_name, spec_model, unit, qty, unit_price AS price, purchase_price AS purchase, remark, manager_id, line_no')
+            ->field('order_id, product_name, supplier_name, spec_model, unit, qty, unit_price, total_price, purchase_price, remark, manager_id, line_no')
             ->select();
-
         // 组装产品经理映射
         $managerIds = [];
         foreach ($items as $item) {
