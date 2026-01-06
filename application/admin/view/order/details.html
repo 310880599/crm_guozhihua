@@ -474,21 +474,21 @@
                     <textarea name="remark" placeholder="请输入备注信息" class="layui-textarea">{:htmlentities($orderInfo.remark)}</textarea>
                 </div>
             </div> -->
-            <!-- 客户微信回执图 -->
+            <!-- 微信沟通凭证 -->
             {if condition="!empty($orderInfo.wechat_receipt_image)"}
             <div class="layui-form-item">
-                <label class="layui-form-label">客户微信回执图</label>
+                <label class="layui-form-label">微信沟通凭证</label>
                 <div class="layui-input-4">
-                    <img src="{$orderInfo.wechat_receipt_image}" alt="客户微信回执图" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
+                    <img src="{$orderInfo.wechat_receipt_image}" alt="微信沟通凭证" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
                 </div>
             </div>
             {/if}
-            <!-- 产品询盘分配图 -->
+            <!-- 询盘来源凭证 -->
             {if condition="!empty($orderInfo.inquiry_assign_image)"}
             <div class="layui-form-item">
-                <label class="layui-form-label">产品询盘分配图</label>
+                <label class="layui-form-label">询盘来源凭证</label>
                 <div class="layui-input-4">
-                    <img src="{$orderInfo.inquiry_assign_image}" alt="产品询盘分配图" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
+                    <img src="{$orderInfo.inquiry_assign_image}" alt="询盘来源凭证" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
                 </div>
             </div>
             {/if}
