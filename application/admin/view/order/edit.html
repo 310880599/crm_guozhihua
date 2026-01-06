@@ -805,10 +805,13 @@
                     }
                 },
                 chinaCompany: function(value) {
-                    if(!value){ return '客户公司名称不能为空'; }
-                    var reg = /^[\u4e00-\u9fa5]{2,}$/;
-                    if(!reg.test(value)){
-                        return '客户公司名称只能填写2个及以上中文汉字';
+                    if (!value) {
+                        return '客户公司名称不能为空';
+                    }
+                    // 允许中文 + 中文括号（）
+                    var reg = /^[\u4e00-\u9fa5（）]{2,}$/;
+                    if (!reg.test(value)) {
+                        return '客户公司名称只能填写中文（可包含中文括号），且不少于2个字';
                     }
                 }
             });

@@ -367,9 +367,9 @@ class Order extends Common
                 if ($clientCompany === '') {
                     return json(['code' => 0, 'msg' => '客户公司名称不能为空']);
                 }
-                // 校验：只能填写2个及以上中文汉字
-                if (!preg_match('/^[\x{4e00}-\x{9fa5}]{2,}$/u', $clientCompany)) {
-                    return json(['code' => 0, 'msg' => '客户公司名称只能填写2个及以上中文汉字']);
+                // 校验：允许中文 + 中文括号（），且不少于2个字符
+                if (!preg_match('/^[\x{4e00}-\x{9fa5}（）]{2,}$/u', $clientCompany)) {
+                    return json(['code' => 0, 'msg' => '客户公司名称只能填写中文（可包含中文括号），且不少于2个字']);
                 }
                 $data['client_company'] = $clientCompany;
             } else {
@@ -1098,9 +1098,9 @@ class Order extends Common
                 if ($clientCompany === '') {
                     return json(['code' => 0, 'msg' => '客户公司名称不能为空']);
                 }
-                // 校验：只能填写2个及以上中文汉字
-                if (!preg_match('/^[\x{4e00}-\x{9fa5}]{2,}$/u', $clientCompany)) {
-                    return json(['code' => 0, 'msg' => '客户公司名称只能填写2个及以上中文汉字']);
+                // 校验：允许中文 + 中文括号（），且不少于2个字符
+                if (!preg_match('/^[\x{4e00}-\x{9fa5}（）]{2,}$/u', $clientCompany)) {
+                    return json(['code' => 0, 'msg' => '客户公司名称只能填写中文（可包含中文括号），且不少于2个字']);
                 }
                 $data['client_company'] = $clientCompany;
             } else {
