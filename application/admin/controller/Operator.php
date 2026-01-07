@@ -514,6 +514,7 @@ private function exportToExcel($data)
             (int)session('aid') === 1
             || ($current_admin['username'] ?? '') === 'admin'
             || (int)($current_admin['group_id'] ?? 0) === 12
+            || (int)($current_admin['group_id'] ?? 0) === 13
         );
         
         $page = input('page') ?? 1;
