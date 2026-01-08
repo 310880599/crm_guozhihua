@@ -540,8 +540,10 @@
 
     {include file="common/foot"/}
     <script>
-        layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element'], function () {
-            const { table, form, laydate, $, upload, util, element } = layui;
+        layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
+            const { table, form, laydate, upload, util, element } = layui;
+            var $ = layui.$;
+            var layer = layui.layer;
             // 根据超级管理员权限设置工具栏按钮
             var defaultToolbar = ['filter'];
             {if session('aid') eq 1}
@@ -692,153 +694,153 @@
             // 初始隐藏日期范围选择框
             $('#at_time').hide();
 
+            // === 图片预览功能（支持缩放/拖拽）开始 ===
+            // 统一的图片预览函数（从 add.html 复制，支持缩放/拖拽）
+            function openZoomPreview(imgSrc) {
+                if (!imgSrc) return;
+
+                // 缩放参数
+                var scale = 1;
+                var minScale = 0.2;
+                var maxScale = 6;
+
+                // 位置（用于拖拽）
+                var translateX = 0, translateY = 0;
+                var isDragging = false;
+                var startX = 0, startY = 0;
+
+                function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+                function applyTransform() {
+                    var $img = $('#previewZoomImg');
+                    $img.css('transform', 'translate(' + translateX + 'px,' + translateY + 'px) scale(' + scale + ')');
+                    $('#zoomRateText').text(Math.round(scale * 100) + '%');
+                }
+
+                function zoomBy(delta, centerX, centerY) {
+                    var oldScale = scale;
+                    scale = clamp(scale + delta, minScale, maxScale);
+
+                    // 以鼠标点为中心缩放（体验更好）
+                    if (centerX != null && centerY != null) {
+                        translateX = translateX - centerX * (scale / oldScale - 1);
+                        translateY = translateY - centerY * (scale / oldScale - 1);
+                    }
+                    applyTransform();
+                }
+
+                var html = ''
+                    + '<div id="previewWrap" style="position:relative; width:100%; height:100%; background:#000;">'
+                    + '  <div id="previewToolbar" style="position:absolute; top:12px; left:12px; z-index:9999; display:flex; gap:8px; align-items:center;">'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomIn">放大 +</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomOut">缩小 -</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm layui-btn-primary" id="btnZoomReset">重置</button>'
+                    + '    <span id="zoomRateText" style="color:#fff; font-size:12px; margin-left:6px;">100%</span>'
+                    + '  </div>'
+                    + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
+                    + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
+                    + '      <img id="previewZoomImg" src="' + imgSrc + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
+                    + '    </div>'
+                    + '  </div>'
+                    + '</div>';
+
+                layer.open({
+                    type: 1,
+                    title: '图片预览（可放大缩小，滚轮缩放，拖拽移动）',
+                    closeBtn: 1,
+                    shadeClose: true,
+                    area: ['90vw', '90vh'],
+                    content: html,
+                    success: function(layero) {
+                        // 初始化
+                        scale = 1; translateX = 0; translateY = 0;
+                        applyTransform();
+
+                        // 关键：关闭按钮点击阻止冒泡（可选但更稳）
+                        layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
+                            ev.stopPropagation();
+                        });
+
+                        // 按钮事件（先解绑再绑定，避免重复）
+                        $('#btnZoomIn').off('click.preview').on('click.preview', function() { zoomBy(0.2); });
+                        $('#btnZoomOut').off('click.preview').on('click.preview', function() { zoomBy(-0.2); });
+                        $('#btnZoomReset').off('click.preview').on('click.preview', function() {
+                            scale = 1; translateX = 0; translateY = 0;
+                            applyTransform();
+                        });
+
+                        // 鼠标滚轮缩放（在预览区域内）
+                        $('#previewStage').off('wheel.preview').on('wheel.preview', function(ev) {
+                            ev.preventDefault();
+                            var oe = ev.originalEvent || ev;
+                            var delta = (oe.deltaY > 0) ? -0.12 : 0.12;
+
+                            var rect = this.getBoundingClientRect();
+                            var cx = (oe.clientX || 0) - rect.left;
+                            var cy = (oe.clientY || 0) - rect.top;
+
+                            zoomBy(delta, cx, cy);
+                        });
+
+                        // 拖拽移动（按住图片拖动）
+                        $('#previewZoomImg').off('mousedown.preview').on('mousedown.preview', function(ev) {
+                            isDragging = true;
+                            startX = ev.clientX;
+                            startY = ev.clientY;
+                            $(this).css('cursor', 'grabbing');
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                        });
+
+                        // 用命名空间绑定，避免影响别的页面逻辑
+                        $(document)
+                            .off('mousemove.previewDrag').on('mousemove.previewDrag', function(ev) {
+                                if (!isDragging) return;
+                                var dx = ev.clientX - startX;
+                                var dy = ev.clientY - startY;
+                                startX = ev.clientX;
+                                startY = ev.clientY;
+                                translateX += dx;
+                                translateY += dy;
+                                applyTransform();
+                            })
+                            .off('mouseup.previewDrag').on('mouseup.previewDrag', function() {
+                                if (!isDragging) return;
+                                isDragging = false;
+                                $('#previewZoomImg').css('cursor', 'grab');
+                            });
+                    },
+                    end: function() {
+                        // 记录关闭时间：防止点右上角 X 时 click 穿透到底下图片又触发打开
+                        window.__IMG_PREVIEW_CLOSE_AT__ = Date.now();
+
+                        // 清理拖拽事件
+                        $(document).off('mousemove.previewDrag mouseup.previewDrag');
+                    }
+                });
+            }
+
+            // 事件委托：绑定所有 .js-img-preview 的点击事件（兼容动态渲染的表格）
+            $(document).on('click', '.js-img-preview', function() {
+                // 防止关闭后立即点击穿透
+                if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
+                    return;
+                }
+
+                // 优先读取data-full属性（原图URL），如果没有则使用src（兼容旧数据）
+                var imgSrc = $(this).data('full') || $(this).attr('src');
+                if (!imgSrc) return;
+
+                openZoomPreview(imgSrc);
+            });
+            // === 图片预览功能（支持缩放/拖拽）结束 ===
+
         });
 
         /*添加*/
         function resetForm() {
             document.getElementById('searchForm').reset();
         }
-        
-        // === wechat_receipt_images 解析兼容开始 ===
-        // 统一的图片预览函数（从 add.html 复制，支持缩放/拖拽）
-        function openZoomPreview(imgSrc) {
-            if (!imgSrc) return;
-
-            // 缩放参数
-            var scale = 1;
-            var minScale = 0.2;
-            var maxScale = 6;
-
-            // 位置（用于拖拽）
-            var translateX = 0, translateY = 0;
-            var isDragging = false;
-            var startX = 0, startY = 0;
-
-            function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-
-            function applyTransform() {
-                var $img = $('#previewZoomImg');
-                $img.css('transform', 'translate(' + translateX + 'px,' + translateY + 'px) scale(' + scale + ')');
-                $('#zoomRateText').text(Math.round(scale * 100) + '%');
-            }
-
-            function zoomBy(delta, centerX, centerY) {
-                var oldScale = scale;
-                scale = clamp(scale + delta, minScale, maxScale);
-
-                // 以鼠标点为中心缩放（体验更好）
-                if (centerX != null && centerY != null) {
-                    translateX = translateX - centerX * (scale / oldScale - 1);
-                    translateY = translateY - centerY * (scale / oldScale - 1);
-                }
-                applyTransform();
-            }
-
-            var html = ''
-                + '<div id="previewWrap" style="position:relative; width:100%; height:100%; background:#000;">'
-                + '  <div id="previewToolbar" style="position:absolute; top:12px; left:12px; z-index:9999; display:flex; gap:8px; align-items:center;">'
-                + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomIn">放大 +</button>'
-                + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomOut">缩小 -</button>'
-                + '    <button type="button" class="layui-btn layui-btn-sm layui-btn-primary" id="btnZoomReset">重置</button>'
-                + '    <span id="zoomRateText" style="color:#fff; font-size:12px; margin-left:6px;">100%</span>'
-                + '  </div>'
-                + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
-                + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
-                + '      <img id="previewZoomImg" src="' + imgSrc + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
-                + '    </div>'
-                + '  </div>'
-                + '</div>';
-
-            layer.open({
-                type: 1,
-                title: '图片预览（可放大缩小，滚轮缩放，拖拽移动）',
-                closeBtn: 1,
-                shadeClose: true,
-                area: ['90vw', '90vh'],
-                content: html,
-                success: function(layero) {
-                    // 初始化
-                    scale = 1; translateX = 0; translateY = 0;
-                    applyTransform();
-
-                    // 关键：关闭按钮点击阻止冒泡（可选但更稳）
-                    layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
-                        ev.stopPropagation();
-                    });
-
-                    // 按钮事件（先解绑再绑定，避免重复）
-                    $('#btnZoomIn').off('click.preview').on('click.preview', function() { zoomBy(0.2); });
-                    $('#btnZoomOut').off('click.preview').on('click.preview', function() { zoomBy(-0.2); });
-                    $('#btnZoomReset').off('click.preview').on('click.preview', function() {
-                        scale = 1; translateX = 0; translateY = 0;
-                        applyTransform();
-                    });
-
-                    // 鼠标滚轮缩放（在预览区域内）
-                    $('#previewStage').off('wheel.preview').on('wheel.preview', function(ev) {
-                        ev.preventDefault();
-                        var oe = ev.originalEvent || ev;
-                        var delta = (oe.deltaY > 0) ? -0.12 : 0.12;
-
-                        var rect = this.getBoundingClientRect();
-                        var cx = (oe.clientX || 0) - rect.left;
-                        var cy = (oe.clientY || 0) - rect.top;
-
-                        zoomBy(delta, cx, cy);
-                    });
-
-                    // 拖拽移动（按住图片拖动）
-                    $('#previewZoomImg').off('mousedown.preview').on('mousedown.preview', function(ev) {
-                        isDragging = true;
-                        startX = ev.clientX;
-                        startY = ev.clientY;
-                        $(this).css('cursor', 'grabbing');
-                        ev.preventDefault();
-                        ev.stopPropagation();
-                    });
-
-                    // 用命名空间绑定，避免影响别的页面逻辑
-                    $(document)
-                        .off('mousemove.previewDrag').on('mousemove.previewDrag', function(ev) {
-                            if (!isDragging) return;
-                            var dx = ev.clientX - startX;
-                            var dy = ev.clientY - startY;
-                            startX = ev.clientX;
-                            startY = ev.clientY;
-                            translateX += dx;
-                            translateY += dy;
-                            applyTransform();
-                        })
-                        .off('mouseup.previewDrag').on('mouseup.previewDrag', function() {
-                            if (!isDragging) return;
-                            isDragging = false;
-                            $('#previewZoomImg').css('cursor', 'grab');
-                        });
-                },
-                end: function() {
-                    // 记录关闭时间：防止点右上角 X 时 click 穿透到底下图片又触发打开
-                    window.__IMG_PREVIEW_CLOSE_AT__ = Date.now();
-
-                    // 清理拖拽事件
-                    $(document).off('mousemove.previewDrag mouseup.previewDrag');
-                }
-            });
-        }
-
-        // 事件委托：绑定所有 .js-img-preview 的点击事件（兼容动态渲染的表格）
-        $(document).on('click', '.js-img-preview', function() {
-            // 防止关闭后立即点击穿透
-            if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
-                return;
-            }
-
-            // 优先读取data-full属性（原图URL），如果没有则使用src（兼容旧数据）
-            var imgSrc = $(this).data('full') || $(this).attr('src');
-            if (!imgSrc) return;
-
-            openZoomPreview(imgSrc);
-        });
-        // === wechat_receipt_images 解析兼容结束 ===
     </script>
 
 
