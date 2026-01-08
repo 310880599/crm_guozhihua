@@ -432,7 +432,48 @@ class Order extends Common
             $data['split_remarks']    = Request::param('split_remarks');  // 分成备注
             $data['amount_received']  = Request::param('amount_received'); // 已收款金额
             //$data['remark']           = Request::param('remark');         // 备注
-            $data['wechat_receipt_image'] = Request::param('wechat_receipt_image', ''); // 客户微信回执图
+            
+            // 处理微信沟通凭证（多图上传）
+            $MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量（与前端一致）
+            $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
+            $wechatReceiptUrls = [];
+            
+            // 解析：兼容 JSON 数组字符串、单字符串、数组三种格式
+            if (is_array($wechatReceiptRaw)) {
+                $wechatReceiptUrls = $wechatReceiptRaw;
+            } else if (is_string($wechatReceiptRaw)) {
+                $wechatReceiptRaw = trim($wechatReceiptRaw);
+                if ($wechatReceiptRaw !== '') {
+                    // 尝试解析为 JSON 数组
+                    if (preg_match('/^\s*\[.*\]\s*$/', $wechatReceiptRaw)) {
+                        $tmp = json_decode($wechatReceiptRaw, true);
+                        if (is_array($tmp)) {
+                            $wechatReceiptUrls = $tmp;
+                        } else {
+                            // JSON 解析失败，当作单字符串处理
+                            $wechatReceiptUrls = [$wechatReceiptRaw];
+                        }
+                    } else {
+                        // 单字符串格式（历史数据兼容）
+                        $wechatReceiptUrls = [$wechatReceiptRaw];
+                    }
+                }
+            }
+            
+            // 去空、去重、重建索引
+            $wechatReceiptUrls = array_values(array_unique(array_filter($wechatReceiptUrls, function($v) {
+                return !empty(trim($v));
+            })));
+            
+            // 校验数量：必须 1~N
+            $count = count($wechatReceiptUrls);
+            if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
+                return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
+            }
+            
+            // JSON 编码存库
+            $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
+            
             $data['inquiry_assign_image'] = Request::param('inquiry_assign_image', ''); // 产品询盘分配图
             $managerIds   = Request::param('product_manager/a'); // ★ 产品经理（管理员）ID 数组
             $data['status']           = '待审核';
