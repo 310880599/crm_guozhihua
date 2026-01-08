@@ -250,6 +250,45 @@
             box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
         }
 
+        /* 微信沟通凭证图片横向滚动容器样式 */
+        .img-strip {
+            display: flex;
+            gap: 4px;
+            width: 100%;
+            max-width: 100%;      /* 关键：不要再限制 260px */
+            overflow-x: auto;     /* 窄屏不够宽时允许滚动 */
+            overflow-y: hidden;
+            padding: 2px 0;
+            /* 优化滚动条样式 */
+            scrollbar-width: thin;
+            scrollbar-color: #c1c1c1 #f1f1f1;
+        }
+
+        .img-strip::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .img-strip::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .img-strip::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .img-strip::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        .img-strip img {
+            flex-shrink: 0;
+            max-width: 60px;
+            max-height: 60px;
+            margin: 0;
+        }
+
         /* 统计行样式 */
         .layui-table-total {
             background: #f0f7ff !important;
@@ -581,28 +620,35 @@
                     { 
                         field: 'wechat_receipt_image', 
                         title: '微信沟通凭证', 
-                        width: 280,
+                        width: 780,
                         templet: function(res){
                             // === wechat_receipt_images 解析兼容开始 ===
                             var images = res.wechat_receipt_images || [];
-                            var html = '';
                             
                             // 如果后端提供了 wechat_receipt_images 数组
                             if (images && images.length > 0) {
-                                // 最多显示3张缩略图
-                                var displayCount = Math.min(images.length, 3);
-                                for (var i = 0; i < displayCount; i++) {
+                                // 修改：显示全部图片，不再截断为3张
+                                // 构建图片数组（统一为 full 地址数组，用于预览）
+                                var html = '<div class="img-strip" data-images="' + encodeURIComponent(JSON.stringify(images.map(function(img) {
+                                    var thumb = img.thumb || img.full || '';
+                                    var full = img.full || thumb;
+                                    return {
+                                        thumb: thumb,
+                                        full: full
+                                    };
+                                }))) + '">';
+                                
+                                // 遍历全部图片，渲染所有缩略图
+                                for (var i = 0; i < images.length; i++) {
                                     var img = images[i];
                                     var thumb = img.thumb || img.full || '';
                                     var full = img.full || thumb;
                                     if (thumb) {
-                                        html += '<img class="js-img-preview" data-full="' + full + '" src="' + thumb + '" style="max-width: 60px; max-height: 60px; margin: 2px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                                        // 添加 data-index 用于标识图片索引，data-full 用于单图预览兼容
+                                        html += '<img class="js-img-gallery-preview" data-index="' + i + '" data-full="' + full + '" src="' + thumb + '" loading="lazy" style="cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
                                     }
                                 }
-                                // 超过3张显示 +N
-                                if (images.length > 3) {
-                                    html += '<span style="display: inline-block; vertical-align: middle; margin-left: 4px; color: #666; font-size: 12px;">+' + (images.length - 3) + '</span>';
-                                }
+                                html += '</div>';
                                 return html || '-';
                             }
                             
@@ -717,6 +763,13 @@
                     $('#zoomRateText').text(Math.round(scale * 100) + '%');
                 }
 
+                function resetTransform() {
+                    scale = 1;
+                    translateX = 0;
+                    translateY = 0;
+                    applyTransform();
+                }
+
                 function zoomBy(delta, centerX, centerY) {
                     var oldScale = scale;
                     scale = clamp(scale + delta, minScale, maxScale);
@@ -753,8 +806,7 @@
                     content: html,
                     success: function(layero) {
                         // 初始化
-                        scale = 1; translateX = 0; translateY = 0;
-                        applyTransform();
+                        resetTransform();
 
                         // 关键：关闭按钮点击阻止冒泡（可选但更稳）
                         layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
@@ -765,8 +817,7 @@
                         $('#btnZoomIn').off('click.preview').on('click.preview', function() { zoomBy(0.2); });
                         $('#btnZoomOut').off('click.preview').on('click.preview', function() { zoomBy(-0.2); });
                         $('#btnZoomReset').off('click.preview').on('click.preview', function() {
-                            scale = 1; translateX = 0; translateY = 0;
-                            applyTransform();
+                            resetTransform();
                         });
 
                         // 鼠标滚轮缩放（在预览区域内）
@@ -820,7 +871,256 @@
                 });
             }
 
-            // 事件委托：绑定所有 .js-img-preview 的点击事件（兼容动态渲染的表格）
+            // 新增：图片组预览函数（支持上一张/下一张切换，保持缩放/拖拽功能）
+            function openZoomPreviewGallery(images, startIndex) {
+                if (!images || images.length === 0) return;
+                if (startIndex < 0 || startIndex >= images.length) startIndex = 0;
+
+                // 统一处理：将 images 转换为 full 地址数组
+                var fullImages = [];
+                for (var i = 0; i < images.length; i++) {
+                    var img = images[i];
+                    if (typeof img === 'string') {
+                        fullImages.push(img);
+                    } else if (img && img.full) {
+                        fullImages.push(img.full);
+                    } else if (img && img.thumb) {
+                        fullImages.push(img.thumb);
+                    }
+                }
+                if (fullImages.length === 0) return;
+
+                var currentIndex = startIndex;
+                var totalImages = fullImages.length;
+
+                // 缩放参数
+                var scale = 1;
+                var minScale = 0.2;
+                var maxScale = 6;
+
+                // 位置（用于拖拽）
+                var translateX = 0, translateY = 0;
+                var isDragging = false;
+                var startX = 0, startY = 0;
+
+                function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+                function applyTransform() {
+                    var $img = $('#previewZoomImg');
+                    $img.css('transform', 'translate(' + translateX + 'px,' + translateY + 'px) scale(' + scale + ')');
+                    $('#zoomRateText').text(Math.round(scale * 100) + '%');
+                }
+
+                // 重置缩放和位置（切换图片时调用）
+                function resetTransform() {
+                    scale = 1;
+                    translateX = 0;
+                    translateY = 0;
+                    applyTransform();
+                }
+
+                function zoomBy(delta, centerX, centerY) {
+                    var oldScale = scale;
+                    scale = clamp(scale + delta, minScale, maxScale);
+
+                    // 以鼠标点为中心缩放（体验更好）
+                    if (centerX != null && centerY != null) {
+                        translateX = translateX - centerX * (scale / oldScale - 1);
+                        translateY = translateY - centerY * (scale / oldScale - 1);
+                    }
+                    applyTransform();
+                }
+
+                // 切换图片
+                function switchImage(newIndex) {
+                    if (newIndex < 0 || newIndex >= totalImages) return;
+                    currentIndex = newIndex;
+                    
+                    // 切换图片时自动重置缩放和位置（避免继承上一张的 transform）
+                    resetTransform();
+                    
+                    // 更新图片源
+                    $('#previewZoomImg').attr('src', fullImages[currentIndex]);
+                    
+                    // 更新计数器显示
+                    $('#galleryCounter').text((currentIndex + 1) + ' / ' + totalImages);
+                    
+                    // 更新按钮状态
+                    $('#btnPrev').prop('disabled', currentIndex === 0);
+                    $('#btnNext').prop('disabled', currentIndex === totalImages - 1);
+                }
+
+                var html = ''
+                    + '<div id="previewWrap" style="position:relative; width:100%; height:100%; background:#000;">'
+                    + '  <div id="previewToolbar" style="position:absolute; top:12px; left:12px; z-index:9999; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnPrev">上一张 ←</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnNext">下一张 →</button>'
+                    + '    <span id="galleryCounter" style="color:#fff; font-size:12px; margin:0 8px;">' + (currentIndex + 1) + ' / ' + totalImages + '</span>'
+                    + '    <span style="color:#fff; font-size:12px; margin:0 4px;">|</span>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomIn">放大 +</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomOut">缩小 -</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm layui-btn-primary" id="btnZoomReset">重置</button>'
+                    + '    <span id="zoomRateText" style="color:#fff; font-size:12px; margin-left:6px;">100%</span>'
+                    + '  </div>'
+                    + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
+                    + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
+                    + '      <img id="previewZoomImg" src="' + fullImages[currentIndex] + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
+                    + '    </div>'
+                    + '  </div>'
+                    + '</div>';
+
+                var layerIndex = layer.open({
+                    type: 1,
+                    title: '图片预览（可放大缩小，滚轮缩放，拖拽移动，键盘左右键切换）',
+                    closeBtn: 1,
+                    shadeClose: true,
+                    area: ['90vw', '90vh'],
+                    content: html,
+                    success: function(layero) {
+                        // 初始化
+                        resetTransform();
+                        $('#btnPrev').prop('disabled', currentIndex === 0);
+                        $('#btnNext').prop('disabled', currentIndex === totalImages - 1);
+
+                        // 关键：关闭按钮点击阻止冒泡
+                        layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
+                            ev.stopPropagation();
+                        });
+
+                        // 上一张/下一张按钮
+                        $('#btnPrev').off('click.gallery').on('click.gallery', function() {
+                            if (currentIndex > 0) {
+                                switchImage(currentIndex - 1);
+                            }
+                        });
+                        $('#btnNext').off('click.gallery').on('click.gallery', function() {
+                            if (currentIndex < totalImages - 1) {
+                                switchImage(currentIndex + 1);
+                            }
+                        });
+
+                        // 缩放按钮
+                        $('#btnZoomIn').off('click.preview').on('click.preview', function() { zoomBy(0.2); });
+                        $('#btnZoomOut').off('click.preview').on('click.preview', function() { zoomBy(-0.2); });
+                        $('#btnZoomReset').off('click.preview').on('click.preview', function() {
+                            resetTransform();
+                        });
+
+                        // 键盘左右键切换图片
+                        $(document).off('keydown.galleryPreview').on('keydown.galleryPreview', function(ev) {
+                            // 只在预览弹窗打开时响应
+                            if (!layero || !layero.is(':visible')) return;
+                            
+                            if (ev.key === 'ArrowLeft' || ev.keyCode === 37) {
+                                ev.preventDefault();
+                                if (currentIndex > 0) {
+                                    switchImage(currentIndex - 1);
+                                }
+                            } else if (ev.key === 'ArrowRight' || ev.keyCode === 39) {
+                                ev.preventDefault();
+                                if (currentIndex < totalImages - 1) {
+                                    switchImage(currentIndex + 1);
+                                }
+                            } else if (ev.key === 'Escape' || ev.keyCode === 27) {
+                                ev.preventDefault();
+                                layer.close(layerIndex);
+                            }
+                        });
+
+                        // 鼠标滚轮缩放（在预览区域内）
+                        $('#previewStage').off('wheel.preview').on('wheel.preview', function(ev) {
+                            ev.preventDefault();
+                            var oe = ev.originalEvent || ev;
+                            var delta = (oe.deltaY > 0) ? -0.12 : 0.12;
+
+                            var rect = this.getBoundingClientRect();
+                            var cx = (oe.clientX || 0) - rect.left;
+                            var cy = (oe.clientY || 0) - rect.top;
+
+                            zoomBy(delta, cx, cy);
+                        });
+
+                        // 拖拽移动（按住图片拖动）
+                        $('#previewZoomImg').off('mousedown.preview').on('mousedown.preview', function(ev) {
+                            isDragging = true;
+                            startX = ev.clientX;
+                            startY = ev.clientY;
+                            $(this).css('cursor', 'grabbing');
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                        });
+
+                        // 用命名空间绑定，避免影响别的页面逻辑
+                        $(document)
+                            .off('mousemove.previewDrag').on('mousemove.previewDrag', function(ev) {
+                                if (!isDragging) return;
+                                var dx = ev.clientX - startX;
+                                var dy = ev.clientY - startY;
+                                startX = ev.clientX;
+                                startY = ev.clientY;
+                                translateX += dx;
+                                translateY += dy;
+                                applyTransform();
+                            })
+                            .off('mouseup.previewDrag').on('mouseup.previewDrag', function() {
+                                if (!isDragging) return;
+                                isDragging = false;
+                                $('#previewZoomImg').css('cursor', 'grab');
+                            });
+                    },
+                    end: function() {
+                        // 记录关闭时间：防止点右上角 X 时 click 穿透到底下图片又触发打开
+                        window.__IMG_PREVIEW_CLOSE_AT__ = Date.now();
+
+                        // 清理事件
+                        $(document).off('mousemove.previewDrag mouseup.previewDrag keydown.galleryPreview');
+                    }
+                });
+            }
+
+            // 事件委托：绑定图片组预览（.js-img-gallery-preview）
+            $(document).on('click', '.js-img-gallery-preview', function() {
+                // 防止关闭后立即点击穿透
+                if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
+                    return;
+                }
+
+                // 获取图片组容器
+                var $container = $(this).closest('.img-strip');
+                if ($container.length === 0) {
+                    // 如果没有容器，降级为单图预览
+                    var imgSrc = $(this).data('full') || $(this).attr('src');
+                    if (imgSrc) openZoomPreview(imgSrc);
+                    return;
+                }
+
+                // 从 data-images 属性读取图片数组（使用 attr 直接读取，因为数据是 encodeURIComponent 编码的）
+                var imagesData = null;
+                var encodedData = $container.attr('data-images');
+                if (encodedData) {
+                    try {
+                        imagesData = JSON.parse(decodeURIComponent(encodedData));
+                    } catch(e) {
+                        console.error('解析图片数据失败', e);
+                    }
+                }
+
+                if (!imagesData || imagesData.length === 0) {
+                    // 降级为单图预览
+                    var imgSrc = $(this).data('full') || $(this).attr('src');
+                    if (imgSrc) openZoomPreview(imgSrc);
+                    return;
+                }
+
+                // 获取当前点击的图片索引
+                var startIndex = parseInt($(this).data('index')) || 0;
+                if (startIndex < 0 || startIndex >= imagesData.length) startIndex = 0;
+
+                // 打开图片组预览
+                openZoomPreviewGallery(imagesData, startIndex);
+            });
+
+            // 事件委托：绑定单图预览（.js-img-preview，兼容旧数据和其他列）
             $(document).on('click', '.js-img-preview', function() {
                 // 防止关闭后立即点击穿透
                 if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
@@ -846,4 +1146,5 @@
 
 </body>
 
+</html>
 </html>
