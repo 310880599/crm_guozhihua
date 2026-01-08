@@ -42,6 +42,28 @@
             text-align: left !important;
         }
         /* ====================================================================== */
+        /* 微信沟通凭证多图显示样式 */
+        .multi-preview-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .preview-item {
+            position: relative;
+            width: 120px;
+            height: 120px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            background: #f5f5f5;
+        }
+        .preview-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            cursor: zoom-in;
+        }
     </style>
     
     <style>
@@ -474,12 +496,18 @@
                     <textarea name="remark" placeholder="请输入备注信息" class="layui-textarea">{:htmlentities($orderInfo.remark)}</textarea>
                 </div>
             </div> -->
-            <!-- 微信沟通凭证 -->
-            {if condition="!empty($orderInfo.wechat_receipt_image)"}
+            <!-- 微信沟通凭证（多图显示） -->
+            {if condition="!empty($orderInfo.wechat_receipt_images) && count($orderInfo.wechat_receipt_images) > 0"}
             <div class="layui-form-item">
                 <label class="layui-form-label">微信沟通凭证</label>
                 <div class="layui-input-4">
-                    <img src="{$orderInfo.wechat_receipt_image}" alt="微信沟通凭证" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
+                    <div id="wechat_receipt_preview_list" class="multi-preview-list">
+                        {volist name="orderInfo.wechat_receipt_images" id="img"}
+                        <div class="preview-item">
+                            <img src="{$img.thumb|default=$img.full}" class="js-img-preview" data-full="{$img.full}" alt="微信沟通凭证" style="width: 100%; height: 100%; object-fit: cover; cursor: zoom-in;">
+                        </div>
+                        {/volist}
+                    </div>
                 </div>
             </div>
             {/if}
@@ -697,20 +725,22 @@
 
             /**
              * 图片预览功能：点击图片打开预览（支持放大/缩小/重置/滚轮缩放/拖拽移动）
-             * 关键修复：点右上角 X 关闭时，click 可能“穿透”到底下的 .js-img-preview 导致立刻又打开
-             *          => 用 closeAt 时间戳做 350ms 忽略窗，彻底解决“关闭按钮失效”的错觉
+             * 关键修复：点右上角 X 关闭时，click 可能"穿透"到底下的 .js-img-preview 导致立刻又打开
+             *          => 用 closeAt 时间戳做 350ms 忽略窗，彻底解决"关闭按钮失效"的错觉
              */
 
             // 全局：关闭后的短时间内，忽略下一次点击（防止点X穿透后又触发底层图片 click）
             window.__IMG_PREVIEW_CLOSE_AT__ = window.__IMG_PREVIEW_CLOSE_AT__ || 0;
 
-            $(document).on('click', '.js-img-preview', function(e) {
-                // 如果刚关闭（比如 350ms 内），说明这是“点X关闭”导致的穿透 click，直接忽略
+            // 使用命名空间绑定，避免重复绑定（详情页所有图片预览）
+            $(document).off('click.detailsPreview', '.js-img-preview').on('click.detailsPreview', '.js-img-preview', function(e) {
+                // 如果刚关闭（比如 350ms 内），说明这是"点X关闭"导致的穿透 click，直接忽略
                 if (Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
                     return;
                 }
 
-                var imgSrc = $(this).attr('src');
+                // 优先读取data-full属性（原图URL），如果没有则使用src（兼容旧数据）
+                var imgSrc = $(this).data('full') || $(this).attr('src');
                 if (!imgSrc) return;
 
                 // 缩放参数
@@ -770,7 +800,7 @@
                         scale = 1; translateX = 0; translateY = 0;
                         applyTransform();
 
-                        // 关键：关闭按钮点击阻止冒泡（可选但更稳）
+                        // 关键：关闭按钮点击阻止冒泡（防止穿透）
                         layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
                             ev.stopPropagation();
                         });

@@ -1869,6 +1869,123 @@ class Order extends Common
         if (!$order) {
             $this->error('订单不存在或已删除');
         }
+        
+        // ====== 解析微信沟通凭证图片（支持多种数据格式） ======
+        /**
+         * 通用图片解析函数：将各种格式的图片数据统一解析为数组
+         * 输入：$raw（可能是字符串 / JSON 字符串 / 数组）
+         * 输出：统一的数组 $imgs，每个元素都是对象结构：['full' => '原图URL', 'thumb' => '缩略图URL(没有就等于full)']
+         */
+        $parseImages = function($raw) {
+            $imgs = [];
+            if (empty($raw)) {
+                return $imgs;
+            }
+            
+            // 如果是字符串，尝试解析为 JSON
+            if (is_string($raw)) {
+                $raw = trim($raw);
+                if ($raw === '') {
+                    return $imgs;
+                }
+                // 尝试解析为 JSON 数组
+                if ($raw[0] === '[') {
+                    $decoded = json_decode($raw, true);
+                    if (is_array($decoded)) {
+                        $raw = $decoded;
+                    } else {
+                        // JSON 解析失败，当作单字符串处理
+                        $imgs[] = ['full' => $raw, 'thumb' => $raw];
+                        return $imgs;
+                    }
+                } else {
+                    // 不是 JSON 数组，当作单字符串处理
+                    $imgs[] = ['full' => $raw, 'thumb' => $raw];
+                    return $imgs;
+                }
+            }
+            
+            // 处理数组
+            if (is_array($raw)) {
+                foreach ($raw as $item) {
+                    if (is_string($item)) {
+                        // 数组元素是字符串，直接作为原图URL
+                        if (!empty($item)) {
+                            $imgs[] = ['full' => $item, 'thumb' => $item];
+                        }
+                    } elseif (is_array($item) || is_object($item)) {
+                        // 数组元素是对象/数组，尝试提取 full/url/path 等字段
+                        $itemArr = (array)$item;
+                        $full = '';
+                        $thumb = '';
+                        
+                        // 优先级：full > url > path > src
+                        if (!empty($itemArr['full'])) {
+                            $full = $itemArr['full'];
+                        } elseif (!empty($itemArr['url'])) {
+                            $full = $itemArr['url'];
+                        } elseif (!empty($itemArr['path'])) {
+                            $full = $itemArr['path'];
+                        } elseif (!empty($itemArr['src'])) {
+                            $full = $itemArr['src'];
+                        }
+                        
+                        // 缩略图优先级：thumb > thumbnail > small，没有就用 full
+                        if (!empty($itemArr['thumb'])) {
+                            $thumb = $itemArr['thumb'];
+                        } elseif (!empty($itemArr['thumbnail'])) {
+                            $thumb = $itemArr['thumbnail'];
+                        } elseif (!empty($itemArr['small'])) {
+                            $thumb = $itemArr['small'];
+                        } else {
+                            $thumb = $full;
+                        }
+                        
+                        if (!empty($full)) {
+                            $imgs[] = ['full' => $full, 'thumb' => $thumb ?: $full];
+                        }
+                    }
+                }
+            }
+            
+            // 过滤空值、去重（按 full 去重）、重建索引
+            $seen = [];
+            $result = [];
+            foreach ($imgs as $img) {
+                $full = trim($img['full'] ?? '');
+                if ($full !== '' && !isset($seen[$full])) {
+                    $seen[$full] = true;
+                    $result[] = [
+                        'full' => $full,
+                        'thumb' => trim($img['thumb'] ?? $full) ?: $full
+                    ];
+                }
+            }
+            
+            return array_values($result);
+        };
+        
+        // 解析订单表的微信沟通凭证
+        $wechatReceiptImages = [];
+        if (!empty($order['wechat_receipt_image'])) {
+            $wechatReceiptImages = $parseImages($order['wechat_receipt_image']);
+        }
+        
+        // 如果订单表没有，尝试从行业表（crm_client_hangye）获取
+        if (empty($wechatReceiptImages) && !empty($order['contact'])) {
+            $hangye = Db::name('crm_client_hangye')
+                ->where('contact', $order['contact'])
+                ->field('wechat_receipt_image')
+                ->find();
+            if (!empty($hangye['wechat_receipt_image'])) {
+                $wechatReceiptImages = $parseImages($hangye['wechat_receipt_image']);
+            }
+        }
+        
+        // 将解析结果写入 $order，供模板使用
+        $order['wechat_receipt_images'] = $wechatReceiptImages;
+        $order['wechat_receipt_full_urls'] = array_column($wechatReceiptImages, 'full');
+        
         // 读取该订单的所有产品明细行
         $items = Db::name('crm_order_item')->where('order_id', $orderId)->select();
 
