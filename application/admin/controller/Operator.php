@@ -698,6 +698,142 @@ private function exportToExcel($data)
         unset($order);
         // ====== 新增代码结束 ======
 
+        // === wechat_receipt_images 解析兼容开始 ===
+        /**
+         * 解析图片数据，统一输出格式
+         * @param mixed $raw 原始数据（可能是字符串、JSON字符串、数组等）
+         * @return array 统一格式：[['full' => '...', 'thumb' => '...'], ...]
+         */
+        $parseImages = function($raw) {
+            if (empty($raw)) {
+                return [];
+            }
+
+            // 如果是字符串，尝试解析为JSON
+            if (is_string($raw)) {
+                $raw = trim($raw);
+                if (empty($raw)) {
+                    return [];
+                }
+                
+                // 如果以 [ 开头，尝试解析为JSON数组
+                if (substr($raw, 0, 1) === '[') {
+                    $decoded = json_decode($raw, true);
+                    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                        $raw = $decoded;
+                    } else {
+                        // JSON解析失败，当作单字符串处理
+                        return [['full' => $raw, 'thumb' => $raw]];
+                    }
+                } else {
+                    // 不是JSON数组，当作单字符串处理
+                    return [['full' => $raw, 'thumb' => $raw]];
+                }
+            }
+
+            // 如果是数组
+            if (is_array($raw)) {
+                $result = [];
+                $seenFulls = []; // 用于去重
+
+                foreach ($raw as $item) {
+                    if (is_string($item)) {
+                        // 数组元素是字符串
+                        $full = trim($item);
+                        if (!empty($full) && !isset($seenFulls[$full])) {
+                            $seenFulls[$full] = true;
+                            $result[] = ['full' => $full, 'thumb' => $full];
+                        }
+                    } elseif (is_array($item) || is_object($item)) {
+                        // 数组元素是对象
+                        $item = (array)$item;
+                        
+                        // 优先从 full/path/src/url 取 full
+                        $full = '';
+                        foreach (['full', 'path', 'src', 'url'] as $key) {
+                            if (!empty($item[$key])) {
+                                $full = trim($item[$key]);
+                                break;
+                            }
+                        }
+                        
+                        if (empty($full)) {
+                            continue; // 没有找到full，跳过
+                        }
+
+                        // 去重
+                        if (isset($seenFulls[$full])) {
+                            continue;
+                        }
+                        $seenFulls[$full] = true;
+
+                        // thumb 优先 thumb/thumbnail/small，没有则 thumb=full
+                        $thumb = $full;
+                        foreach (['thumb', 'thumbnail', 'small'] as $key) {
+                            if (!empty($item[$key])) {
+                                $thumb = trim($item[$key]);
+                                break;
+                            }
+                        }
+
+                        $result[] = ['full' => $full, 'thumb' => $thumb];
+                    }
+                }
+
+                return $result;
+            }
+
+            return [];
+        };
+
+        // 收集需要回退的订单（wechat_receipt_image 为空）
+        $needFallbackOrders = [];
+        $contactsForFallback = [];
+        foreach ($list['data'] as $index => $order) {
+            if (empty($order['wechat_receipt_image'])) {
+                $contact = $order['contact'] ?? '';
+                if (!empty($contact)) {
+                    $needFallbackOrders[$index] = $contact;
+                    $contactsForFallback[] = $contact;
+                }
+            }
+        }
+
+        // 批量查询 hangye 表
+        $hangyeMap = [];
+        if (!empty($contactsForFallback)) {
+            $contactsForFallback = array_unique($contactsForFallback);
+            $hangyeList = Db::table('crm_client_hangye')
+                ->whereIn('contact', $contactsForFallback)
+                ->field('contact,wechat_receipt_image')
+                ->select();
+            
+            foreach ($hangyeList as $hangye) {
+                $contact = $hangye['contact'] ?? '';
+                if (!empty($contact)) {
+                    $hangyeMap[$contact] = $hangye['wechat_receipt_image'] ?? '';
+                }
+            }
+        }
+
+        // 为每条订单添加 wechat_receipt_images 字段
+        foreach ($list['data'] as $index => &$order) {
+            $raw = $order['wechat_receipt_image'] ?? '';
+            
+            // 如果订单自身为空，尝试从 hangye 回退
+            if (empty($raw) && isset($needFallbackOrders[$index])) {
+                $contact = $needFallbackOrders[$index];
+                $raw = $hangyeMap[$contact] ?? '';
+            }
+
+            // 解析图片
+            $order['wechat_receipt_images'] = $parseImages($raw);
+            
+            // 注意：保留原字段 wechat_receipt_image 以兼容旧逻辑
+        }
+        unset($order);
+        // === wechat_receipt_images 解析兼容结束 ===
+
         //成单率
 
         $totalInquiries = Db::table('crm_leads')

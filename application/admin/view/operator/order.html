@@ -578,24 +578,52 @@
                     { field: 'source_port', title: '来源端口',width: 180 },
                     { 
                         field: 'wechat_receipt_image', 
-                        title: '客户微信回执图', 
-                        width: 180,
+                        title: '微信沟通凭证', 
+                        width: 280,
                         templet: function(res){
-                            if(res.wechat_receipt_image){
-                                return '<img src="' + res.wechat_receipt_image + '" style="max-width: 100px; max-height: 100px; cursor: pointer;" onclick="previewImage(\'' + res.wechat_receipt_image + '\')">';
+                            // === wechat_receipt_images 解析兼容开始 ===
+                            var images = res.wechat_receipt_images || [];
+                            var html = '';
+                            
+                            // 如果后端提供了 wechat_receipt_images 数组
+                            if (images && images.length > 0) {
+                                // 最多显示3张缩略图
+                                var displayCount = Math.min(images.length, 3);
+                                for (var i = 0; i < displayCount; i++) {
+                                    var img = images[i];
+                                    var thumb = img.thumb || img.full || '';
+                                    var full = img.full || thumb;
+                                    if (thumb) {
+                                        html += '<img class="js-img-preview" data-full="' + full + '" src="' + thumb + '" style="max-width: 60px; max-height: 60px; margin: 2px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                                    }
+                                }
+                                // 超过3张显示 +N
+                                if (images.length > 3) {
+                                    html += '<span style="display: inline-block; vertical-align: middle; margin-left: 4px; color: #666; font-size: 12px;">+' + (images.length - 3) + '</span>';
+                                }
+                                return html || '-';
                             }
+                            
+                            // 兼容旧数据：如果后端没给 wechat_receipt_images，尝试使用 wechat_receipt_image
+                            if (res.wechat_receipt_image) {
+                                return '<img class="js-img-preview" data-full="' + res.wechat_receipt_image + '" src="' + res.wechat_receipt_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                            }
+                            
                             return '-';
+                            // === wechat_receipt_images 解析兼容结束 ===
                         }
                     },
                     { 
                         field: 'inquiry_assign_image', 
-                        title: '产品询盘分配图', 
+                        title: '询盘来源凭证', 
                         width: 180,
                         templet: function(res){
+                            // === wechat_receipt_images 解析兼容开始 ===
                             if(res.inquiry_assign_image){
-                                return '<img src="' + res.inquiry_assign_image + '" style="max-width: 100px; max-height: 100px; cursor: pointer;" onclick="previewImage(\'' + res.inquiry_assign_image + '\')">';
+                                return '<img class="js-img-preview" data-full="' + res.inquiry_assign_image + '" src="' + res.inquiry_assign_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
                             }
                             return '-';
+                            // === wechat_receipt_images 解析兼容结束 ===
                         }
                     },
                     { field: 'pr_user', title: '负责人', hide: false,width: 180 },
@@ -671,18 +699,146 @@
             document.getElementById('searchForm').reset();
         }
         
-        // 预览图片
-        function previewImage(url) {
-            if (!url) return;
+        // === wechat_receipt_images 解析兼容开始 ===
+        // 统一的图片预览函数（从 add.html 复制，支持缩放/拖拽）
+        function openZoomPreview(imgSrc) {
+            if (!imgSrc) return;
+
+            // 缩放参数
+            var scale = 1;
+            var minScale = 0.2;
+            var maxScale = 6;
+
+            // 位置（用于拖拽）
+            var translateX = 0, translateY = 0;
+            var isDragging = false;
+            var startX = 0, startY = 0;
+
+            function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+            function applyTransform() {
+                var $img = $('#previewZoomImg');
+                $img.css('transform', 'translate(' + translateX + 'px,' + translateY + 'px) scale(' + scale + ')');
+                $('#zoomRateText').text(Math.round(scale * 100) + '%');
+            }
+
+            function zoomBy(delta, centerX, centerY) {
+                var oldScale = scale;
+                scale = clamp(scale + delta, minScale, maxScale);
+
+                // 以鼠标点为中心缩放（体验更好）
+                if (centerX != null && centerY != null) {
+                    translateX = translateX - centerX * (scale / oldScale - 1);
+                    translateY = translateY - centerY * (scale / oldScale - 1);
+                }
+                applyTransform();
+            }
+
+            var html = ''
+                + '<div id="previewWrap" style="position:relative; width:100%; height:100%; background:#000;">'
+                + '  <div id="previewToolbar" style="position:absolute; top:12px; left:12px; z-index:9999; display:flex; gap:8px; align-items:center;">'
+                + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomIn">放大 +</button>'
+                + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomOut">缩小 -</button>'
+                + '    <button type="button" class="layui-btn layui-btn-sm layui-btn-primary" id="btnZoomReset">重置</button>'
+                + '    <span id="zoomRateText" style="color:#fff; font-size:12px; margin-left:6px;">100%</span>'
+                + '  </div>'
+                + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
+                + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
+                + '      <img id="previewZoomImg" src="' + imgSrc + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
+                + '    </div>'
+                + '  </div>'
+                + '</div>';
+
             layer.open({
                 type: 1,
-                title: '图片预览',
+                title: '图片预览（可放大缩小，滚轮缩放，拖拽移动）',
+                closeBtn: 1,
                 shadeClose: true,
-                shade: 0.8,
-                area: ['90%', '90%'],
-                content: '<div style="text-align: center; padding: 20px;"><img src="' + url + '" style="max-width: 100%; max-height: 100%;"></div>'
+                area: ['90vw', '90vh'],
+                content: html,
+                success: function(layero) {
+                    // 初始化
+                    scale = 1; translateX = 0; translateY = 0;
+                    applyTransform();
+
+                    // 关键：关闭按钮点击阻止冒泡（可选但更稳）
+                    layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
+                        ev.stopPropagation();
+                    });
+
+                    // 按钮事件（先解绑再绑定，避免重复）
+                    $('#btnZoomIn').off('click.preview').on('click.preview', function() { zoomBy(0.2); });
+                    $('#btnZoomOut').off('click.preview').on('click.preview', function() { zoomBy(-0.2); });
+                    $('#btnZoomReset').off('click.preview').on('click.preview', function() {
+                        scale = 1; translateX = 0; translateY = 0;
+                        applyTransform();
+                    });
+
+                    // 鼠标滚轮缩放（在预览区域内）
+                    $('#previewStage').off('wheel.preview').on('wheel.preview', function(ev) {
+                        ev.preventDefault();
+                        var oe = ev.originalEvent || ev;
+                        var delta = (oe.deltaY > 0) ? -0.12 : 0.12;
+
+                        var rect = this.getBoundingClientRect();
+                        var cx = (oe.clientX || 0) - rect.left;
+                        var cy = (oe.clientY || 0) - rect.top;
+
+                        zoomBy(delta, cx, cy);
+                    });
+
+                    // 拖拽移动（按住图片拖动）
+                    $('#previewZoomImg').off('mousedown.preview').on('mousedown.preview', function(ev) {
+                        isDragging = true;
+                        startX = ev.clientX;
+                        startY = ev.clientY;
+                        $(this).css('cursor', 'grabbing');
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                    });
+
+                    // 用命名空间绑定，避免影响别的页面逻辑
+                    $(document)
+                        .off('mousemove.previewDrag').on('mousemove.previewDrag', function(ev) {
+                            if (!isDragging) return;
+                            var dx = ev.clientX - startX;
+                            var dy = ev.clientY - startY;
+                            startX = ev.clientX;
+                            startY = ev.clientY;
+                            translateX += dx;
+                            translateY += dy;
+                            applyTransform();
+                        })
+                        .off('mouseup.previewDrag').on('mouseup.previewDrag', function() {
+                            if (!isDragging) return;
+                            isDragging = false;
+                            $('#previewZoomImg').css('cursor', 'grab');
+                        });
+                },
+                end: function() {
+                    // 记录关闭时间：防止点右上角 X 时 click 穿透到底下图片又触发打开
+                    window.__IMG_PREVIEW_CLOSE_AT__ = Date.now();
+
+                    // 清理拖拽事件
+                    $(document).off('mousemove.previewDrag mouseup.previewDrag');
+                }
             });
         }
+
+        // 事件委托：绑定所有 .js-img-preview 的点击事件（兼容动态渲染的表格）
+        $(document).on('click', '.js-img-preview', function() {
+            // 防止关闭后立即点击穿透
+            if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
+                return;
+            }
+
+            // 优先读取data-full属性（原图URL），如果没有则使用src（兼容旧数据）
+            var imgSrc = $(this).data('full') || $(this).attr('src');
+            if (!imgSrc) return;
+
+            openZoomPreview(imgSrc);
+        });
+        // === wechat_receipt_images 解析兼容结束 ===
     </script>
 
 
