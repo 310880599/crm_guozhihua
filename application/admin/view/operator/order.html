@@ -594,6 +594,7 @@
                 url: '{:url("order")}',
                 method: 'post',
                 // width:'100%',
+                height: 'full-260', // ✅ 关键：给表格一个高度（260 按你页面头部高度微调）
                 toolbar: '#topBtn',
                 defaultToolbar: defaultToolbar,
                 cols: [[
@@ -601,7 +602,7 @@
                     { field: 'order_no', title: '订单编号', totalRowText: '合计：',width: 180 },
                     { field: 'cname', title: '客户名称',width: 180 },
                     { field: 'contact', title: '联系方式',width: 180 },
-                    { field: 'order_items', title: '产品明细', width: 480, templet: function(d){
+                    { field: 'order_items', title: '产品明细', width: 280, templet: function(d){
                         if (!d.order_items || d.order_items.length === 0) {
                             return '';
                         }
