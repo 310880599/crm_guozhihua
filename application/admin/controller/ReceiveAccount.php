@@ -25,14 +25,33 @@ class ReceiveAccount extends Common
     public function index()
     {
         if (request()->isPost()) {
-            $page  = input('page/d', 1);
-            $limit = input('limit/d', 10);
-            $list = ReceiveAccountModel::order('id desc')
-                ->paginate(['list_rows'=>$limit,'page'=>$page])
-                ->toArray();
-            return ['code'=>0,'msg'=>'获取成功!','data'=>$list['data'],'count'=>$list['total'],'rel'=>1];
+            return $this->accountSearch();
         }
         return $this->fetch();
+    }
+
+    public function accountSearch()
+    {
+        $account = input('account', '');
+        $page = input('page/d', 1);
+        $limit = input('limit/d', 10);
+        
+        $query = ReceiveAccountModel::order('id desc');
+        
+        // 如果account不为空，则模糊匹配
+        if (!empty($account)) {
+            $query->where('account', 'like', "%{$account}%");
+        }
+        
+        $list = $query->paginate(['list_rows'=>$limit,'page'=>$page])->toArray();
+        
+        return json([
+            'code' => 0,
+            'msg' => '获取成功!',
+            'data' => $list['data'],
+            'count' => $list['total'],
+            'rel' => 1
+        ]);
     }
 
     public function add()

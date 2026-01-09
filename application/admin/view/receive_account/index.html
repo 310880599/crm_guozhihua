@@ -2,9 +2,87 @@
 <html>
 <head>
     {include file="common/head"/}  <!-- 包含通用的CSS和JS -->
+    <style>
+        .filtrate-warp {
+            margin-bottom: 10px;
+        }
+        .layui-elem-field {
+            background: #fff !important;
+            border-radius: 8px !important;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+            border: 1px solid #e8e8e8 !important;
+            overflow: hidden !important;
+        }
+        .layui-elem-field legend {
+            margin-left: 20px;
+            padding: 0 10px;
+            font-size: 20px;
+            font-weight: 300;
+            background: #4285f4;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 10px;
+        }
+
+        .filtrate-warp .title {
+            padding: 5px 12px 7px 12px;
+            font-size: 14px;
+            font-weight: normal;
+            text-align: left;
+            cursor: pointer;
+            width: 90px;
+            background-color: transparent !important;
+            color: black !important;
+        }
+
+        .filtrate-warp .title:hover {
+            color: black;
+        }
+
+        .filtrate-warp .flag {
+            padding: 6px 12px 6px 12px;
+            cursor: pointer;
+        }
+
+        .filtrate-warp .flag:hover {
+            color: black;
+        }
+
+        .filtrate-warp .layui-badge:hover {
+            color: white !important;
+        }
+        .layui-form-label {
+            white-space: nowrap;   /* 不允许换行 */
+        }
+
+    </style>
 </head>
 <body class="layui-layout-body">
 <div class="admin-main layui-anim layui-anim-upbit">
+    <fieldset class="layui-elem-field ">
+        <legend>高级查询</legend>
+
+        <div class="layui-card" style="box-shadow: none;margin-top: 10px">
+            <div class="layui-form layui-card-header layuiadmin-card-header-auto"
+                style="border-bottom: transparent;height: auto">
+                <div class="layui-form-item" style="text-align: left;padding-left: 20px;">
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="margin-left: 5px">收款账户：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="account" name="account" placeholder="请输入收款账户："
+                                class="layui-input">
+                        </div>
+                    </div>
+                </div>
+                <div class="layui-inline" style="float: right;padding-bottom: 15px">
+                    <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
+                        <i class="layui-icon layui-icon-search layuiadmin-button-btn"
+                            style="vertical-align: sub;"></i>查询数据
+                    </button>
+                </div>
+            </div>
+        </div>
+    </fieldset>
 
     <!-- 数据列表表格 -->
     <table class="layui-table" id="table-list" lay-filter="table-list"></table>
@@ -37,8 +115,8 @@
 {include file="common/foot"/}  <!-- 通用尾部 JS -->
 
 <script>
-layui.use(['table','util','jquery'], function() {
-    var table = layui.table, util = layui.util, $ = layui.jquery;
+layui.use(['table','form','util','jquery'], function() {
+    var table = layui.table, form = layui.form, util = layui.util, $ = layui.jquery;
     // 渲染数据表格
     var tableIns = table.render({
         elem: '#table-list',
@@ -147,7 +225,15 @@ layui.use(['table','util','jquery'], function() {
       }
     });
 
-
+    //监听搜索
+    form.on('submit(LAY-app-contlist-search)', function (data) {
+        table.reload('table-list', {
+            url: "{:url('ReceiveAccount/accountSearch')}",
+            where: data.field,
+            page: { curr: 1 }
+        });
+        return false;
+    });
     
     
 });
