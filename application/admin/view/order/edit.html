@@ -512,7 +512,7 @@
                     <select name="bank_account" id="bank_account" lay-verify="required" lay-search="">
                         <option value="">请选择收款账户</option>
                         {volist name="accountList" id="acc"}
-                            <option value="{$acc.id}">{$acc.account|htmlentities}</option>
+                            <option value="{$acc.id}" {if $acc.id == $orderInfo.bank_account}selected{/if}>{$acc.account|htmlentities}</option>
                         {/volist}
                     </select>
                 </div>

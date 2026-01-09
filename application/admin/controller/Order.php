@@ -386,7 +386,13 @@ class Order extends Common
             $data['pr_user']          = Session::get('username');
             $data['pr_user_id']       = (int)Session::get('aid');
             $data['oper_user']        = Request::param('oper_user');      // 运营人员
-            $data['bank_account']     = Request::param('bank_account');   // 收款账户
+            $data['bank_account']     = Request::param('bank_account');   // 收款账户 ID
+            // 【收款账户快照模式】根据 bank_account ID 查询账户名称并写入快照字段
+            if (!empty($data['bank_account'])) {
+                $data['bank_account_name'] = $this->resolveBankAccountName($data['bank_account']);
+            } else {
+                $data['bank_account_name'] = '';  // 如果为空，快照字段也置空
+            }
             $data['check_status']     = 1;   // 订单的审核状态，起始值是1，待审核
 
             // 处理运营端口：将端口ID转换为端口名称（文字）保存
@@ -699,7 +705,8 @@ class Order extends Common
         $this->assign('customer_type', self::CUSTOMER_TYPE);
 
         $userlist = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
-        $accountList = Db::name('crm_receive_account')->field('id, account')->select();
+        // 【收款账户快照模式】只显示未删除的账户（is_deleted=0）
+        $accountList = Db::name('crm_receive_account')->where('is_deleted', 0)->field('id, account')->select();
         //var_dump($bankaccount);
         $this->assign('userlist', $userlist);
         $this->assign('accountList', $accountList);
@@ -1417,7 +1424,28 @@ class Order extends Common
 
         // 准备下拉选项数据（团队列表、来源列表、客户性质列表、运营人员列表等）
         $teamList   = $this->getTeamList();
-        $accountList = Db::name('crm_receive_account')->field('id, account')->select();
+        // 【收款账户快照模式】只显示未删除的账户（is_deleted=0）
+        $accountList = Db::name('crm_receive_account')->where('is_deleted', 0)->field('id, account')->select();
+        
+        // 【收款账户快照模式】兼容已删除账户：如果当前订单的 bank_account 对应账户已经软删除，补充到列表头部
+        if (!empty($order['bank_account']) && !empty($order['bank_account_name'])) {
+            $currentAccountId = $order['bank_account'];
+            $foundInList = false;
+            foreach ($accountList as $acc) {
+                if ($acc['id'] == $currentAccountId) {
+                    $foundInList = true;
+                    break;
+                }
+            }
+            // 如果当前订单的账户不在列表中（已删除），则补充一个选项
+            if (!$foundInList) {
+                array_unshift($accountList, [
+                    'id' => $currentAccountId,
+                    'account' => $order['bank_account_name'] . '（已删除）'
+                ]);
+            }
+        }
+        
         $this->assign('accountList', $accountList);
         $this->assign('teamList', $teamList);
         $this->assign('customer_type', self::CUSTOMER_TYPE);
@@ -1672,6 +1700,18 @@ class Order extends Common
             $data['customer_type']    = Request::param('customer_type');  // 客户性质
             $data['source']           = Request::param('source');         // 询盘来源
             $data['bank_account']     = Request::param('bank_account');  // 收款账户 ID (as string)
+            // 【收款账户快照模式】根据 bank_account ID 查询账户名称并更新快照字段
+            // 先获取原始订单数据，用于在查询失败时保留原值
+            $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('bank_account_name')->find();
+            if (!empty($data['bank_account'])) {
+                $data['bank_account_name'] = $this->resolveBankAccountName($data['bank_account']);
+                // 如果查不到（例如账户被删除或异常），保留原值
+                if (empty($data['bank_account_name']) && !empty($originalOrder['bank_account_name'])) {
+                    $data['bank_account_name'] = $originalOrder['bank_account_name'];
+                }
+            } else {
+                $data['bank_account_name'] = '';  // 如果为空，快照字段也置空
+            }
             $data['pr_user']          = Request::param('pr_user') ?: Session::get('username'); // 客户负责人（默认当前用户）
             $data['oper_user']        = Request::param('oper_user');      // 运营人员
             $data['team_name']        = Request::param('team_name');      // 团队名称
@@ -1995,7 +2035,28 @@ class Order extends Common
         // 使用 array_map 和 trim 去除每个值的前后空格
         $sourceList = array_map('trim', $sourceList);
         //var_dump($sourceList);
-        $accountList = Db::name('crm_receive_account')->field('id, account')->select();  // fetch all accounts (id and name)
+        // 【收款账户快照模式】只显示未删除的账户（is_deleted=0）
+        $accountList = Db::name('crm_receive_account')->where('is_deleted', 0)->field('id, account')->select();
+        
+        // 【收款账户快照模式】兼容已删除账户：如果当前订单的 bank_account 对应账户已经软删除，补充到列表头部
+        if (!empty($order['bank_account']) && !empty($order['bank_account_name'])) {
+            $currentAccountId = $order['bank_account'];
+            $foundInList = false;
+            foreach ($accountList as $acc) {
+                if ($acc['id'] == $currentAccountId) {
+                    $foundInList = true;
+                    break;
+                }
+            }
+            // 如果当前订单的账户不在列表中（已删除），则补充一个选项
+            if (!$foundInList) {
+                array_unshift($accountList, [
+                    'id' => $currentAccountId,
+                    'account' => $order['bank_account_name'] . '（已删除）'
+                ]);
+            }
+        }
+        
         $this->assign('accountList', $accountList);
         $this->assign('teamList', $teamList);
         $this->assign('sourceList', $sourceList);
@@ -2601,16 +2662,16 @@ class Order extends Common
         $orderIds = array_column($list['data'], 'id');
         $orderItemsMap = $this->buildOrderItemsSnapshotMap($orderIds);
         
-        // 转换收款账户ID为账户名称 和 协同人ID为用户名
+        // 【收款账户快照模式】优先使用 bank_account_name 快照字段，仅在为空时补齐
+        // 转换协同人ID为用户名
         foreach ($list['data'] as &$order) {
-            // 转换收款账户
-            if (!empty($order['bank_account'])) {
-                $accountInfo = Db::name('crm_receive_account')
-                    ->where('id', $order['bank_account'])
-                    ->field('account')
-                    ->find();
-                if ($accountInfo) {
-                    $order['bank_account_name'] = $accountInfo['account'];
+            // 【收款账户快照模式】优先使用 bank_account_name（快照），仅在 bank_account 有值且 bank_account_name 为空时实时查询补齐
+            if (!empty($order['bank_account']) && empty($order['bank_account_name'])) {
+                $accountName = $this->resolveBankAccountName($order['bank_account']);
+                if (!empty($accountName)) {
+                    $order['bank_account_name'] = $accountName;
+                    // 可选：写回数据库补齐（一次性补齐老数据）
+                    // Db::name('crm_client_order')->where('id', $order['id'])->update(['bank_account_name' => $accountName]);
                 }
             }
             
@@ -2724,6 +2785,25 @@ class Order extends Common
         }
 
         return $orderItemsMap;
+    }
+
+    /**
+     * 根据收款账户ID获取账户名称（用于快照保存）
+     * @param int|string $bankAccountId 收款账户ID
+     * @return string 账户名称，如果查不到或ID为空则返回空字符串
+     */
+    private function resolveBankAccountName($bankAccountId)
+    {
+        if (empty($bankAccountId)) {
+            return '';
+        }
+        
+        $accountInfo = Db::name('crm_receive_account')
+            ->where('id', $bankAccountId)
+            ->field('account')
+            ->find();
+        
+        return $accountInfo ? ($accountInfo['account'] ?? '') : '';
     }
 
 
