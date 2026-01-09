@@ -61,7 +61,38 @@ class ReceiveAccount extends Common
     {
         if (Request::isPost()) {
             $data = Request::only(['account','receiver'], 'post');
-            // soft delete by is_deleted: 新增时明确设置软删除字段默认值
+            
+            // 校验必填字段
+            if (empty($data['account'])) {
+                return json(['code'=>-200,'msg'=>'收款账户名称不能为空']);
+            }
+            
+            // 1. 检查是否存在 account 相同且 is_deleted = 0 的记录
+            $existsActive = ReceiveAccountModel::where('account', $data['account'])
+                ->where('is_deleted', 0)
+                ->find();
+            if ($existsActive) {
+                return json(['code'=>-200,'msg'=>'收款账户已存在']);
+            }
+            
+            // 2. 检查是否存在 account 相同且 is_deleted = 1 的记录（已删除的记录）
+            $existsDeleted = ReceiveAccountModel::where('account', $data['account'])
+                ->where('is_deleted', 1)
+                ->find();
+            
+            if ($existsDeleted) {
+                // 复活该记录
+                $existsDeleted->is_deleted = 0;
+                $existsDeleted->deleted_time = null;
+                $existsDeleted->deleted_by = null;
+                $existsDeleted->receiver = $data['receiver'] ?? '';
+                $existsDeleted->update_time = time();
+                $res = $existsDeleted->save();
+                return $res ? json(['code'=>0,'msg'=>'添加成功！'])
+                            : json(['code'=>-200,'msg'=>'添加失败！']);
+            }
+            
+            // 3. 既不存在未删除同名，也不存在已删除同名，正常插入新记录
             $data['is_deleted'] = 0;
             $data['deleted_time'] = null;
             $data['deleted_by'] = null;
@@ -88,9 +119,21 @@ class ReceiveAccount extends Common
         }
         
         if (Request::isAjax()) {
-            $data = Request::only(['account']); // tag 不允许改
+            $data = Request::only(['account', 'receiver'], 'post');
             
-            // soft delete by is_deleted: 更新时只允许更新正常状态的记录
+            // 如果修改了 account 名称，需要校验是否存在重复
+            if (isset($data['account']) && $data['account'] !== $entry->account) {
+                // 校验是否存在 account 相同且 is_deleted = 0 且 id ≠ 当前记录
+                $exists = ReceiveAccountModel::where('account', $data['account'])
+                    ->where('is_deleted', 0)
+                    ->where('id', '<>', $id)
+                    ->find();
+                if ($exists) {
+                    return json(['code' => -200, 'msg' => '收款账户名称已存在']);
+                }
+            }
+            
+            // 更新当前记录（仅更新当前记录，不做任何"复活其他记录"的操作）
             $res = Db::name('crm_receive_account')
                 ->where('id', $id)
                 ->where('is_deleted', 0)
@@ -113,6 +156,7 @@ class ReceiveAccount extends Common
         }
         
         // soft delete by is_deleted: 软删除，只允许删除正常状态的记录
+        // deleted_time 使用 DATETIME 格式字符串（Y-m-d H:i:s），deleted_by 使用当前管理员 ID
         $aff = Db::name('crm_receive_account')
             ->where('id', $id)
             ->where('is_deleted', 0)
@@ -146,6 +190,7 @@ class ReceiveAccount extends Common
         Db::startTrans();
         try {
             // soft delete by is_deleted: 批量软删除（只更新 is_deleted=0 的）
+            // deleted_time 使用 DATETIME 格式字符串（Y-m-d H:i:s），deleted_by 使用当前管理员 ID
             $delCount = Db::name('crm_receive_account')
                 ->whereIn('id', $ids)
                 ->where('is_deleted', 0)
