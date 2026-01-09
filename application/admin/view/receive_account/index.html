@@ -50,9 +50,9 @@ layui.use(['table','util','jquery'], function() {
         cols: [[
             {type:'checkbox', fixed: 'left'},
             {field: 'id', title: 'ID', width: 80, sort: true},
-            {field: 'account', title: '收款账户'},
-            {field: 'receiver', title: '创建人'},
-            {field:'create_time', title:'创建时间',
+            {field: 'account', title: '收款账户',width: 180},
+            {field: 'receiver', title: '创建人',width: 100},
+            {field:'create_time', title:'创建时间',width: 180,
                 templet: function(d){
                   var v = d.create_time;
                   if (!v) return '';
@@ -62,7 +62,7 @@ layui.use(['table','util','jquery'], function() {
                   return v;
                 }
             },
-            {field:'update_time', title:'修改时间',
+            {field:'update_time', title:'修改时间',width: 180,
                 templet: function(d){
                   var v = d.update_time;
                   if (!v) return '';
