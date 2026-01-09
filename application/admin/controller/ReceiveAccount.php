@@ -38,6 +38,9 @@ class ReceiveAccount extends Common
         
         $query = ReceiveAccountModel::order('id desc');
         
+        // soft delete by is_deleted: 只显示正常状态的收款账户（is_deleted = 0）
+        $query->where('is_deleted', 0);
+        
         // 如果account不为空，则模糊匹配
         if (!empty($account)) {
             $query->where('account', 'like', "%{$account}%");
@@ -58,6 +61,10 @@ class ReceiveAccount extends Common
     {
         if (Request::isPost()) {
             $data = Request::only(['account','receiver'], 'post');
+            // soft delete by is_deleted: 新增时明确设置软删除字段默认值
+            $data['is_deleted'] = 0;
+            $data['deleted_time'] = null;
+            $data['deleted_by'] = null;
             $res = ReceiveAccountModel::create($data); // 模型已开启自动时间戳
             return $res ? json(['code'=>0,'msg'=>'添加成功！'])
                         : json(['code'=>-200,'msg'=>'添加失败！']);
@@ -70,17 +77,29 @@ class ReceiveAccount extends Common
     public function edit()
     {
         $id = input('id/d', 0);
+        if (empty($id)) {
+            return $this->error('参数错误');
+        }
+        
+        // soft delete by is_deleted: 获取记录时排除已删除的数据
+        $entry = ReceiveAccountModel::where('id', $id)->where('is_deleted', 0)->find();
+        if (empty($entry)) {
+            return $this->error('记录不存在或已删除');
+        }
+        
         if (Request::isAjax()) {
             $data = Request::only(['account']); // tag 不允许改
-            $data['id'] = $id; // ★ 必须带上主键，模型 update() 才知道更新哪条
-    
-            // 触发模型的自动时间戳（autoWriteTimestamp='int'），会自动写 update_time
-            $res = ReceiveAccountModel::update($data);
+            
+            // soft delete by is_deleted: 更新时只允许更新正常状态的记录
+            $res = Db::name('crm_receive_account')
+                ->where('id', $id)
+                ->where('is_deleted', 0)
+                ->update($data);
     
             return $res ? json(['code' => 0, 'msg' => '修改成功！'])
                         : json(['code' => -200, 'msg' => '修改失败！']);
         }
-        $entry = ReceiveAccountModel::find($id);
+        
         $this->assign('entry',$entry);
         return $this->fetch();
     }
@@ -89,9 +108,25 @@ class ReceiveAccount extends Common
     public function del()
     {
         $id = input('id/d',0);
-        $res = ReceiveAccountModel::destroy($id);
-        return $res ? json(['code'=>0,'msg'=>'删除成功！'])
-                    : json(['code'=>-200,'msg'=>'删除失败！']);
+        if (empty($id)) {
+            return json(['code'=>-200,'msg'=>'参数错误']);
+        }
+        
+        // soft delete by is_deleted: 软删除，只允许删除正常状态的记录
+        $aff = Db::name('crm_receive_account')
+            ->where('id', $id)
+            ->where('is_deleted', 0)
+            ->update([
+                'is_deleted' => 1,
+                'deleted_time' => date('Y-m-d H:i:s'),
+                'deleted_by' => session('aid'),
+            ]);
+        
+        if ($aff) {
+            return json(['code'=>0,'msg'=>'删除成功！']);
+        } else {
+            return json(['code'=>-200,'msg'=>'删除失败！']);
+        }
     }
     
     
@@ -107,19 +142,25 @@ class ReceiveAccount extends Common
             return json(['code' => -200, 'msg' => '未选择任何记录']);
         }
     
-        // 建议再做一次超管校验（双保险）
-        // if (session('aid') != 1) return json(['code'=>-200,'msg'=>'无权限']);
-    
+        // soft delete by is_deleted: 使用事务保证数据一致性
+        Db::startTrans();
         try {
-            // 方式1：模型批量删除
-            // $res = ReceiveAccountModel::destroy($ids);
-            // 方式2：DB 批量删除（更直观）
-            $res = \think\Db::name('crm_receive_account')->whereIn('id', $ids)->delete();
-            if ($res > 0) {
-                return json(['code' => 0, 'msg' => '删除成功', 'data' => ['count' => $res]]);
+            // soft delete by is_deleted: 批量软删除（只更新 is_deleted=0 的）
+            $delCount = Db::name('crm_receive_account')
+                ->whereIn('id', $ids)
+                ->where('is_deleted', 0)
+                ->update([
+                    'is_deleted' => 1,
+                    'deleted_time' => date('Y-m-d H:i:s'),
+                    'deleted_by' => session('aid'),
+                ]);
+            Db::commit();
+            if ($delCount > 0) {
+                return json(['code' => 0, 'msg' => '删除成功', 'data' => ['count' => $delCount]]);
             }
             return json(['code' => -200, 'msg' => '删除失败或记录不存在']);
         } catch (\Throwable $e) {
+            Db::rollback();
             return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
         }
     }
@@ -239,9 +280,13 @@ class ReceiveAccount extends Common
             // 必填校验：account至少要有
             if ($account === '') continue;
 
+            // soft delete by is_deleted: 导入时明确设置软删除字段默认值
             $data[] = [
                 'account'       => $account,
                 'receiver'     => $receiver,
+                'is_deleted'   => 0,
+                'deleted_time' => null,
+                'deleted_by'   => null,
                 'create_time'  => $now,
                 'update_time'  => $now,
             ];
