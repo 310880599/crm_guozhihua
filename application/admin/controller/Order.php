@@ -1442,10 +1442,44 @@ class Order extends Common
 
         // 准备下拉选项数据（团队列表、来源列表、客户性质列表、运营人员列表等）
         $teamList   = $this->getTeamList();
+        
+        // ====== 解析收款账户展示名（与 details() 方法保持一致） ======
+        // 优先使用 crm_receive_account 的最新账户名，而不是订单快照
+        // 先保存原始快照名，避免在更新后被覆盖
+        $originalSnapshotName = $order['bank_account_name'] ?? '';
+        $currentAccountInfoForDisplay = null;
+        if (!empty($order['bank_account'])) {
+            $currentAccountId = $order['bank_account'];
+            // 按 ID 查询账户表（不加 is_deleted 条件），获取最新账户信息
+            $currentAccountInfoForDisplay = Db::name('crm_receive_account')
+                ->where('id', $currentAccountId)
+                ->field('id, account, is_deleted')
+                ->find();
+            
+            $displayName = '';
+            if ($currentAccountInfoForDisplay) {
+                // 查到账户记录：使用最新的账户名，并根据 is_deleted 决定是否追加"（已删除）"
+                $displayName = $currentAccountInfoForDisplay['account'] ?? '';
+                if (isset($currentAccountInfoForDisplay['is_deleted']) && $currentAccountInfoForDisplay['is_deleted'] == 1) {
+                    $displayName .= '（已删除）';
+                }
+            } else {
+                // 查不到账户记录（被物理删除/异常）：回退使用订单快照名，并显示"（已删除）"
+                $snapshotName = $originalSnapshotName;
+                // 去掉可能已有的"（已删除）"标记，避免重复
+                $snapshotName = str_replace('（已删除）', '', $snapshotName);
+                $displayName = $snapshotName . '（已删除）';
+            }
+            
+            // 覆盖订单的 bank_account_name 为计算后的展示名，供模板使用
+            $order['bank_account_name'] = $displayName;
+        }
+        
+        // ====== 构建 accountList（与 details() 方法保持一致） ======
         // 【收款账户快照模式】只显示未删除的账户（is_deleted=0）
         $accountList = Db::name('crm_receive_account')->where('is_deleted', 0)->field('id, account')->select();
         
-        // 【收款账户快照模式】兼容已删除账户：如果当前订单的 bank_account 对应账户已经软删除，补充到列表头部
+        // 【收款账户快照模式】兼容已删除账户：如果当前订单的 bank_account 对应账户不在列表中，补充到列表头部
         if (!empty($order['bank_account'])) {
             $currentAccountId = $order['bank_account'];
             $foundInList = false;
@@ -1455,33 +1489,32 @@ class Order extends Common
                     break;
                 }
             }
-            // 如果当前订单的账户不在列表中（可能已删除），则补充一个选项
+            // 如果当前订单的账户不在列表中（因为 is_deleted=1 或查不到），需要补充一个选项
             if (!$foundInList) {
-                // 优先通过 bank_account（ID）去 crm_receive_account 表查询最新账户名称（不加 is_deleted 条件）
-                $currentAccountInfo = Db::name('crm_receive_account')
-                    ->where('id', $currentAccountId)
-                    ->field('account, is_deleted')
-                    ->find();
-                
                 $displayAccountName = '';
                 $statusSuffix = '';
                 
-                if ($currentAccountInfo) {
-                    // 能查到账户记录，使用最新的账户名称
-                    $displayAccountName = $currentAccountInfo['account'] ?? '';
-                    // 判断是否已删除
-                    if (isset($currentAccountInfo['is_deleted']) && $currentAccountInfo['is_deleted'] == 1) {
+                // 复用上面查询的结果，避免重复查询
+                if ($currentAccountInfoForDisplay) {
+                    // 若能按 ID 查到：用其最新 account 名，并按 is_deleted 决定是否加"（已删除）"
+                    $displayAccountName = $currentAccountInfoForDisplay['account'] ?? '';
+                    if (isset($currentAccountInfoForDisplay['is_deleted']) && $currentAccountInfoForDisplay['is_deleted'] == 1) {
                         $statusSuffix = '（已删除）';
                     }
                 } else {
-                    // 查不到账户记录（极端脏数据），使用订单快照名作为兜底
-                    $displayAccountName = $order['bank_account_name'] ?? '';
-                    $statusSuffix = '（不可用）';
+                    // 若查不到：用订单原始快照 bank_account_name（去掉可能已有的标记） + "（已删除）"
+                    $snapshotName = $originalSnapshotName;
+                    // 去掉可能已有的"（已删除）"标记，避免重复
+                    $displayAccountName = str_replace('（已删除）', '', $snapshotName);
+                    $statusSuffix = '（已删除）';
                 }
                 
-                // 如果最终显示名称为空，使用订单快照名作为最后兜底
+                // 如果最终显示名称为空，使用订单原始快照名作为最后兜底
                 if (empty($displayAccountName)) {
-                    $displayAccountName = $order['bank_account_name'] ?? '';
+                    $snapshotName = $originalSnapshotName;
+                    // 去掉可能已有的"（已删除）"标记，重新追加
+                    $displayAccountName = str_replace('（已删除）', '', $snapshotName);
+                    $statusSuffix = '（已删除）';
                 }
                 
                 // 将该选项添加到列表头部，保证下拉框能正常选中
@@ -2083,11 +2116,44 @@ class Order extends Common
         // 使用 array_map 和 trim 去除每个值的前后空格
         $sourceList = array_map('trim', $sourceList);
         //var_dump($sourceList);
+        // ====== 解析收款账户展示名（与 edit() 方法保持一致） ======
+        // 优先使用 crm_receive_account 的最新账户名，而不是订单快照
+        // 先保存原始快照名，避免在更新后被覆盖
+        $originalSnapshotName = $order['bank_account_name'] ?? '';
+        $currentAccountInfoForDisplay = null;
+        if (!empty($order['bank_account'])) {
+            $currentAccountId = $order['bank_account'];
+            // 按 ID 查询账户表（不加 is_deleted 条件），获取最新账户信息
+            $currentAccountInfoForDisplay = Db::name('crm_receive_account')
+                ->where('id', $currentAccountId)
+                ->field('id, account, is_deleted')
+                ->find();
+            
+            $displayName = '';
+            if ($currentAccountInfoForDisplay) {
+                // 查到账户记录：使用最新的账户名，并根据 is_deleted 决定是否追加"（已删除）"
+                $displayName = $currentAccountInfoForDisplay['account'] ?? '';
+                if (isset($currentAccountInfoForDisplay['is_deleted']) && $currentAccountInfoForDisplay['is_deleted'] == 1) {
+                    $displayName .= '（已删除）';
+                }
+            } else {
+                // 查不到账户记录（被物理删除/异常）：回退使用订单快照名，并显示"（已删除）"
+                $snapshotName = $originalSnapshotName;
+                // 去掉可能已有的"（已删除）"标记，避免重复
+                $snapshotName = str_replace('（已删除）', '', $snapshotName);
+                $displayName = $snapshotName . '（已删除）';
+            }
+            
+            // 覆盖订单的 bank_account_name 为计算后的展示名，供模板使用
+            $order['bank_account_name'] = $displayName;
+        }
+        
+        // ====== 构建 accountList（与 edit() 方法保持一致） ======
         // 【收款账户快照模式】只显示未删除的账户（is_deleted=0）
         $accountList = Db::name('crm_receive_account')->where('is_deleted', 0)->field('id, account')->select();
         
-        // 【收款账户快照模式】兼容已删除账户：如果当前订单的 bank_account 对应账户已经软删除，补充到列表头部
-        if (!empty($order['bank_account']) && !empty($order['bank_account_name'])) {
+        // 【收款账户快照模式】兼容已删除账户：如果当前订单的 bank_account 对应账户不在列表中，补充到列表头部
+        if (!empty($order['bank_account'])) {
             $currentAccountId = $order['bank_account'];
             $foundInList = false;
             foreach ($accountList as $acc) {
@@ -2096,12 +2162,41 @@ class Order extends Common
                     break;
                 }
             }
-            // 如果当前订单的账户不在列表中（已删除），则补充一个选项
+            // 如果当前订单的账户不在列表中（因为 is_deleted=1 或查不到），需要补充一个选项
             if (!$foundInList) {
-                array_unshift($accountList, [
-                    'id' => $currentAccountId,
-                    'account' => $order['bank_account_name'] . '（已删除）'
-                ]);
+                $displayAccountName = '';
+                $statusSuffix = '';
+                
+                // 复用上面查询的结果，避免重复查询
+                if ($currentAccountInfoForDisplay) {
+                    // 若能按 ID 查到：用其最新 account 名，并按 is_deleted 决定是否加"（已删除）"
+                    $displayAccountName = $currentAccountInfoForDisplay['account'] ?? '';
+                    if (isset($currentAccountInfoForDisplay['is_deleted']) && $currentAccountInfoForDisplay['is_deleted'] == 1) {
+                        $statusSuffix = '（已删除）';
+                    }
+                } else {
+                    // 若查不到：用订单原始快照 bank_account_name（去掉可能已有的标记） + "（已删除）"
+                    $snapshotName = $originalSnapshotName;
+                    // 去掉可能已有的"（已删除）"标记，避免重复
+                    $displayAccountName = str_replace('（已删除）', '', $snapshotName);
+                    $statusSuffix = '（已删除）';
+                }
+                
+                // 如果最终显示名称为空，使用订单原始快照名作为最后兜底
+                if (empty($displayAccountName)) {
+                    $snapshotName = $originalSnapshotName;
+                    // 去掉可能已有的"（已删除）"标记，重新追加
+                    $displayAccountName = str_replace('（已删除）', '', $snapshotName);
+                    $statusSuffix = '（已删除）';
+                }
+                
+                // 将该选项添加到列表头部，保证下拉框能正常选中
+                if (!empty($displayAccountName)) {
+                    array_unshift($accountList, [
+                        'id' => $currentAccountId,
+                        'account' => $displayAccountName . $statusSuffix
+                    ]);
+                }
             }
         }
         
