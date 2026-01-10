@@ -1446,7 +1446,7 @@ class Order extends Common
         $accountList = Db::name('crm_receive_account')->where('is_deleted', 0)->field('id, account')->select();
         
         // 【收款账户快照模式】兼容已删除账户：如果当前订单的 bank_account 对应账户已经软删除，补充到列表头部
-        if (!empty($order['bank_account']) && !empty($order['bank_account_name'])) {
+        if (!empty($order['bank_account'])) {
             $currentAccountId = $order['bank_account'];
             $foundInList = false;
             foreach ($accountList as $acc) {
@@ -1455,12 +1455,42 @@ class Order extends Common
                     break;
                 }
             }
-            // 如果当前订单的账户不在列表中（已删除），则补充一个选项
+            // 如果当前订单的账户不在列表中（可能已删除），则补充一个选项
             if (!$foundInList) {
-                array_unshift($accountList, [
-                    'id' => $currentAccountId,
-                    'account' => $order['bank_account_name'] . '（已删除）'
-                ]);
+                // 优先通过 bank_account（ID）去 crm_receive_account 表查询最新账户名称（不加 is_deleted 条件）
+                $currentAccountInfo = Db::name('crm_receive_account')
+                    ->where('id', $currentAccountId)
+                    ->field('account, is_deleted')
+                    ->find();
+                
+                $displayAccountName = '';
+                $statusSuffix = '';
+                
+                if ($currentAccountInfo) {
+                    // 能查到账户记录，使用最新的账户名称
+                    $displayAccountName = $currentAccountInfo['account'] ?? '';
+                    // 判断是否已删除
+                    if (isset($currentAccountInfo['is_deleted']) && $currentAccountInfo['is_deleted'] == 1) {
+                        $statusSuffix = '（已删除）';
+                    }
+                } else {
+                    // 查不到账户记录（极端脏数据），使用订单快照名作为兜底
+                    $displayAccountName = $order['bank_account_name'] ?? '';
+                    $statusSuffix = '（不可用）';
+                }
+                
+                // 如果最终显示名称为空，使用订单快照名作为最后兜底
+                if (empty($displayAccountName)) {
+                    $displayAccountName = $order['bank_account_name'] ?? '';
+                }
+                
+                // 将该选项添加到列表头部，保证下拉框能正常选中
+                if (!empty($displayAccountName)) {
+                    array_unshift($accountList, [
+                        'id' => $currentAccountId,
+                        'account' => $displayAccountName . $statusSuffix
+                    ]);
+                }
             }
         }
         
