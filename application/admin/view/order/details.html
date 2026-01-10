@@ -64,6 +64,9 @@
             object-fit: cover;
             cursor: zoom-in;
         }
+        .label-long {
+            width: 200px !important;   /* 或 220px，看你整体布局 */
+        }
     </style>
     
     <style>
@@ -496,15 +499,15 @@
                     <textarea name="remark" placeholder="请输入备注信息" class="layui-textarea">{:htmlentities($orderInfo.remark)}</textarea>
                 </div>
             </div> -->
-            <!-- 微信沟通凭证（多图显示） -->
+            <!-- 微信沟通及付款凭证（多图显示） -->
             {if condition="!empty($orderInfo.wechat_receipt_images) && count($orderInfo.wechat_receipt_images) > 0"}
             <div class="layui-form-item">
-                <label class="layui-form-label">微信沟通凭证</label>
+                <label class="layui-form-label label-long">微信沟通及付款凭证</label>
                 <div class="layui-input-4">
                     <div id="wechat_receipt_preview_list" class="multi-preview-list">
                         {volist name="orderInfo.wechat_receipt_images" id="img"}
                         <div class="preview-item">
-                            <img src="{$img.thumb|default=$img.full}" class="js-img-preview" data-full="{$img.full}" alt="微信沟通凭证" style="width: 100%; height: 100%; object-fit: cover; cursor: zoom-in;">
+                            <img src="{$img.thumb|default=$img.full}" class="js-img-preview" data-full="{$img.full}" alt="微信沟通及付款凭证" style="width: 100%; height: 100%; object-fit: cover; cursor: zoom-in;">
                         </div>
                         {/volist}
                     </div>
@@ -514,7 +517,7 @@
             <!-- 询盘来源凭证 -->
             {if condition="!empty($orderInfo.inquiry_assign_image)"}
             <div class="layui-form-item">
-                <label class="layui-form-label">询盘来源凭证</label>
+                <label class="layui-form-label label-long">询盘来源凭证</label>
                 <div class="layui-input-4">
                     <img src="{$orderInfo.inquiry_assign_image}" alt="询盘来源凭证" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
                 </div>

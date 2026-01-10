@@ -55,17 +55,17 @@
             min-height: 100% !important;
         }
         .layui-form-pane .layui-form-label {
-    width: 146px;
-    padding: 8px 15px;
-    height: 38px;
-    line-height: 20px;
-    border-width: 0;
-    border-style: none;
-    border-radius: 2px 0 0 2px;
-    text-align: left;
-    background-color: #FBFBFB;
-    box-sizing: border-box;
-}
+            width: 146px;
+            padding: 8px 15px;
+            height: 38px;
+            line-height: 20px;
+            border-width: 0;
+            border-style: none;
+            border-radius: 2px 0 0 2px;
+            text-align: left;
+            background-color: #FBFBFB;
+            box-sizing: border-box;
+        }
         /* 微信沟通凭证多图上传样式 */
         .multi-preview-list {
             display: flex;
@@ -107,6 +107,9 @@
         .btn-remove:hover {
             background: #ff5722;
             color: #fff;
+        }
+        .label-long {
+            width: 200px !important;   /* 或 220px，看你整体布局 */
         }
     </style>
 </head>
@@ -776,9 +779,9 @@
                     <span style="position: absolute; right: 5px; top: 50%; transform: translateY(-50%);">%</span>
                 </div>
             </div>
-            <!-- 微信沟通凭证 -->
+            <!-- 微信沟通及付款凭证 -->
             <div class="layui-form-item">
-                <label class="layui-form-label"><span style="color:red;">*</span>微信沟通凭证</label>
+                <label class="layui-form-label label-long"><span style="color:red;">*</span>微信沟通及付款凭证</label>
                 <div class="layui-input-4">
                     <div class="layui-upload">
                         <button type="button" class="layui-btn" id="upload_wechat_receipt">
@@ -794,7 +797,7 @@
             </div>
             <!-- 询盘来源凭证 -->
             <div class="layui-form-item">
-                <label class="layui-form-label"><span style="color:red;">*</span>询盘来源凭证</label>
+                <label class="layui-form-label label-long"><span style="color:red;">*</span>询盘来源凭证</label>
                 <div class="layui-input-4">
                     <div class="layui-upload">
                         <button type="button" class="layui-btn" id="upload_inquiry_assign">
