@@ -1162,6 +1162,24 @@ class Order extends Common
             $data['customer_type']    = Request::param('customer_type');  // 客户性质
             $data['source']           = Request::param('source');         // 询盘来源（运营渠道，存储为文字）
             $data['bank_account']     = Request::param('bank_account');  // 收款账户 ID (as string)
+            
+            // 【收款账户快照模式】根据 bank_account ID 查询账户名称并更新快照字段
+            // 先查出当前订单原来的快照字段做兜底
+            $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('bank_account_name')->find();
+            $originalBankAccountName = $originalOrder['bank_account_name'] ?? '';
+            
+            if (!empty($data['bank_account'])) {
+                // 根据本次提交的 bank_account 查询账户名称
+                $data['bank_account_name'] = $this->resolveBankAccountName($data['bank_account']);
+                // 若查不到（账户被删除/异常）：不要把快照写空，保留原来的 bank_account_name
+                if (empty($data['bank_account_name']) && !empty($originalBankAccountName)) {
+                    $data['bank_account_name'] = $originalBankAccountName;
+                }
+            } else {
+                // 如果 bank_account 为空（用户清空）：bank_account_name 也置空
+                $data['bank_account_name'] = '';
+            }
+            
             $data['pr_user']          = Request::param('pr_user') ?: Session::get('username'); // 客户负责人（默认当前用户）
             $data['team_name']        = Request::param('team_name');      // 团队名称
             
