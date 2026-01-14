@@ -762,7 +762,7 @@
                 </div>
             </div>
             <!-- 微信沟通及付款凭证 -->
-            <div class="layui-form-item">
+            <div class="layui-form-item" id="wechat_receipt_item">
                 <label class="layui-form-label label-long"><span style="color:red;">*</span>微信沟通及付款凭证</label>
                 <div class="layui-input-4">
                     <div class="layui-upload">
@@ -778,7 +778,7 @@
                 </div>
             </div>
             <!-- 询盘来源凭证 -->
-            <div class="layui-form-item">
+            <div class="layui-form-item" id="inquiry_assign_item">
                 <label class="layui-form-label label-long"><span style="color:red;">*</span>询盘来源凭证</label>
                 <div class="layui-input-4">
                     <div class="layui-upload">
@@ -1162,7 +1162,48 @@
                 window.fillSourcePortBySourceName(sourceName);
             }
             form.render('select');
+            // 询盘来源切换时，更新凭证上传块的显示/隐藏
+            updateVoucherUI();
         });
+        
+        // 判断是否满足凭证豁免条件（返单 or 利润<2000）
+        function isVoucherExempt() {
+            // 判断询盘来源是否为"返单"
+            var sourceValue = $('#source').val() || '';
+            var sourceText = $('#source option:selected').text() || '';
+            var isReturnOrder = (sourceValue === '返单' || sourceText === '返单');
+            
+            // 判断利润是否<2000
+            var profit = parseFloat($('#profit').val()) || 0;
+            var isLowProfit = profit < 2000;
+            
+            return isReturnOrder || isLowProfit;
+        }
+        
+        // 根据豁免条件更新凭证上传块的显示/隐藏和必填状态
+        function updateVoucherUI() {
+            var exempt = isVoucherExempt();
+            
+            if (exempt) {
+                // 豁免：隐藏两个上传块，移除必填验证
+                $('#wechat_receipt_item').hide();
+                $('#inquiry_assign_item').hide();
+                $('#wechat_receipt_image').removeAttr('lay-verify');
+                $('#inquiry_assign_image').removeAttr('lay-verify');
+            } else {
+                // 非豁免：显示两个上传块，恢复必填验证
+                $('#wechat_receipt_item').show();
+                $('#inquiry_assign_item').show();
+                $('#wechat_receipt_image').attr('lay-verify', 'required');
+                $('#inquiry_assign_image').attr('lay-verify', 'required');
+            }
+            
+            // 重新渲染表单验证
+            form.render();
+        }
+        
+        // 页面初始化时调用一次
+        updateVoucherUI();
         
         // 用户属性选择变化时的处理
         form.on('select(customer_type_flag)', function (data) {
@@ -1337,6 +1378,9 @@
                 marginRate = (finalProfit / sumTotal) * 100;
             }
             $('#margin_rate').val(marginRate.toFixed(2));
+            
+            // 利润更新后，检查是否需要更新凭证上传块的显示/隐藏
+            updateVoucherUI();
         }
 
 
@@ -1876,29 +1920,35 @@
                 return false;
             }
 
-            // 检查两个图片是否已上传
-            // 微信沟通凭证校验（多图，至少1张）
-            var wechatReceiptImage = $('#wechat_receipt_image').val();
-            if (!wechatReceiptImage || wechatReceiptImage.trim() === '') {
-                layer.msg('请至少上传1张微信沟通凭证', { icon: 2, time: 2000 });
-                return false;
-            }
-            // 校验是否为有效的JSON数组且至少1张
-            try {
-                var wechatReceiptArray = JSON.parse(wechatReceiptImage);
-                if (!Array.isArray(wechatReceiptArray) || wechatReceiptArray.length < 1) {
+            // 检查是否满足凭证豁免条件
+            var exempt = isVoucherExempt();
+            
+            // 只有在非豁免情况下才校验两个图片
+            if (!exempt) {
+                // 微信沟通凭证校验（多图，至少1张）
+                var wechatReceiptImage = $('#wechat_receipt_image').val();
+                if (!wechatReceiptImage || wechatReceiptImage.trim() === '') {
                     layer.msg('请至少上传1张微信沟通凭证', { icon: 2, time: 2000 });
                     return false;
                 }
-            } catch(e) {
-                layer.msg('微信沟通凭证数据格式错误，请重新上传', { icon: 2, time: 2000 });
-                return false;
-            }
-            
-            var inquiryAssignImage = $('#inquiry_assign_image').val();
-            if (!inquiryAssignImage || inquiryAssignImage.trim() === '') {
-                layer.msg('请上传产品询盘分配图', { icon: 2, time: 2000 });
-                return false;
+                // 校验是否为有效的JSON数组且至少1张
+                try {
+                    var wechatReceiptArray = JSON.parse(wechatReceiptImage);
+                    if (!Array.isArray(wechatReceiptArray) || wechatReceiptArray.length < 1) {
+                        layer.msg('请至少上传1张微信沟通凭证', { icon: 2, time: 2000 });
+                        return false;
+                    }
+                } catch(e) {
+                    layer.msg('微信沟通凭证数据格式错误，请重新上传', { icon: 2, time: 2000 });
+                    return false;
+                }
+                
+                // 询盘来源凭证校验
+                var inquiryAssignImage = $('#inquiry_assign_image').val();
+                if (!inquiryAssignImage || inquiryAssignImage.trim() === '') {
+                    layer.msg('请上传产品询盘分配图', { icon: 2, time: 2000 });
+                    return false;
+                }
             }
 
             // 提交前同步更新总计字段，以防用户未触发输入事件
