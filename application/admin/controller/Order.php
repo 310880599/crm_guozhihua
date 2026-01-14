@@ -1252,6 +1252,20 @@ class Order extends Common
             $data['amount_received']  = Request::param('amount_received'); // 已收款金额
             //$data['remark']           = Request::param('remark');         // 备注
             
+            // ====== 判断是否满足凭证豁免条件（返单 or 利润<2000） ======
+            $source = trim(Request::param('source', ''));
+            $isReturnOrder = ($source === '返单');
+            
+            // 从请求参数中读取利润（前端会在提交前调用 updateTotals() 计算好）
+            $profit = floatval(Request::param('profit', 0));
+            $isLowProfit = ($profit < 2000);
+            
+            // 豁免条件：返单 或 利润<2000
+            $exempt = $isReturnOrder || $isLowProfit;
+            
+            // 获取原始订单数据（用于豁免情况下保留原值）
+            $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('wechat_receipt_image, inquiry_assign_image')->find();
+            
             // 处理微信沟通凭证（多图上传）
             $MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量（与前端一致）
             $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
@@ -1284,16 +1298,47 @@ class Order extends Common
                 return !empty(trim($v));
             })));
             
-            // 校验数量：必须 1~N
-            $count = count($wechatReceiptUrls);
-            if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
-                return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
+            if ($exempt) {
+                // 豁免情况：允许为空，但如果上传了也保存（不校验数量）
+                if (empty($wechatReceiptUrls)) {
+                    // 如果前端传空，不覆盖数据库原值（编辑特性）
+                    // 不设置 $data['wechat_receipt_image']，保留原值
+                } else {
+                    // 如果上传了，校验数量不超过上限
+                    $count = count($wechatReceiptUrls);
+                    if ($count > $MAX_WECHAT_RECEIPT_IMAGES) {
+                        return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
+                    }
+                    $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
+                }
+            } else {
+                // 非豁免情况：必须上传，保持原有校验逻辑
+                $count = count($wechatReceiptUrls);
+                if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
+                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
+                }
+                // JSON 编码存库
+                $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
             }
             
-            // JSON 编码存库
-            $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
-            
-            $data['inquiry_assign_image'] = Request::param('inquiry_assign_image', '');
+            // 处理询盘来源凭证
+            $inquiryAssignImage = Request::param('inquiry_assign_image', '');
+            if ($exempt) {
+                // 豁免情况：允许为空，但如果上传了也保存
+                if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
+                    // 如果前端传空，不覆盖数据库原值（编辑特性）
+                    // 不设置 $data['inquiry_assign_image']，保留原值
+                } else {
+                    // 如果有值，保存新值
+                    $data['inquiry_assign_image'] = trim($inquiryAssignImage);
+                }
+            } else {
+                // 非豁免情况：必须上传
+                if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
+                    return json(['code' => 0, 'msg' => '请上传询盘来源凭证（产品询盘分配图）']);
+                }
+                $data['inquiry_assign_image'] = trim($inquiryAssignImage);
+            }
             $data['ut_time']          = date("Y-m-d H:i:s");              // 更新操作时间
 
             // 解析协同人 joint_person 字段（支持数组/JSON/逗号分隔字符串）
