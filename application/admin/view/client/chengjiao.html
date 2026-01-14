@@ -566,8 +566,8 @@
 
 <!-- 操作栏模板：仅保留“写跟进”按钮 -->
 <script type="text/html" id="action">
-    {{# if(d.aid == 1) { }}
     <a class="layui-btn layui-btn-primary layui-btn-xs follow-btn" href="javascript:void(0);" data-id="{{d.id}}"><i class="layui-icon">&#xe654;</i>写跟进</a>
+    {{# if(d.aid == 1) { }}
     <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
     <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
     {{# } }}
