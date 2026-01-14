@@ -2175,17 +2175,6 @@ class Order extends Common
             $wechatReceiptImages = $parseImages($order['wechat_receipt_image']);
         }
         
-        // 如果订单表没有，尝试从行业表（crm_client_hangye）获取
-        if (empty($wechatReceiptImages) && !empty($order['contact'])) {
-            $hangye = Db::name('crm_client_hangye')
-                ->where('contact', $order['contact'])
-                ->field('wechat_receipt_image')
-                ->find();
-            if (!empty($hangye['wechat_receipt_image'])) {
-                $wechatReceiptImages = $parseImages($hangye['wechat_receipt_image']);
-            }
-        }
-        
         // 将解析结果写入 $order，供模板使用
         $order['wechat_receipt_images'] = $wechatReceiptImages;
         $order['wechat_receipt_full_urls'] = array_column($wechatReceiptImages, 'full');

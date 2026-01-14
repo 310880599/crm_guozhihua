@@ -501,7 +501,7 @@
             </div> -->
             <!-- 微信沟通及付款凭证（多图显示） -->
             {if condition="!empty($orderInfo.wechat_receipt_images) && count($orderInfo.wechat_receipt_images) > 0"}
-            <div class="layui-form-item">
+            <div class="layui-form-item" id="wechat_receipt_item">
                 <label class="layui-form-label label-long">微信沟通及付款凭证</label>
                 <div class="layui-input-4">
                     <div id="wechat_receipt_preview_list" class="multi-preview-list">
@@ -516,7 +516,7 @@
             {/if}
             <!-- 询盘来源凭证 -->
             {if condition="!empty($orderInfo.inquiry_assign_image)"}
-            <div class="layui-form-item">
+            <div class="layui-form-item" id="inquiry_assign_item">
                 <label class="layui-form-label label-long">询盘来源凭证</label>
                 <div class="layui-input-4">
                     <img src="{$orderInfo.inquiry_assign_image}" alt="询盘来源凭证" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
@@ -725,6 +725,35 @@
             }
             // 将对齐修正函数暴露到全局，便于在其他异步回调中调用
             window.fixSelectAlign = fixSelectAlign;
+
+            // 判断是否满足凭证豁免条件（返单 or 利润<2000）
+            function isVoucherExempt() {
+                // 判断询盘来源是否为"返单"
+                var sourceValue = $('#source').val() || '';
+                var sourceText = $('#source option:selected').text() || '';
+                var isReturnOrder = (sourceValue === '返单' || sourceText === '返单');
+                
+                // 判断利润是否<2000
+                var profit = parseFloat($('#profit').val()) || 0;
+                var isLowProfit = profit < 2000;
+                
+                return isReturnOrder || isLowProfit;
+            }
+            
+            // 根据豁免条件更新凭证展示块的显示/隐藏
+            function updateVoucherUI() {
+                var exempt = isVoucherExempt();
+                
+                if (exempt) {
+                    // 豁免：隐藏两个凭证块
+                    $('#wechat_receipt_item').hide();
+                    $('#inquiry_assign_item').hide();
+                } else {
+                    // 非豁免：显示两个凭证块
+                    $('#wechat_receipt_item').show();
+                    $('#inquiry_assign_item').show();
+                }
+            }
 
             /**
              * 图片预览功能：点击图片打开预览（支持放大/缩小/重置/滚轮缩放/拖拽移动）
@@ -979,6 +1008,9 @@
                     e.preventDefault();
                     return false;
                 });
+
+                // 7) 根据凭证豁免条件更新凭证展示块的显示/隐藏
+                updateVoucherUI();
 
             })();
         });
