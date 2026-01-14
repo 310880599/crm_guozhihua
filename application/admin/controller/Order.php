@@ -817,12 +817,18 @@ class Order extends Common
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
 
         // 查询所有产品经理（admin表中 group_id=14），按用户名升序
+        $extraManagerIds = [395]; // 李营
         $managerList = Db::name('admin')
-            ->whereIn('group_id', [ 13, 14])
+            ->where(function($q) use ($extraManagerIds){
+                $q->whereIn('group_id', [13, 14])
+                  ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+            })
             ->field('admin_id, username')
             ->order('username', 'asc')
             ->select();
+        
         $this->assign('managerList', $managerList);
+        
 
         return $this->fetch('order/add');
     }
@@ -1744,12 +1750,18 @@ class Order extends Common
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
 
         // 产品经理列表（group_id = 13/14）
+        $extraManagerIds = [395]; // 李营
         $managerList = Db::name('admin')
-            ->whereIn('group_id', [13, 14])
+            ->where(function($q) use ($extraManagerIds){
+                $q->whereIn('group_id', [13, 14])
+                  ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+            })
             ->field('admin_id, username')
             ->order('username', 'asc')
             ->select();
+        
         $this->assign('managerList', $managerList);
+
 
         // 获取来源端口列表（按来源名称分组，与订单新增页一致）
         $shopList = [];
@@ -2365,12 +2377,18 @@ class Order extends Common
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
 
         // 产品经理列表（group_id = 14）
+        $extraManagerIds = [395]; // 李营
         $managerList = Db::name('admin')
-            ->where('group_id', 14)
+            ->where(function($q) use ($extraManagerIds){
+                $q->whereIn('group_id', [13, 14])
+                  ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+            })
             ->field('admin_id, username')
             ->order('username', 'asc')
             ->select();
+        
         $this->assign('managerList', $managerList);
+
 
         // 将订单主表和明细数据分配给模板
         $this->assign('orderInfo', $order);
