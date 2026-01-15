@@ -4015,5 +4015,154 @@ class Client extends Common
         exit;
     }
 
+    /**
+     * 获取表格列宽
+     * 用于页面初始化时读取当前用户已保存的列宽
+     */
+    /**
+     * 获取表格列宽
+     * 从数据库读取当前用户的列宽配置
+     * 路由：Client/getColWidths
+     * 请求：GET（AJAX）
+     * 入参：page_key（字符串）、table_id（字符串）
+     * 返回：json {code:0, data:{field1:120, field2:180...}}
+     * 
+     * 验收方式：
+     * 1. 登录 A 用户，拖拽"产品名称"列宽到 300，刷新页面：列宽仍为 300
+     * 2. 换 B 用户登录：列宽不受影响（仍是默认或 B 自己的）
+     * 3. 数据表 crm_table_colwidth 能看到对应记录更新 updated_at
+     */
+    public function getColWidths()
+    {
+        if (!request()->isAjax()) {
+            return json(['code' => 500, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $adminId = Session::get('aid');
+        $pageKey = Request::param('page_key', '');
+        $tableId = Request::param('table_id', '');
+
+        // 强制要求：admin_id 为空返回 401
+        if (empty($adminId)) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        // 校验 page_key/table_id
+        if (empty($pageKey) || empty($tableId)) {
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => []]);
+        }
+
+        try {
+            $list = Db::table('crm_table_colwidth')
+                ->where('admin_id', $adminId)
+                ->where('page_key', $pageKey)
+                ->where('table_id', $tableId)
+                ->field('field, width')
+                ->select();
+
+            $widths = [];
+            if (!empty($list)) {
+                foreach ($list as $item) {
+                    $widths[$item['field']] = (int)$item['width'];
+                }
+            }
+
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => $widths]);
+        } catch (\Exception $e) {
+            // 如果表不存在或其他错误，返回空数据，不报错
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => []]);
+        }
+    }
+
+    /**
+     * 保存表格列宽
+     * 用于前端拖拽列宽后保存到数据库
+     * 路由：Client/saveColWidths
+     * 请求：POST（AJAX）
+     * 入参：page_key, table_id, widths（JSON 字符串或 array，兼容两种）
+     * 返回：json {code:0, msg:'保存成功'}
+     * 
+     * 强制要求：
+     * - widths decode 失败/为空，返回 code=400
+     * - width 只允许正整数（<=2000 上限保护）
+     * - 使用批量 INSERT ... ON DUPLICATE KEY UPDATE
+     */
+    public function saveColWidths()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 500, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $adminId = Session::get('aid');
+        $pageKey = Request::param('page_key', '');
+        $tableId = Request::param('table_id', '');
+        $widthsParam = Request::param('widths', '');
+
+        if (empty($adminId) || empty($pageKey) || empty($tableId)) {
+            return json(['code' => 500, 'msg' => '参数不完整', 'data' => []]);
+        }
+
+        // 兼容 widths 是 JSON 字符串或 array 两种情况
+        $widths = null;
+        if (is_array($widthsParam)) {
+            $widths = $widthsParam;
+        } else if (!empty($widthsParam)) {
+            $widths = json_decode($widthsParam, true);
+        }
+
+        // 强制要求：widths decode 失败/为空，返回 code=400（不要静默成功）
+        if (!is_array($widths) || empty($widths)) {
+            return json(['code' => 400, 'msg' => '列宽数据格式错误或为空', 'data' => []]);
+        }
+
+        try {
+            $currentTime = time();
+            $values = [];
+            $params = [];
+
+            // 准备批量插入数据
+            foreach ($widths as $field => $width) {
+                if (empty($field) || !is_string($field)) {
+                    continue;
+                }
+
+                // 验证字段名格式：只允许字母、数字、下划线（防止 SQL 注入）
+                if (!preg_match('/^[a-zA-Z0-9_]+$/', $field)) {
+                    continue;
+                }
+
+                $width = (int)$width;
+                
+                // 强制要求：width 只允许正整数（<=2000 上限保护）
+                if ($width <= 0 || $width > 2000) {
+                    continue;
+                }
+                
+                $values[] = "(?, ?, ?, ?, ?, ?)";
+                $params[] = $adminId;
+                $params[] = $pageKey;
+                $params[] = $tableId;
+                $params[] = $field; // 已验证格式，直接使用
+                $params[] = $width;
+                $params[] = $currentTime;
+            }
+
+            if (empty($values)) {
+                return json(['code' => 400, 'msg' => '没有有效的列宽数据', 'data' => []]);
+            }
+
+            // 使用批量 INSERT ... ON DUPLICATE KEY UPDATE（一条 SQL）
+            $sql = "INSERT INTO `crm_table_colwidth` (`admin_id`, `page_key`, `table_id`, `field`, `width`, `updated_at`) 
+                    VALUES " . implode(', ', $values) . "
+                    ON DUPLICATE KEY UPDATE `width` = VALUES(`width`), `updated_at` = VALUES(`updated_at`)";
+            
+            Db::execute($sql, $params);
+
+            return json(['code' => 0, 'msg' => '保存成功', 'data' => ['count' => count($values)]]);
+        } catch (\Exception $e) {
+            return json(['code' => 500, 'msg' => '保存失败：' . $e->getMessage(), 'data' => []]);
+        }
+    }
+
 
 }
