@@ -898,7 +898,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             success: function(res) {
                 if (res.code === 0 && res.data && Object.keys(res.data).length > 0) {
                     dbWidths = res.data;
-                    console.log('✅ 从数据库恢复列宽:', dbWidths);
+                    //console.log('✅ 从数据库恢复列宽:', dbWidths);
                 } else if (res.code === 401) {
                     console.warn('⚠️ 未登录，无法从数据库恢复列宽');
                 }
@@ -1155,107 +1155,136 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
 
     // ========== 列宽拖拽保存（更稳：用 colgroup + mouseup 兜底）==========
-    var saveWidthTimer = null;
-    var maybeResizing = false;
+    var lastSnapshot = {}; // 全局变量：保存上一次的列宽快照
 
     /**
      * 读表头 colgroup 的真实宽度（Layui 改的是 col 的 width）
      * 保存逻辑：先保存到 localStorage（兜底），再保存到数据库
      * 保存失败要提示（layer.msg）
      */
-    function saveWidths() {
+     function saveWidths() {
         try {
             var widths = {};
             var $view = $('#' + tableId).next('.layui-table-view');
             if (!$view.length) return;
 
-            // 只取"主表头"的 th/colgroup（不取 fixed 那套，避免重复）
-            var $headerTable = $view.find('.layui-table-header table');
+            // ✅只取主表头（不取 fixed 的那套）
+            var $headerTable = $view.find('.layui-table-header table').eq(0);
             var $ths = $headerTable.find('thead tr th');
-            var $cols = $headerTable.find('colgroup col');
 
             $ths.each(function () {
-                var field = $(this).attr('data-field');
-                if (!field) return;
+                var $th = $(this);
+                var field = $th.attr('data-field');
+                if (!field || field === '0') return;
 
-                // Layui 的 checkbox 列经常是 data-field="0"（跳过）
-                if (field === '0') return;
-
-                var idx = $(this).index();
-                var $col = $cols.eq(idx);
-                if (!$col.length) return;
-
-                var w = parseInt($col.attr('width') || $col.css('width'), 10);
+                var w = parseInt($th.outerWidth(), 10);
                 if (w > 0) widths[field] = w;
             });
 
-            if (Object.keys(widths).length) {
-                // 保留原有 localStorage 逻辑（作为兜底）
-                localStorage.setItem(columnWidthKey, JSON.stringify(widths));
-                
-                // 保存到数据库（带错误提示）
-                $.ajax({
-                    url: "{:url('Client/saveColWidths')}",
-                    type: 'POST',
-                    dataType: 'json',
-                    data: {
-                        page_key: pageKey,
-                        table_id: tableId,
-                        widths: JSON.stringify(widths)
-                    },
-                    success: function(res) {
-                        if (res.code === 0) {
-                            // 调试辅助：保存成功时可选 console.log
-                            console.log('✅ 列宽已保存到数据库', widths);
-                        } else {
-                            // 保存失败要提示（layer.msg）
-                            layer.msg(res.msg || '保存列宽失败', { icon: 2, time: 2000 });
-                            console.error('❌ 列宽保存失败:', res);
-                        }
-                    },
-                    error: function(xhr, status, error) {
-                        // 保存失败要提示（layer.msg）
-                        layer.msg('保存列宽失败：网络错误', { icon: 2, time: 2000 });
-                        console.error('❌ 列宽保存失败（网络错误）:', error);
-                    }
-                });
+            // 没取到就直接跳过
+            if (!Object.keys(widths).length) {
+                console.warn('[colwidth] widths empty, skip save');
+                return;
             }
+
+            // ✅localStorage 兜底
+            localStorage.setItem(columnWidthKey, JSON.stringify(widths));
+
+            // ✅保存到数据库
+            $.ajax({
+                url: "{:url('Client/saveColWidths')}",
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    page_key: pageKey,
+                    table_id: tableId,
+                    widths: JSON.stringify(widths)
+                },
+                success: function(res) {
+                    if (res.code === 0) {
+                        //console.log('✅ 列宽已保存到数据库', widths);
+                    } else {
+                        layer.msg(res.msg || '保存列宽失败', { icon: 2, time: 2000 });
+                        console.error('❌ 列宽保存失败:', res);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    layer.msg('保存列宽失败：网络错误', { icon: 2, time: 2000 });
+                    console.error('❌ 列宽保存失败（网络错误）:', error);
+                }
+            });
+
         } catch (e) {
             console.warn('保存列宽失败:', e);
         }
     }
 
+
+    /**
+     * 获取当前列宽快照
+     * 读取 #table-list 对应的 .layui-table-view
+     * 找到主表头：$view.find('.layui-table-header table')
+     * 遍历 thead tr th 与 colgroup col，生成 {field: width} 的对象（跳过 data-field="0"）
+     * 返回对象（空对象也返回）
+     */
+     function getCurrentWidthsSnapshot() {
+        var snapshot = {};
+        try {
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if (!$view.length) return snapshot;
+
+            // ✅只取主表头（不取 fixed 的那套）
+            var $headerTable = $view.find('.layui-table-header table').eq(0);
+            var $ths = $headerTable.find('thead tr th');
+
+            $ths.each(function () {
+                var $th = $(this);
+                var field = $th.attr('data-field');
+                if (!field || field === '0') return; // 跳过 checkbox / 空字段
+
+                // ✅直接读取 th 的真实宽度（Layui 版本差异下最稳）
+                var w = parseInt($th.outerWidth(), 10);
+                if (w > 0) snapshot[field] = w;
+            });
+        } catch (e) {
+            console.warn('获取列宽快照失败:', e);
+        }
+        return snapshot;
+    }
+
+
     /**
      * 绑定列宽拖拽保存监听
-     * 节流：mouseup 后 300ms 再保存（避免连续写库）
+     * 策略：监听 document 的 mouseup/touchend，对比快照变化后保存
      */
-    function bindResizeSave() {
+     function bindResizeSave() {
         var $view = $('#' + tableId).next('.layui-table-view');
         if (!$view.length) return;
 
-        var $header = $view.find('.layui-table-header');
+        // 防止 done 多次绑定
+        $(document).off('mouseup.colwidth_auto touchend.colwidth_auto');
 
-        // 先解绑，避免 done 多次绑定
-        $header.off('.colwidth');
-        $(document).off('.colwidth_end');
+        lastSnapshot = getCurrentWidthsSnapshot();
+        //console.log('[colwidth] listener bound', lastSnapshot);
 
-        // 只要在表头区域按下，就认为"可能要拖拽列宽"
-        $header.on('mousedown.colwidth touchstart.colwidth', function () {
-            maybeResizing = true;
+        $(document).on('mouseup.colwidth_auto touchend.colwidth_auto', function(e) {
+            //console.log('[colwidth] mouseup fired', e && e.target);
 
-            // 在 mouseup 时兜底保存一次
-            $(document).off('.colwidth_end').on('mouseup.colwidth_end touchend.colwidth_end', function () {
-                if (!maybeResizing) return;
-                maybeResizing = false;
+            setTimeout(function() {
+                var newSnapshot = getCurrentWidthsSnapshot();
+                //console.log('[colwidth] snapshot after mouseup', newSnapshot);
 
-                // 节流：mouseup 后 300ms 再保存（避免连续写库）
-                if (saveWidthTimer) clearTimeout(saveWidthTimer);
-                saveWidthTimer = setTimeout(function () {
+                if (Object.keys(newSnapshot).length === 0) return;
+
+                if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
+                    //console.log('[colwidth] changed -> saving', newSnapshot);
                     saveWidths();
-                }, 300);
-            });
+                    lastSnapshot = newSnapshot;
+                }
+            }, 120);
         });
     }
+
 
 
 
