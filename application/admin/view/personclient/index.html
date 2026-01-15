@@ -812,11 +812,13 @@
 <script>
 layui.use(['table','form','upload','util','laydate','layer'], function () {
     var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery, upload = layui.upload, layer = layui.layer;
-    var followIndex = null; // 记住“写跟进弹窗”的 layer index
+    var followIndex = null; // 记住"写跟进弹窗"的 layer index
     var isMobile = $(window).width() < 768;
     var currentUsername = "{$Think.session.username}" || "default";
-    var columnWidthKey = "crm_table_column_widths_" + currentUsername;
     var tableId = "table-list";
+    // 生成更唯一的列宽存储 key（包含用户名、页面路径、表格ID）
+    var pageKey = location.pathname.replace(/[^\w]/g, '_');
+    var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey + "_" + tableId;
 
      // 列定义
      var cols = [[
@@ -859,7 +861,23 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
          { fixed: 'right', title: '操作', width: isMobile ? 100 : 320, align: 'center', toolbar: '#action' }
      ]];
 
-    // restoreColWidth(cols[0]);
+    // 恢复列宽（在渲染前执行）
+    function restoreColWidth(colArr) {
+        try {
+            var saved = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
+            colArr.forEach(function (c) {
+                // 只处理有 field 的列，checkbox/操作列也可以按需处理
+                if (c.field && saved[c.field] && saved[c.field] > 0) {
+                    c.width = saved[c.field];
+                }
+            });
+        } catch (e) {
+            console.warn('恢复列宽失败:', e);
+        }
+    }
+    
+    // 在渲染前恢复列宽
+    restoreColWidth(cols[0]);
 
     // 列表初始化（注意：根据你的实际路由改这里）
     var tableIns = table.render({
@@ -873,8 +891,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         limit: 30,
         cols: cols,
         limit: 10,
-        page: { limits: [10, 20, 50, 100, 200, 500,9999999] }
-        // done: bindResizeSave
+        page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
+        done: function(res, curr, count) {
+            // 绑定列宽拖拽保存监听（每次 done 都会执行，先 off 再 on 避免重复绑定）
+            bindResizeSave();
+        }
     });
  // 点击写跟进按钮打开弹窗
     $(document).on('click', '.follow-btn, .client-link', function() {
@@ -1077,24 +1098,50 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             }
         });
     });
-    // 拖拽列宽后的保存
-    // function bindResizeSave() {
-    //     $(document).off('mouseup.saveWidth').on('mouseup.saveWidth', function () {
-    //         setTimeout(saveWidths, 10);
-    //     });
-    // }
-    // function saveWidths() {
-    //     var widths = {};
-    //     $('#' + tableId).next('.layui-table-view').find('th').each(function () {
-    //         var field = $(this).data('field');
-    //         if (field) widths[field] = $(this).outerWidth();
-    //     });
-    //     localStorage.setItem(columnWidthKey, JSON.stringify(widths));
-    // }
-    // function restoreColWidth(colArr) {
-    //     var saved = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
-    //     colArr.forEach(function (c) { if (saved[c.field]) c.width = saved[c.field]; });
-    // }
+    // 拖拽列宽后的保存（升级版：带防抖，兼容移动端）
+    var saveWidthTimer = null;
+    function saveWidths() {
+        try {
+            var widths = {};
+            var $tableView = $('#' + tableId).next('.layui-table-view');
+            if ($tableView.length === 0) return;
+            
+            // 从表头 th 中读取宽度
+            $tableView.find('.layui-table-header th').each(function () {
+                var $th = $(this);
+                var field = $th.data('field');
+                if (field) {
+                    var width = $th.outerWidth();
+                    if (width > 0) {
+                        widths[field] = width;
+                    }
+                }
+            });
+            
+            // 保存到 localStorage
+            if (Object.keys(widths).length > 0) {
+                localStorage.setItem(columnWidthKey, JSON.stringify(widths));
+            }
+        } catch (e) {
+            console.warn('保存列宽失败:', e);
+        }
+    }
+    
+    function bindResizeSave() {
+        // 先移除旧的监听，避免重复绑定
+        $(document).off('mouseup.saveWidth touchend.saveWidth');
+        
+        // 绑定新的监听（支持鼠标和触摸）
+        $(document).on('mouseup.saveWidth touchend.saveWidth', function () {
+            // 防抖：延迟 100ms 保存，避免拖拽过程中频繁写入
+            if (saveWidthTimer) {
+                clearTimeout(saveWidthTimer);
+            }
+            saveWidthTimer = setTimeout(function() {
+                saveWidths();
+            }, 100);
+        });
+    }
 
     // 添加按钮
     $('#add').on('click', function () {
