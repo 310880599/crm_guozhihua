@@ -1,6 +1,5 @@
 {include file="common/head"/}
 <link rel="stylesheet" href="/static/admin/css/select.css" media="all">
-<script src="/static/admin/js/select.js"></script>
 <style>
     /* 个人客户列表页面样式优化 - 撑满页面 */
     body {
@@ -162,11 +161,12 @@
          width: 100%;
      }
      
+     /* ✅表格宽度严格按列宽总和，不强制撑满 */
      .layui-table {
-         width: auto !important;
-         min-width: 100%;
-         table-layout: auto;
-     }
+        width: max-content !important;
+        min-width: 0 !important;
+        table-layout: fixed !important;
+    }
      
     /* ✅ 默认：所有列单行显示 + 省略号（利于拖拽列宽） */
     .layui-table-view .layui-table-cell{
@@ -595,6 +595,23 @@
         background: rgba(0, 0, 0, .3);
         display: none;
     }
+    
+    /* ===============================
+       ✅ 方案A：表格按"列宽总和"渲染，不分摊空白
+       =============================== */
+    .layui-table-view .layui-table-header table,
+    .layui-table-view .layui-table-body table{
+        width: max-content !important;  /* 表格宽度由列宽总和决定 */
+        min-width: 0 !important;        /* 取消 min-width:100% 导致的强制撑满 */
+        table-layout: fixed !important; /* 避免空白被分摊到列上 */
+    }
+
+    /* 横向滚动由外层负责（你本来就有，这里再加固一次） */
+    .layui-table-box,
+    .layui-table-main,
+    .layui-table-body{
+        overflow-x: auto !important;
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域 -->
@@ -874,6 +891,36 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
      ]];
 
     /**
+     * ✅ 批量收窄默认列宽：不会覆盖数据库/本地记忆（记忆在 restoreColWidth 里优先级更高）
+     */
+    function shrinkDefaultWidths(colArr){
+        var map = {
+            kh_name: 120,
+            product_name: 160,
+            last_up_records: 200,
+            main_phone: 120,
+            aux_phone: 120,
+            last_up_time: 140,
+            at_time: 150,
+            ut_time: 150,
+            inquiry_name: 120,
+            port_name: 120,
+            joint_person_names: 120,
+            pr_user: 100,
+            issuccess: 90,
+            original_creation_time: 150,
+            original_modification_time: 150
+        };
+
+        colArr.forEach(function(c){
+            if(!c) return;
+            if(!c.field) return; // checkbox/操作列等
+            // 统一更窄的默认值
+            c.width = map[c.field] || 90;
+        });
+    }
+
+    /**
      * 恢复列宽（在渲染前执行）
      * 优先级：数据库 > localStorage > 默认值
      * 如果数据库无数据/请求失败，仍然走 localStorage 兜底，确保表格能正常渲染
@@ -898,7 +945,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             success: function(res) {
                 if (res.code === 0 && res.data && Object.keys(res.data).length > 0) {
                     dbWidths = res.data;
-                    //console.log('✅ 从数据库恢复列宽:', dbWidths);
+                    console.log('✅ 从数据库恢复列宽:', dbWidths);
                 } else if (res.code === 401) {
                     console.warn('⚠️ 未登录，无法从数据库恢复列宽');
                 }
@@ -912,16 +959,21 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         // 应用列宽：优先使用数据库，其次使用 localStorage
         try {
             var saved = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
+            
+            // ✅ 同步写回 localStorage：如果数据库有值，以数据库为准覆盖 localStorage（确保两边一致）
+            var finalWidths = saved; // 默认使用 localStorage
+            if (Object.keys(dbWidths).length > 0) {
+                finalWidths = Object.assign({}, saved, dbWidths); // 以数据库为准覆盖
+                localStorage.setItem(columnWidthKey, JSON.stringify(finalWidths));
+                console.log('✅ 列宽已同步到 localStorage:', finalWidths);
+            }
+            
             colArr.forEach(function (c) {
                 // 只处理有 field 的列，checkbox/操作列也可以按需处理
                 if (c.field) {
-                    // 优先使用数据库中的列宽
-                    if (dbWidths[c.field] && dbWidths[c.field] > 0) {
-                        c.width = dbWidths[c.field];
-                    } 
-                    // 如果数据库没有，则使用 localStorage 中的列宽（作为兜底）
-                    else if (saved[c.field] && saved[c.field] > 0) {
-                        c.width = saved[c.field];
+                    // 优先使用数据库中的列宽，否则使用 localStorage 中的列宽（作为兜底）
+                    if (finalWidths[c.field] && finalWidths[c.field] > 0) {
+                        c.width = finalWidths[c.field];
                     }
                 }
             });
@@ -930,7 +982,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }
     }
     
-    // 在渲染前恢复列宽
+    // 先设置更窄的默认宽度
+    shrinkDefaultWidths(cols[0]);
+    
+    // 再用数据库/本地记忆覆盖默认宽度（保持优先级：数据库 > localStorage > 默认）
     restoreColWidth(cols[0]);
 
     // 列表初始化（注意：根据你的实际路由改这里）
@@ -1202,7 +1257,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 },
                 success: function(res) {
                     if (res.code === 0) {
-                        //console.log('✅ 列宽已保存到数据库', widths);
+                        console.log('✅ 列宽已保存到数据库', widths);
                     } else {
                         layer.msg(res.msg || '保存列宽失败', { icon: 2, time: 2000 });
                         console.error('❌ 列宽保存失败:', res);
@@ -1265,19 +1320,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $(document).off('mouseup.colwidth_auto touchend.colwidth_auto');
 
         lastSnapshot = getCurrentWidthsSnapshot();
-        //console.log('[colwidth] listener bound', lastSnapshot);
+        console.log('[colwidth] listener bound', lastSnapshot);
 
         $(document).on('mouseup.colwidth_auto touchend.colwidth_auto', function(e) {
-            //console.log('[colwidth] mouseup fired', e && e.target);
+            console.log('[colwidth] mouseup fired', e && e.target);
 
             setTimeout(function() {
                 var newSnapshot = getCurrentWidthsSnapshot();
-                //console.log('[colwidth] snapshot after mouseup', newSnapshot);
+                console.log('[colwidth] snapshot after mouseup', newSnapshot);
 
                 if (Object.keys(newSnapshot).length === 0) return;
 
                 if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
-                    //console.log('[colwidth] changed -> saving', newSnapshot);
+                    console.log('[colwidth] changed -> saving', newSnapshot);
                     saveWidths();
                     lastSnapshot = newSnapshot;
                 }
@@ -1425,8 +1480,17 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         if (!isCustom) $('#at_time').val('');
     });
 
-    // 运营人员下拉（保持你原来的 EditableSelect 用法）
-    const khSelect = new EditableSelect(document.getElementById('oper_user_input'), {$_yyList|raw}, '运营人员', '', 'name');
+    // 运营人员下拉（防重复初始化：避免脚本重复执行时再次 new）
+    if (!window.__crm_oper_user_select_inited) {
+        window.__crm_oper_user_select_inited = true;
+        window.__crm_oper_user_select = new EditableSelect(
+            document.getElementById('oper_user_input'),
+            {$_yyList|raw},
+            '运营人员',
+            '',
+            'name'
+        );
+    }
 
     // 来源端口联动逻辑
     //var shopList = {$shopList|raw}; // 店铺列表分组数据：{ 来源名称: [ {id:..., name:...}, ... ], ... }
