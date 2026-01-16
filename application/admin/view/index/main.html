@@ -228,54 +228,33 @@
                 </div>-->
             </div>
         </div>
-
-
-
     </div>
-
-
     <div class="layui-row layui-col-space15">
-
         <div class="layui-col-md8">
             <div class="layui-row layui-col-space15">
 
                 <div class="layui-col-md12">
 
                     <div class="layui-card">
-                        <div class="layui-card-header">绩效月排行</div>
+                        <div class="layui-card-header">动态</div>
                         <div class="layui-card-body">
                             <dl class="layuiadmin-card-status">
-                                <table class="layui-table">
-                                    <colgroup>
-                                        <col width="100">
-                                        <col>
-                                    </colgroup>
-                                    <!-- //月度排名（名）、月目标（元）、已成交（元）、完成率（%）、已成交（单）、提成点（%） -->
-                                    <tbody>
-                                        <tr>
-                                            <td>月度排名</td>
-                                            <td>业务员</td>
-                                            <td>已成交（元）</td>
-                                            <td>成单率（%）</td>
-                                            <td>已成交（单）</td>
-                                            <td>每月客户</td>
-                                        </tr>
-                                        {volist name='userlist' id='vo' key="k" }
-                                        <tr>
-                                            <td>{$k}</td>
-                                            <td>{$vo['username']}</td>
-                                            <td>{$vo['money_month']}</td>
-                                            <td>  {if condition="$vo.client_count_month > 0"}
-        {:round($vo['number_month'] / $vo['client_count_month'] * 100, 2)}%
-    {else}
-        0.00%
-    {/if}</td>
-                                            <td>{$vo['number_month']}</td>
-                                            <td>{$vo.client_count_month}</td>
-                                        </tr>
-                                        {/volist}
-                                    </tbody>
-                                </table>
+
+
+                                {volist name='result' id='vo'}
+                                <dd>
+                                    <div class="layui-status-img"><a href="javascript:;">
+                                            <img src="{$vo.avatar}"></a>
+                                    </div>
+                                    <div>
+                                        <p>{$vo.username} <em style="color: red;margin-right: 5px">跟进</em> <a
+                                                href="{:url('Client/dialogue')}?id={$vo.id}"> {$vo.kh_name}</a> </p>
+                                        <p><strong style="color: burlywood;margin-right: 5px">跟进记录:
+                                            </strong>{$vo.reply_msg}</p>
+                                        <span>跟进时间：{$vo.create_date|date='Y-m-d H:i:s'}</span>
+                                    </div>
+                                </dd>
+                                {/volist}
 
                             </dl>
                         </div>
@@ -406,32 +385,46 @@
         </div>
     </div>
     <div class="layui-row layui-col-space15">
-
         <div class="layui-col-md8">
             <div class="layui-row layui-col-space15">
 
                 <div class="layui-col-md12">
 
                     <div class="layui-card">
-                        <div class="layui-card-header">动态</div>
+                        <div class="layui-card-header">绩效月排行</div>
                         <div class="layui-card-body">
                             <dl class="layuiadmin-card-status">
-
-
-                                {volist name='result' id='vo'}
-                                <dd>
-                                    <div class="layui-status-img"><a href="javascript:;">
-                                            <img src="{$vo.avatar}"></a>
-                                    </div>
-                                    <div>
-                                        <p>{$vo.username} <em style="color: red;margin-right: 5px">跟进</em> <a
-                                                href="{:url('Client/dialogue')}?id={$vo.id}"> {$vo.kh_name}</a> </p>
-                                        <p><strong style="color: burlywood;margin-right: 5px">跟进记录:
-                                            </strong>{$vo.reply_msg}</p>
-                                        <span>跟进时间：{$vo.create_date|date='Y-m-d H:i:s'}</span>
-                                    </div>
-                                </dd>
-                                {/volist}
+                                <table class="layui-table">
+                                    <colgroup>
+                                        <col width="100">
+                                        <col>
+                                    </colgroup>
+                                    <!-- //月度排名（名）、月目标（元）、已成交（元）、完成率（%）、已成交（单）、提成点（%） -->
+                                    <tbody>
+                                        <tr>
+                                            <td>月度排名</td>
+                                            <td>业务员</td>
+                                            <td>已成交（元）</td>
+                                            <td>成单率（%）</td>
+                                            <td>已成交（单）</td>
+                                            <td>每月客户</td>
+                                        </tr>
+                                        {volist name='userlist' id='vo' key="k" }
+                                        <tr>
+                                            <td>{$k}</td>
+                                            <td>{$vo['username']}</td>
+                                            <td>{$vo['money_month']}</td>
+                                            <td>  {if condition="$vo.client_count_month > 0"}
+        {:round($vo['number_month'] / $vo['client_count_month'] * 100, 2)}%
+    {else}
+        0.00%
+    {/if}</td>
+                                            <td>{$vo['number_month']}</td>
+                                            <td>{$vo.client_count_month}</td>
+                                        </tr>
+                                        {/volist}
+                                    </tbody>
+                                </table>
 
                             </dl>
                         </div>
