@@ -1232,8 +1232,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 var field = $th.attr('data-field');
                 if (!field || field === '0') return;
 
-                var w = parseInt($th.outerWidth(), 10);
-                if (w > 0) widths[field] = w;
+                var w = parseInt($th.width(), 10); // ✅只取内容宽度（不含 padding/border）
+                // ✅合理边界检查，防止极小/极大异常值
+                if (w >= 30 && w <= 3000) {
+                    widths[field] = w;
+                }
             });
 
             // 没取到就直接跳过
@@ -1297,9 +1300,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 var field = $th.attr('data-field');
                 if (!field || field === '0') return; // 跳过 checkbox / 空字段
 
-                // ✅直接读取 th 的真实宽度（Layui 版本差异下最稳）
-                var w = parseInt($th.outerWidth(), 10);
-                if (w > 0) snapshot[field] = w;
+                // ✅只取内容宽度（不含 padding/border），统一口径
+                var w = parseInt($th.width(), 10);
+                // ✅合理边界检查，防止极小/极大异常值
+                if (w >= 30 && w <= 3000) {
+                    snapshot[field] = w;
+                }
             });
         } catch (e) {
             console.warn('获取列宽快照失败:', e);
@@ -1320,19 +1326,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $(document).off('mouseup.colwidth_auto touchend.colwidth_auto');
 
         lastSnapshot = getCurrentWidthsSnapshot();
-        console.log('[colwidth] listener bound', lastSnapshot);
+        // console.log('[colwidth] listener bound', lastSnapshot); // ✅降低日志噪音
 
         $(document).on('mouseup.colwidth_auto touchend.colwidth_auto', function(e) {
-            console.log('[colwidth] mouseup fired', e && e.target);
+            // console.log('[colwidth] mouseup fired', e && e.target); // ✅降低日志噪音
 
             setTimeout(function() {
                 var newSnapshot = getCurrentWidthsSnapshot();
-                console.log('[colwidth] snapshot after mouseup', newSnapshot);
+                // console.log('[colwidth] snapshot after mouseup', newSnapshot); // ✅降低日志噪音
 
                 if (Object.keys(newSnapshot).length === 0) return;
 
                 if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
-                    console.log('[colwidth] changed -> saving', newSnapshot);
+                    console.log('[colwidth] changed -> saving', newSnapshot); // ✅保留真正保存时的日志
                     saveWidths();
                     lastSnapshot = newSnapshot;
                 }
