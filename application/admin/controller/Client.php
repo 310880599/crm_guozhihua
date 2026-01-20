@@ -2946,6 +2946,19 @@ class Client extends Common
             $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
         }
 
+        // 【新增-跟进筛选-参数归一】最新跟进时间筛选参数处理
+        $followFilter = isset($keyword['follow_filter']) ? trim($keyword['follow_filter']) : '';
+        $followDays   = isset($keyword['follow_days']) ? intval($keyword['follow_days']) : 0;
+
+        // 只有当 follow_filter 非空 且 follow_days > 0 时才计算边界并写入 keyword
+        if (!empty($followFilter) && $followDays > 0) {
+            $boundaryTime = date('Y-m-d H:i:s', time() - $followDays * 86400);
+            $keyword['__follow_filter']   = $followFilter;
+            $keyword['__follow_boundary'] = $boundaryTime;
+            // 移除原始字段避免其他旧逻辑误判
+            unset($keyword['follow_filter'], $keyword['follow_days']);
+        }
+
         // 取列表（保留你原来的模型查询逻辑）
         $list = model('client')->getPersonClientSearchList($page, $limit, $keyword);
 

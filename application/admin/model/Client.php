@@ -277,6 +277,27 @@ class Client extends Model
             $mapSourcePort = ['source_port' => $keyword['source_port']];
         }
 
+        // 【新增-跟进筛选】最新跟进时间筛选条件
+        $mapFollow = [];
+        $followNoFlag = false; // recent_no_follow 标记
+        $followBoundary = ''; // 边界时间（用于 recent_no_follow）
+
+        // 【新增-跟进筛选】处理最新跟进时间筛选
+        if (!empty($keyword['__follow_filter']) && !empty($keyword['__follow_boundary'])) {
+            $ff = $keyword['__follow_filter'];
+            $bd = $keyword['__follow_boundary'];
+
+            if ($ff === 'recent_follow') {
+                // 最近有跟进：last_up_time >= 边界
+                $mapFollow = [['last_up_time', '>=', $bd]];
+            } elseif ($ff === 'recent_no_follow') {
+                // 最近无跟进（反选）：last_up_time IS NULL OR last_up_time < 边界
+                // 需要用闭包实现 OR 条件，此处设置标记
+                $followNoFlag = true;
+                $followBoundary = $bd;
+            }
+        }
+
         $result  = Db::table('crm_leads')
             ->where($mapPhone)
             ->where($mapKhName)
@@ -285,9 +306,17 @@ class Client extends Model
             ->where($mapXsSource)
             ->where($mapPort)        // 使用运营端口筛选
             ->where($mapAtTime)
+            ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
             ->where($where)
             ->where(['status' => 1, 'issuccess' => -1]) //0 线索，1客户，2公海
             ->where(['pr_user' => session('username')]) //负责人
+            ->where(function($q) use ($followNoFlag, $followBoundary) {
+                // 【新增-跟进反选】最近无跟进：last_up_time IS NULL OR last_up_time < 边界
+                if ($followNoFlag) {
+                    $q->whereNull('last_up_time')
+                      ->whereOr('last_up_time', '<', $followBoundary);
+                }
+            })
             ->order('at_time desc')
             ->paginate(array('list_rows' => $limit, 'page' => $page))
             ->toArray();

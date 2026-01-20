@@ -698,6 +698,25 @@
                         </div>
                     </div>
 
+                    <!-- 【新增-跟进筛选】最新跟进时间筛选 -->
+                    <div class="layui-inline">
+                        <label class="layui-form-label">跟进类型：</label>
+                        <div class="layui-input-inline">
+                            <select name="follow_filter" id="follow_filter">
+                                <option value="">不限</option>
+                                <option value="recent_follow">最近有跟进</option>
+                                <option value="recent_no_follow">最近无跟进（反选）</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">跟进时间：</label>
+                        <div class="layui-input-inline">
+                            <input type="number" name="follow_days" id="follow_days" class="layui-input" placeholder="如 2（天）">
+                        </div>
+                    </div>
+
                 </div>
 
                 <div class="layui-inline" style="float:right;padding-bottom:15px">
