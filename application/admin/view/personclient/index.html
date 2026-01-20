@@ -888,7 +888,7 @@
         <div class="layui-form" style="margin-bottom: 20px;">
             <div class="layui-form-item" style="margin-bottom: 15px;">
                 <div class="layui-inline">
-                    <label class="layui-form-label" style="width: 100px;">关键字搜索:</label>
+                    <label class="layui-form-label" style="width: 120px;">关键字搜索:</label>
                     <div class="layui-input-inline" style="width: 200px;">
                         <input type="text" id="af-keyword" name="keyword" placeholder="输入跟进内容关键字" class="layui-input">
                     </div>
@@ -911,12 +911,14 @@
 </div>
 <!-- 操作列 -->
 <script type="text/html" id="action">
-     <a class="layui-btn layui-btn-primary layui-btn-xs follow-btn" href="javascript:void(0);" data-id="{{d.id}}"><i class="layui-icon">&#xe654;</i>写跟进</a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs follow-btn" href="javascript:void(0);" data-id="{{d.id}}"><i class="layui-icon">&#xe654;</i>写跟进</a>
     <!-- ✅新增：全部跟进 -->
     <a class="layui-btn layui-btn-warm layui-btn-xs all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}"><i class="layui-icon">&#xe60a;</i>全部跟进</a>
     <a class="layui-btn layui-btn-xs" data-id="{{d.id}}" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
     <a class="layui-btn layui-btn-primary layui-btn-xs" data-id="{{d.id}}" lay-event="alter"><i class="layui-icon">&#xe60e;</i>转移</a>
+    <!-- {if session('aid') eq 1}
     <a class="layui-btn layui-btn-primary layui-btn-xs yincang" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>成交</a>
+    {/if} -->
 </script>
 
 <!-- 顶部工具栏 -->
@@ -991,7 +993,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
              return v;
              }
          },
-         { fixed: 'right', title: '操作', width: isMobile ? 100 : 320, align: 'center', toolbar: '#action' }
+         { fixed: 'right', title: '操作', width: isMobile ? 100 : 420, align: 'center', toolbar: '#action' }
      ]];
 
     /**
@@ -1258,7 +1260,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 method: 'post',
                 page: true,
                 limit: 10,
-                limits: [10, 20, 50, 100],
+                limits: [5,10, 20, 50, 100, 200, 500],
                 cols: [[
                     {field: 'create_date', title: '跟进时间', width: 180, sort: true},
                     {field: 'username', title: '跟进人', width: 120},
