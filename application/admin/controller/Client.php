@@ -3382,6 +3382,17 @@ class Client extends Common
         }
         $client['port_name'] = $portName;  // 新增代码
 
+        // ✅新增：获取产品名称（如果 product_name 是 ID）
+        $productValue = $client['product_name'];
+        $productName = $productValue;
+        if (is_numeric($productValue) && !empty($productValue)) {
+            $productInfo = Db::table('crm_products')->where('id', $productValue)->find();
+            if ($productInfo) {
+                $productName = $productInfo['product_name'];
+            }
+        }
+        $client['product_name'] = $productName;  // 转换为产品名称
+
         // 获取来源端口名称（如果 source_port 字段存在）
         // $client['source_port_name'] = '';
         // try {
@@ -3479,6 +3490,110 @@ class Client extends Common
                 'comments' => $comments
             ],
             'msg' => '获取成功'
+        ]);
+    }
+
+    // ✅新增：全部跟进 - 分页获取客户跟进记录
+    public function getClientCommentsPage()
+    {
+        $leadsId = Request::param('leads_id');
+        $page = input('page/d', 1);
+        $limit = input('limit/d', 10);
+        $keyword = input('keyword/s', '');
+        $startDate = input('start_date/s', '');
+        $endDate = input('end_date/s', '');
+
+        // 校验客户ID
+        if (empty($leadsId)) {
+            return json(['code' => 1, 'msg' => '缺少客户ID', 'count' => 0, 'data' => []]);
+        }
+
+        // 校验客户是否存在（可选：检查权限，只能查看自己负责的客户）
+        $client = Db::table('crm_leads')->where(['id' => $leadsId])->find();
+        if (!$client) {
+            return json(['code' => 1, 'msg' => '客户不存在', 'count' => 0, 'data' => []]);
+        }
+
+        // 权限检查：如果是个人客户列表，只能查看自己负责的客户
+        $currentUsername = session('username');
+        if ($client['pr_user'] !== $currentUsername) {
+            // 可以扩展为检查协同人权限等
+            // 这里先简单处理：如果不是负责人，检查是否是协同人
+            $isJointPerson = false;
+            if (!empty($client['joint_person'])) {
+                $currentAdminId = session('aid');
+                $jp = $client['joint_person'];
+                if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
+                    $tmp = json_decode($jp, true);
+                    if (is_array($tmp) && in_array($currentAdminId, $tmp)) {
+                        $isJointPerson = true;
+                    }
+                } else {
+                    $idsArr = preg_split('/[,，\s]+/', $jp, -1, PREG_SPLIT_NO_EMPTY);
+                    if (in_array($currentAdminId, $idsArr)) {
+                        $isJointPerson = true;
+                    }
+                }
+            }
+            // 如果不是负责人也不是协同人，且不是超级管理员，则拒绝访问
+            if (!$isJointPerson && session('aid') != 1) {
+                return json(['code' => 1, 'msg' => '无权查看该客户的跟进记录', 'count' => 0, 'data' => []]);
+            }
+        }
+
+        // 构建查询条件
+        $where = [['com.leads_id', '=', $leadsId]];
+
+        // 关键字搜索（跟进内容）
+        if (!empty($keyword)) {
+            $where[] = ['com.reply_msg', 'like', '%' . $keyword . '%'];
+        }
+
+        // 时间范围筛选
+        if (!empty($startDate)) {
+            // 开始日期：取当天的 00:00:00
+            $startTimestamp = strtotime($startDate . ' 00:00:00');
+            if ($startTimestamp !== false) {
+                $where[] = ['com.create_date', '>=', $startTimestamp];
+            }
+        }
+        if (!empty($endDate)) {
+            // 结束日期：取当天的 23:59:59
+            $endTimestamp = strtotime($endDate . ' 23:59:59');
+            if ($endTimestamp !== false) {
+                $where[] = ['com.create_date', '<=', $endTimestamp];
+            }
+        }
+
+        // 查询总数
+        $count = Db::table('crm_comment')
+            ->alias('com')
+            ->join('admin adm', 'com.user_id = adm.admin_id')
+            ->where($where)
+            ->count();
+
+        // 分页查询
+        $list = Db::table('crm_comment')
+            ->alias('com')
+            ->join('admin adm', 'com.user_id = adm.admin_id')
+            ->where($where)
+            ->field('com.*, adm.username, adm.avatar')
+            ->order('com.create_date desc')
+            ->page($page, $limit)
+            ->select();
+
+        // 格式化时间：Y-m-d H:i（列表用紧凑格式）
+        foreach ($list as &$item) {
+            $item['create_date'] = date('Y-m-d H:i', $item['create_date']);
+        }
+        unset($item);
+
+        // 返回 Layui 标准分页格式
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'count' => $count,
+            'data' => $list
         ]);
     }
 
