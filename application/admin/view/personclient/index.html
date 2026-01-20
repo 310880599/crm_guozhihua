@@ -612,6 +612,24 @@
     .layui-table-body{
         overflow-x: auto !important;
     }
+
+    /* 【新增】跟进筛选联合提示样式 */
+    .follow-filter-wrap{
+        display: inline-block;
+        vertical-align: top;
+    }
+    .follow-filter-tip{
+        margin-top: 6px;
+        padding-left: 100px; /* 对齐 label 宽度（你当前 label 宽 100px） */
+        font-size: 12px;
+        color: #999;
+        line-height: 18px;
+    }
+    .follow-filter-tip .layui-icon{
+        font-size: 12px;
+        margin-right: 4px;
+        color: #ff9800;
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域 -->
@@ -699,22 +717,34 @@
                     </div>
 
                     <!-- 【新增-跟进筛选】最新跟进时间筛选 -->
-                    <div class="layui-inline">
-                        <label class="layui-form-label">跟进类型：</label>
-                        <div class="layui-input-inline">
-                            <select name="follow_filter" id="follow_filter">
-                                <option value="">不限</option>
-                                <option value="recent_follow">最近有跟进</option>
-                                <option value="recent_no_follow">最近无跟进（反选）</option>
-                            </select>
-                        </div>
-                    </div>
+                    <div class="follow-filter-wrap"><!-- 【新增】联合条件容器 -->
 
-                    <div class="layui-inline">
-                        <label class="layui-form-label">跟进时间：</label>
-                        <div class="layui-input-inline">
-                            <input type="number" name="follow_days" id="follow_days" class="layui-input" placeholder="如 2（天）">
+                        <div class="layui-inline">
+                            <label class="layui-form-label">跟进类型：</label>
+                            <div class="layui-input-inline">
+                                <select name="follow_filter" id="follow_filter">
+                                    <!-- 【修改】默认提示：强调需配合时间 -->
+                                    <option value="">不限（需配合跟进时间）</option>
+                                    <option value="recent_follow">最近有跟进</option>
+                                    <option value="recent_no_follow">最近无跟进（反选）</option>
+                                </select>
+                            </div>
                         </div>
+
+                        <div class="layui-inline">
+                            <label class="layui-form-label">跟进时间：</label>
+                            <div class="layui-input-inline">
+                                <!-- 【修改】placeholder：强调需选择类型 -->
+                                <input type="number" name="follow_days" id="follow_days" class="layui-input" placeholder="如 2（天）（需选择跟进类型）">
+                            </div>
+                        </div>
+
+                        <!-- 【新增】字段下方提示文案（方案一） -->
+                        <div class="follow-filter-tip">
+                            <i class="layui-icon layui-icon-tips"></i>
+                            跟进类型 与 跟进时间 需同时选择才会生效
+                        </div>
+
                     </div>
 
                 </div>
@@ -1489,6 +1519,36 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     // 搜索表单提交
     form.on('submit(LAY-app-contlist-search)', function (data) {
+
+        // 【新增】跟进类型 + 跟进时间：联合使用轻提示（不拦截查询）
+        try{
+            var followType = (data.field.follow_filter || '').toString().trim();
+            var followDaysRaw = (data.field.follow_days || '').toString().trim();
+            var followDays = followDaysRaw === '' ? null : parseInt(followDaysRaw, 10);
+
+            var msgShown = false;
+
+            // 情况1：只选了类型，没填时间/<=0
+            if (followType && (!followDays || followDays <= 0)) {
+                layer.msg('【跟进类型】与【跟进时间】需同时选择才会生效', {icon:0});
+                msgShown = true;
+            }
+
+            // 情况2：只填了时间（>0），没选类型
+            if (!msgShown && (!followType) && (followDays && followDays > 0)) {
+                layer.msg('【跟进类型】与【跟进时间】需同时选择才会生效', {icon:0});
+                msgShown = true;
+            }
+
+            // 情况3：输入了 0/负数（且尚未提示联合规则），提示天数必须>0（仍不拦截）
+            if (!msgShown && followDaysRaw !== '' && (isNaN(followDays) || followDays <= 0)) {
+                layer.msg('请填写大于 0 的天数', {icon:0});
+                msgShown = true;
+            }
+        }catch(e){
+            console.warn('follow filter tip error:', e);
+        }
+
         table.reload('table-list', {
             url: "{:url('Client/personClientSearch')}",
             where: { keyword: data.field },
