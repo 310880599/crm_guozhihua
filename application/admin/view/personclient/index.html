@@ -1362,29 +1362,38 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     function reloadKeepColWidth() {
+        // 1) 先快照当前列宽（不丢你刚做好的列宽记忆）
         var snapshot = {};
         if (typeof getCurrentWidthsSnapshot === 'function') {
             snapshot = getCurrentWidthsSnapshot() || {};
         }
 
-        if (tableIn && tableIn.config && tableIn.config.cols && tableIn.config.cols[0]) {
-            tableIn.config.cols[0].forEach(function (col) {
-                if (!col || !col.field) {
-                    return;
-                }
+        // 2) 把快照回写到当前 tableIns 的 cols（避免 reload 后宽度被默认值覆盖）
+        if (window.tableIns && tableIns.config && tableIns.config.cols && tableIns.config.cols[0]) {
+            tableIns.config.cols[0].forEach(function (col) {
+                if (!col || !col.field) return;
                 if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, col.field)) {
                     col.width = snapshot[col.field];
                 }
             });
         }
 
-        if (snapshot && Object.keys(snapshot).length && typeof columnWidthKey !== 'undefined' && typeof localStorage !== 'undefined') {
+        // 3) 同步兜底到 localStorage（可选，但建议保留）
+        if (snapshot && Object.keys(snapshot).length && typeof columnWidthKey !== 'undefined') {
             localStorage.setItem(columnWidthKey, JSON.stringify(snapshot));
         }
 
-        console.log('[colwidth] reloadKeepColWidth snapshot', snapshot);
-        tableIn.reload();
+        // 4) 关键：刷新列表（两种写法二选一）
+        // 写法A：用实例 reload（推荐）
+        if (window.tableIns) {
+            tableIns.reload();
+            return;
+        }
+
+        // 写法B：用 table.reload（如果你某些页面 tableIns 作用域拿不到）
+        layui.table.reload(tableId);
     }
+
 
 
     // 打开跟进弹窗
