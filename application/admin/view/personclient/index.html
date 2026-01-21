@@ -1361,7 +1361,33 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#follow-mask').hide();
     }
 
-      // 打开跟进弹窗
+    function reloadKeepColWidth() {
+        var snapshot = {};
+        if (typeof getCurrentWidthsSnapshot === 'function') {
+            snapshot = getCurrentWidthsSnapshot() || {};
+        }
+
+        if (tableIn && tableIn.config && tableIn.config.cols && tableIn.config.cols[0]) {
+            tableIn.config.cols[0].forEach(function (col) {
+                if (!col || !col.field) {
+                    return;
+                }
+                if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, col.field)) {
+                    col.width = snapshot[col.field];
+                }
+            });
+        }
+
+        if (snapshot && Object.keys(snapshot).length && typeof columnWidthKey !== 'undefined' && typeof localStorage !== 'undefined') {
+            localStorage.setItem(columnWidthKey, JSON.stringify(snapshot));
+        }
+
+        console.log('[colwidth] reloadKeepColWidth snapshot', snapshot);
+        tableIn.reload();
+    }
+
+
+    // 打开跟进弹窗
     function openFollowDialog(clientId) {
         // 显示加载提示
         var loading = layer.load(1, {shade: 0});
@@ -1519,7 +1545,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                     $('#follow-last-time').text(createDate);
                     
                     // 更新表格中的最新跟进记录
-                    tableIns.reload();
+                    reloadKeepColWidth();
                 } else {
                     layer.msg(res.msg);
                 }
