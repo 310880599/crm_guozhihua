@@ -699,20 +699,24 @@ private function exportToExcel($data)
         // ====== 新增代码结束 ======
 
         // === wechat_receipt_images 解析兼容开始 ===
+        // 【重要说明】crm_client_hangye 表已废弃，不再使用任何 hangye 表的回退逻辑
+        // 若订单 wechat_receipt_image 为空，直接保持为空，不做任何回退查询
+        
         /**
          * 解析图片数据，统一输出格式
          * @param mixed $raw 原始数据（可能是字符串、JSON字符串、数组等）
          * @return array 统一格式：[['full' => '...', 'thumb' => '...'], ...]
          */
         $parseImages = function($raw) {
+            // 空值安全处理：null、空字符串、'null'、'[]' 都返回空数组
             if (empty($raw)) {
                 return [];
             }
-
-            // 如果是字符串，尝试解析为JSON
+            
+            // 处理字符串 'null' 或 '[]'
             if (is_string($raw)) {
                 $raw = trim($raw);
-                if (empty($raw)) {
+                if (empty($raw) || $raw === 'null' || $raw === '[]') {
                     return [];
                 }
                 
@@ -786,47 +790,12 @@ private function exportToExcel($data)
             return [];
         };
 
-        // 收集需要回退的订单（wechat_receipt_image 为空）
-        $needFallbackOrders = [];
-        $contactsForFallback = [];
-        foreach ($list['data'] as $index => $order) {
-            if (empty($order['wechat_receipt_image'])) {
-                $contact = $order['contact'] ?? '';
-                if (!empty($contact)) {
-                    $needFallbackOrders[$index] = $contact;
-                    $contactsForFallback[] = $contact;
-                }
-            }
-        }
-
-        // 批量查询 hangye 表
-        $hangyeMap = [];
-        if (!empty($contactsForFallback)) {
-            $contactsForFallback = array_unique($contactsForFallback);
-            $hangyeList = Db::table('crm_client_hangye')
-                ->whereIn('contact', $contactsForFallback)
-                ->field('contact,wechat_receipt_image')
-                ->select();
-            
-            foreach ($hangyeList as $hangye) {
-                $contact = $hangye['contact'] ?? '';
-                if (!empty($contact)) {
-                    $hangyeMap[$contact] = $hangye['wechat_receipt_image'] ?? '';
-                }
-            }
-        }
-
-        // 为每条订单添加 wechat_receipt_images 字段
-        foreach ($list['data'] as $index => &$order) {
+        // 为每条订单添加 wechat_receipt_images 字段（不再从 hangye 表回退）
+        foreach ($list['data'] as &$order) {
             $raw = $order['wechat_receipt_image'] ?? '';
             
-            // 如果订单自身为空，尝试从 hangye 回退
-            if (empty($raw) && isset($needFallbackOrders[$index])) {
-                $contact = $needFallbackOrders[$index];
-                $raw = $hangyeMap[$contact] ?? '';
-            }
-
-            // 解析图片
+            // 【修改】直接解析订单自身的 wechat_receipt_image，不再尝试从 hangye 回退
+            // 如果订单 wechat_receipt_image 为空，parseImages 会返回空数组 []
             $order['wechat_receipt_images'] = $parseImages($raw);
             
             // 注意：保留原字段 wechat_receipt_image 以兼容旧逻辑
