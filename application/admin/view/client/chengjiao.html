@@ -412,6 +412,17 @@
         .layui-layer-loading {
             border-radius: 50%;
         }
+        
+        /* 自定义遮罩层样式 */
+        .follow-mask {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, .3);
+            display: none;
+        }
     </style>
 </head>
 <body class="skin-<?php echo !empty($_COOKIE['skin']) ? $_COOKIE['skin'] : '0'; setcookie('skin','0'); ?>">
@@ -556,13 +567,15 @@
                     </div>
                     <div class="layui-form-item">
                         <input type="hidden" name="leads_id" id="leads_id" value="">
-                        <button class="layui-btn" lay-filter="btn_comment" lay-submit id="submit-comment">提交记录</button>
+                        <button type="button" class="layui-btn" id="submit-comment">提交记录</button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 </div>
+<!-- 自定义遮罩层（替代 layui 的 shade） -->
+<div id="follow-mask" class="follow-mask" style="display:none;"></div>
 
 <!-- 操作栏模板：仅保留“写跟进”按钮 -->
 <script type="text/html" id="action">
@@ -583,10 +596,14 @@
 <script>
 layui.use(['table','form','upload','util','laydate','layer'], function(){
     var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery, upload = layui.upload, layer = layui.layer;
+    var followIndex = null; // 记住"写跟进弹窗"的 layer index
     var isMobile = $(window).width() < 768;
     var currentUsername = "{$Think.session.username}" || "default";
-    var columnWidthKey = "crm_table_column_widths_" + currentUsername;
     var tableId = "table-list";
+    // 生成 page_key：使用 location.pathname（不要 replace 下划线，否则和数据库存的不一致）
+    var pageKey = location.pathname;
+    // localStorage 的 key（用于兜底）
+    var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
     // 定义表格列
     var cols = [[
         { type: 'checkbox', fixed: true , width: 50},
@@ -715,23 +732,122 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         }
     });
 
-    // 跟进按钮点击事件 - 打开跟进弹窗
-    $(document).on('click', '.follow-btn, .client-link', function() {
+    // 自定义遮罩层工具函数
+    function ensureFollowMask() {
+        var $mask = $('#follow-mask');
+        if (!$mask.length) {
+            $('body').append('<div id="follow-mask" class="follow-mask" style="display:none;"></div>');
+            $mask = $('#follow-mask');
+        }
+        return $mask;
+    }
+
+    // 把遮罩放到弹层下面（关键：必须在 layer.setTop 之后再调用一次）
+    function showFollowMaskUnderLayer(layero) {
+        var $mask = ensureFollowMask();
+        var z = parseInt($(layero).css('z-index'), 10);
+        if (!isNaN(z)) {
+            $mask.css('z-index', z - 1);
+        } else {
+            $mask.css('z-index', 19999999);
+        }
+        $mask.show();
+    }
+
+    function hideFollowMask() {
+        $('#follow-mask').hide();
+    }
+
+    function reloadKeepColWidth() {
+        // 1) 先快照当前列宽（不丢你刚做好的列宽记忆）
+        var snapshot = {};
+        if (typeof getCurrentWidthsSnapshot === 'function') {
+            snapshot = getCurrentWidthsSnapshot() || {};
+        }
+
+        // 2) 把快照回写到当前 tableIns 的 cols（避免 reload 后宽度被默认值覆盖）
+        if (window.tableIns && tableIns.config && tableIns.config.cols && tableIns.config.cols[0]) {
+            tableIns.config.cols[0].forEach(function (col) {
+                if (!col || !col.field) return;
+                if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, col.field)) {
+                    col.width = snapshot[col.field];
+                }
+            });
+        }
+
+        // 3) 同步兜底到 localStorage（可选，但建议保留）
+        if (snapshot && Object.keys(snapshot).length && typeof columnWidthKey !== 'undefined') {
+            localStorage.setItem(columnWidthKey, JSON.stringify(snapshot));
+        }
+
+        // 4) 关键：刷新列表（两种写法二选一）
+        // 写法A：用实例 reload（推荐）
+        if (window.tableIns) {
+            tableIns.reload();
+            return;
+        }
+
+        // 写法B：用 table.reload（如果你某些页面 tableIns 作用域拿不到）
+        layui.table.reload(tableId);
+    }
+
+    /**
+     * 获取当前列宽快照
+     * 读取 #table-list 对应的 .layui-table-view
+     * 找到主表头：$view.find('.layui-table-header table')
+     * 遍历 thead tr th 与 colgroup col，生成 {field: width} 的对象（跳过 data-field="0"）
+     * 返回对象（空对象也返回）
+     */
+    function getCurrentWidthsSnapshot() {
+        var snapshot = {};
+        try {
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if (!$view.length) return snapshot;
+
+            // ✅只取主表头（不取 fixed 的那套）
+            var $headerTable = $view.find('.layui-table-header table').eq(0);
+            var $ths = $headerTable.find('thead tr th');
+
+            $ths.each(function () {
+                var $th = $(this);
+                var field = $th.attr('data-field');
+                if (!field || field === '0') return; // 跳过 checkbox / 空字段
+
+                // ✅只取内容宽度（不含 padding/border），统一口径
+                var w = parseInt($th.width(), 10);
+                // ✅合理边界检查，防止极小/极大异常值
+                if (w >= 30 && w <= 3000) {
+                    snapshot[field] = w;
+                }
+            });
+        } catch (e) {
+            console.warn('获取列宽快照失败:', e);
+        }
+        return snapshot;
+    }
+
+    // 点击写跟进按钮打开弹窗
+    $(document).off('click', '.follow-btn, .client-link').on('click', '.follow-btn, .client-link', function() {
         var clientId = $(this).data('id');
         openFollowDialog(clientId);
     });
-    // 打开跟进弹窗并加载数据
+
+    // 打开跟进弹窗
     function openFollowDialog(clientId) {
-        var loading = layer.load(1, { shade: [0.1, '#fff'] });
+        // 显示加载提示
+        var loading = layer.load(1, {shade: 0});
+        
+        // 获取客户信息和跟进记录
         $.ajax({
             url: "{:url('Client/getClientDetailAndComments')}",
             method: 'GET',
-            data: { id: clientId },
+            data: {id: clientId},
             success: function(res) {
                 layer.close(loading);
                 if (res.code === 0) {
                     var clientData = res.data.client;
                     var comments = res.data.comments;
+                    
                     // 填充客户信息
                     $('#follow-client-id').text(clientData.id || '');
                     $('#follow-client-name').text(clientData.kh_name || '');
@@ -739,8 +855,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                     $('#follow-main-phone').text(clientData.main_phone || '暂无');
                     $('#follow-aux-phone').text(clientData.aux_phone || '暂无');
                     $('#follow-area').text(clientData.xs_area || '');
-                    $('#follow-source').text(clientData.inquiry_name || clientData.inquiry_id || '');
-                    $('#follow-source-port').text(clientData.port_name || clientData.port_id || '暂无');
+                    $('#follow-source').text(clientData.inquiry_name || clientData.inquiry_id || '');        // 所属渠道
+                    $('#follow-source-port').text(clientData.port_name || clientData.port_id || '暂无');    // 运营端口
                     $('#follow-rank').text(clientData.kh_rank_name || clientData.kh_rank || '');
                     $('#follow-user').text(clientData.pr_user || '');
                     $('#follow-joint-person').text(clientData.joint_person_names || '暂无');
@@ -748,36 +864,75 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                     $('#follow-last-time').text(clientData.last_up_time || '暂无');
                     $('#follow-last-record').val(clientData.last_up_records || '暂无记录');
                     $('#leads_id').val(clientData.id);
+                    
                     // 填充跟进历史
                     var html = '';
                     if (comments.length > 0) {
                         $.each(comments, function(index, item) {
                             html += '<div class="timeline-item">' +
-                                        '<div class="timeline-title">' + item.create_date + '</div>' +
-                                        '<div class="timeline-content">' +
-                                            '<img src="' + (item.avatar || '/static/admin/images/0.jpg') + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
-                                            '<strong>' + item.username + '：</strong>' + item.reply_msg +
-                                        '</div></div>';
+                                '<div class="timeline-title">' + item.create_date + '</div>' +
+                                '<div class="timeline-content">' +
+                                '<img src="' + (item.avatar || '/static/admin/images/0.jpg') + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
+                                '<strong>' + item.username + '：</strong>' +
+                                item.reply_msg +
+                                '</div>' +
+                                '</div>';
                         });
                     } else {
                         html = '<p>暂无跟进记录</p>';
                     }
                     $('#follow-history-list').html(html);
+
+
+                    // 如果上一次弹窗没关干净，先强制关闭
+                    if (followIndex !== null) {
+                        layer.close(followIndex);
+                        followIndex = null;
+                    }
+                                        
                     // 显示弹窗
-                    layer.open({
+                    followIndex = layer.open({
                         type: 1,
                         title: '客户跟进 - ' + clientData.kh_name,
                         area: ['90%', '80%'],
                         content: $('#follow-dialog'),
-                        zIndex: layer.zIndex,
+                        closeBtn: 1,
+                        shade: 0,              // ✅禁用 layui 自动遮罩
+                        shadeClose: false,
+                        key: true,
+                        anim: -1,
+
                         success: function(layero, index) {
                             $('#follow-dialog').show();
+
+                            // ✅让弹窗置顶（layui 会重排 z-index）
                             layer.setTop(layero);
+
+                            // ✅关键：setTop 之后再把自定义遮罩放到弹窗下面
+                            showFollowMaskUnderLayer(layero);
+
+                            // ✅接管右上角 X：保证点击一定会走 layer.close
+                            $(layero).find('.layui-layer-close').off('click.follow').on('click.follow', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                layer.close(index);
+                            });
                         },
+
                         end: function() {
+                            // ✅把 DOM 放回去
                             $('#follow-dialog').hide().appendTo('body');
+
+                            // ✅移除自定义遮罩
+                            hideFollowMask();
+
+                            // ✅历史兜底：清掉所有残留的 layui 遮罩（因为你之前多次残留过）
+                            $('.layui-layer-shade').remove();
+
+                            followIndex = null;
                         }
                     });
+
                 } else {
                     layer.msg(res.msg || '获取客户信息失败');
                 }
@@ -788,35 +943,63 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             }
         });
     }
-    // 提交新跟进记录
-    $('#submit-comment').on('click', function() {
+    // 提交跟进记录
+    $('#submit-comment').on('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
         var replyMsg = $('#reply_msg').val();
         var leadsId = $('#leads_id').val();
+        
         if (!replyMsg) {
             layer.msg('请输入跟进内容');
-            return false;
+            return;
         }
-        // 提交跟进评论
-        $.post("{:url('Client/comment')}", { reply_msg: replyMsg, leads_id: leadsId }, function(res) {
-            if (res.code === 0) {
-                layer.msg('提交成功', { time: 1000, icon: 1 });
-                // 将新评论追加到跟进历史列表
-                var newItem = '<div class="timeline-item">' +
-                              '<div class="timeline-title">' + res.data.create_date + '</div>' +
-                              '<div class="timeline-content">' +
-                                  '<img src="' + (res.data.avatar || '/static/admin/images/0.jpg') + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
-                                  '<strong>' + (res.data.username || '') + '：</strong>' + res.data.reply_msg +
-                              '</div></div>';
-                $('#follow-history-list').prepend(newItem);
-                // 更新最后跟进记录显示
-                $('#follow-last-time').text(res.data.create_date);
-                $('#follow-last-record').val(res.data.reply_msg);
-                $('#reply_msg').val('');
-            } else {
-                layer.msg(res.msg || '提交失败', { icon: 2 });
+        
+        // 显示加载提示
+        var loading = layer.load(1, {shade: [0.1, '#fff']});
+        
+        $.ajax({
+            method: 'post',
+            url: "{:url('Client/comment')}",
+            data: {
+                reply_msg: replyMsg,
+                leads_id: leadsId
+            },
+            success: function (res) {
+                layer.close(loading);
+                if (res.code === 0) {
+                    layer.msg(res.msg);
+                    $('#reply_msg').val('');
+                    
+                    // 更新历史记录
+                    var now = new Date();
+                    var createDate = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日 ' 
+                        + now.getHours() + ':' + (now.getMinutes() < 10 ? '0' : '') + now.getMinutes();
+                    
+                    var historyHtml = '<div class="timeline-item">' +
+                        '<div class="timeline-title">' + createDate + '</div>' +
+                        '<div class="timeline-content">' +
+                        '<img src="{$Think.session.avatar|default="/static/admin/images/0.jpg"}" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
+                        '<strong>{$Think.session.username}：</strong>' +
+                        replyMsg +
+                        '</div>' +
+                        '</div>';
+                    $('#follow-history-list').prepend(historyHtml);
+                    
+                    $('#follow-last-record').val(replyMsg);
+                    $('#follow-last-time').text(createDate);
+                    
+                    // 更新表格中的最新跟进记录
+                    reloadKeepColWidth();
+                } else {
+                    layer.msg(res.msg);
+                }
+            },
+            error: function () {
+                layer.close(loading);
+                layer.msg('提交失败');
             }
         });
-        return false;
     });
     // 拖拽列宽后的保存
     // function bindResizeSave() {
