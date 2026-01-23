@@ -398,7 +398,6 @@
        =============================== */
     /* 让 fixed 右侧每个 td 内部 .layui-table-cell 高度可以 100% 撑满，并用 flex 垂直居中 */
     .layui-table-fixed-r td .layui-table-cell {
-        height: 100% !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
@@ -410,7 +409,6 @@
     
     /* 左侧固定列也做同样处理（如果存在） */
     .layui-table-fixed-l td .layui-table-cell {
-        height: 100% !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
@@ -716,7 +714,6 @@
         padding: 4px 8px !important;     /* 控制"内容区"上下左右留白 */
         line-height: 18px !important;    /* 文字更紧凑但仍清晰 */
         min-height: 32px !important;     /* 让大多数行变矮（可微调 30~36） */
-        height: auto !important;         /* 避免被 layui 固定死 */
         box-sizing: border-box !important;
     }
 
@@ -758,7 +755,6 @@
         padding: 4px 8px !important;
         line-height: 18px !important;
         min-height: 32px !important;
-        height: auto !important;
         box-sizing: border-box !important;
     }
 
@@ -1255,20 +1251,23 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             // ===============================
             // 【修改】同步固定列行高 - 升级版（解决 Layui fixed 列晚生成问题）
             // ===============================
-            // 使用 requestAnimationFrame 确保在浏览器下一次重绘前执行
-            requestAnimationFrame(function() {
+            // ✅ 更稳：同步 3 次（下一帧 + 60ms + 180ms），每次都跑最新算法
+            requestAnimationFrame(function () {
                 syncFixedRowHeights();
+                // 再补一次：防止 fixed 列刚生成/图片刚加载导致高度再次变化
+                setTimeout(syncFixedRowHeights, 0);
             });
-            
-            // 延迟执行（因为 Layui fixed 列有时稍晚生成）
-            setTimeout(function() {
+
+            setTimeout(function () {
                 syncFixedRowHeights();
+                setTimeout(syncFixedRowHeights, 0);
             }, 60);
-            
-            // 再延迟一次确保完全同步（针对两行显示的列和复杂布局）
-            setTimeout(function() {
+
+            setTimeout(function () {
                 syncFixedRowHeights();
+                setTimeout(syncFixedRowHeights, 0);
             }, 180);
+
             
             // ===============================
             // 【新增】表格 body 滚动时触发行高同步（节流处理）
@@ -1545,77 +1544,100 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     /**
-     * ✅ 【修改】同步固定列行高（逐行对齐主表格）- 升级版
-     * 解决主表格与右侧固定列行高不一致的问题
-     * 
-     * 升级点：
-     * 1. 双向取最大值：同时计算主表、右 fixed、左 fixed 的高度，取最大值统一设置
-     * 2. 强制统一高度：不仅设置 tr 高度，还设置 td 和 .layui-table-cell 的高度
-     * 3. 像素级对齐：确保每一行都严格一致
+     * ✅ 同步主表与固定列（右/左）的每一行高度 —— 像素级对齐版
+     * 核心改进：
+     * 1) 同步前先 reset 高度（否则测量会被上一次写入的高度污染）
+     * 2) 统一写入：主表/固定列 的 tr + td + .layui-table-cell 全部写同一个高度
+     * 3) 取三者最大高度作为最终高度（主表、fixed-r、fixed-l）
      */
-    function syncFixedRowHeights() {
-        try {
-            var $view = $('#' + tableId).next('.layui-table-view');
-            if (!$view.length) return;
+     function syncFixedRowHeights() {
+            try {
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if (!$view.length) return;
 
-            // 找到主表 tbody 行
-            var $mainRows = $view.find('.layui-table-main tbody tr');
-            if (!$mainRows.length) return;
+                var $mainRows = $view.find('.layui-table-main tbody tr');
+                if (!$mainRows.length) return;
 
-            // 找到右侧固定列 tbody 行
-            var $fixRRows = $view.find('.layui-table-fixed-r tbody tr');
-            // 找到左侧固定列 tbody 行（如果存在）
-            var $fixLRows = $view.find('.layui-table-fixed-l tbody tr');
+                var $fixRRows = $view.find('.layui-table-fixed-r tbody tr');
+                var $fixLRows = $view.find('.layui-table-fixed-l tbody tr');
 
-            // 遍历每一行，同步高度（双向取最大值）
-            $mainRows.each(function(index) {
-                var $mainRow = $(this);
-                var $fixRRow = $fixRRows.length > index ? $fixRRows.eq(index) : null;
-                var $fixLRow = $fixLRows.length > index ? $fixLRows.eq(index) : null;
-
-                // 计算各行的实际高度（使用 outerHeight 包含 padding 和 border）
-                var hMain = $mainRow.outerHeight() || 0;
-                var hR = $fixRRow ? ($fixRRow.outerHeight() || 0) : 0;
-                var hL = $fixLRow ? ($fixLRow.outerHeight() || 0) : 0;
-
-                // 取最大值作为统一高度
-                var h = Math.max(hMain, hR, hL);
-
-                // 如果所有高度都是 0，跳过（数据为空）
-                if (h <= 0) return;
-
-                // 同时设置主表、右 fixed、左 fixed 的高度
-                // 1. 设置 tr 高度（直接使用 outerHeight 的值，因为表格行通常 border 很小且固定）
-                $mainRow.css('height', h + 'px');
-                
-                if ($fixRRow) {
-                    // 设置 tr 高度
-                    $fixRRow.css('height', h + 'px');
-                    
-                    // 2. 设置 fixed-r 的 td 高度（确保单元格也能被拉伸）
-                    $fixRRow.find('td').css('height', h + 'px');
-                    
-                    // 3. 设置 fixed-r 的 .layui-table-cell 高度（关键：确保内容区域撑满）
-                    // 由于 CSS 已经设置了 height: 100%，这里只需要确保 td 高度正确即可
-                    // 但为了更精确，我们也可以显式设置
-                    $fixRRow.find('td .layui-table-cell').css('height', h + 'px');
+                // ✅ 写入 height:xxxpx!important
+                function setHImportant(el, h) {
+                    if (!el) return;
+                    el.style.setProperty('height', h + 'px', 'important');
                 }
-                
-                if ($fixLRow) {
-                    // 设置 tr 高度
-                    $fixLRow.css('height', h + 'px');
-                    
-                    // 设置 fixed-l 的 td 高度
-                    $fixLRow.find('td').css('height', h + 'px');
-                    
-                    // 设置 fixed-l 的 .layui-table-cell 高度
-                    $fixLRow.find('td .layui-table-cell').css('height', h + 'px');
+
+                // ✅ 清空 height 的 important（恢复测量用）
+                function resetHImportant(el) {
+                    if (!el) return;
+                    el.style.removeProperty('height');
                 }
-            });
-        } catch (e) {
-            console.warn('同步固定列行高失败:', e);
+
+                // =========================
+                // ① 同步前：reset（避免上一次写入污染测量）
+                // =========================
+                $mainRows.each(function () {
+                    resetHImportant(this);
+                    $(this).find('td').each(function(){ resetHImportant(this); });
+                    $(this).find('td .layui-table-cell').each(function(){ resetHImportant(this); });
+                });
+
+                if ($fixRRows.length) {
+                    $fixRRows.each(function () {
+                        resetHImportant(this);
+                        $(this).find('td').each(function(){ resetHImportant(this); });
+                        $(this).find('td .layui-table-cell').each(function(){ resetHImportant(this); });
+                    });
+                }
+
+                if ($fixLRows.length) {
+                    $fixLRows.each(function () {
+                        resetHImportant(this);
+                        $(this).find('td').each(function(){ resetHImportant(this); });
+                        $(this).find('td .layui-table-cell').each(function(){ resetHImportant(this); });
+                    });
+                }
+
+                // =========================
+                // ② 逐行计算最大高度 -> 写入 important
+                // =========================
+                $mainRows.each(function (index) {
+                    var mainRow = this;
+                    var fixRRow = ($fixRRows.length > index) ? $fixRRows.get(index) : null;
+                    var fixLRow = ($fixLRows.length > index) ? $fixLRows.get(index) : null;
+
+                    var hMain = $(mainRow).outerHeight() || 0;
+                    var hR = fixRRow ? ($(fixRRow).outerHeight() || 0) : 0;
+                    var hL = fixLRow ? ($(fixLRow).outerHeight() || 0) : 0;
+
+                    var h = Math.max(hMain, hR, hL);
+                    if (h <= 0) return;
+
+                    // 主表
+                    setHImportant(mainRow, h);
+                    $(mainRow).find('td').each(function(){ setHImportant(this, h); });
+                    $(mainRow).find('td .layui-table-cell').each(function(){ setHImportant(this, h); });
+
+                    // 右 fixed
+                    if (fixRRow) {
+                        setHImportant(fixRRow, h);
+                        $(fixRRow).find('td').each(function(){ setHImportant(this, h); });
+                        $(fixRRow).find('td .layui-table-cell').each(function(){ setHImportant(this, h); });
+                    }
+
+                    // 左 fixed
+                    if (fixLRow) {
+                        setHImportant(fixLRow, h);
+                        $(fixLRow).find('td').each(function(){ setHImportant(this, h); });
+                        $(fixLRow).find('td .layui-table-cell').each(function(){ setHImportant(this, h); });
+                    }
+                });
+
+            } catch (e) {
+                console.warn('同步固定列行高失败:', e);
+            }
         }
-    }
+
 
     // ✅ 窗口resize防抖处理
     var resizeTimer = null;
