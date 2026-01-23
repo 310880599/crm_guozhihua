@@ -1242,8 +1242,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         defaultToolbar: ['filter'],
         page: true,
         cols: cols,
-        limit: 10,
-        page: { limits: [5,10, 20, 50, 100, 200, 500] },
+        limit: 8,
+        page: { limits: [5,8,10, 20, 50, 100, 200, 500] },
         done: function(res, curr, count) {
             // 绑定列宽拖拽保存监听（每次 done 都会执行，先 off 再 on 避免重复绑定）
             bindResizeSave();
