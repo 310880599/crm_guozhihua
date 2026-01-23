@@ -279,6 +279,19 @@
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     }
     
+    /* 操作列图标按钮紧凑样式（只影响操作列的图标按钮） */
+    .layui-table-view .layui-table td .action-icon-btn {
+        padding: 4px 6px !important;
+        min-width: 30px !important;
+        justify-content: center !important;
+        gap: 0 !important;
+    }
+    
+    /* 操作列单元格保持一行显示（针对固定列） */
+    .layui-table-fixed-r .layui-table td {
+        white-space: nowrap !important;
+    }
+    
     .layui-table-view .layui-table td .layui-btn-primary {
         background: #4285f4 !important;
         border-color: #4285f4 !important;
@@ -911,11 +924,11 @@
 </div>
 <!-- 操作列 -->
 <script type="text/html" id="action">
-    <a class="layui-btn layui-btn-primary layui-btn-xs follow-btn" href="javascript:void(0);" data-id="{{d.id}}"><i class="layui-icon">&#xe654;</i>写跟进</a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a>
     <!-- ✅新增：全部跟进 -->
-    <a class="layui-btn layui-btn-warm layui-btn-xs all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}"><i class="layui-icon">&#xe60a;</i>全部跟进</a>
-    <a class="layui-btn layui-btn-xs" data-id="{{d.id}}" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
-    <a class="layui-btn layui-btn-primary layui-btn-xs" data-id="{{d.id}}" lay-event="alter"><i class="layui-icon">&#xe60e;</i>转移</a>
+    <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="全部跟进" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i></a>
+    <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i></a>
     <!-- {if session('aid') eq 1}
     <a class="layui-btn layui-btn-primary layui-btn-xs yincang" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>成交</a>
     {/if} -->
@@ -993,7 +1006,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
              return v;
              }
          },
-         { fixed: 'right', title: '操作', width: isMobile ? 100 : 420, align: 'center', toolbar: '#action' }
+         { fixed: 'right', title: '操作', width: isMobile ? 130 : 220, align: 'center', toolbar: '#action' }
      ]];
 
     /**
