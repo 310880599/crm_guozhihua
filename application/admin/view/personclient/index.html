@@ -393,6 +393,49 @@
         vertical-align: middle !important;
     }
     
+    /* ===============================
+       【新增】A) CSS：让 fixed 操作列单元格"可被拉伸并居中"
+       =============================== */
+    /* 让 fixed 右侧每个 td 内部 .layui-table-cell 高度可以 100% 撑满，并用 flex 垂直居中 */
+    .layui-table-fixed-r td .layui-table-cell {
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-wrap: wrap !important; /* 允许按钮换行（如果空间不足） */
+        gap: 4px !important; /* 按钮间距 */
+        padding: 4px 8px !important; /* 保留适当 padding，确保按钮不贴边 */
+        box-sizing: border-box !important;
+    }
+    
+    /* 左侧固定列也做同样处理（如果存在） */
+    .layui-table-fixed-l td .layui-table-cell {
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-wrap: wrap !important;
+        gap: 4px !important;
+        padding: 4px 8px !important;
+        box-sizing: border-box !important;
+    }
+    
+    /* 操作列按钮容器：不允许把高度"撑坏"或"缩小"，确保按钮容器不改变行高，只负责居中 */
+    .layui-table-fixed-r td .layui-table-cell .layui-btn-xs,
+    .layui-table-fixed-l td .layui-table-cell .layui-btn-xs {
+        height: 26px !important; /* 保持按钮紧凑高度，不改变行高 */
+        line-height: 26px !important;
+        margin: 0 !important; /* 使用 gap 替代 margin，避免间距问题 */
+        flex-shrink: 0 !important; /* 不允许按钮被压缩 */
+    }
+    
+    /* 确保 fixed 列的 td 高度也能被拉伸 */
+    .layui-table-fixed-r tbody td,
+    .layui-table-fixed-l tbody td {
+        height: 100% !important;
+        box-sizing: border-box !important;
+    }
+    
     /* 跟进弹窗样式 */
     .follow-container {
         padding: 20px;
@@ -1209,20 +1252,48 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             // 绑定列宽拖拽保存监听（每次 done 都会执行，先 off 再 on 避免重复绑定）
             bindResizeSave();
             
-            // ✅ 同步固定列行高（立即执行一次）
-            syncFixedRowHeights();
+            // ===============================
+            // 【修改】同步固定列行高 - 升级版（解决 Layui fixed 列晚生成问题）
+            // ===============================
+            // 使用 requestAnimationFrame 确保在浏览器下一次重绘前执行
+            requestAnimationFrame(function() {
+                syncFixedRowHeights();
+            });
             
-            // ✅ 延迟再执行一次（因为 Layui fixed 列有时稍晚生成）
+            // 延迟执行（因为 Layui fixed 列有时稍晚生成）
             setTimeout(function() {
                 syncFixedRowHeights();
-            }, 50);
+            }, 60);
             
-            // ✅ 再延迟一次确保完全同步（针对两行显示的列）
+            // 再延迟一次确保完全同步（针对两行显示的列和复杂布局）
             setTimeout(function() {
                 syncFixedRowHeights();
-            }, 100);
+            }, 180);
+            
+            // ===============================
+            // 【新增】表格 body 滚动时触发行高同步（节流处理）
+            // ===============================
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if ($view.length) {
+                var $tableMain = $view.find('.layui-table-main');
+                if ($tableMain.length) {
+                    // 先解绑旧的监听，避免重复绑定
+                    $tableMain.off('scroll.syncRowHeight');
+                    // 绑定新的滚动监听（节流处理）
+                    var scrollSyncTimer = null;
+                    $tableMain.on('scroll.syncRowHeight', function() {
+                        if (scrollSyncTimer) {
+                            clearTimeout(scrollSyncTimer);
+                        }
+                        scrollSyncTimer = setTimeout(function() {
+                            syncFixedRowHeights();
+                        }, 100);
+                    });
+                }
+            }
         }
     });
+    
  // 点击写跟进按钮打开弹窗
     $(document).on('click', '.follow-btn, .client-link', function() {
         var clientId = $(this).data('id');
@@ -1474,8 +1545,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     /**
-     * ✅ 同步固定列行高（逐行对齐主表格）
+     * ✅ 【修改】同步固定列行高（逐行对齐主表格）- 升级版
      * 解决主表格与右侧固定列行高不一致的问题
+     * 
+     * 升级点：
+     * 1. 双向取最大值：同时计算主表、右 fixed、左 fixed 的高度，取最大值统一设置
+     * 2. 强制统一高度：不仅设置 tr 高度，还设置 td 和 .layui-table-cell 的高度
+     * 3. 像素级对齐：确保每一行都严格一致
      */
     function syncFixedRowHeights() {
         try {
@@ -1491,25 +1567,49 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             // 找到左侧固定列 tbody 行（如果存在）
             var $fixLRows = $view.find('.layui-table-fixed-l tbody tr');
 
-            // 遍历每一行，同步高度
+            // 遍历每一行，同步高度（双向取最大值）
             $mainRows.each(function(index) {
                 var $mainRow = $(this);
-                var h = $mainRow.outerHeight();
+                var $fixRRow = $fixRRows.length > index ? $fixRRows.eq(index) : null;
+                var $fixLRow = $fixLRows.length > index ? $fixLRows.eq(index) : null;
 
-                // 同步右侧固定列
-                if ($fixRRows.length > index) {
-                    var $fixRRow = $fixRRows.eq(index);
-                    // 先清除旧高度，避免累积偏差
-                    $fixRRow.css('height', '');
-                    // 设置新高度
-                    $fixRRow.height(h);
+                // 计算各行的实际高度（使用 outerHeight 包含 padding 和 border）
+                var hMain = $mainRow.outerHeight() || 0;
+                var hR = $fixRRow ? ($fixRRow.outerHeight() || 0) : 0;
+                var hL = $fixLRow ? ($fixLRow.outerHeight() || 0) : 0;
+
+                // 取最大值作为统一高度
+                var h = Math.max(hMain, hR, hL);
+
+                // 如果所有高度都是 0，跳过（数据为空）
+                if (h <= 0) return;
+
+                // 同时设置主表、右 fixed、左 fixed 的高度
+                // 1. 设置 tr 高度（直接使用 outerHeight 的值，因为表格行通常 border 很小且固定）
+                $mainRow.css('height', h + 'px');
+                
+                if ($fixRRow) {
+                    // 设置 tr 高度
+                    $fixRRow.css('height', h + 'px');
+                    
+                    // 2. 设置 fixed-r 的 td 高度（确保单元格也能被拉伸）
+                    $fixRRow.find('td').css('height', h + 'px');
+                    
+                    // 3. 设置 fixed-r 的 .layui-table-cell 高度（关键：确保内容区域撑满）
+                    // 由于 CSS 已经设置了 height: 100%，这里只需要确保 td 高度正确即可
+                    // 但为了更精确，我们也可以显式设置
+                    $fixRRow.find('td .layui-table-cell').css('height', h + 'px');
                 }
-
-                // 同步左侧固定列（如果存在）
-                if ($fixLRows.length > index) {
-                    var $fixLRow = $fixLRows.eq(index);
-                    $fixLRow.css('height', '');
-                    $fixLRow.height(h);
+                
+                if ($fixLRow) {
+                    // 设置 tr 高度
+                    $fixLRow.css('height', h + 'px');
+                    
+                    // 设置 fixed-l 的 td 高度
+                    $fixLRow.find('td').css('height', h + 'px');
+                    
+                    // 设置 fixed-l 的 .layui-table-cell 高度
+                    $fixLRow.find('td .layui-table-cell').css('height', h + 'px');
                 }
             });
         } catch (e) {
