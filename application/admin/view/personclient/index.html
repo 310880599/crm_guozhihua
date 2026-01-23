@@ -643,6 +643,79 @@
         margin-right: 4px;
         color: #ff9800;
     }
+
+    /* ===============================
+       ✅ 表格行高：紧凑模式（我的客户）
+       说明：只影响 layui table，不影响页面其它区域
+       =============================== */
+
+    /* 1) 表头/单元格整体 padding 变小 */
+    .layui-table-view .layui-table th,
+    .layui-table-view .layui-table td{
+        padding: 4px 0 !important;   /* 原来行高偏高，先把上下 padding 收紧 */
+    }
+
+    /* 2) 单元格内容区域：统一紧凑高度与行高 */
+    .layui-table-view .layui-table-cell{
+        padding: 4px 8px !important;     /* 控制"内容区"上下左右留白 */
+        line-height: 18px !important;    /* 文字更紧凑但仍清晰 */
+        min-height: 32px !important;     /* 让大多数行变矮（可微调 30~36） */
+        height: auto !important;         /* 避免被 layui 固定死 */
+        box-sizing: border-box !important;
+    }
+
+    /* 3) 两行省略列：保证两行仍可读（不让它被压成一团） */
+    .layui-table-view td[data-field="product_name"] .layui-table-cell,
+    .layui-table-view td[data-field="last_up_records"] .layui-table-cell{
+        line-height: 17px !important;
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        /* 两行内容最小高度：17*2 + padding(8) ≈ 42，可按体验微调 */
+        min-height: 42px !important;
+    }
+
+    /* 4) 操作列：按钮整体同步紧凑 + 垂直居中 */
+    .layui-table-view .layui-table td .layui-btn-xs{
+        height: 26px !important;         /* 按钮高度更矮 */
+        line-height: 26px !important;
+        padding: 0 8px !important;       /* 比你原来的 4px 12px 更紧凑 */
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    /* 5) 只影响你这种"图标按钮"（action-icon-btn）让它更方更紧凑 */
+    .layui-table-view .layui-table td .action-icon-btn{
+        width: 28px !important;
+        min-width: 28px !important;
+        padding: 0 !important;
+    }
+
+    /* 6) 操作列单元格整体垂直居中（避免行高变化后按钮漂） */
+    .layui-table-view .layui-table td{
+        vertical-align: middle !important;
+    }
+
+    /* 7) 确保固定列也应用相同的紧凑样式 */
+    .layui-table-fixed-l .layui-table-cell,
+    .layui-table-fixed-r .layui-table-cell{
+        padding: 4px 8px !important;
+        line-height: 18px !important;
+        min-height: 32px !important;
+        height: auto !important;
+        box-sizing: border-box !important;
+    }
+
+    /* 8) 固定列中的两行省略列也要保证可读性 */
+    .layui-table-fixed-l td[data-field="product_name"] .layui-table-cell,
+    .layui-table-fixed-l td[data-field="last_up_records"] .layui-table-cell,
+    .layui-table-fixed-r td[data-field="product_name"] .layui-table-cell,
+    .layui-table-fixed-r td[data-field="last_up_records"] .layui-table-cell{
+        line-height: 17px !important;
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        min-height: 42px !important;
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域 -->
