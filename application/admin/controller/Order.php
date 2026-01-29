@@ -3320,7 +3320,7 @@ class Order extends Common
         $where[] = ['check_status', '=', 0];
         if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
         if (isset($keyword['timebucket'])) {
-            $where[] = $this->buildTimeWhere($keyword['timebucket'], 'order_time');
+            $where[] = $this->buildTimeWhere($keyword['timebucket'], 'create_time');
 
             $timeWhere['at_time'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
             $timeWhere['to_kh_time'] = $this->buildTimeWhere($keyword['timebucket'], 'to_kh_time');
