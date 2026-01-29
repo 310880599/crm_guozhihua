@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>{:config('sys_name')}后台管理</title>
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <link rel="stylesheet" href="/static/plugins/layui/css/layui.css" media="all" />
+    <link rel="stylesheet" href="/static/admin/css/global.css" media="all">
+    <link rel="stylesheet" href="/static/common/css/font.css" media="all">
+
+    <style>
+        /* 隐藏模板脚本标签，避免在页面上显示为代码 */
+        script[type="text/html"] {
+            display: none !important;
+        }
+
+        /* 筛选区域样式优化 */
+        .filtrate-warp {
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .filtrate-warp .title {
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 500;
+            text-align: left;
+            cursor: pointer;
+            width: 90px;
+            background-color: transparent !important;
+            color: #333 !important;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .filtrate-warp .title:hover {
+            color: #1890ff !important;
+            background-color: #f0f7ff !important;
+        }
+
+        .filtrate-warp .flag {
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .filtrate-warp .flag:hover {
+            color: #1890ff;
+            background-color: #f0f7ff;
+        }
+
+        .filtrate-warp .layui-badge:hover {
+            color: white !important;
+            transform: scale(1.05);
+            transition: transform 0.2s ease;
+        }
+
+        /* 高级查询区域优化 */
+        .layui-elem-field {
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e8e8e8;
+            /* overflow: hidden; */
+            background: #fafafa;
+        }
+
+        .layui-elem-field legend {
+            font-size: 16px;
+            font-weight: 600;
+            background: #6695ea;
+            border-radius: 8px;
+            color: #fff;
+            padding: 10px 15px;
+        }
+
+        .layui-card {
+            background: #fafafa;
+            border-radius: 6px;
+        }
+
+        .layui-form-item {
+            margin-bottom: 15px;
+        }
+
+        .layui-form-label {
+            font-weight: 500;
+            color: #555;
+        }
+
+        .layui-input, .layui-select {
+            border-radius: 4px;
+            border: 1px solid #d9d9d9;
+            transition: all 0.3s ease;
+        }
+
+        .layui-input:focus, .layui-select:focus {
+            border-color: #1890ff;
+            box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+        }
+
+        /* 折叠面板优化 */
+        .layui-collapse {
+            border: none;
+            background: transparent;
+        }
+
+        .layui-colla-item {
+            border: 1px solid #e8e8e8;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            background: #fff;
+            transition: all 0.3s ease;
+        }
+
+        .layui-colla-item:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .layui-colla-title {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            color: #333;
+            font-weight: 600;
+            border-radius: 6px 6px 0 0;
+            transition: all 0.3s ease;
+        }
+
+        .layui-colla-title:hover {
+            background: linear-gradient(135deg, #e8ecf1 0%, #b8c4d6 100%);
+        }
+
+        .layui-colla-content {
+            background: #fff;
+            border-radius: 0 0 6px 6px;
+        }
+
+        /* 按钮样式优化 */
+        .layui-btn {
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .layui-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .layui-btn-xs {
+            padding: 4px 12px;
+            font-size: 12px;
+            border-radius: 4px;
+            margin: 0 3px;
+            line-height: 14px !important;
+        }
+
+        /* 查询按钮优化 */
+        .layuiadmin-btn-list {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.4);
+        }
+
+        .layuiadmin-btn-list:hover {
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.6);
+        }
+
+        /* 操作列：按钮一行显示、留出间距、不换行 */
+        .table-actions {
+            white-space: nowrap;
+        }
+
+        .table-actions .layui-btn {
+            margin-right: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .table-actions .layui-btn:last-child {
+            margin-right: 0;
+        }
+
+        .table-actions .layui-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        /* 也可根据需要略微增大按钮点击区域 */
+        .table-actions .layui-btn.layui-btn-xs {
+            padding: 0 10px;
+        }
+
+        /* 统计信息卡片优化 */
+        #summary-info {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            margin-bottom: 15px;
+            padding: 20px;
+            border: none;
+        }
+
+        #summary-info span {
+            color: #fff;
+            font-size: 14px;
+        }
+
+        #summary-info span[style*="font-weight: 600"] {
+            font-weight: 600 !important;
+            margin-right: 5px;
+        }
+
+        #summary-info span[style*="font-weight: 300"] {
+            font-weight: 300 !important;
+            color: #fff !important;
+        }
+
+        /* 表格样式优化 */
+        .layui-table {
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .layui-table thead tr {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .layui-table thead th {
+            color: #fff;
+            font-weight: 600;
+            padding: 15px 10px;
+        }
+
+        .layui-table tbody tr {
+            transition: all 0.2s ease;
+        }
+
+        .layui-table tbody tr:hover {
+            background-color: #f5f7fa;
+        }
+
+        /* 让单元格内容成为独立可移动的容器 */
+            .layui-table tbody td > * {
+                display: inline-block;
+                transition: transform 0.25s ease;
+        }
+
+        /* hover 行时，只移动内容，不移动整个表格行 */
+        .layui-table tbody tr:hover td > * {
+            transform: translateX(-4px);
+        }
+
+        .layui-table tbody td {
+            padding: 12px 10px;
+        }
+
+        /* 工具栏按钮组优化 */
+        #topBtn {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 15px;
+            background: #fafafa;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+
+        #topBtn .layui-btn {
+            margin: 0;
+        }
+
+        /* 主容器优化 */
+        .admin-main {
+            padding: 15px;
+            background: #f5f7fa;
+            border-radius: 8px;
+        }
+
+        /* 响应式优化 */
+        @media (max-width: 768px) {
+            .layui-form-item {
+                margin-bottom: 10px;
+            }
+
+            .layui-inline {
+                display: block;
+                width: 100%;
+                margin-bottom: 10px;
+            }
+
+            #summary-info {
+                padding: 15px;
+                font-size: 12px;
+            }
+
+            #summary-info span {
+                display: block;
+                margin-bottom: 8px;
+            }
+
+            .layui-table {
+                font-size: 12px;
+            }
+
+            .layui-btn-xs {
+                padding: 2px 8px;
+                font-size: 11px;
+            }
+
+            #topBtn {
+                padding: 10px;
+            }
+
+            .table-actions .layui-btn {
+                margin-right: 5px;
+            }
+        }
+
+        /* 加载动画优化 */
+        .layui-layer-loading {
+            border-radius: 50%;
+        }
+
+        /* 产品明细样式 */
+        .product-cell {
+            display: block;
+            width: 100%;
+            background: #f5f7fb;
+            padding: 10px 12px;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+
+        .product-row {
+            display: block;
+            padding: 10px 12px;
+            line-height: 22px;
+            border: 1px dashed #d6dbe6;
+            border-radius: 6px;
+            background: #fff;
+            margin-bottom: 8px;
+            box-sizing: border-box;
+        }
+
+        .product-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .product-field {
+            display: inline-block;
+            margin-right: 12px;
+            margin-bottom: 6px;
+            padding: 3px 6px;
+            border-radius: 4px;
+            background: #e8f4ff;
+            color: #1890ff;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        /* 产品明细列自动调整行高 */
+        .layui-table tbody td[data-field="order_items"] .layui-table-cell {
+            white-space: normal !important;
+            word-wrap: break-word !important;
+            line-height: 1.8 !important;
+            padding: 10px 15px !important;
+            height: auto !important;
+            min-height: 40px !important;
+            overflow: visible !important;
+        }
+
+        /* 确保表格行可以自动调整高度 */
+        .layui-table tbody tr {
+            height: auto !important;
+        }
+
+        .layui-table tbody tr td[data-field="order_items"] {
+            height: auto !important;
+        }
+    </style>
+
+</head>
+
+<body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
+
+    <div class="admin-main layui-anim layui-anim-upbit">
+        <fieldset class="layui-elem-field ">
+            <form class="layui-form" id="searchForm">
+                <legend>高级查询</legend>
+                <div class="layui-card" style="box-shadow: none; margin-top: 10px">
+                    <div class="layui-form layui-card-header layuiadmin-card-header-auto"
+                        style="border-bottom: transparent; height: auto">
+                        <div class="layui-form-item" style="text-align: left; padding-left: 20px;">
+                            <!-- 通用筛选条件 -->
+                            <!-- <div class="layui-inline">
+                                <label class="layui-form-label">审核状态：</label>
+                                <div class="layui-input-inline">
+                                    <select name="status" id="status">
+                                        <option value="">请选择审核状态：</option>
+                                        <option value="审核中">审核中</option>
+                                        <option value="审核通过">审核通过</option>
+                                    </select>
+                                </div>
+                            </div> -->
+                            <div class="layui-inline">
+                                <label class="layui-form-label">订单编号：</label>
+                                <div class="layui-input-inline">
+                                    <input type="text" name="order_no" placeholder="请输入订单编号" class="layui-input">
+                                </div>
+                            </div>
+                            <div class="layui-inline">
+                                <label class="layui-form-label">联系方式：</label>
+                                <div class="layui-input-inline">
+                                    <input type="text" name="contact" placeholder="请输入联系方式" class="layui-input">
+                                </div>
+                            </div>
+                            <div class="layui-inline">
+                                <label class="layui-form-label">时间查询：</label>
+                                <div class="layui-input-inline">
+                                    <select name="timebucket">
+                                        <option value="">请选择时间</option>
+                                        <option value="today">今天</option>
+                                        <option value="yesterday">昨天</option>
+                                        <option value="week">本周</option>
+                                        <option value="last week">上周</option>
+                                        <option value="month" selected>本月</option>
+                                        <option value="last month">上月</option>
+                                        <option value="year">今年</option>
+                                        <option value="last year">去年</option>
+                                        <option value="-2 hours">两个小时内</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- 自定义筛选折叠面板 -->
+                            <div class="layui-collapse">
+                                <div class="layui-colla-item">
+                                    <h2 class="layui-colla-title">自定义筛选 <i class="layui-icon layui-colla-icon"></i></h2>
+                                    <div class="layui-colla-content  layui-show">
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">客户名称：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="text" id="cname" name="cname" placeholder="请输入客户名称"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">客户性质：</label>
+                                            <div class="layui-input-inline">
+                                                <select name="customer_type" lay-search="">
+                                                    <option value="">请选择客户性质</option>
+                                                    {volist name='customer_type' id='vo'}
+                                                    <option value="{$vo}" {if $vo==$orderInfo.customer_type}
+                                                        selected="selected" {/if}>{$vo}
+                                                    </option>
+                                                    {/volist}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">产品名称：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="text" name="product_name" placeholder="请输入产品名称"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">成交金额：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="min_money" placeholder="最小值"
+                                                    class="layui-input">
+                                            </div>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="max_money" placeholder="最大值"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">利润：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="min_profit" placeholder="最小值"
+                                                    class="layui-input">
+                                            </div>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="max_profit" placeholder="最大值"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">利润率：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="min_margin_rate" placeholder="最小值(%)"
+                                                    class="layui-input">
+                                            </div>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="max_margin_rate" placeholder="最大值(%)"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">询盘来源：</label>
+                                            <div class="layui-input-inline">
+                                                <select name="source" id="source" lay-search="">
+                                                    <option value="">请选择询盘来源</option>
+                                                    {volist name='sourceList' id='vo'}
+                                                    <option value="{$vo}">{$vo}</option>
+                                                    {/volist}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="layui-inline" style="float: right; padding-bottom: 15px">
+                            <button type="button" class="layui-btn" onclick="resetForm()">重置</button>
+                            <button class="layui-btn layuiadmin-btn-list" lay-submit
+                                lay-filter="LAY-app-contlist-search">
+                                <i class="layui-icon layui-icon-search layuiadmin-button-btn"
+                                    style="vertical-align: sub;"></i>查询数据
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+
+        </fieldset>
+
+        <div id="summary-info" class="layui-card" style="margin-bottom: 10px; padding: 10px;">
+            <span style="font-weight: 600;">成交金额总计：￥<span style="font-weight: 300;" id="total-money"> 0</span>
+                <span style="font-weight: 600; margin-left: 20px;">利润总计：￥<span style="font-weight: 300;"
+                        id="total-profit">
+                        0</span>
+                    <span style="font-weight: 600; margin-left: 20px;">询盘数量：<span style="font-weight: 300;"
+                            id="total-inquiries">0</span></span>
+                    <span style="font-weight: 600; margin-left: 20px;">成单率：<span style="font-weight: 300;"
+                            id="success-rate">0</span>%</span>
+        </div>
+
+
+        <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+    </div>
+
+
+    <!-- <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a> -->
+    <script type="text/html" id="action">
+    <!-- 是否审核通过 -->
+    <!-- {//if $Think.session.aid == 1} -->
+    <!-- <a class="layui-btn  layui-btn-xs" lay-event="shenhe"><i class="layui-icon">&#xe642;</i>审核通过</a> -->
+    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="details"><i class="layui-icon">&#xe615;</i> 详情</a>
+    {if session('aid') eq 1} 
+    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
+    {/if}
+    <!-- {/if} -->
+
+    </script>
+
+
+    <script type="text/html" id="topBtn">
+    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加订单</button>
+</script>
+
+
+    {include file="common/foot"/}
+    <script>
+        layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element'], function () {
+            const { table, form, laydate, $, upload, util, element } = layui;
+            // 根据超级管理员权限设置工具栏按钮
+            var defaultToolbar = ['filter'];
+            {if session('aid') eq 1}
+            defaultToolbar = ['filter', 'print', 'exports'];
+            {/if}
+            
+            var tableIn = table.render({
+                elem: '#table-list',
+                url: '{:url("personindex")}',
+                method: 'post',
+                // width:'100%',
+                toolbar: '#topBtn',
+                defaultToolbar: defaultToolbar,
+                cols: [[
+                    { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
+                    { field: 'order_no', title: '订单编号', totalRowText: '合计：' , width: 180},
+                    { field: 'order_time', title: '成交时间' , width: 180},
+                    { field: 'country', title: '成交地址' , width: 280},
+                    { field: 'contact', title: '联系方式' , width: 180},
+                    { field: 'order_items', title: '产品明细', width: 480, templet: function(d){
+                        if (!d.order_items || d.order_items.length === 0) {
+                            return '';
+                        }
+                        return d.order_items.map(function(item){
+                            return item.product_name || '';
+                        }).filter(function(name){
+                            return name;
+                        }).join('<br>');
+                    }},
+                    { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
+                    { field: 'profit', title: '利润', totalRow: true, width: 180 },
+                    { field: 'source', title: '运营渠道' , width: 180},
+                    { field: 'source_port', title: '运营端口' , width: 180},
+                    { field: 'pr_user', title: '负责人', hide: false , width: 180},
+                    { field: 'joint_person', title: '协同人', width: 180, templet: function(d){
+                        return d.joint_person_names || d.joint_person || '';
+                    }},
+                    { field: 'create_time', title: '创建时间' , width: 180},
+                    { field: 'update_time', title: '更新时间' , width: 180},
+                    { width: 200, title: '操作', toolbar: '#action' }
+                ]],
+                limit: 10, //每页默认显示的数量
+
+                page: { limits: [10, 20, 30, 40, 50, 100, 200, 500,9999999] },
+                totalRow: true,// 开启统计行
+                done: function (res, curr, count) {
+                    $('#total-money').text(res.totalMoney);
+                    $('#total-profit').text(res.totalProfit);
+                    $('#total-inquiries').text(res.totalInquiries);
+                    $('#success-rate').text(res.successRate);
+                    
+                    // 自动调整产品明细列的行高
+                    setTimeout(function() {
+                        $('.layui-table tbody tr').each(function() {
+                            var $row = $(this);
+                            // 跳过合计行
+                            if ($row.hasClass('layui-table-total')) {
+                                return;
+                            }
+                            var $productCell = $row.find('td[data-field="order_items"] .layui-table-cell');
+                            if ($productCell.length > 0) {
+                                // 临时移除高度限制以获取真实内容高度
+                                var originalHeight = $productCell.css('height');
+                                $productCell.css('height', 'auto');
+                                var cellHeight = $productCell[0].scrollHeight;
+                                
+                                // 设置单元格和行的高度
+                                if (cellHeight > 40) {
+                                    $row.css('height', 'auto');
+                                    $row.find('td').css('height', 'auto');
+                                    $productCell.css('height', 'auto');
+                                    $productCell.css('min-height', cellHeight + 10 + 'px');
+                                } else {
+                                    $productCell.css('height', originalHeight);
+                                }
+                            }
+                        });
+                    }, 200);
+                }
+            });
+            table.on('tool(table-list)', function (obj) {
+                var data = obj.data;
+
+                if (obj.event === 'del') {
+                    layer.confirm('您确定要删除这个订单吗？', function (index) {
+                        var loading = layer.load(1, { shade: [0.1, '#fff'] });
+                        $.post("{:url('del')}", { id: data.id }, function (res) {
+                            layer.close(loading);
+                            if (res.code === 0) {
+                                layer.msg(res.msg, { time: 1000, icon: 1 });
+                                tableIn.reload();
+                            } else {
+                                layer.msg('操作失败！', { time: 1000, icon: 2 });
+                            }
+                        });
+                        layer.close(index);
+                    });
+                }
+                else if (obj.event === 'edit') {
+                    layer.open({
+                        type: 2,
+                        title: '编辑订单',
+                        closeBtn: 1, //是否显示关闭按钮
+                        area: ['100%', '86%'],
+                        anim: 2,  //动画
+                        shadeClose: false,  //点击空白处是否关闭
+                        maxmin: false, //开启最大化最小化按钮
+                        content: ["{:url('Order/edit')}?id=" + data.id]
+                    });
+                }
+                else if (obj.event === 'details') {
+                    layer.open({
+                        type: 2,
+                        title: '订单详情',
+                        closeBtn: 1, //是否显示关闭按钮
+                        area: ['100%', '86%'],
+                        anim: 2,  //动画
+                        shadeClose: false,  //点击空白处是否关闭
+                        maxmin: false, //开启最大化最小化按钮
+                        content: ["{:url('Order/details')}?id=" + data.id]
+                    });
+                }
+                else if (obj.event === 'shenhe') {
+                    layer.confirm('确认金额和客户信息,确认审核业绩吗？', function (index) {
+                        var loading = layer.load(1, { shade: [0.1, '#fff'] });
+                        $.post("{:url('shenhe')}", { id: data.id }, function (res) {
+                            layer.close(loading);
+                            if (res.code === 0) {
+                                layer.msg(res.msg, { time: 1000, icon: 1 });
+                                tableIn.reload();
+                            } else {
+                                layer.msg(res.msg, { time: 2000, icon: 2 });
+                            }
+                        });
+                        layer.close(index);
+                    });
+                }
+            });
+
+
+            $('body').on('click', '#add', function () {
+                var indexOpen = layer.open({
+                    type: 2,
+                    title: '添加订单',
+                    closeBtn: 1, //是否显示关闭按钮
+                    area: ['100%', '86%'],
+                    anim: 2,  //动画
+                    shadeClose: false,  //点击空白处是否关闭
+                    maxmin: false, //开启最大化最小化按钮
+                    content: ["{:url('Order/add')}"]
+                });
+            })
+
+
+
+            //监听事件
+            table.on('toolbar(table-list)', function (obj) {
+
+                var checkStatus = table.checkStatus(obj.config.id)
+                    , data = checkStatus.data; //获取选中的数据
+                switch (obj.event) {
+                    case 'moveGh':
+                        if (data.length === 0) {
+                            layer.msg('请选择一行');
+                        } else if (data.length > 1) {
+                            layer.msg('只能同时编辑一个');
+                        } else {
+                            console.log(data);
+                            /*layer.alert('编辑 [id]：'+ checkStatus.data[0]['id']);*/
+                            var indexOpen = layer.open({
+                                type: 2,
+                                title: '移入公海',
+                                closeBtn: 1, //是否显示关闭按钮
+                                area: ['100%', '86%'],
+                                anim: 2,  //动画
+                                shadeClose: false,  //点击空白处是否关闭
+                                maxmin: false, //开启最大化最小化按钮
+                                content: ["{:url('Client/toMoveGh')}?id=" + checkStatus.data[0]['id']]
+                            });
+                        }
+                        break;
+                    case 'alterAll':
+                        var checkStatus = table.checkStatus(obj.config.id)
+                            , data = checkStatus.data;//获取选中的数据
+
+                        if (data.length > 0) {
+                            alterList = [];  //定义需要转移的数组
+                            data.forEach(function (obj, index) {
+                                alterList.push(obj.id);
+                            });
+
+                            var currConfirm = layer.confirm('您确定要转移这' + data.length + '个客户吗？', function (index) {
+
+
+                                layer.close(currConfirm);
+                                var indexOpen = layer.open({
+                                    type: 2,
+                                    title: '转移客户',
+                                    closeBtn: 1, //是否显示关闭按钮
+                                    area: ['100%', '86%'],
+                                    anim: 2,  //动画
+                                    shadeClose: false,  //点击空白处是否关闭
+                                    maxmin: false, //开启最大化最小化按钮
+                                    content: ["{:url('Client/alterPrUser')}?ids=" + alterList]
+
+                                });
+
+
+                            });
+
+
+                        } else {
+                            layer.msg("请选择需要转移的客户");
+                        }
+                        break;
+                };
+            });
+
+
+            //监听搜索
+            form.on('submit(LAY-app-contlist-search)', function (data) {
+                var field = data.field;
+                table.reload('table-list', {
+                    url: "{:url('Order/personClientSearch')}",
+                    where: {
+                        keyword: data.field
+                    },
+                    page: {
+                        curr: 1
+                    }
+                });
+                return false;
+
+            });
+
+            // 初始化折叠面板
+            element.render('collapse');
+            laydate.render({
+                elem: '#create_time'
+            });
+
+        });
+
+        /*添加*/
+        function layer_add(title, url) {
+            var index = layer.open({
+                type: 2,
+                title: title,
+                closeBtn: 1, //是否显示关闭按钮
+                area: ['100%', '86%'],
+                anim: 2,  //动画
+                shadeClose: false,  //点击空白处是否关闭
+                maxmin: true, //开启最大化最小化按钮
+                content: [url, 'no']
+            });
+        }
+
+        function resetForm() {
+            document.getElementById('searchForm').reset();
+        }
+    </script>
+
+
+</body>
+
+</html>

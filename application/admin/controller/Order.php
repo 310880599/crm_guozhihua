@@ -153,33 +153,33 @@ class Order extends Common
         return $this->fetch();
     }
 
+        //（订单草稿）列表
+        public function draftindex()
+        {
+    
+            if (request()->isPost()) {
+                $params = Request::param();
+                if (!isset($params['keyword'])) {
+                    $params['keyword'] = [];
+                }
+                $params['keyword']['timebucket'] = 'month';
+                Request::merge($params);
+                return $this->draftClientSearch();
+                // $key = input('post.key');
+                // $page = input('page') ? input('page') : 1;
+                // $pageSize = input('limit') ? input('limit') : config('pageSize');
+                // $list = db('crm_client_order')
+                //     ->where(['pr_user' => Session::get('username')])
+                //     ->order('create_time desc')
+                //     ->paginate(array('list_rows' => $pageSize, 'page' => $page))
+                //     ->toArray();
+                // return $result = ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
+            }
+            $this->assign('customer_type', self::CUSTOMER_TYPE);
+            $this->assign('sourceList', Db::name('crm_client_status')->distinct(true)->column('status_name'));
+            return $this->fetch();
+        }
 
-    //（协同人订单）列表（备用）
-    // public function collaboratorindex()
-    // {
-
-    //     if (request()->isPost()) {
-    //         $params = Request::param();
-    //         if (!isset($params['keyword'])) {
-    //             $params['keyword'] = [];
-    //         }
-    //         $params['keyword']['timebucket'] = 'month';
-    //         Request::merge($params);
-    //         return $this->collaboratorClientSearch();
-    //         // $key = input('post.key');
-    //         // $page = input('page') ? input('page') : 1;
-    //         // $pageSize = input('limit') ? input('limit') : config('pageSize');
-    //         // $list = db('crm_client_order')
-    //         //     ->where(['pr_user' => Session::get('username')])
-    //         //     ->order('create_time desc')
-    //         //     ->paginate(array('list_rows' => $pageSize, 'page' => $page))
-    //         //     ->toArray();
-    //         // return $result = ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
-    //     }
-    //     $this->assign('customer_type', self::CUSTOMER_TYPE);
-    //     $this->assign('sourceList', Db::name('crm_client_status')->distinct(true)->column('status_name'));
-    //     return $this->fetch();
-    // }
 
     // 协同人订单页面入口（新增）
     public function collabIndex()
@@ -268,6 +268,10 @@ class Order extends Common
     public function add()
     {
         if (request()->isPost()) {
+            // ✅新增：区分“提交保存 / 保存草稿”
+            $saveType = Request::param('save_type', 'submit');
+            $isDraft = ($saveType === 'draft');
+
             // ====== 验证客户是否属于当前用户或协同人 ======
             $contact = Request::param('contact');
             $leadsId = null; // 保存客户ID，用于后续更新成交状态
@@ -352,7 +356,11 @@ class Order extends Common
             
             // 如果cname仍然为空，返回错误
             if (empty($data['cname'])) {
-                return json(['code' => -200, 'msg' => '客户名称不能为空，请先输入联系方式并验证客户信息']);
+                // 草稿：允许不完整（但前端已做弱校验 contact/cname 至少一个）
+                if (!$isDraft) {
+                    return json(['code' => -200, 'msg' => '客户名称不能为空，请先输入联系方式并验证客户信息']);
+                }
+                $data['cname'] = '';
             }
             
             // 用户属性：0=公司，1=个人
@@ -362,16 +370,18 @@ class Order extends Common
             // 客户公司：如果是公司（0）则必填，如果是个人（1）则可以为空
             $clientCompany = Request::param('client_company', '');
             if ($data['customer_type_flag'] == 0) {
-                // 公司类型，客户公司必填
                 $clientCompany = trim($clientCompany);
-                if ($clientCompany === '') {
-                    return json(['code' => 0, 'msg' => '客户公司名称不能为空']);
+                // 公司类型：提交保存保持强校验；草稿允许为空/不校验格式
+                if (!$isDraft) {
+                    if ($clientCompany === '') {
+                        return json(['code' => 0, 'msg' => '客户公司名称不能为空']);
+                    }
+                    // 校验：允许中文 + 中文括号（），且不少于2个字符
+                    if (!preg_match('/^[\x{4e00}-\x{9fa5}（）]{2,}$/u', $clientCompany)) {
+                        return json(['code' => 0, 'msg' => '客户公司名称只能填写中文（可包含中文括号），且不少于2个字']);
+                    }
                 }
-                // 校验：允许中文 + 中文括号（），且不少于2个字符
-                if (!preg_match('/^[\x{4e00}-\x{9fa5}（）]{2,}$/u', $clientCompany)) {
-                    return json(['code' => 0, 'msg' => '客户公司名称只能填写中文（可包含中文括号），且不少于2个字']);
-                }
-                $data['client_company'] = $clientCompany;
+                $data['client_company'] = $clientCompany; // 草稿可为空
             } else {
                 // 个人类型，客户公司可以为空
                 $data['client_company'] = '';
@@ -393,7 +403,8 @@ class Order extends Common
             } else {
                 $data['bank_account_name'] = '';  // 如果为空，快照字段也置空
             }
-            $data['check_status']     = 1;   // 订单的审核状态，起始值是1，待审核
+            // ✅审核状态：草稿=0，提交=1（待审核）
+            $data['check_status']     = $isDraft ? 0 : 1;
 
             // 处理运营端口：将端口ID转换为端口名称（文字）保存
             $sourcePortId = Request::param('source_port', '');
@@ -422,7 +433,25 @@ class Order extends Common
             $data['team_name']        = $loginTeamName;  // 强制使用登录人团队名称
             $data['at_user']          = Session::get('username');         // 创建人
             $data['at_user_id']       = (int)Session::get('aid');
-            $data['order_time']       = Request::param('order_time');     // 成交时间
+            // 成交时间：提交必填；草稿允许为空（写 NULL，避免 datetime 插入 '' 报错）
+            $orderTime = trim((string)Request::param('order_time', ''));
+
+            if ($isDraft) {
+                // 草稿：允许不填，空则写 NULL
+                $data['order_time'] = ($orderTime === '') ? null : $orderTime;
+            } else {
+                // 提交：必须填写
+                if ($orderTime === '') {
+                    $this->redisUnLock();
+                    return json(['code' => 0, 'msg' => '成交时间不能为空']);
+                }
+                // 可选：格式校验（yyyy-MM-dd HH:mm:ss）
+                if (!preg_match('/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/', $orderTime)) {
+                    $this->redisUnLock();
+                    return json(['code' => 0, 'msg' => '成交时间格式不正确，请选择正确的日期时间']);
+                }
+                $data['order_time'] = $orderTime;
+            }
             $data['shipping_cost']    = Request::param('shipping_cost');  // 估算运费
             // 票种性质（普票、专票、不开票）- 验证并保存
             $invoiceType = Request::param('invoice_type', '');
@@ -450,77 +479,84 @@ class Order extends Common
             // 豁免条件：返单 或 利润<2000
             $exempt = $isReturnOrder || $isLowProfit;
             
-            // 处理微信沟通凭证（多图上传）
-            $MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量（与前端一致）
-            $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
-            $wechatReceiptUrls = [];
-            
-            // 解析：兼容 JSON 数组字符串、单字符串、数组三种格式
-            if (is_array($wechatReceiptRaw)) {
-                $wechatReceiptUrls = $wechatReceiptRaw;
-            } else if (is_string($wechatReceiptRaw)) {
-                $wechatReceiptRaw = trim($wechatReceiptRaw);
-                if ($wechatReceiptRaw !== '') {
-                    // 尝试解析为 JSON 数组
-                    if (preg_match('/^\s*\[.*\]\s*$/', $wechatReceiptRaw)) {
-                        $tmp = json_decode($wechatReceiptRaw, true);
-                        if (is_array($tmp)) {
-                            $wechatReceiptUrls = $tmp;
+            // ✅草稿：跳过“强必填凭证校验”，避免字段不全也能落库
+            if ($isDraft) {
+                $data['wechat_receipt_image'] = '';
+                $data['inquiry_assign_image'] = '';
+            } else {
+                // 处理微信沟通凭证（多图上传）
+                $MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量（与前端一致）
+                $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
+                $wechatReceiptUrls = [];
+                
+                // 解析：兼容 JSON 数组字符串、单字符串、数组三种格式
+                if (is_array($wechatReceiptRaw)) {
+                    $wechatReceiptUrls = $wechatReceiptRaw;
+                } else if (is_string($wechatReceiptRaw)) {
+                    $wechatReceiptRaw = trim($wechatReceiptRaw);
+                    if ($wechatReceiptRaw !== '') {
+                        // 尝试解析为 JSON 数组
+                        if (preg_match('/^\s*\[.*\]\s*$/', $wechatReceiptRaw)) {
+                            $tmp = json_decode($wechatReceiptRaw, true);
+                            if (is_array($tmp)) {
+                                $wechatReceiptUrls = $tmp;
+                            } else {
+                                // JSON 解析失败，当作单字符串处理
+                                $wechatReceiptUrls = [$wechatReceiptRaw];
+                            }
                         } else {
-                            // JSON 解析失败，当作单字符串处理
+                            // 单字符串格式（历史数据兼容）
                             $wechatReceiptUrls = [$wechatReceiptRaw];
                         }
-                    } else {
-                        // 单字符串格式（历史数据兼容）
-                        $wechatReceiptUrls = [$wechatReceiptRaw];
                     }
                 }
-            }
-            
-            // 去空、去重、重建索引
-            $wechatReceiptUrls = array_values(array_unique(array_filter($wechatReceiptUrls, function($v) {
-                return !empty(trim($v));
-            })));
-            
-            if ($exempt) {
-                // 豁免情况：允许为空，但如果上传了也保存（不校验数量）
-                if (empty($wechatReceiptUrls)) {
-                    $data['wechat_receipt_image'] = '';
-                } else {
-                    // 如果上传了，校验数量不超过上限
-                    $count = count($wechatReceiptUrls);
-                    if ($count > $MAX_WECHAT_RECEIPT_IMAGES) {
-                        $this->redisUnLock();
-                        return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
+                
+                // 去空、去重、重建索引
+                $wechatReceiptUrls = array_values(array_unique(array_filter($wechatReceiptUrls, function($v) {
+                    return !empty(trim($v));
+                })));
+                
+                if ($exempt) {
+                    // 豁免情况：允许为空，但如果上传了也保存（不校验数量）
+                    if (empty($wechatReceiptUrls)) {
+                        $data['wechat_receipt_image'] = '';
+                    } else {
+                        // 如果上传了，校验数量不超过上限
+                        $count = count($wechatReceiptUrls);
+                        if ($count > $MAX_WECHAT_RECEIPT_IMAGES) {
+                            $this->redisUnLock();
+                            return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
+                        }
+                        $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
                     }
+                } else {
+                    // 非豁免情况：必须上传，保持原有校验逻辑
+                    $count = count($wechatReceiptUrls);
+                    if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
+                        $this->redisUnLock();
+                        return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
+                    }
+                    // JSON 编码存库
                     $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
                 }
-            } else {
-                // 非豁免情况：必须上传，保持原有校验逻辑
-                $count = count($wechatReceiptUrls);
-                if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
-                    $this->redisUnLock();
-                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
+                
+                // 处理询盘来源凭证
+                $inquiryAssignImage = Request::param('inquiry_assign_image', '');
+                if ($exempt) {
+                    // 豁免情况：允许为空，但如果上传了也保存
+                    $data['inquiry_assign_image'] = trim($inquiryAssignImage);
+                } else {
+                    // 非豁免情况：必须上传
+                    if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
+                        $this->redisUnLock();
+                        return json(['code' => 0, 'msg' => '请上传询盘来源凭证（产品询盘分配图）']);
+                    }
+                    $data['inquiry_assign_image'] = trim($inquiryAssignImage);
                 }
-                // JSON 编码存库
-                $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
-            }
-            
-            // 处理询盘来源凭证
-            $inquiryAssignImage = Request::param('inquiry_assign_image', '');
-            if ($exempt) {
-                // 豁免情况：允许为空，但如果上传了也保存
-                $data['inquiry_assign_image'] = trim($inquiryAssignImage);
-            } else {
-                // 非豁免情况：必须上传
-                if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
-                    $this->redisUnLock();
-                    return json(['code' => 0, 'msg' => '请上传询盘来源凭证（产品询盘分配图）']);
-                }
-                $data['inquiry_assign_image'] = trim($inquiryAssignImage);
             }
             $managerIds   = Request::param('product_manager/a'); // ★ 产品经理（管理员）ID 数组
-            $data['status']           = '待审核';
+            // ✅文本状态（如表里有 status 字段则同步）
+            $data['status']           = $isDraft ? '草稿' : '待审核';
             $data['create_time']      = date("Y-m-d H:i:s");
             $data['order_no']         = date("YmdHis") . rand(1000, 9999);
 
@@ -603,8 +639,10 @@ class Order extends Common
                     }
                 }
                 if (!empty($missingPids)) {
-                    $this->redisUnLock();
-                    return json(['code' => -200, 'msg' => '产品ID ' . implode(', ', $missingPids) . ' 不存在或已删除，无法保存']);
+                    if (!$isDraft) {
+                        $this->redisUnLock();
+                        return json(['code' => -200, 'msg' => '产品ID ' . implode(', ', $missingPids) . ' 不存在或已删除，无法保存']);
+                    }
                 }
             }
 
@@ -700,7 +738,7 @@ class Order extends Common
                 }
                 
                 // 订单添加成功后，更新客户的成交状态为已成交
-                if (!empty($leadsId)) {
+                if (!$isDraft && !empty($leadsId)) {
                     // 更新客户的成交状态为已成交
                     Db::name('crm_leads')->where('id', $leadsId)->update(['issuccess' => 1]);
                 }
@@ -3083,6 +3121,172 @@ class Order extends Common
     }
 
     public function personClientSearch()
+    {
+        $where = [];
+        $client_where = [];
+        $pr_user = Session::get('username') ?? '';
+        
+        // 确保只显示当前用户的订单：自己创建的或自己是负责人的
+        if (!empty($pr_user)) {
+            $where[] = function($query) use ($pr_user) {
+                $query->where('at_user', '=', $pr_user)
+                      ->whereOr('pr_user', '=', $pr_user);
+            };
+        } else {
+            // 如果没有用户名，返回空结果
+            $where[] = ['id', '=', 0];
+        }
+        
+        $client_where[] = ['pr_user', '=', $pr_user];
+        //判断权限
+        // $team_name = session('team_name') ?? '';
+        // if ($team_name) {
+        //     $where[] = ['team_name', '=', $team_name];
+        //     $usernames = Db::table('admin')->where('team_name', $team_name)->column('username');
+        //     $client_where[] = ['pr_user', 'in', $usernames];
+        // }
+        $page = input('page') ?? 1;
+        $limit = input('limit') ?? config('pageSize');
+        $keyword = Request::param('keyword');
+        // 过滤掉 null 元素
+        if ($keyword) $keyword = array_filter($keyword);
+
+        $where[] = ['check_status', '=', 2];
+        if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
+        if (isset($keyword['timebucket'])) {
+            $where[] = $this->buildTimeWhere($keyword['timebucket'], 'order_time');
+
+            $timeWhere['at_time'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
+            $timeWhere['to_kh_time'] = $this->buildTimeWhere($keyword['timebucket'], 'to_kh_time');
+            $client_where[] =  function ($query) use ($timeWhere) {
+                $query->where(...$timeWhere['at_time']);
+                $query->whereOr(...$timeWhere['to_kh_time']);
+            };
+        }
+        if (isset($keyword['min_money'])) $where[] = ['money', '>', $keyword['min_money']];
+        if (isset($keyword['max_money'])) $where[] = ['money', '<', $keyword['max_money']];
+        if (isset($keyword['min_profit'])) $where[] = ['profit', '>', $keyword['min_profit']];
+        if (isset($keyword['max_profit'])) $where[] = ['profit', '<', $keyword['max_profit']];
+        if (isset($keyword['min_margin_rate'])) $where[] = ['margin_rate', '>', $keyword['min_margin_rate']];
+        if (isset($keyword['max_margin_rate'])) $where[] = ['margin_rate', '<', $keyword['max_margin_rate']];
+        if (isset($keyword['cname'])) {
+            $where[] = ['cname', 'like', "%{$keyword['cname']}%"];
+            // $client_where[] = ['kh_name', 'like', "%{$keyword['cname']}%"];
+        }
+        if (isset($keyword['contact'])) {
+            $where[] = ['contact', 'like', "%{$keyword['contact']}%"];
+        }
+        if (isset($keyword['customer_type'])) {
+            $where[] = ['customer_type', '=', $keyword['customer_type']];
+        }
+        if (isset($keyword['product_name'])) {
+            $where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
+        }
+        if (isset($keyword['source'])) {
+            $where[] = ['source', '=', $keyword['source']];
+            //兼容历史数据
+            $kh_source = strtolower($keyword['source']);
+            $client_where[] = ['kh_status', 'like', "%$kh_source%"];
+        }
+        $list = Db::table('crm_client_order')
+            ->where($where)
+            ->order('create_time desc,id desc')
+            ->paginate([
+                'list_rows' => $limit,
+                'page' => $page
+            ])
+            ->toArray();
+        
+        // 收集所有需要查询的admin_id（协同人）
+        $allAdminIds = [];
+        foreach ($list['data'] as $order) {
+            // 收集协同人ID
+            if (!empty($order['joint_person'])) {
+                $ids = explode(',', $order['joint_person']);
+                foreach ($ids as $id) {
+                    $id = trim($id);
+                    if (is_numeric($id)) {
+                        $allAdminIds[] = $id;
+                    }
+                }
+            }
+        }
+        $allAdminIds = array_unique($allAdminIds);
+
+        // 批量查询admin表获取用户名映射
+        $adminMap = [];
+        if (!empty($allAdminIds)) {
+            $admins = Db::name('admin')
+                ->whereIn('admin_id', $allAdminIds)
+                ->column('username', 'admin_id');
+            $adminMap = $admins;
+        }
+
+        // 【订单快照模式】查询订单对应的产品明细，统一使用快照字段
+        $orderIds = array_column($list['data'], 'id');
+        $orderItemsMap = $this->buildOrderItemsSnapshotMap($orderIds);
+        
+        // 转换收款账户ID为账户名称 和 协同人ID为用户名
+        foreach ($list['data'] as &$order) {
+            // 转换收款账户
+            if (!empty($order['bank_account'])) {
+                $accountInfo = Db::name('crm_receive_account')
+                    ->where('id', $order['bank_account'])
+                    ->field('account')
+                    ->find();
+                if ($accountInfo) {
+                    $order['bank_account_name'] = $accountInfo['account'];
+                }
+            }
+            
+            // 转换协同人ID为用户名
+            if (!empty($order['joint_person'])) {
+                $ids = explode(',', $order['joint_person']);
+                $names = [];
+                foreach ($ids as $id) {
+                    $id = trim($id);
+                    if (isset($adminMap[$id])) {
+                        $names[] = $adminMap[$id];
+                    }
+                }
+                if (!empty($names)) {
+                    $order['joint_person_names'] = implode(',', $names);
+                }
+            }
+
+            // 绑定订单的产品明细（快照数据）
+            $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
+            // 如果订单主表的 product_name 为空，从明细快照中取第一个产品名称
+            if (empty($order['product_name']) && !empty($order['order_items'])) {
+                $order['product_name'] = $order['order_items'][0]['product_name'] ?? '';
+            }
+        }
+        unset($order);
+
+
+        //成单率
+
+        $totalInquiries = Db::table('crm_leads')->where('status', 1)->where($client_where)->count();
+
+        $successOrders = $list['total'];
+        $successRate = $totalInquiries > 0 ? ($successOrders / $totalInquiries * 100) : 0;
+        $totalMoney = $this->getSum($where, 'money');
+        $totalProfit = $this->getSum($where, 'profit');
+        return $result = [
+            'code' => 0,
+            'msg' => '获取成功!',
+            'data' => $list['data'],
+            'count' => $list['total'],
+            'rel' => 1,
+            'totalInquiries' => $totalInquiries,
+            'successRate' => number_format($successRate, 2),
+            'totalMoney' => number_format($totalMoney, 2),
+            'totalProfit' => number_format($totalProfit, 2),
+        ];
+    }
+
+    //订单草稿搜索接口
+    public function draftClientSearch()
     {
         $where = [];
         $client_where = [];

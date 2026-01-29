@@ -388,7 +388,7 @@
     </script>
 
     <div class="admin-main layui-anim layui-anim-upbit" ng-app="hd" ng-controller="ctrl">
-        <form class="layui-form layui-form-pane">
+        <form id="orderAddForm" class="layui-form layui-form-pane">
             <!-- 客户联系方式 -->
             <div class="layui-form-item">
                 <label class="layui-form-label">联系方式<span style="color:red;">*</span></label>
@@ -804,6 +804,7 @@
             <div class="layui-form-item">
                 <div class="layui-input-block">
                     <button type="button" class="layui-btn" lay-submit lay-filter="submit">提交保存</button>
+                    <button type="button" id="btnSaveDraft" class="layui-btn layui-btn-primary">保存为草稿</button>
                 </div>
             </div>
         </form>
@@ -1964,6 +1965,79 @@
                 }
             }, 'json');
             return false;
+        });
+
+        // 保存为草稿（不触发 lay-verify required）
+        $('#btnSaveDraft').on('click', function () {
+            try {
+                // 提交前同步更新总计字段（能算就带上，算不出来也允许为空）
+                if (typeof updateTotals === 'function') {
+                    updateTotals();
+                }
+
+                var $form = $('#orderAddForm');
+                if (!$form.length) {
+                    layer.msg('表单不存在，无法保存草稿', { icon: 2, time: 2000 });
+                    return;
+                }
+
+                // 1) serializeArray 收集全部 input/select/textarea（含 hidden）
+                var arr = $form.serializeArray();
+                var payload = {};
+
+                // 2) 合并同名字段：xxx[] => 数组；普通字段 => 直接赋值
+                $.each(arr, function (_, item) {
+                    var name = item.name || '';
+                    var value = item.value;
+                    if (!name) return;
+
+                    if (name.slice(-2) === '[]') {
+                        var key = name.slice(0, -2);
+                        if (!payload[key]) payload[key] = [];
+                        payload[key].push(value);
+                    } else {
+                        payload[name] = value;
+                    }
+                });
+
+                // 3) joint_person（xmSelect）兜底：如果 serialize 拿不到，手动补
+                if (window.collaboratorSelectInstance && typeof window.collaboratorSelectInstance.getValue === 'function') {
+                    var jpVals = window.collaboratorSelectInstance.getValue('value');
+                    if (Array.isArray(jpVals)) {
+                        payload.joint_person = jpVals;
+                    }
+                }
+
+                // 4) 弱校验：contact / cname 至少一个不为空
+                var contact = (payload.contact || '').toString().trim();
+                var cname = (payload.cname || '').toString().trim();
+                if (!contact && !cname) {
+                    layer.msg('联系方式/客户名称至少填写一个（草稿允许不完整）', { icon: 0, time: 2200 });
+                    return;
+                }
+
+                // 5) 标记保存类型
+                payload.save_type = 'draft';
+
+                var loading = layer.load(1, { shade: [0.1, '#fff'] });
+                $.post("{:url('Order/add')}", payload, function (res) {
+                    layer.close(loading);
+                    if (res && res.code === 0) {
+                        layer.msg('已保存为草稿，可在【订单草稿】中继续编辑', { time: 2000 }, function () {
+                            layer.close(layer.index);
+                            window.parent.location.reload();
+                        });
+                    } else {
+                        layer.msg((res && res.msg) ? res.msg : '保存草稿失败', { time: 2000 });
+                    }
+                }, 'json').fail(function () {
+                    layer.close(loading);
+                    layer.msg('保存草稿失败：网络错误', { icon: 2, time: 2000 });
+                });
+            } catch (e) {
+                console && console.warn && console.warn('save draft error:', e);
+                layer.msg('保存草稿失败：脚本异常', { icon: 2, time: 2000 });
+            }
         });
         }); // 闭合 layui.use
     </script>
