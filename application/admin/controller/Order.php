@@ -3317,7 +3317,7 @@ class Order extends Common
         // 过滤掉 null 元素
         if ($keyword) $keyword = array_filter($keyword);
 
-        $where[] = ['check_status', '=', 2];
+        $where[] = ['check_status', '=', 0];
         if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
         if (isset($keyword['timebucket'])) {
             $where[] = $this->buildTimeWhere($keyword['timebucket'], 'order_time');
@@ -3449,6 +3449,65 @@ class Order extends Common
             'totalMoney' => number_format($totalMoney, 2),
             'totalProfit' => number_format($totalProfit, 2),
         ];
+    }
+
+    /**
+     * 草稿提交审核：仅允许 check_status=0 的订单，更新为待审核（check_status=1）
+     */
+    public function submitDraft()
+    {
+        $id = (int)Request::param('id');
+        if ($id <= 0) {
+            return json(['code' => 1, 'msg' => '参数错误']);
+        }
+        $pr_user = Session::get('username') ?? '';
+        $order = Db::table('crm_client_order')->where('id', $id)->find();
+        if (!$order) {
+            return json(['code' => 1, 'msg' => '订单不存在']);
+        }
+        if ((int)$order['check_status'] !== 0) {
+            return json(['code' => 1, 'msg' => '仅草稿可提交审核']);
+        }
+        if ($pr_user && $order['at_user'] !== $pr_user && $order['pr_user'] !== $pr_user) {
+            return json(['code' => 1, 'msg' => '无权限操作该订单']);
+        }
+        Db::table('crm_client_order')->where('id', $id)->update([
+            'check_status' => 1,
+            'status'       => '待审核',
+        ]);
+        return json(['code' => 0, 'msg' => '已提交审核']);
+    }
+
+    /**
+     * 删除草稿：仅允许 check_status=0，物理删除订单及 crm_order_item 明细
+     */
+    public function deleteDraft()
+    {
+        $id = (int)Request::param('id');
+        if ($id <= 0) {
+            return json(['code' => 1, 'msg' => '参数错误']);
+        }
+        $pr_user = Session::get('username') ?? '';
+        $order = Db::table('crm_client_order')->where('id', $id)->find();
+        if (!$order) {
+            return json(['code' => 1, 'msg' => '订单不存在']);
+        }
+        if ((int)$order['check_status'] !== 0) {
+            return json(['code' => 1, 'msg' => '仅可删除草稿']);
+        }
+        if ($pr_user && $order['at_user'] !== $pr_user && $order['pr_user'] !== $pr_user) {
+            return json(['code' => 1, 'msg' => '无权限操作该订单']);
+        }
+        Db::startTrans();
+        try {
+            Db::table('crm_order_item')->where('order_id', $id)->delete();
+            Db::table('crm_client_order')->where('id', $id)->delete();
+            Db::commit();
+            return json(['code' => 0, 'msg' => '删除成功']);
+        } catch (\Exception $e) {
+            Db::rollback();
+            return json(['code' => 1, 'msg' => '删除失败']);
+        }
     }
 
     // 协同人订单搜索接口（已改造为只展示协同人订单）

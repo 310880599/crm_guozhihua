@@ -550,17 +550,10 @@
     </div>
 
 
-    <!-- <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a> -->
     <script type="text/html" id="action">
-    <!-- 是否审核通过 -->
-    <!-- {//if $Think.session.aid == 1} -->
-    <!-- <a class="layui-btn  layui-btn-xs" lay-event="shenhe"><i class="layui-icon">&#xe642;</i>审核通过</a> -->
-    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="details"><i class="layui-icon">&#xe615;</i> 详情</a>
-    {if session('aid') eq 1} 
-    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
-    {/if}
-    <!-- {/if} -->
-
+    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>继续编辑</a>
+    <a class="layui-btn layui-btn-warm layui-btn-xs" lay-event="submit"><i class="layui-icon">&#xe609;</i>提交审核</a>
+    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除草稿</a>
     </script>
 
 
@@ -581,7 +574,7 @@
             
             var tableIn = table.render({
                 elem: '#table-list',
-                url: '{:url("personindex")}',
+                url: '{:url("draftindex")}',
                 method: 'post',
                 // width:'100%',
                 toolbar: '#topBtn',
@@ -612,7 +605,7 @@
                     }},
                     { field: 'create_time', title: '创建时间' , width: 180},
                     { field: 'update_time', title: '更新时间' , width: 180},
-                    { width: 200, title: '操作', toolbar: '#action' }
+                    { width: 400, title: '操作', toolbar: '#action' }
                 ]],
                 limit: 10, //每页默认显示的数量
 
@@ -656,55 +649,43 @@
             table.on('tool(table-list)', function (obj) {
                 var data = obj.data;
 
-                if (obj.event === 'del') {
-                    layer.confirm('您确定要删除这个订单吗？', function (index) {
+                if (obj.event === 'edit') {
+                    layer.open({
+                        type: 2,
+                        title: '编辑订单',
+                        closeBtn: 1,
+                        area: ['100%', '86%'],
+                        anim: 2,
+                        shadeClose: false,
+                        maxmin: false,
+                        content: ["{:url('Order/edit')}?id=" + data.id]
+                    });
+                }
+                else if (obj.event === 'submit') {
+                    layer.confirm('确认提交审核？', function (index) {
                         var loading = layer.load(1, { shade: [0.1, '#fff'] });
-                        $.post("{:url('del')}", { id: data.id }, function (res) {
+                        $.post("{:url('submitDraft')}", { id: data.id }, function (res) {
                             layer.close(loading);
                             if (res.code === 0) {
                                 layer.msg(res.msg, { time: 1000, icon: 1 });
                                 tableIn.reload();
                             } else {
-                                layer.msg('操作失败！', { time: 1000, icon: 2 });
+                                layer.msg(res.msg || '操作失败', { time: 1000, icon: 2 });
                             }
                         });
                         layer.close(index);
                     });
                 }
-                else if (obj.event === 'edit') {
-                    layer.open({
-                        type: 2,
-                        title: '编辑订单',
-                        closeBtn: 1, //是否显示关闭按钮
-                        area: ['100%', '86%'],
-                        anim: 2,  //动画
-                        shadeClose: false,  //点击空白处是否关闭
-                        maxmin: false, //开启最大化最小化按钮
-                        content: ["{:url('Order/edit')}?id=" + data.id]
-                    });
-                }
-                else if (obj.event === 'details') {
-                    layer.open({
-                        type: 2,
-                        title: '订单详情',
-                        closeBtn: 1, //是否显示关闭按钮
-                        area: ['100%', '86%'],
-                        anim: 2,  //动画
-                        shadeClose: false,  //点击空白处是否关闭
-                        maxmin: false, //开启最大化最小化按钮
-                        content: ["{:url('Order/details')}?id=" + data.id]
-                    });
-                }
-                else if (obj.event === 'shenhe') {
-                    layer.confirm('确认金额和客户信息,确认审核业绩吗？', function (index) {
+                else if (obj.event === 'del') {
+                    layer.confirm('确认删除草稿？', function (index) {
                         var loading = layer.load(1, { shade: [0.1, '#fff'] });
-                        $.post("{:url('shenhe')}", { id: data.id }, function (res) {
+                        $.post("{:url('deleteDraft')}", { id: data.id }, function (res) {
                             layer.close(loading);
                             if (res.code === 0) {
                                 layer.msg(res.msg, { time: 1000, icon: 1 });
                                 tableIn.reload();
                             } else {
-                                layer.msg(res.msg, { time: 2000, icon: 2 });
+                                layer.msg(res.msg || '操作失败', { time: 1000, icon: 2 });
                             }
                         });
                         layer.close(index);
@@ -796,7 +777,7 @@
             form.on('submit(LAY-app-contlist-search)', function (data) {
                 var field = data.field;
                 table.reload('table-list', {
-                    url: "{:url('Order/personClientSearch')}",
+                    url: "{:url('draftindex')}",
                     where: {
                         keyword: data.field
                     },
