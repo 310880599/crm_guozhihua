@@ -277,34 +277,50 @@ class Common extends Controller
         if (!$timebucket) {
             return ['1','=','1'];
         }
+        $raw = trim($timebucket);
+        $lower = strtolower($raw);
+        $lower = preg_replace('/\s+/', ' ', $lower);
+        // 相对时间（如 -2 hours）保持原样，不替换空格，用于 strtotime
+        if (preg_match('/^\-\d+/', $lower)) {
+            $bucket = $lower;
+        } else {
+            $bucket = str_replace(' ', '_', $lower);
+        }
+
         $timeRanges = [
             'today' => ['today', 'today'],
             'yesterday' => ['yesterday', 'yesterday'],
             'week' => ['monday this week', 'sunday this week'],
-            'last week' => ['monday last week', 'sunday last week'],
+            'last_week' => ['monday last week', 'sunday last week'],
             'month' => ['first day of this month', 'last day of this month'],
-            'last month' => ['first day of last month', 'last day of last month'],
+            'last_month' => ['first day of last month', 'last day of last month'],
             'year' => ['first day of january this year', 'last day of december this year'],
-            'last year' => ['first day of january last year', 'last day of december last year'],
+            'last_year' => ['first day of january last year', 'last day of december last year'],
             '-2 hours' => [date('Y-m-d H:i:s', strtotime('-2 hours')), null]
         ];
 
-        if (isset($timeRanges[$timebucket])) {
-            list($start, $end) = $timeRanges[$timebucket];
-            if ($timebucket === '-2 hours') {
+        if (isset($timeRanges[$bucket])) {
+            list($start, $end) = $timeRanges[$bucket];
+            if ($bucket === '-2 hours') {
                 return [[$field, '>=', $start]];
             }
 
             return [$field, 'between time', [date('Y-m-d 00:00:00', strtotime($start)), date('Y-m-d 23:59:59', strtotime($end))]];
         }
 
-        if (strpos($timebucket, '-') !== false) {
-            list($start, $end) = explode(' - ', $timebucket);
-            return [$field, 'between time', [date('Y-m-d 00:00:00', strtotime($start)), date('Y-m-d 23:59:59', strtotime($end))]];
+        // 相对时间：如 -3 days, -2 hours（未在 timeRanges 中预定义的）
+        if (preg_match('/^\-\d+/', $bucket)) {
+            $start = date('Y-m-d H:i:s', strtotime($bucket));
+            return [[$field, '>=', $start]];
+        }
+
+        if (strpos($lower, ' - ') !== false) {
+            list($start, $end) = explode(' - ', $lower);
+            return [$field, 'between time', [date('Y-m-d 00:00:00', strtotime(trim($start))), date('Y-m-d 23:59:59', strtotime(trim($end)))]];
         }
 
         // 自定义日期
-        return [$field, 'between time', [date('Y-m-d 00:00:00', strtotime($timebucket)), date('Y-m-d 23:59:59', strtotime($timebucket . '+1 day'))]];
+        return [$field, 'between time', [date('Y-m-d 00:00:00', strtotime($lower)), date('Y-m-d 23:59:59', strtotime($lower . '+1 day'))]];
     }
 
     public function getOrg($org)
