@@ -3453,29 +3453,170 @@ class Order extends Common
 
     /**
      * 草稿提交审核：仅允许 check_status=0 的订单，更新为待审核（check_status=1）
+     * 提交前校验草稿必填项（与 add.html 对齐），缺失则返回 missing 列表与 edit_url
      */
     public function submitDraft()
     {
         $id = (int)Request::param('id');
         if ($id <= 0) {
-            return json(['code' => 1, 'msg' => '参数错误']);
+            return json(['code' => 2, 'msg' => '参数错误']);
         }
         $pr_user = Session::get('username') ?? '';
         $order = Db::table('crm_client_order')->where('id', $id)->find();
         if (!$order) {
-            return json(['code' => 1, 'msg' => '订单不存在']);
+            return json(['code' => 2, 'msg' => '订单不存在']);
         }
         if ((int)$order['check_status'] !== 0) {
-            return json(['code' => 1, 'msg' => '仅草稿可提交审核']);
+            return json(['code' => 2, 'msg' => '仅草稿可提交审核']);
         }
         if ($pr_user && $order['at_user'] !== $pr_user && $order['pr_user'] !== $pr_user) {
-            return json(['code' => 1, 'msg' => '无权限操作该订单']);
+            return json(['code' => 2, 'msg' => '无权限操作该订单']);
         }
+
+        // 草稿必填校验（与 add.html 的 lay-verify required 及条件必填一致）
+        $missing = $this->validateDraftRequired($order, $id);
+        if (!empty($missing)) {
+            return json([
+                'code'     => 1,
+                'msg'      => '请先完善必填项后再提交审核',
+                'missing'  => $missing,
+                'edit_url' => url('Order/edit', ['id' => $id]),
+            ]);
+        }
+
         Db::table('crm_client_order')->where('id', $id)->update([
             'check_status' => 1,
             'status'       => '待审核',
         ]);
         return json(['code' => 0, 'msg' => '已提交审核']);
+    }
+
+    /**
+     * 草稿必填项校验（与 add.html 必填及条件必填对齐）
+     * @param array $order 订单主表一条记录
+     * @param int   $orderId 订单ID（用于查 crm_order_item）
+     * @return array 缺失项中文名称列表，如 ['成交时间','产品明细']
+     */
+    private function validateDraftRequired($order, $orderId)
+    {
+        $missing = [];
+        $isEmpty = function ($v) {
+            if ($v === null) {
+                return true;
+            }
+            $v = trim((string)$v);
+            return $v === '';
+        };
+
+        // 基础信息必填
+        if ($isEmpty($order['contact'] ?? null)) {
+            $missing[] = '联系方式';
+        }
+        if ($isEmpty($order['province'] ?? null)) {
+            $missing[] = '所在省';
+        }
+        if ($isEmpty($order['city'] ?? null)) {
+            $missing[] = '所在市';
+        }
+        if ($isEmpty($order['country'] ?? null)) {
+            $missing[] = '收货地址';
+        }
+        if ($isEmpty($order['customer_type_flag'] ?? null)) {
+            $missing[] = '用户属性';
+        }
+        // 客户公司：仅当 customer_type_flag != '1'（个人）时必填
+        $customerTypeFlag = trim((string)($order['customer_type_flag'] ?? ''));
+        if ($customerTypeFlag !== '1') {
+            $clientCompany = $order['client_company'] ?? $order['cname'] ?? null;
+            if ($isEmpty($clientCompany)) {
+                $missing[] = '客户公司';
+            }
+        }
+        if ($isEmpty($order['customer_type'] ?? null)) {
+            $missing[] = '客户性质';
+        }
+        if ($isEmpty($order['pr_user'] ?? null)) {
+            $missing[] = '客户负责人';
+        }
+        if ($isEmpty($order['source'] ?? null)) {
+            $missing[] = '询盘来源';
+        }
+        if ($isEmpty($order['source_port'] ?? null)) {
+            $missing[] = '运营端口';
+        }
+        if ($isEmpty($order['bank_account'] ?? null)) {
+            $missing[] = '收款账户';
+        }
+        if ($isEmpty($order['team_name'] ?? null)) {
+            $missing[] = '团队名称';
+        }
+        if ($isEmpty($order['order_time'] ?? null)) {
+            $missing[] = '成交时间';
+        }
+        if ($isEmpty($order['shipping_cost'] ?? null)) {
+            $missing[] = '估算运费';
+        }
+        if ($isEmpty($order['invoice_type'] ?? null)) {
+            $missing[] = '票种性质';
+        }
+        // 条件必填：普票/专票时 invoice_amount 必填
+        $invoiceType = trim((string)($order['invoice_type'] ?? ''));
+        if ($invoiceType === '普票' || $invoiceType === '专票') {
+            if ($isEmpty($order['invoice_amount'] ?? null)) {
+                $missing[] = '票种/票金额';
+            }
+        }
+        if ($isEmpty($order['tax_amount'] ?? null)) {
+            $missing[] = '税费金额';
+        }
+        if ($isEmpty($order['debugging_cost'] ?? null)) {
+            $missing[] = '调试费';
+        }
+        if ($isEmpty($order['sales_commission'] ?? null)) {
+            $missing[] = '佣金';
+        }
+        if ($isEmpty($order['split_remarks'] ?? null)) {
+            $missing[] = '备注';
+        }
+        if ($isEmpty($order['amount_received'] ?? null)) {
+            $missing[] = '已收款金额';
+        }
+        if ($isEmpty($order['money'] ?? null)) {
+            $missing[] = '订单金额';
+        }
+        if ($isEmpty($order['profit'] ?? null)) {
+            $missing[] = '利润';
+        }
+        if ($isEmpty($order['margin_rate'] ?? null)) {
+            $missing[] = '利润率';
+        }
+
+        // 产品明细：至少 1 行，每行含 product_name / product_manager(manager_id) / unit / qty / unit_price / purchase_price
+        $items = Db::table('crm_order_item')->where('order_id', $orderId)->order('line_no asc, id asc')->select();
+        $productMissing = false;
+        if (empty($items)) {
+            $productMissing = true;
+        } else {
+            $requiredItemKeys = ['product_name', 'unit', 'qty', 'unit_price', 'purchase_price'];
+            foreach ($items as $row) {
+                foreach ($requiredItemKeys as $key) {
+                    if ($isEmpty($row[$key] ?? null)) {
+                        $productMissing = true;
+                        break 2;
+                    }
+                }
+                // 产品经理：表存 manager_id，空则视为缺失
+                if ($isEmpty($row['manager_id'] ?? null)) {
+                    $productMissing = true;
+                    break;
+                }
+            }
+        }
+        if ($productMissing) {
+            $missing[] = '产品明细';
+        }
+
+        return $missing;
     }
 
     /**

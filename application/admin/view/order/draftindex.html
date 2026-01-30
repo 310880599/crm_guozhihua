@@ -667,10 +667,33 @@
                         $.post("{:url('submitDraft')}", { id: data.id }, function (res) {
                             layer.close(loading);
                             if (res.code === 0) {
-                                layer.msg(res.msg, { time: 1000, icon: 1 });
+                                layer.msg(res.msg || '已提交审核', { time: 1000, icon: 1 });
                                 tableIn.reload();
+                            } else if (res.code === 1) {
+                                var listHtml = (res.missing && res.missing.length) ? '<ul style="margin:10px 0 0 20px;">' + res.missing.map(function (name) { return '<li>' + name + '</li>'; }).join('') + '</ul>' : '';
+                                layer.open({
+                                    type: 1,
+                                    title: '请先完善必填项',
+                                    area: ['400px', 'auto'],
+                                    content: '<div style="padding:15px;">缺失字段：' + listHtml + '</div>',
+                                    btn: ['去完善（继续编辑）', '我知道了'],
+                                    yes: function (layero, idx) {
+                                        layer.close(idx);
+                                        var editUrl = res.edit_url || ("{:url('Order/edit')}?id=" + data.id);
+                                        layer.open({
+                                            type: 2,
+                                            title: '编辑订单',
+                                            closeBtn: 1,
+                                            area: ['100%', '86%'],
+                                            anim: 2,
+                                            shadeClose: false,
+                                            maxmin: false,
+                                            content: editUrl
+                                        });
+                                    }
+                                });
                             } else {
-                                layer.msg(res.msg || '操作失败', { time: 1000, icon: 2 });
+                                layer.msg(res.msg || '操作失败', { time: 2000, icon: 2 });
                             }
                         });
                         layer.close(index);
