@@ -677,8 +677,8 @@
                                     area: ['400px', 'auto'],
                                     content: '<div style="padding:15px;">缺失字段：' + listHtml + '</div>',
                                     btn: ['去完善（继续编辑）', '我知道了'],
-                                    yes: function (layero, idx) {
-                                        layer.close(idx);
+                                    yes: function (index, layero) {
+                                        layer.close(index); // ✅ 这里必须关闭 index（数字）
                                         var editUrl = res.edit_url || ("{:url('Order/edit')}?id=" + data.id);
                                         layer.open({
                                             type: 2,
