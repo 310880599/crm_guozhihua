@@ -302,7 +302,7 @@ class Common extends Controller
         if (isset($timeRanges[$bucket])) {
             list($start, $end) = $timeRanges[$bucket];
             if ($bucket === '-2 hours') {
-                return [[$field, '>=', $start]];
+                return [$field, '>=', $start];
             }
 
             return [$field, 'between time', [date('Y-m-d 00:00:00', strtotime($start)), date('Y-m-d 23:59:59', strtotime($end))]];
@@ -311,7 +311,7 @@ class Common extends Controller
         // 相对时间：如 -3 days, -2 hours（未在 timeRanges 中预定义的）
         if (preg_match('/^\-\d+/', $bucket)) {
             $start = date('Y-m-d H:i:s', strtotime($bucket));
-            return [[$field, '>=', $start]];
+            return [$field, '>=', $start];
         }
 
         if (strpos($lower, ' - ') !== false) {

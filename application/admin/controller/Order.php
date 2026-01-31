@@ -162,7 +162,10 @@ class Order extends Common
                 if (!isset($params['keyword'])) {
                     $params['keyword'] = [];
                 }
-                $params['keyword']['timebucket'] = 'month';
+                // 只有未选择时间时才默认「本月」，否则使用表单提交的 timebucket
+                if (!isset($params['keyword']['timebucket']) || $params['keyword']['timebucket'] === '') {
+                    $params['keyword']['timebucket'] = 'month';
+                }
                 Request::merge($params);
                 return $this->draftClientSearch();
                 // $key = input('post.key');
@@ -3362,7 +3365,24 @@ class Order extends Common
                 'page' => $page
             ])
             ->toArray();
-        
+
+        // #region agent log
+        // $lastSql = Db::getLastSql();
+        // $logPath = dirname(__DIR__, 5) . DIRECTORY_SEPARATOR . '.cursor' . DIRECTORY_SEPARATOR . 'debug.log';
+        // file_put_contents(
+        //     $logPath,
+        //     json_encode([
+        //         'message' => 'draftClientSearch paginate SQL',
+        //         'data' => ['sql' => $lastSql, 'page' => $page, 'limit' => $limit],
+        //         'timestamp' => round(microtime(true) * 1000),
+        //         'location' => 'Order.php:draftClientSearch',
+        //         'sessionId' => 'debug-session',
+        //         'hypothesisId' => 'SQL_DEBUG'
+        //     ], JSON_UNESCAPED_UNICODE) . "\n",
+        //     FILE_APPEND
+        // );
+        // #endregion
+
         // 收集所有需要查询的admin_id（协同人）
         $allAdminIds = [];
         foreach ($list['data'] as $order) {
