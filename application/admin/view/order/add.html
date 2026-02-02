@@ -402,6 +402,7 @@
                     <label id="checklabel"></label>
                 </div>
             </div>
+            <input type="hidden" id="cname" name="cname" value="">
             <!-- 省市选择 -->
             <div class="layui-form-item">
                 <label class="layui-form-label">所在省市<span style="color:red;">*</span></label>
@@ -818,6 +819,12 @@
                 $ = layui.jquery,
                 laydate = layui.laydate,
                 upload = layui.upload;
+            // 钉钉式草稿：当前草稿ID、脏标记、自动保存提示节流
+            window.__draftId = null;
+            window.__dirty = false;
+            var __DRAFT_ID__ = 0;
+            var __LAST_SNAPSHOT__ = '';
+            var __LAST_AUTOSAVE_MSG_TIME__ = 0;
             // 日期控件初始化
             laydate.render({
                 elem: '#orderTime',
@@ -859,6 +866,205 @@
             });
             // 渲染现有的下拉框（包括产品名称、询盘来源等）
             form.render('select');
+
+            // 监听表单变化，标记脏数据（用于 30 秒仅在有变化时保存）
+            $('#orderAddForm').on('input change', 'input, select, textarea', function () {
+                window.__dirty = true;
+            });
+
+            // 打开 add 页时：如有最新草稿则弹窗三选一（继续编辑 / 新建 / 删除草稿）
+            $.get("{:url('Order/getLatestDraft')}", function (res) {
+                if (res && res.code === 0 && res.data && res.data.id) {
+                    var id = res.data.id;
+                    var formData = res.data.formData || {};
+                    layer.confirm('检测到未完成的草稿，是否继续编辑？', {
+                        title: '草稿恢复',
+                        btn: ['继续编辑', '新建', '删除草稿']
+                    }, function (idx) {
+                        layer.close(idx);
+                        fillFormFromDraft(formData);
+                        window.__draftId = id;
+                        __DRAFT_ID__ = id;
+                    }, function (idx) {
+                        layer.close(idx);
+                        window.__draftId = null;
+                        __DRAFT_ID__ = 0;
+                    }, function (idx) {
+                        layer.close(idx);
+                        $.post("{:url('Order/deleteDraft')}", { id: id }, function (delRes) {
+                            if (delRes && delRes.code === 0) {
+                                layer.msg('已删除草稿', { time: 800 });
+                                window.__draftId = null;
+                                __DRAFT_ID__ = 0;
+                            } else {
+                                layer.msg((delRes && delRes.msg) ? delRes.msg : '删除失败', { time: 1500 });
+                            }
+                        }, 'json');
+                    });
+                }
+            }, 'json');
+
+            // 将草稿 formData 回填到 add 表单
+            function fillFormFromDraft(formData) {
+                if (!formData) return;
+                var $form = $('#orderAddForm');
+                if (!$form.length) return;
+                $('#contact').val(formData.contact || '');
+                $('#cname').val(formData.cname || '');
+                $('#client_company').val(formData.client_company || '');
+                $('#country').val(formData.country || '');
+                $('#shipping_cost').val(formData.shipping_cost || '');
+                $('#invoice_amount').val(formData.invoice_amount || '');
+                $('#tax_amount').val(formData.tax_amount || '');
+                $('#debugging_cost').val(formData.debugging_cost || '');
+                $('#sales_commission').val(formData.sales_commission || '');
+                $('#split_remarks').val(formData.split_remarks || '');
+                $('#amount_received').val(formData.amount_received || '');
+                $('#money').val(formData.money || '');
+                $('#profit').val(formData.profit || '');
+                $('#margin_rate').val(formData.margin_rate || '');
+                $('textarea[name="remark"]').val(formData.remark || '');
+                $('#wechat_receipt_image').val(formData.wechat_receipt_image || '');
+                $('#inquiry_assign_image').val(formData.inquiry_assign_image || '');
+                if (formData.customer_type_flag !== undefined) {
+                    $('select[name="customer_type_flag"]').val(String(formData.customer_type_flag));
+                }
+                if (formData.province) $('select[name="province"]').val(formData.province);
+                if (formData.city) $('select[name="city"]').val(formData.city);
+                if (formData.customer_type) $('select[name="customer_type"]').val(formData.customer_type);
+                if (formData.source) $('select[name="source"]').val(formData.source);
+                if (formData.bank_account) $('select[name="bank_account"]').val(formData.bank_account);
+                if (formData.invoice_type) $('select[name="invoice_type"]').val(formData.invoice_type);
+                if (formData.team_name) $('select[name="team_name"]').val(formData.team_name);
+                if (formData.order_time) $('#orderTime').val(formData.order_time);
+                form.render('select');
+                if (formData.source_port_text) {
+                    var $sp = $('select[name="source_port"]');
+                    if ($sp.find('option[value="' + formData.source_port_text + '"]').length) {
+                        $sp.val(formData.source_port_text);
+                    } else {
+                        $sp.append('<option value="' + (formData.source_port_text || '') + '">' + (formData.source_port_text || '') + '</option>').val(formData.source_port_text);
+                    }
+                    form.render('select');
+                }
+                if (window.collaboratorSelectInstance && Array.isArray(formData.joint_person)) {
+                    try {
+                        window.collaboratorSelectInstance.setValue(formData.joint_person);
+                    } catch (e) { console.debug('joint_person setValue:', e); }
+                }
+                if (Array.isArray(formData.order_items) && formData.order_items.length > 0) {
+                    var $tbody = $('#productTableBody');
+                    $tbody.find('tr').remove();
+                    var productOptions = $('select[name="product_name[]"]').first().html();
+                    var managerOptions = $('select[name="product_manager[]"]').first().html();
+                    var unitOptions = $('select[name="unit[]"]').first().html();
+                    formData.order_items.forEach(function (item) {
+                        var row = '<tr><td><select name="product_name[]" lay-search lay-verify="required">' + (productOptions || '') + '</select></td>' +
+                            '<td><select name="product_manager[]" lay-search lay-verify="required">' + (managerOptions || '') + '</select></td>' +
+                            '<td><input type="text" name="spec_model[]" class="layui-input" value="' + ((item.spec_model || '').toString().replace(/"/g, '&quot;')) + '"></td>' +
+                            '<td><select name="unit[]" lay-search lay-verify="required">' + (unitOptions || '') + '</select></td>' +
+                            '<td><input type="number" name="qty[]" class="layui-input" value="' + (item.qty || '') + '"></td>' +
+                            '<td><input type="number" name="unit_price[]" class="layui-input" step="0.01" value="' + (item.unit_price || '') + '"></td>' +
+                            '<td><input type="number" name="total_price[]" class="layui-input" readonly value="' + (item.total_price || '') + '"></td>' +
+                            '<td><input type="number" name="purchase_price[]" class="layui-input" step="0.01" value="' + (item.purchase_price || '') + '"></td>' +
+                            '<td><input type="number" name="sub_profit[]" class="layui-input" readonly value="' + (item.sub_profit || '') + '"></td>' +
+                            '<td><input type="text" name="item_remark[]" class="layui-input" value="' + ((item.remark || '').toString().replace(/"/g, '&quot;')) + '"></td>' +
+                            '<td><button type="button" class="layui-btn layui-btn-danger layui-btn-sm delete-row">删除</button></td></tr>';
+                        $tbody.append(row);
+                    });
+                    $tbody.find('tr').each(function (idx) {
+                        var it = formData.order_items[idx];
+                        if (!it) return;
+                        $(this).find('select[name="product_name[]"]').val(it.product_id || '');
+                        $(this).find('select[name="product_manager[]"]').val(String(it.manager_id || ''));
+                        $(this).find('select[name="unit[]"]').val(it.unit || '');
+                    });
+                    form.render('select');
+                }
+            }
+
+            // 收集表单数据（与保存草稿一致，含 xmSelect joint_person）
+            function getFormPayload() {
+                if (typeof updateTotals === 'function') updateTotals();
+                var $form = $('#orderAddForm');
+                if (!$form.length) return {};
+                var arr = $form.serializeArray();
+                var payload = {};
+                $.each(arr, function (_, item) {
+                    var name = item.name || '';
+                    var value = item.value;
+                    if (!name) return;
+                    if (name.slice(-2) === '[]') {
+                        var key = name.slice(0, -2);
+                        if (!payload[key]) payload[key] = [];
+                        payload[key].push(value);
+                    } else {
+                        payload[name] = value;
+                    }
+                });
+                if (window.collaboratorSelectInstance && typeof window.collaboratorSelectInstance.getValue === 'function') {
+                    var jpVals = window.collaboratorSelectInstance.getValue('value');
+                    if (Array.isArray(jpVals)) payload.joint_person = jpVals;
+                }
+                return payload;
+            }
+
+            // 30 秒自动保存（节流 + 只在数据变化时保存；不弹窗打扰，控制台 debug 或轻提示）
+            setInterval(function () {
+                if (!window.__dirty) return;
+                var payload = getFormPayload();
+                var draftId = window.__draftId || __DRAFT_ID__;
+                if (!draftId) {
+                    $.post("{:url('Order/createDraft')}", {}, function (res) {
+                        if (res && res.code === 0 && res.draft_id) {
+                            window.__draftId = res.draft_id;
+                            __DRAFT_ID__ = res.draft_id;
+                            payload.draft_id = res.draft_id;
+                            $.post("{:url('Order/autosaveDraft')}", payload, function (ar) {
+                                if (ar && ar.code === 0) {
+                                    window.__dirty = false;
+                                    if (typeof console !== 'undefined' && console.debug) console.debug('已自动保存');
+                                    if (Date.now() - __LAST_AUTOSAVE_MSG_TIME__ > 60000) {
+                                        __LAST_AUTOSAVE_MSG_TIME__ = Date.now();
+                                        layer.msg('已自动保存', { time: 800 });
+                                    }
+                                }
+                            }, 'json').fail(function () {
+                                if (console && console.warn) console.warn('autosave failed');
+                            });
+                        }
+                    }, 'json').fail(function () {
+                        if (console && console.warn) console.warn('createDraft failed');
+                    });
+                } else {
+                    payload.draft_id = draftId;
+                    $.post("{:url('Order/autosaveDraft')}", payload, function (res) {
+                        if (res && res.code === 0) {
+                            window.__dirty = false;
+                            if (typeof console !== 'undefined' && console.debug) console.debug('已自动保存');
+                            if (Date.now() - __LAST_AUTOSAVE_MSG_TIME__ > 60000) {
+                                __LAST_AUTOSAVE_MSG_TIME__ = Date.now();
+                                layer.msg('已自动保存', { time: 800 });
+                            }
+                        }
+                    }, 'json').fail(function () {
+                        if (console && console.warn) console.warn('autosave failed');
+                    });
+                }
+            }, 30000);
+
+            // 页面关闭前再触发一次自动保存（仅在有脏数据时）
+            window.addEventListener('beforeunload', function () {
+                if (!window.__dirty) return;
+                var payload = getFormPayload();
+                var draftId = window.__draftId || __DRAFT_ID__;
+                if (!draftId) {
+                    $.post("{:url('Order/createDraft')}", {});
+                } else {
+                    payload.draft_id = draftId;
+                    $.post("{:url('Order/autosaveDraft')}", payload);
+                }
+            });
 
             // 定义更新团队名称的方法（根据 pr_user 获取团队名称）
             window.updateTeamNameByPrUser = function(prUser) {
@@ -1967,73 +2173,62 @@
             return false;
         });
 
-        // 保存为草稿（不触发 lay-verify required）
+        // 保存为草稿（不触发 lay-verify required）：有草稿ID则走 autosaveDraft，否则 Order/add
         $('#btnSaveDraft').on('click', function () {
             try {
-                // 提交前同步更新总计字段（能算就带上，算不出来也允许为空）
-                if (typeof updateTotals === 'function') {
-                    updateTotals();
-                }
-
+                var payload = getFormPayload();
                 var $form = $('#orderAddForm');
                 if (!$form.length) {
                     layer.msg('表单不存在，无法保存草稿', { icon: 2, time: 2000 });
                     return;
                 }
-
-                // 1) serializeArray 收集全部 input/select/textarea（含 hidden）
-                var arr = $form.serializeArray();
-                var payload = {};
-
-                // 2) 合并同名字段：xxx[] => 数组；普通字段 => 直接赋值
-                $.each(arr, function (_, item) {
-                    var name = item.name || '';
-                    var value = item.value;
-                    if (!name) return;
-
-                    if (name.slice(-2) === '[]') {
-                        var key = name.slice(0, -2);
-                        if (!payload[key]) payload[key] = [];
-                        payload[key].push(value);
-                    } else {
-                        payload[name] = value;
-                    }
-                });
-
-                // 3) joint_person（xmSelect）兜底：如果 serialize 拿不到，手动补
-                if (window.collaboratorSelectInstance && typeof window.collaboratorSelectInstance.getValue === 'function') {
-                    var jpVals = window.collaboratorSelectInstance.getValue('value');
-                    if (Array.isArray(jpVals)) {
-                        payload.joint_person = jpVals;
-                    }
-                }
-
-                // 4) 弱校验：contact / cname 至少一个不为空
                 var contact = (payload.contact || '').toString().trim();
                 var cname = (payload.cname || '').toString().trim();
                 if (!contact && !cname) {
                     layer.msg('联系方式/客户名称至少填写一个（草稿允许不完整）', { icon: 0, time: 2200 });
                     return;
                 }
-
-                // 5) 标记保存类型
-                payload.save_type = 'draft';
-
                 var loading = layer.load(1, { shade: [0.1, '#fff'] });
-                $.post("{:url('Order/add')}", payload, function (res) {
-                    layer.close(loading);
-                    if (res && res.code === 0) {
-                        layer.msg('已保存为草稿，可在【订单草稿】中继续编辑', { time: 2000 }, function () {
-                            layer.close(layer.index);
-                            window.parent.location.reload();
-                        });
-                    } else {
-                        layer.msg((res && res.msg) ? res.msg : '保存草稿失败', { time: 2000 });
-                    }
-                }, 'json').fail(function () {
-                    layer.close(loading);
-                    layer.msg('保存草稿失败：网络错误', { icon: 2, time: 2000 });
-                });
+                if (__DRAFT_ID__ > 0 || window.__draftId) {
+                    payload.draft_id = window.__draftId || __DRAFT_ID__;
+                    $.post("{:url('Order/autosaveDraft')}", payload, function (res) {
+                        layer.close(loading);
+                        if (res && res.code === 0) {
+                            window.__dirty = false;
+                            layer.msg('已保存为草稿，可在【订单草稿】中继续编辑', { time: 2000 }, function () {
+                                layer.close(layer.index);
+                                window.parent.location.reload();
+                            });
+                        } else {
+                            layer.msg((res && res.msg) ? res.msg : '保存草稿失败', { time: 2000 });
+                        }
+                    }, 'json').fail(function () {
+                        layer.close(loading);
+                        layer.msg('保存草稿失败：网络错误', { icon: 2, time: 2000 });
+                    });
+                } else {
+                    payload.save_type = 'draft';
+                    $.post("{:url('Order/add')}", payload, function (res) {
+                        layer.close(loading);
+                        if (res && res.code === 0) {
+                            var did = (res.draft_id != null) ? res.draft_id : (res.data && res.data.id);
+                            if (did) {
+                                window.__draftId = did;
+                                __DRAFT_ID__ = did;
+                            }
+                            window.__dirty = false;
+                            layer.msg('已保存为草稿，可在【订单草稿】中继续编辑', { time: 2000 }, function () {
+                                layer.close(layer.index);
+                                window.parent.location.reload();
+                            });
+                        } else {
+                            layer.msg((res && res.msg) ? res.msg : '保存草稿失败', { time: 2000 });
+                        }
+                    }, 'json').fail(function () {
+                        layer.close(loading);
+                        layer.msg('保存草稿失败：网络错误', { icon: 2, time: 2000 });
+                    });
+                }
             } catch (e) {
                 console && console.warn && console.warn('save draft error:', e);
                 layer.msg('保存草稿失败：脚本异常', { icon: 2, time: 2000 });

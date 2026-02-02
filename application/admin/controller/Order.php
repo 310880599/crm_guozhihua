@@ -747,6 +747,9 @@ class Order extends Common
                 }
                 
                 Db::commit();
+                if ($isDraft) {
+                    return json(['code' => 0, 'msg' => '草稿保存成功', 'draft_id' => $orderId, 'data' => ['id' => $orderId]]);
+                }
                 return json(['code' => 0, 'msg' => '添加成功！']);
             } catch (\Exception $e) {
                 Db::rollback();
@@ -3663,11 +3666,302 @@ class Order extends Common
     }
 
     /**
+     * 获取当前用户最新一条草稿（钉钉式断点恢复）
+     * 权限：at_user=当前用户 OR pr_user=当前用户；只返回 add 表单用到的字段为 formData
+     */
+    public function getLatestDraft()
+    {
+        $username = Session::get('username');
+        if ($username === null || $username === '') {
+            return json(['code' => 1, 'msg' => 'no_draft']);
+        }
+        $order = Db::table('crm_client_order')
+            ->where('check_status', 0)
+            ->where(function ($q) use ($username) {
+                $q->where('at_user', $username)->whereOr('pr_user', $username);
+            })
+            ->orderRaw('COALESCE(ut_time, create_time) DESC, id DESC')
+            ->find();
+        if (!$order) {
+            return json(['code' => 1, 'msg' => 'no_draft']);
+        }
+        $id = (int)$order['id'];
+        // 只返回 add 表单用到的字段
+        $formData = [
+            'contact'           => $order['contact'] ?? '',
+            'cname'             => $order['cname'] ?? '',
+            'customer_type_flag'=> (int)($order['customer_type_flag'] ?? 0),
+            'client_company'    => $order['client_company'] ?? '',
+            'province'          => $order['province'] ?? '',
+            'city'              => $order['city'] ?? '',
+            'country'           => $order['country'] ?? '',
+            'customer_type'     => $order['customer_type'] ?? '',
+            'source'            => $order['source'] ?? '',
+            'source_port'       => $order['source_port'] ?? '',
+            'bank_account'      => $order['bank_account'] ?? '',
+            'order_time'        => $order['order_time'] ?? '',
+            'shipping_cost'     => $order['shipping_cost'] ?? '',
+            'invoice_type'      => $order['invoice_type'] ?? '',
+            'invoice_amount'    => $order['invoice_amount'] ?? '',
+            'tax_amount'        => $order['tax_amount'] ?? '',
+            'debugging_cost'    => $order['debugging_cost'] ?? '',
+            'sales_commission'  => $order['sales_commission'] ?? '',
+            'split_remarks'     => $order['split_remarks'] ?? '',
+            'amount_received'   => $order['amount_received'] ?? '',
+            'money'             => $order['money'] ?? '',
+            'profit'            => $order['profit'] ?? '',
+            'margin_rate'       => $order['margin_rate'] ?? '',
+            'remark'            => $order['remark'] ?? '',
+            'wechat_receipt_image' => $order['wechat_receipt_image'] ?? '',
+            'inquiry_assign_image' => $order['inquiry_assign_image'] ?? '',
+        ];
+        // joint_person：库中可能是逗号分隔或 JSON，统一转为数组供前端 xmSelect
+        $jp = $order['joint_person'] ?? '';
+        if (is_string($jp) && $jp !== '') {
+            if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
+                $tmp = json_decode($jp, true);
+                $formData['joint_person'] = is_array($tmp) ? $tmp : array_filter(explode(',', $jp));
+            } else {
+                $formData['joint_person'] = array_values(array_filter(array_map('trim', explode(',', $jp))));
+            }
+        } else {
+            $formData['joint_person'] = [];
+        }
+        // source_port 存的是端口名称，add 页下拉是 id；若有端口表可反查 id，这里先传名称供回填
+        $formData['source_port_text'] = $order['source_port'] ?? '';
+        // 产品明细行
+        $items = Db::name('crm_order_item')->where('order_id', $id)->order('line_no asc')->select();
+        $formData['order_items'] = [];
+        if ($items) {
+            foreach ($items as $row) {
+                $formData['order_items'][] = [
+                    'product_id'     => $row['product_id'] ?? '',
+                    'product_name'   => $row['product_name'] ?? '',
+                    'manager_id'     => $row['manager_id'] ?? 0,
+                    'spec_model'     => $row['spec_model'] ?? '',
+                    'unit'           => $row['unit'] ?? '',
+                    'qty'            => $row['qty'] ?? 0,
+                    'unit_price'     => $row['unit_price'] ?? '',
+                    'total_price'    => $row['total_price'] ?? '',
+                    'purchase_price' => $row['purchase_price'] ?? '',
+                    'sub_profit'     => $row['sub_profit'] ?? '',
+                    'remark'         => $row['remark'] ?? '',
+                ];
+            }
+        }
+        return json(['code' => 0, 'msg' => 'ok', 'data' => ['id' => $id, 'formData' => $formData]]);
+    }
+
+    /**
+     * 创建一条最小草稿记录（第一次自动保存时调用；保证 NOT NULL 字段有默认值）
+     */
+    public function createDraft()
+    {
+        $now = date('Y-m-d H:i:s');
+        $currentUsername = Session::get('username');
+        $adminInfo = Db::name('admin')->where('username', $currentUsername)->field('team_name')->find();
+        $teamName = ($adminInfo && !empty($adminInfo['team_name'])) ? $adminInfo['team_name'] : '';
+        $data = [
+            'check_status'       => 0,
+            'status'             => '草稿',
+            'create_time'        => $now,
+            'first_create_time'  => $now,
+            'ut_time'            => $now,
+            'order_no'           => 'DR' . date('YmdHis') . rand(100, 999),
+            'pr_user'            => $currentUsername,
+            'pr_user_id'         => (int)Session::get('aid'),
+            'at_user'            => $currentUsername,
+            'at_user_id'         => (int)Session::get('aid'),
+            'money'              => 0,
+            'source_port'        => '',
+            'cname'              => '',
+            'customer_type_flag' => 0,
+            'team_name'          => $teamName,
+            'bank_account'       => '',
+            'bank_account_name'  => '',
+        ];
+        $id = Db::name('crm_client_order')->insertGetId($data);
+        if (!$id) {
+            return json(['code' => 1, 'msg' => 'create_failed']);
+        }
+        return json(['code' => 0, 'msg' => 'ok', 'draft_id' => (int)$id]);
+    }
+
+    /**
+     * 30 秒更新草稿（白名单更新；严禁修改 check_status，必须一直为 0）
+     */
+    public function autosaveDraft()
+    {
+        $draftId = (int)Request::param('draft_id');
+        if ($draftId <= 0) {
+            return json(['code' => 1, 'msg' => 'draft_not_found_or_no_permission']);
+        }
+        $username = Session::get('username') ?? '';
+        $order = Db::table('crm_client_order')->where('id', $draftId)->find();
+        if (!$order || (int)$order['check_status'] !== 0) {
+            return json(['code' => 1, 'msg' => 'draft_not_found_or_no_permission']);
+        }
+        if ($username && $order['at_user'] !== $username && $order['pr_user'] !== $username) {
+            return json(['code' => 1, 'msg' => 'draft_not_found_or_no_permission']);
+        }
+        $now = date('Y-m-d H:i:s');
+        $data = [];
+        $data['contact']          = Request::param('contact', '');
+        $data['cname']            = Request::param('cname', '');
+        $data['customer_type_flag'] = in_array(Request::param('customer_type_flag'), ['0', '1']) ? (int)Request::param('customer_type_flag') : 0;
+        $data['client_company']   = Request::param('client_company', '');
+        $data['province']         = Request::param('province', '');
+        $data['city']             = Request::param('city', '');
+        $data['country']          = Request::param('country', '');
+        $data['customer_type']    = Request::param('customer_type', '');
+        $data['source']           = Request::param('source', '');
+        $data['oper_user']        = Request::param('oper_user', '');
+        $data['bank_account']     = Request::param('bank_account', '');
+        $sourcePortId = Request::param('source_port', '');
+        $data['source_port'] = '';
+        if (!empty($sourcePortId)) {
+            $portInfo = Db::name('crm_inquiry_port')->where('id', $sourcePortId)->field('port_name')->find();
+            if ($portInfo && !empty($portInfo['port_name'])) $data['source_port'] = $portInfo['port_name'];
+        }
+        $currentUsername = Session::get('username');
+        $adminInfo = Db::name('admin')->where('username', $currentUsername)->field('team_name')->find();
+        $data['team_name'] = ($adminInfo && !empty($adminInfo['team_name'])) ? $adminInfo['team_name'] : (Session::get('team_name') ?: '');
+        $orderTime = trim((string)Request::param('order_time', ''));
+        $data['order_time'] = $orderTime === '' ? null : $orderTime;
+        $data['shipping_cost']    = Request::param('shipping_cost', '');
+        $invoiceType = Request::param('invoice_type', '');
+        $data['invoice_type'] = in_array($invoiceType, ['普票', '专票', '不开票']) ? $invoiceType : '';
+        $data['invoice_amount']   = Request::param('invoice_amount', '');
+        $data['tax_amount']       = Request::param('tax_amount', '');
+        $data['debugging_cost']   = Request::param('debugging_cost', '');
+        $data['sales_commission'] = Request::param('sales_commission', '');
+        $data['split_remarks']    = Request::param('split_remarks', '');
+        $data['amount_received']  = Request::param('amount_received', '');
+        $data['wechat_receipt_image'] = Request::param('wechat_receipt_image', '');
+        if (is_array($data['wechat_receipt_image'])) {
+            $data['wechat_receipt_image'] = json_encode($data['wechat_receipt_image'], JSON_UNESCAPED_UNICODE);
+        }
+        $data['inquiry_assign_image'] = trim((string)Request::param('inquiry_assign_image', ''));
+        $jpRaw = Request::param('joint_person');
+        $jpIds = [];
+        if (is_array($jpRaw)) {
+            $jpIds = $jpRaw;
+        } elseif (is_string($jpRaw)) {
+            $jpRaw = trim($jpRaw);
+            if ($jpRaw !== '') {
+                if (isset($jpRaw[0]) && $jpRaw[0] === '[') {
+                    $tmp = json_decode($jpRaw, true);
+                    if (is_array($tmp)) $jpIds = $tmp;
+                } else {
+                    $jpIds = explode(',', $jpRaw);
+                }
+            }
+        }
+        $jpIds = array_values(array_unique(array_filter(array_map(function ($v) {
+            return preg_replace('/\D/', '', (string)$v);
+        }, $jpIds), function ($v) { return $v !== ''; })));
+        $data['joint_person'] = implode(',', $jpIds);
+        if (!empty($data['bank_account'])) {
+            $data['bank_account_name'] = $this->resolveBankAccountName($data['bank_account']);
+        } else {
+            $data['bank_account_name'] = '';
+        }
+        $productIds = Request::param('product_name/a');
+        $specModels = Request::param('spec_model/a');
+        $units = Request::param('unit/a');
+        $qtys = Request::param('qty/a');
+        $unitPrices = Request::param('unit_price/a');
+        $purchasePrices = Request::param('purchase_price/a');
+        $itemRemarks = Request::param('item_remark/a');
+        $managerIds = Request::param('product_manager/a');
+        $idArr = [];
+        if (!empty($productIds) && is_array($productIds)) {
+            foreach ($productIds as $pid) {
+                $pid = (int)$pid;
+                if ($pid > 0) $idArr[] = $pid;
+            }
+            $idArr = array_values(array_unique($idArr));
+        }
+        $prodMap = []; $supIdMap = []; $supNameMap = [];
+        if (!empty($idArr)) {
+            $rows = Db::name('crm_products')->alias('p')
+                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
+                ->where('p.id', 'in', $idArr)
+                ->field('p.id, p.product_name, p.category_id, c.category_name')
+                ->select();
+            foreach ($rows as $r) {
+                $prodMap[$r['id']] = $r['product_name'];
+                $supIdMap[$r['id']] = $r['category_id'] ?? 0;
+                $supNameMap[$r['id']] = $r['category_name'] ?? '';
+            }
+        }
+        $sumTotal = 0; $sumProfit = 0; $itemsData = [];
+        if (!empty($productIds) && is_array($productIds)) {
+            foreach ($productIds as $index => $pid) {
+                $pid = (int)$pid;
+                if ($pid <= 0) continue;
+                $pnameText = $prodMap[$pid] ?? '';
+                $supplierId = $supIdMap[$pid] ?? 0;
+                $supplierName = $supNameMap[$pid] ?? '';
+                $qty = isset($qtys[$index]) ? floatval($qtys[$index]) : 0;
+                $price = isset($unitPrices[$index]) ? floatval($unitPrices[$index]) : 0;
+                $purchase = isset($purchasePrices[$index]) ? floatval($purchasePrices[$index]) : 0;
+                $lineTotal = round($qty * $price, 2);
+                $lineProfit = round($lineTotal - $purchase, 2);
+                $sumTotal += $lineTotal;
+                $sumProfit += $lineProfit;
+                $managerId = !empty($managerIds[$index]) ? intval($managerIds[$index]) : 0;
+                $itemsData[] = [
+                    'order_id' => $draftId, 'line_no' => $index + 1, 'product_id' => (string)$pid,
+                    'product_name' => $pnameText, 'supplier_id' => (string)$supplierId, 'supplier_name' => $supplierName,
+                    'spec_model' => $specModels[$index] ?? '', 'unit' => $units[$index] ?? '', 'qty' => (int)$qty,
+                    'unit_price' => number_format($price, 2, '.', ''), 'total_price' => number_format($lineTotal, 2, '.', ''),
+                    'purchase_price' => number_format($purchase, 2, '.', ''), 'sub_profit' => number_format($lineProfit, 2, '.', ''),
+                    'remark' => $itemRemarks[$index] ?? '', 'manager_id' => $managerId
+                ];
+            }
+        }
+        $data['money'] = round($sumTotal, 2);
+        $shippingCost = floatval(Request::param('shipping_cost', 0));
+        $taxAmount = floatval(Request::param('tax_amount', 0));
+        $debuggingCost = floatval(Request::param('debugging_cost', 0));
+        $salesCommission = floatval(Request::param('sales_commission', 0));
+        $finalProfit = $sumProfit - $shippingCost - $taxAmount - $debuggingCost - $salesCommission;
+        $data['profit'] = round($finalProfit, 2);
+        $data['margin_rate'] = ($sumTotal > 0) ? round($finalProfit / $sumTotal * 100, 2) : 0;
+        if (!empty($productIds)) {
+            $firstPid = (int)($productIds[0] ?? 0);
+            $firstName = $prodMap[$firstPid] ?? '';
+            $data['product_name'] = $firstName !== '' ? $firstName . (count($productIds) > 1 ? ' 等' : '') : '';
+        }
+        $data['ut_time'] = $now;
+        $data['oper_user'] = Session::get('username');
+        $data['status'] = '草稿';
+        // 严禁修改 check_status，不写入 $data
+        Db::startTrans();
+        try {
+            Db::name('crm_client_order')->where('id', $draftId)->update($data);
+            Db::name('crm_order_item')->where('order_id', $draftId)->delete();
+            if (!empty($itemsData)) {
+                Db::name('crm_order_item')->insertAll($itemsData);
+            }
+            Db::commit();
+            return json(['code' => 0, 'msg' => 'saved']);
+        } catch (\Exception $e) {
+            Db::rollback();
+            return json(['code' => 1, 'msg' => 'autosave_failed']);
+        }
+    }
+
+    /**
      * 删除草稿：仅允许 check_status=0，物理删除订单及 crm_order_item 明细
      */
     public function deleteDraft()
     {
         $id = (int)Request::param('id');
+        if ($id <= 0) {
+            $id = (int)Request::param('draft_id');
+        }
         if ($id <= 0) {
             return json(['code' => 1, 'msg' => '参数错误']);
         }
