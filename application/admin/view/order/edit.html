@@ -127,6 +127,12 @@
         // 编辑页：后端传入的订单及明细数据
         var orderInfo = {:json_encode($orderInfo ?? [], JSON_UNESCAPED_UNICODE)};
         var orderItems = {:json_encode($orderItems ?? [], JSON_UNESCAPED_UNICODE)};
+        // 编辑页来源：草稿列表进入时 URL 带 from=draft，提交保存时透传给后端用于自动提交审核
+        function getQueryParam(name) {
+            var m = location.search.match(new RegExp('[?&]' + name + '=([^&]*)'));
+            return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
+        }
+        window.__editFromParam = getQueryParam('from');
         
         // **加粗产品下拉中括号内的分类名称部分** - 移到全局作用域
         function boldCategory($select) {
@@ -2255,11 +2261,16 @@
 
             // 提交前同步更新总计字段，以防用户未触发输入事件
             updateTotals();
+            // 透传 URL 参数 from（草稿进入时为 draft），后端用于保存后自动提交审核
+            if (window.__editFromParam) {
+                data.field.from = window.__editFromParam;
+            }
             $.post("{:url('Order/edit')}", data.field, function (res) {
                 if (res.code === 0) {
                     layer.msg(res.msg, { time: 2000 }, function () {
-                        layer.close(layer.index);
-                        window.parent.location.reload();
+                        var idx = parent.layer.getFrameIndex(window.name);
+                        if (idx >= 0) parent.layer.close(idx);
+                        if (parent.layui && parent.layui.table) parent.layui.table.reload('table-list');
                     });
                 } else {
                     layer.msg(res.msg, { time: 2000 });

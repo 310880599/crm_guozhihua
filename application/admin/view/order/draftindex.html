@@ -658,7 +658,7 @@
                         anim: 2,
                         shadeClose: false,
                         maxmin: false,
-                        content: ["{:url('Order/edit')}?id=" + data.id]
+                        content: ["{:url('Order/edit')}?id=" + data.id + "&from=draft"]
                     });
                 }
                 else if (obj.event === 'submit') {
@@ -679,7 +679,8 @@
                                     btn: ['去完善（继续编辑）', '我知道了'],
                                     yes: function (index, layero) {
                                         layer.close(index); // ✅ 这里必须关闭 index（数字）
-                                        var editUrl = res.edit_url || ("{:url('Order/edit')}?id=" + data.id);
+                                        var baseUrl = res.edit_url || ("{:url('Order/edit')}?id=" + data.id);
+                                        var editUrl = baseUrl + (baseUrl.indexOf('from=draft') >= 0 ? '' : (baseUrl.indexOf('?') >= 0 ? '&from=draft' : '?from=draft'));
                                         layer.open({
                                             type: 2,
                                             title: '编辑订单',

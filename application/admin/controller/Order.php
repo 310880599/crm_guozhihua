@@ -1554,6 +1554,29 @@ class Order extends Common
                     }
                 }
                 Db::commit();
+
+                // ====== 草稿来源：保存成功后自动提交审核（check_status=1） ======
+                $from = Request::param('from', '');
+                if ($from === 'draft') {
+                    $orderRow = Db::name('crm_client_order')->where('id', $id)->field('check_status')->find();
+                    if ($orderRow && (int)$orderRow['check_status'] === 0) {
+                        // 最小兜底校验：成交时间/客户/产品/金额
+                        $orderTime = trim((string)($data['order_time'] ?? ''));
+                        $cname = trim((string)($data['cname'] ?? ''));
+                        $money = isset($data['money']) ? (float)$data['money'] : 0;
+                        $hasProduct = !empty($productIds) && is_array($productIds) && count(array_filter($productIds, function ($pid) { return (int)$pid > 0; })) > 0;
+                        if ($orderTime === '' || $cname === '' || $money <= 0 || !$hasProduct) {
+                            return json(['code' => 1, 'msg' => '请先完善必填项后再提交审核']);
+                        }
+                        Db::name('crm_client_order')->where('id', $id)->update([
+                            'check_status' => 1,
+                            'status'       => '待审核',
+                            'ut_time'      => date('Y-m-d H:i:s'),
+                        ]);
+                        return json(['code' => 0, 'msg' => '保存成功，已提交审核']);
+                    }
+                }
+
                 return json(['code' => 0, 'msg' => '编辑成功！']);
             } catch (\Exception $e) {
                 Db::rollback();
