@@ -409,17 +409,19 @@ class Order extends Common
             // ✅审核状态：草稿=0，提交=1（待审核）
             $data['check_status']     = $isDraft ? 0 : 1;
 
-            // 处理运营端口：将端口ID转换为端口名称（文字）保存
-            $sourcePortId = Request::param('source_port', '');
-            $data['source_port'] = '';  // 默认为空
-            if (!empty($sourcePortId)) {
-                // 从 crm_inquiry_port 表获取端口名称
-                $portInfo = Db::name('crm_inquiry_port')
-                    ->where('id', $sourcePortId)
-                    ->field('port_name')
-                    ->find();
-                if ($portInfo && !empty($portInfo['port_name'])) {
-                    $data['source_port'] = $portInfo['port_name'];  // 保存端口名称（文字）
+            // 处理运营端口：端口ID查 port_name 保存；非数字或查不到时兜底为端口名称直接保存
+            $sourcePortId = trim((string)Request::param('source_port', ''));
+            $data['source_port'] = '';
+            if ($sourcePortId !== '') {
+                $isNumericId = ctype_digit($sourcePortId) || (is_numeric($sourcePortId) && (int)$sourcePortId > 0);
+                if ($isNumericId) {
+                    $portInfo = Db::name('crm_inquiry_port')->where('id', $sourcePortId)->field('port_name')->find();
+                    if ($portInfo && !empty($portInfo['port_name'])) {
+                        $data['source_port'] = $portInfo['port_name'];
+                    }
+                }
+                if ($data['source_port'] === '' && $sourcePortId !== '') {
+                    $data['source_port'] = mb_substr($sourcePortId, 0, 100, 'UTF-8');
                 }
             }
             // 强制覆盖 team_name 为当前登录人的团队名称
@@ -3832,11 +3834,17 @@ class Order extends Common
         $data['source']           = Request::param('source', '');
         $data['oper_user']        = Request::param('oper_user', '');
         $data['bank_account']     = Request::param('bank_account', '');
-        $sourcePortId = Request::param('source_port', '');
+        $sourcePortId = trim((string)Request::param('source_port', ''));
         $data['source_port'] = '';
-        if (!empty($sourcePortId)) {
-            $portInfo = Db::name('crm_inquiry_port')->where('id', $sourcePortId)->field('port_name')->find();
-            if ($portInfo && !empty($portInfo['port_name'])) $data['source_port'] = $portInfo['port_name'];
+        if ($sourcePortId !== '') {
+            $isNumericId = ctype_digit($sourcePortId) || (is_numeric($sourcePortId) && (int)$sourcePortId > 0);
+            if ($isNumericId) {
+                $portInfo = Db::name('crm_inquiry_port')->where('id', $sourcePortId)->field('port_name')->find();
+                if ($portInfo && !empty($portInfo['port_name'])) $data['source_port'] = $portInfo['port_name'];
+            }
+            if ($data['source_port'] === '' && $sourcePortId !== '') {
+                $data['source_port'] = mb_substr($sourcePortId, 0, 100, 'UTF-8');
+            }
         }
         $currentUsername = Session::get('username');
         $adminInfo = Db::name('admin')->where('username', $currentUsername)->field('team_name')->find();

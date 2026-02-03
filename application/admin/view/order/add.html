@@ -962,15 +962,6 @@
                 form.render('select');
                 updateCustomerTypeUI($('select[name="customer_type_flag"]').val());
                 updateInvoiceUI($('select[name="invoice_type"]').val());
-                if (formData.source_port_text) {
-                    var $sp = $('select[name="source_port"]');
-                    if ($sp.find('option[value="' + formData.source_port_text + '"]').length) {
-                        $sp.val(formData.source_port_text);
-                    } else {
-                        $sp.append('<option value="' + (formData.source_port_text || '') + '">' + (formData.source_port_text || '') + '</option>').val(formData.source_port_text);
-                    }
-                    form.render('select');
-                }
                 if (window.collaboratorSelectInstance && Array.isArray(formData.joint_person)) {
                     try {
                         window.collaboratorSelectInstance.setValue(formData.joint_person);
@@ -1025,11 +1016,11 @@
                 if (typeof updateVoucherUI === 'function') updateVoucherUI();
                 if (typeof hydrateWechatReceiptFromHidden === 'function') hydrateWechatReceiptFromHidden();
                 if (typeof hydrateInquiryAssignFromHidden === 'function') hydrateInquiryAssignFromHidden();
-                // 回填完成：解除回填态，且不标脏
-                setTimeout(function(){
+                // 端口按“端口名称”映射为端口ID回填，回填完成后再解除回填态
+                setSourcePortByPortName(formData.source || '', formData.source_port || '', function () {
                     window.__fillingDraft = false;
                     window.__dirty = false;
-                }, 0);
+                });
             }
 
             // 收集表单数据（与保存草稿一致，含 xmSelect joint_person）
@@ -1439,6 +1430,29 @@
                 form.render('select');
             }, 50);
         };
+        
+        // 草稿回填：根据询盘来源+端口名称，刷新端口列表后匹配端口ID并设置 value
+        function setSourcePortByPortName(sourceName, portName, cb) {
+            if (typeof cb !== 'function') cb = function () {};
+            if (typeof window.fillSourcePortBySourceName === 'function') {
+                window.fillSourcePortBySourceName(sourceName);
+            }
+            setTimeout(function () {
+                var $sp = $('#source_port');
+                if (portName && $sp.length) {
+                    $sp.find('option').each(function () {
+                        var opt = $(this);
+                        var v = opt.val();
+                        if (v && (opt.text().trim() === String(portName).trim() || (opt.data('port-name') && opt.data('port-name') === portName))) {
+                            $sp.val(v);
+                            return false;
+                        }
+                    });
+                }
+                form.render('select');
+                cb();
+            }, 300);
+        }
         
         form.on('select(kh_status)', function (data) {
             var sourceName = $(data.elem).find("option:selected").text();
