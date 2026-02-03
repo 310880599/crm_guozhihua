@@ -264,38 +264,16 @@
                             setTimeout(function() {
                                 // 触发 select 事件以更新运营端口选项列表
                                 $sourceSelect.trigger('change');
-                                
-                                // 如果有返回的来源端口值，自动选择
                                 var sourcePortValue = result['msg']['source_port'] || '';
-                                if (sourcePortValue && typeof window.fillSourcePortBySourceName === 'function') {
-                                    // 先更新选项列表
+                                if (typeof window.setSourcePortByAnyValue === 'function') {
+                                    window.setSourcePortByAnyValue(
+                                        sourceValue,
+                                        sourcePortValue,
+                                        result['msg']['source_port_id'] || '',
+                                        function() {}
+                                    );
+                                } else if (typeof window.fillSourcePortBySourceName === 'function') {
                                     window.fillSourcePortBySourceName(sourceValue);
-                                    
-                                    // 然后选择对应的端口
-                                    setTimeout(function() {
-                                        var $sourcePort = $('#source_port');
-                                        // 尝试通过值匹配
-                                        var portMatched = false;
-                                        $sourcePort.find('option').each(function() {
-                                            if ($(this).val() === sourcePortValue || $(this).val() === String(sourcePortValue)) {
-                                                $sourcePort.val(sourcePortValue);
-                                                portMatched = true;
-                                                return false;
-                                            }
-                                        });
-                                        if (portMatched) {
-                                            layui.form.render('select');
-                                            // 确保搜索功能正常
-                                            setTimeout(function() {
-                                                layui.form.render('select');
-                                            }, 50);
-                                        }
-                                    }, 200);
-                                } else {
-                                    // 如果没有来源端口值，只更新选项列表
-                                    if (typeof window.fillSourcePortBySourceName === 'function') {
-                                        window.fillSourcePortBySourceName(sourceValue);
-                                    }
                                 }
                             }, 100);
                         }
@@ -1175,6 +1153,45 @@
             }, 50);
         };
         
+        // 运营端口健壮回填：支持端口ID或端口名称，统一由后端 source_port_id 或 anyValue 匹配
+        window.setSourcePortByAnyValue = function(sourceName, anyValue, preferId, done) {
+            done = done || function() {};
+            if (!sourceName) {
+                done();
+                return;
+            }
+            window.fillSourcePortBySourceName(sourceName);
+            setTimeout(function() {
+                var $sourcePort = $('#source_port');
+                if (preferId !== undefined && preferId !== null && String(preferId) !== '') {
+                    $sourcePort.val(preferId);
+                } else if (anyValue !== undefined && anyValue !== null && String(anyValue) !== '') {
+                    var matched = false;
+                    $sourcePort.find('option').each(function() {
+                        var optVal = $(this).val();
+                        if (optVal === anyValue || optVal === String(anyValue)) {
+                            $sourcePort.val(optVal);
+                            matched = true;
+                            return false;
+                        }
+                    });
+                    if (!matched) {
+                        $sourcePort.find('option').each(function() {
+                            if ($(this).text() === String(anyValue)) {
+                                $sourcePort.val($(this).val());
+                                return false;
+                            }
+                        });
+                    }
+                }
+                form.render('select');
+                setTimeout(function() {
+                    form.render('select');
+                    done();
+                }, 50);
+            }, 200);
+        };
+        
         form.on('select(kh_status)', function (data) {
             var sourceName = $(data.elem).find("option:selected").text();
             var users = yyList[sourceName] || [];
@@ -1410,28 +1427,17 @@
                 }
             }
             
-            // 运营端口回显：先根据 source 刷新端口选项，再设置选中值
+            // 运营端口回显：先根据 source 刷新端口选项，再设置选中值（统一使用健壮回填函数）
             if (orderInfo.source) {
-                if (typeof window.fillSourcePortBySourceName === 'function') {
+                if (typeof window.setSourcePortByAnyValue === 'function') {
+                    window.setSourcePortByAnyValue(
+                        orderInfo.source,
+                        orderInfo.source_port || '',
+                        orderInfo.source_port_id || '',
+                        function() { form.render('select'); }
+                    );
+                } else if (typeof window.fillSourcePortBySourceName === 'function') {
                     window.fillSourcePortBySourceName(orderInfo.source);
-                    setTimeout(function() {
-                        var sourcePortId = orderInfo.source_port_id || '';
-                        if (sourcePortId) {
-                            $('#source_port').val(sourcePortId);
-                        } else if (orderInfo.source_port) {
-                            // 如果没有 source_port_id，尝试通过端口名称匹配
-                            var $sourcePort = $('#source_port');
-                            var portMatched = false;
-                            $sourcePort.find('option').each(function() {
-                                if ($(this).text() === orderInfo.source_port) {
-                                    $sourcePort.val($(this).val());
-                                    portMatched = true;
-                                    return false;
-                                }
-                            });
-                        }
-                        form.render('select');
-                    }, 200);
                 }
             }
             
