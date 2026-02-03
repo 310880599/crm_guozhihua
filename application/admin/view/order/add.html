@@ -774,6 +774,7 @@
                             <div id="wechat_receipt_preview_list" class="multi-preview-list"></div>
                             <p id="wechat_receipt_text"></p>
                             <input type="hidden" name="wechat_receipt_image" id="wechat_receipt_image" value="" lay-verify="required">
+                            <input type="hidden" name="clear_wechat_receipt_image" id="clear_wechat_receipt_image" value="0">
                         </div>
                     </div>
                 </div>
@@ -790,6 +791,8 @@
                             <img class="layui-upload-img js-img-preview" id="inquiry_assign_preview" style="max-width: 200px; max-height: 200px; display: none; cursor: zoom-in;">
                             <p id="inquiry_assign_text"></p>
                             <input type="hidden" name="inquiry_assign_image" id="inquiry_assign_image" value="" lay-verify="required">
+                            <input type="hidden" name="clear_inquiry_assign_image" id="clear_inquiry_assign_image" value="0">
+                            <button type="button" class="layui-btn layui-btn-danger layui-btn-sm" id="btnRemoveInquiryAssign" style="margin-top:8px;display:none;">删除图片</button>
                         </div>
                     </div>
                 </div>
@@ -822,6 +825,7 @@
             // 钉钉式草稿：当前草稿ID、脏标记、自动保存提示节流
             window.__draftId = null;
             window.__dirty = false;
+            window.__fillingDraft = false;
             var __DRAFT_ID__ = 0;
             var __LAST_SNAPSHOT__ = '';
             var __LAST_AUTOSAVE_MSG_TIME__ = 0;
@@ -869,6 +873,7 @@
 
             // 监听表单变化，标记脏数据（用于 30 秒仅在有变化时保存）
             $('#orderAddForm').on('input change', 'input, select, textarea', function () {
+                if (window.__fillingDraft) return; // 回填中不标脏
                 window.__dirty = true;
             });
 
@@ -909,6 +914,7 @@
                 if (!formData) return;
                 var $form = $('#orderAddForm');
                 if (!$form.length) return;
+                window.__fillingDraft = true;
                 $('#contact').val(formData.contact || '');
                 $('#cname').val(formData.cname || '');
                 $('#client_company').val(formData.client_company || '');
@@ -981,6 +987,15 @@
                     });
                     form.render('select');
                 }
+                // 回显图片预览（关键）：先更新凭证块显隐，再根据 hidden 渲染预览
+                if (typeof updateVoucherUI === 'function') updateVoucherUI();
+                if (typeof hydrateWechatReceiptFromHidden === 'function') hydrateWechatReceiptFromHidden();
+                if (typeof hydrateInquiryAssignFromHidden === 'function') hydrateInquiryAssignFromHidden();
+                // 回填完成：解除回填态，且不标脏
+                setTimeout(function(){
+                    window.__fillingDraft = false;
+                    window.__dirty = false;
+                }, 0);
             }
 
             // 收集表单数据（与保存草稿一致，含 xmSelect joint_person）
@@ -1728,11 +1743,46 @@
                     return typeof item === 'string' ? item : item.full;
                 });
                 $('#wechat_receipt_image').val(JSON.stringify(urlArray));
+                // 关键：标记脏 + 触发change，让30秒autosave能保存到草稿
+                window.__dirty = true;
+                $('#wechat_receipt_image').trigger('change');
+                if (urlArray.length > 0) {
+                    $('#clear_wechat_receipt_image').val('0');
+                }
             }
             
             // 更新提示文本
             function updateWechatReceiptText() {
                 $('#wechat_receipt_text').html('已上传 ' + wechatReceiptUrls.length + '/' + MAX_WECHAT_RECEIPT_IMAGES);
+            }
+            
+            // 从 hidden 值渲染微信多图预览（草稿回填用，不标脏）
+            function hydrateWechatReceiptFromHidden() {
+                var raw = $('#wechat_receipt_image').val();
+                wechatReceiptUrls = [];
+                if (!raw) {
+                    renderWechatReceiptPreviews();
+                    updateWechatReceiptText();
+                    return;
+                }
+                try {
+                    var arr = JSON.parse(raw);
+                    if (Array.isArray(arr)) {
+                        arr.forEach(function(url){
+                            if (url && String(url).trim() !== '') {
+                                wechatReceiptUrls.push({ full: String(url), thumb: String(url) });
+                            }
+                        });
+                    } else if (typeof arr === 'string' && arr.trim() !== '') {
+                        wechatReceiptUrls.push({ full: arr.trim(), thumb: arr.trim() });
+                    }
+                } catch(e) {
+                    if (String(raw).trim() !== '') {
+                        wechatReceiptUrls.push({ full: String(raw).trim(), thumb: String(raw).trim() });
+                    }
+                }
+                renderWechatReceiptPreviews();
+                updateWechatReceiptText();
             }
             
             // 客户微信回执图上传 - 使用隐藏的input，支持多选
@@ -1853,6 +1903,12 @@
                     renderWechatReceiptPreviews();
                     syncWechatReceiptHidden();
                     updateWechatReceiptText();
+                    if (wechatReceiptUrls.length === 0) {
+                        $('#clear_wechat_receipt_image').val('1');
+                    } else {
+                        $('#clear_wechat_receipt_image').val('0');
+                    }
+                    window.__dirty = true;
                 }
             });
             
@@ -1881,6 +1937,7 @@
                 var reader = new FileReader();
                 reader.onload = function(e) {
                     $('#inquiry_assign_preview').attr('src', e.target.result).show();
+                    $('#btnRemoveInquiryAssign').show();
                 };
                 reader.readAsDataURL(file);
                 
@@ -1903,6 +1960,9 @@
                         function(res) {
                             if(res.code == 1){
                                 $('#inquiry_assign_image').val(res.url);
+                                window.__dirty = true;
+                                $('#inquiry_assign_image').trigger('change');
+                                $('#clear_inquiry_assign_image').val('0');
                                 $('#inquiry_assign_text').html('<span style="color: #5FB878;">上传成功</span>');
                             } else {
                                 $('#inquiry_assign_text').html('<span style="color: #FF5722;">上传失败：' + (res.info || '未知错误') + '</span>');
@@ -1914,6 +1974,30 @@
                     );
                 });
             });
+
+            // 询盘来源凭证：删除图片按钮
+            $('#btnRemoveInquiryAssign').on('click', function() {
+                $('#inquiry_assign_preview').attr('src', '').hide();
+                $('#btnRemoveInquiryAssign').hide();
+                $('#inquiry_assign_image').val('');
+                $('#clear_inquiry_assign_image').val('1');
+                $('#inquiry_assign_text').html('');
+                window.__dirty = true;
+                $('#inquiry_assign_image').trigger('change');
+            });
+
+            // 从 hidden 值渲染询盘单图预览（草稿回填用）
+            function hydrateInquiryAssignFromHidden() {
+                var url = ($('#inquiry_assign_image').val() || '').trim();
+                if (url) {
+                    $('#inquiry_assign_preview').attr('src', url).show();
+                    $('#btnRemoveInquiryAssign').show();
+                    $('#inquiry_assign_text').html('<span style="color:#5FB878;">已回填</span>');
+                } else {
+                    $('#inquiry_assign_preview').attr('src','').hide();
+                    $('#btnRemoveInquiryAssign').hide();
+                }
+            }
 
             /**
              * 图片预览功能：点击图片打开预览（支持放大/缩小/重置/滚轮缩放/拖拽移动）

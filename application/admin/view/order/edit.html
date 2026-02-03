@@ -797,6 +797,7 @@
                             <div id="wechat_receipt_preview_list" class="multi-preview-list"></div>
                             <p id="wechat_receipt_text"></p>
                             <input type="hidden" name="wechat_receipt_image" id="wechat_receipt_image" value="" lay-verify="required">
+                            <input type="hidden" name="clear_wechat_receipt_image" id="clear_wechat_receipt_image" value="0">
                         </div>
                     </div>
                 </div>
@@ -813,6 +814,8 @@
                             <img class="layui-upload-img js-img-preview" id="inquiry_assign_preview" style="max-width: 200px; max-height: 200px; display: none; cursor: zoom-in;">
                             <p id="inquiry_assign_text"></p>
                             <input type="hidden" name="inquiry_assign_image" id="inquiry_assign_image" value="" lay-verify="required">
+                            <input type="hidden" name="clear_inquiry_assign_image" id="clear_inquiry_assign_image" value="0">
+                            <button type="button" class="layui-btn layui-btn-danger layui-btn-sm" id="btn_remove_inquiry_assign" style="margin-top:8px;display:none;">删除图片</button>
                         </div>
                     </div>
                 </div>
@@ -1479,6 +1482,11 @@
                 }
             }
             
+            // 回填图片预览（多图 + 单图），并同步隐藏域
+            if (typeof window.initImageEchoFromOrderInfo === 'function') {
+                window.initImageEchoFromOrderInfo(orderInfo);
+            }
+            
             // 产品明细回显
             if (Array.isArray(orderItems) && orderItems.length > 0) {
                 var $tbody = $('#productTableBody');
@@ -1542,61 +1550,11 @@
                 });
             }
             
-            // 已有图片回显（兼容单字符串和 JSON 数组格式）
-            if (orderInfo.wechat_receipt_image) {
-                var receiptImage = orderInfo.wechat_receipt_image;
-                var receiptArray = [];
-                
-                // 解析：兼容 JSON 数组字符串和单字符串
-                if (typeof receiptImage === 'string') {
-                    receiptImage = receiptImage.trim();
-                    if (receiptImage !== '') {
-                        // 尝试解析为 JSON 数组
-                        if (receiptImage.charAt(0) === '[') {
-                            try {
-                                var parsed = JSON.parse(receiptImage);
-                                if (Array.isArray(parsed)) {
-                                    receiptArray = parsed;
-                                } else {
-                                    // JSON 解析失败，当作单字符串处理
-                                    receiptArray = [receiptImage];
-                                }
-                            } catch (e) {
-                                // JSON 解析异常，当作单字符串处理
-                                receiptArray = [receiptImage];
-                            }
-                        } else {
-                            // 单字符串格式（历史数据兼容）
-                            receiptArray = [receiptImage];
-                        }
-                    }
-                } else if (Array.isArray(receiptImage)) {
-                    // 如果已经是数组，直接使用
-                    receiptArray = receiptImage;
-                }
-                
-                // 赋值给 wechatReceiptUrls（使用字符串数组）
-                wechatReceiptUrls = receiptArray.map(function(url) {
-                    return typeof url === 'string' ? url : (url.full || url);
-                });
-                
-                // 渲染、同步、更新
-                renderWechatReceiptPreviews();
-                syncWechatReceiptHidden();
-                updateWechatReceiptText();
-            }
-            if (orderInfo.inquiry_assign_image) {
-                $('#inquiry_assign_image').val(orderInfo.inquiry_assign_image);
-                $('#inquiry_assign_preview').attr('src', orderInfo.inquiry_assign_image).show();
-                $('#inquiry_assign_text').html('<span style="color: #5FB878;">已上传</span>');
-            }
-            
-            // 触发一次全单汇总计算
+            // 回显完成后，取消初始化标记（setTimeout 0 避免 changeyewu 在回填过程中触发）
             setTimeout(function() {
                 updateTotals();
-                // 回显完成后，取消初始化标记
                 window.isEditInit = false;
-            }, 500);
+            }, 0);
         }
         
         // 页面加载完成后，初始化回显
@@ -1826,6 +1784,9 @@
                     return typeof item === 'string' ? item : item.full;
                 });
                 $('#wechat_receipt_image').val(JSON.stringify(urlArray));
+                if (urlArray.length > 0) {
+                    $('#clear_wechat_receipt_image').val('0');
+                }
             }
             
             // 更新提示文本
@@ -1951,11 +1912,78 @@
                     renderWechatReceiptPreviews();
                     syncWechatReceiptHidden();
                     updateWechatReceiptText();
+                    if (wechatReceiptUrls.length === 0) {
+                        $('#clear_wechat_receipt_image').val('1');
+                    } else {
+                        $('#clear_wechat_receipt_image').val('0');
+                    }
                 }
             });
             
             // 初始化提示文本
             updateWechatReceiptText();
+
+            /**
+             * 编辑页图片回显：从 orderInfo 或隐藏域回填多图/单图预览，并同步隐藏域
+             * 兼容 wechat_receipt_image：JSON 数组字符串、逗号分隔字符串、单个 URL
+             */
+            function initImageEchoFromOrderInfo(orderInfo) {
+                if (!orderInfo || typeof orderInfo !== 'object') {
+                    orderInfo = {};
+                }
+                // 1）多图回显：wechat_receipt_image
+                var rawWechat = (orderInfo.wechat_receipt_image != null && orderInfo.wechat_receipt_image !== '') ? orderInfo.wechat_receipt_image : ($('#wechat_receipt_image').val() || '');
+                rawWechat = typeof rawWechat === 'string' ? rawWechat.trim() : '';
+                var wechatReceiptUrlsParsed = [];
+                if (rawWechat) {
+                    if (rawWechat.charAt(0) === '[') {
+                        try {
+                            var arr = JSON.parse(rawWechat);
+                            if (Array.isArray(arr)) {
+                                arr.forEach(function(u) {
+                                    if (u != null && String(u).trim() !== '') {
+                                        wechatReceiptUrlsParsed.push(String(u).trim());
+                                    }
+                                });
+                            } else {
+                                wechatReceiptUrlsParsed.push(rawWechat);
+                            }
+                        } catch (e) {
+                            wechatReceiptUrlsParsed.push(rawWechat);
+                        }
+                    } else if (rawWechat.indexOf(',') > -1) {
+                        rawWechat.split(',').forEach(function(u) {
+                            if (u != null && String(u).trim() !== '') {
+                                wechatReceiptUrlsParsed.push(String(u).trim());
+                            }
+                        });
+                    } else {
+                        wechatReceiptUrlsParsed.push(rawWechat);
+                    }
+                }
+                wechatReceiptUrls = wechatReceiptUrlsParsed.map(function(url) {
+                    return { full: url, thumb: url };
+                });
+                renderWechatReceiptPreviews();
+                syncWechatReceiptHidden();
+                updateWechatReceiptText();
+
+                // 2）单图回显：inquiry_assign_image
+                var rawInquiry = (orderInfo.inquiry_assign_image != null && orderInfo.inquiry_assign_image !== '') ? orderInfo.inquiry_assign_image : ($('#inquiry_assign_image').val() || '');
+                rawInquiry = typeof rawInquiry === 'string' ? rawInquiry.trim() : '';
+                if (rawInquiry) {
+                    $('#inquiry_assign_preview').attr('src', rawInquiry).show();
+                    $('#inquiry_assign_image').val(rawInquiry);
+                    $('#btn_remove_inquiry_assign').show();
+                    $('#clear_inquiry_assign_image').val('0');
+                } else {
+                    $('#inquiry_assign_preview').attr('src', '').hide();
+                    $('#inquiry_assign_image').val('');
+                    $('#btn_remove_inquiry_assign').hide();
+                    $('#clear_inquiry_assign_image').val('1');
+                }
+            }
+            window.initImageEchoFromOrderInfo = initImageEchoFromOrderInfo;
 
             // 产品询盘分配图上传 - 使用隐藏的input
             var inquiryAssignInput = $('<input type="file" accept="image/*" style="display:none;" id="inquiry_assign_input">');
@@ -1979,6 +2007,7 @@
                 var reader = new FileReader();
                 reader.onload = function(e) {
                     $('#inquiry_assign_preview').attr('src', e.target.result).show();
+                    $('#btn_remove_inquiry_assign').show();
                 };
                 reader.readAsDataURL(file);
                 
@@ -2001,6 +2030,8 @@
                         function(res) {
                             if(res.code == 1){
                                 $('#inquiry_assign_image').val(res.url);
+                                $('#clear_inquiry_assign_image').val('0');
+                                $('#btn_remove_inquiry_assign').show();
                                 $('#inquiry_assign_text').html('<span style="color: #5FB878;">上传成功</span>');
                             } else {
                                 $('#inquiry_assign_text').html('<span style="color: #FF5722;">上传失败：' + (res.info || '未知错误') + '</span>');
@@ -2011,6 +2042,15 @@
                         }
                     );
                 });
+            });
+
+            // 询盘来源凭证：删除图片按钮
+            $('#btn_remove_inquiry_assign').on('click', function() {
+                $('#inquiry_assign_preview').attr('src', '').hide();
+                $('#btn_remove_inquiry_assign').hide();
+                $('#inquiry_assign_image').val('');
+                $('#clear_inquiry_assign_image').val('1');
+                $('#inquiry_assign_text').html('');
             });
 
             /**

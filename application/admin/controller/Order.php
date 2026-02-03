@@ -3837,11 +3837,42 @@ class Order extends Common
         $data['sales_commission'] = Request::param('sales_commission', '');
         $data['split_remarks']    = Request::param('split_remarks', '');
         $data['amount_received']  = Request::param('amount_received', '');
-        $data['wechat_receipt_image'] = Request::param('wechat_receipt_image', '');
-        if (is_array($data['wechat_receipt_image'])) {
-            $data['wechat_receipt_image'] = json_encode($data['wechat_receipt_image'], JSON_UNESCAPED_UNICODE);
+        // 询盘来源凭证：支持显式清空，空值不覆盖数据库已有图片
+        $inq = trim((string)Request::param('inquiry_assign_image', ''));
+        $clearInq = (int)Request::param('clear_inquiry_assign_image', 0);
+        if ($clearInq === 1) {
+            $data['inquiry_assign_image'] = '';
+        } elseif ($inq !== '') {
+            $data['inquiry_assign_image'] = $inq;
         }
-        $data['inquiry_assign_image'] = trim((string)Request::param('inquiry_assign_image', ''));
+        // 微信沟通凭证：支持显式清空，空值不覆盖数据库已有图片
+        $wr = Request::param('wechat_receipt_image', null);
+        $clearWr = (int)Request::param('clear_wechat_receipt_image', 0);
+        if ($clearWr === 1) {
+            $data['wechat_receipt_image'] = '';
+        } else {
+            $wechatReceiptUrls = [];
+            if (is_array($wr)) {
+                $wechatReceiptUrls = array_values(array_filter($wr, function ($v) { return trim((string)$v) !== ''; }));
+            } elseif (is_string($wr)) {
+                $wr = trim($wr);
+                if ($wr !== '') {
+                    if (isset($wr[0]) && $wr[0] === '[') {
+                        $tmp = json_decode($wr, true);
+                        if (is_array($tmp)) {
+                            $wechatReceiptUrls = array_values(array_filter($tmp, function ($v) { return trim((string)$v) !== ''; }));
+                        } else {
+                            $wechatReceiptUrls = [$wr];
+                        }
+                    } else {
+                        $wechatReceiptUrls = [$wr];
+                    }
+                }
+            }
+            if (!empty($wechatReceiptUrls)) {
+                $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
+            }
+        }
         $jpRaw = Request::param('joint_person');
         $jpIds = [];
         if (is_array($jpRaw)) {
