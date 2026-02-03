@@ -621,18 +621,37 @@
             form.render('select');
             fixSelectAlign(); // 首次渲染后调整下拉框文本左对齐
             
-            // 【新增】详情页只读逻辑：渲染后立即禁用所有 select
-            setTimeout(function() {
-                // 禁用所有 select（包括产品明细表格中的）
-                $('select').each(function() {
+            // 【新增】详情页只读逻辑：渲染后立即禁用所有 select（但要保留选中值）
+            setTimeout(function () {
+                // 1) 禁用前：保存所有 select 当前值
+                $('select').each(function () {
+                    $(this).data('keepVal', $(this).val());
+                });
+
+                // 2) 禁用所有 select
+                $('select').each(function () {
                     $(this).attr('disabled', true);
                 });
-                // 重新渲染以应用禁用状态
+
+                // 3) 先渲染一次，让 disabled 生效
                 form.render('select');
-                // 给渲染后的下拉容器加禁用样式
+
+                // 4) 渲染后：把值写回去，防止 Layui disabled render 丢值
+                $('select').each(function () {
+                    var v = $(this).data('keepVal');
+                    if (v !== undefined && v !== null && v !== '') {
+                        $(this).val(v);
+                    }
+                });
+
+                // 5) 再渲染一次，让 UI 展示回到正确选中项
+                form.render('select');
+
+                // 6) 给渲染后的下拉容器加禁用样式（保留你原来的视觉）
                 $('.layui-form-select').addClass('layui-disabled');
                 fixSelectAlign(); // 再次调整对齐
-            }, 200);
+
+            }, 100);
 
 
 

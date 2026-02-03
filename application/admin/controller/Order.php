@@ -2152,7 +2152,18 @@ class Order extends Common
         if (!$order) {
             $this->error('订单不存在或已删除');
         }
-        
+        // 询盘来源等字段规范化，避免前后空格导致下拉无法选中
+        $order['source'] = trim((string)($order['source'] ?? ''));
+        if (isset($order['source_port'])) {
+            $order['source_port'] = trim((string)($order['source_port'] ?? ''));
+        }
+        if (isset($order['province'])) {
+            $order['province'] = trim((string)($order['province'] ?? ''));
+        }
+        if (isset($order['city'])) {
+            $order['city'] = trim((string)($order['city'] ?? ''));
+        }
+
         // ====== 解析微信沟通凭证图片（支持多种数据格式） ======
         /**
          * 通用图片解析函数：将各种格式的图片数据统一解析为数组
@@ -2266,6 +2277,10 @@ class Order extends Common
         $sourceList = Db::name('crm_client_status')->distinct(true)->column('status_name');
         // 使用 array_map 和 trim 去除每个值的前后空格
         $sourceList = array_map('trim', $sourceList);
+        // 兜底：当前订单的询盘来源若不在列表中（被删/改名），塞入列表头部，保证详情页能正确选中
+        if (!empty($order['source']) && !in_array($order['source'], $sourceList, true)) {
+            array_unshift($sourceList, $order['source']);
+        }
         //var_dump($sourceList);
         // ====== 解析收款账户展示名（与 edit() 方法保持一致） ======
         // 优先使用 crm_receive_account 的最新账户名，而不是订单快照
