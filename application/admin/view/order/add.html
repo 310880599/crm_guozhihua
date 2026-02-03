@@ -949,6 +949,8 @@
                 if (formData.team_name) $('select[name="team_name"]').val(formData.team_name);
                 if (formData.order_time) $('#orderTime').val(formData.order_time);
                 form.render('select');
+                updateCustomerTypeUI($('select[name="customer_type_flag"]').val());
+                updateInvoiceUI($('select[name="invoice_type"]').val());
                 if (formData.source_port_text) {
                     var $sp = $('select[name="source_port"]');
                     if ($sp.find('option[value="' + formData.source_port_text + '"]').length) {
@@ -1483,50 +1485,48 @@
         // 页面初始化时调用一次
         updateVoucherUI();
         
-        // 用户属性选择变化时的处理
-        form.on('select(customer_type_flag)', function (data) {
-            var customerTypeFlag = data.value;
+        // 用户属性/票种依赖区域显隐（草稿回填或初始化时主动调用，避免仅 .val() 不触发 form.on）
+        function updateCustomerTypeUI(customerTypeFlag) {
             var $clientCompanyItem = $('#client_company_item');
             var $clientCompanyInput = $('#client_company');
-            
             if (customerTypeFlag === '0') {
-                // 选择"公司"：显示客户公司字段并设置为必填
                 $clientCompanyItem.show();
                 $clientCompanyInput.attr('lay-verify', 'required|chinaCompany');
-                // 重新渲染表单验证
-                form.render();
-            } else if (customerTypeFlag === '1') {
-                // 选择"个人"：隐藏客户公司字段并移除必填验证
+            } else {
                 $clientCompanyItem.hide();
                 $clientCompanyInput.removeAttr('lay-verify');
-                $clientCompanyInput.val(''); // 清空值
-                $('#companyList').hide(); // 隐藏下拉列表
-                // 重新渲染表单验证
-                form.render();
+                $clientCompanyInput.val('');
+                $('#companyList').hide();
             }
+            form.render();
+        }
+        function updateInvoiceUI(invoiceType) {
+            var $invoiceAmountItem = $('#invoice_amount_item');
+            var $invoiceAmountInput = $('#invoice_amount');
+            if (invoiceType === '普票' || invoiceType === '专票') {
+                $invoiceAmountItem.show();
+                $invoiceAmountInput.attr('lay-verify', 'required');
+            } else {
+                $invoiceAmountItem.hide();
+                $invoiceAmountInput.removeAttr('lay-verify');
+                $invoiceAmountInput.val('');
+            }
+            form.render();
+        }
+        
+        // 用户属性选择变化时的处理
+        form.on('select(customer_type_flag)', function (data) {
+            updateCustomerTypeUI(data.value);
         });
         
         // 票种性质选择变化时的处理
         form.on('select(invoice_type)', function (data) {
-            var invoiceType = data.value;
-            var $invoiceAmountItem = $('#invoice_amount_item');
-            var $invoiceAmountInput = $('#invoice_amount');
-            
-            if (invoiceType === '不开票') {
-                // 选择"不开票"：隐藏票种金额字段并移除必填验证
-                $invoiceAmountItem.hide();
-                $invoiceAmountInput.removeAttr('lay-verify');
-                $invoiceAmountInput.val(''); // 清空值
-                // 重新渲染表单验证
-                form.render();
-            } else if (invoiceType === '普票' || invoiceType === '专票') {
-                // 选择"普票"或"专票"：显示票种金额字段并设置为必填
-                $invoiceAmountItem.show();
-                $invoiceAmountInput.attr('lay-verify', 'required');
-                // 重新渲染表单验证
-                form.render();
-            }
+            updateInvoiceUI(data.value);
         });
+        
+        // 页面初始化跑一次，防止刷新/默认值异常
+        updateCustomerTypeUI($('#customer_type_flag').val());
+        updateInvoiceUI($('#invoice_type').val());
 
         // **为新增产品行准备选项HTML** 
         // 获取初始产品名称下拉的所有选项HTML（包括"请选择"和产品列表）
