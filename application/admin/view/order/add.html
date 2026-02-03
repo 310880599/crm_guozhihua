@@ -884,8 +884,34 @@
                     var formData = res.data.formData || {};
                     layer.confirm('检测到未完成的草稿，是否继续编辑？', {
                         title: '草稿恢复',
-                        btn: ['继续编辑', '新建', '删除草稿']
+                        btn: ['继续编辑', '新建', '删除草稿'],
+
+                        // 第二个按钮：新建
+                        btn2: function (idx, layero) {
+                            window.__draftId = null;
+                            __DRAFT_ID__ = 0;
+                            // 不 return false，允许 layer 自动关闭
+                        },
+
+                        // 第三个按钮：删除草稿
+                        btn3: function (idx, layero) {
+                            // 用后端兜底：优先传 id；即使不传，后端也能删“最新草稿”
+                            $.post("{:url('Order/deleteDraft')}", { id: id }, function (delRes) {
+                                if (delRes && delRes.code === 0) {
+                                    layer.msg('已删除草稿', { time: 800 });
+                                    window.__draftId = null;
+                                    __DRAFT_ID__ = 0;
+                                    layer.close(idx);
+                                } else {
+                                    layer.msg((delRes && delRes.msg) ? delRes.msg : '删除失败', { time: 1500 });
+                                }
+                            }, 'json');
+
+                            return false; // 关键：阻止 layer 默认关闭，等删除结果
+                        }
+
                     }, function (idx) {
+                        // 第一个按钮：继续编辑
                         layer.close(idx);
                         if (typeof window.setProvinceCity === 'function') {
                             window.setProvinceCity(formData.province || '', formData.city || '', function () {
@@ -896,21 +922,6 @@
                         }
                         window.__draftId = id;
                         __DRAFT_ID__ = id;
-                    }, function (idx) {
-                        layer.close(idx);
-                        window.__draftId = null;
-                        __DRAFT_ID__ = 0;
-                    }, function (idx) {
-                        layer.close(idx);
-                        $.post("{:url('Order/deleteDraft')}", { id: id }, function (delRes) {
-                            if (delRes && delRes.code === 0) {
-                                layer.msg('已删除草稿', { time: 800 });
-                                window.__draftId = null;
-                                __DRAFT_ID__ = 0;
-                            } else {
-                                layer.msg((delRes && delRes.msg) ? delRes.msg : '删除失败', { time: 1500 });
-                            }
-                        }, 'json');
                     });
                 }
             }, 'json');

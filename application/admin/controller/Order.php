@@ -3987,16 +3987,42 @@ class Order extends Common
     /**
      * 删除草稿：仅允许 check_status=0，物理删除订单及 crm_order_item 明细
      */
+    /**
+     * 删除草稿：仅允许 check_status=0，物理删除订单及 crm_order_item 明细
+     * 兜底：当未传 id 时，自动删除当前用户最新一条草稿（按 COALESCE(ut_time, create_time) 倒序）
+     */
     public function deleteDraft()
     {
         $id = (int)Request::param('id');
         if ($id <= 0) {
             $id = (int)Request::param('draft_id');
         }
-        if ($id <= 0) {
-            return json(['code' => 1, 'msg' => '参数错误']);
-        }
+
         $pr_user = Session::get('username') ?? '';
+
+        // ✅兜底：未传 id 时，自动找"当前用户最新草稿"
+        if ($id <= 0) {
+            if (!$pr_user) {
+                return json(['code' => 1, 'msg' => '未登录']);
+            }
+
+            $latest = Db::table('crm_client_order')
+                ->where('check_status', 0)
+                ->where(function ($q) use ($pr_user) {
+                    $q->where('at_user', $pr_user)->whereOr('pr_user', $pr_user);
+                })
+                ->order(Db::raw('COALESCE(ut_time, create_time) DESC'))
+                ->order('id', 'DESC')
+                ->find();
+
+            if (!$latest) {
+                return json(['code' => 1, 'msg' => '暂无可删除草稿']);
+            }
+
+            $id = (int)$latest['id'];
+        }
+
+        // 原有校验：订单存在、必须是草稿、必须有权限
         $order = Db::table('crm_client_order')->where('id', $id)->find();
         if (!$order) {
             return json(['code' => 1, 'msg' => '订单不存在']);
@@ -4007,6 +4033,7 @@ class Order extends Common
         if ($pr_user && $order['at_user'] !== $pr_user && $order['pr_user'] !== $pr_user) {
             return json(['code' => 1, 'msg' => '无权限操作该订单']);
         }
+
         Db::startTrans();
         try {
             Db::table('crm_order_item')->where('order_id', $id)->delete();
