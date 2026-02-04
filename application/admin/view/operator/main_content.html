@@ -525,6 +525,9 @@
             <div id="teamPane" style="flex: 1; overflow-y: auto; padding: 20px;">
                 <!-- 团队列表内容将在这里渲染 -->
             </div>
+            <div id="teamPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">
+                合计：总利润 0.00 ｜ 总金额 0.00 ｜ 利润率 0.00%
+            </div>
         </div>
         
         <!-- 中列：成员排名 -->
@@ -549,6 +552,9 @@
                     <p style="font-size: 16px; margin: 0;">请选择团队查看成员业绩排名</p>
                 </div>
             </div>
+            <div id="memberPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">
+                合计：总利润 0.00 ｜ 总金额 0.00 ｜ 利润率 0.00%
+            </div>
         </div>
         
         <!-- 右列：个人业绩清单 -->
@@ -572,6 +578,9 @@
                     <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
                     <p style="font-size: 16px; margin: 0;">请点击业务员名称查看个人业绩清单</p>
                 </div>
+            </div>
+            <div id="memberDetailPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">
+                合计：订单金额 0.00 ｜ 利润 0.00
             </div>
         </div>
     </div>
@@ -966,9 +975,11 @@
                 if (res.code === 0 || res.code === 200) {
                     window.teamPerformanceAllData = res.data || [];
                     window.teamPerformanceTableData = res.data || [];
+                    window.teamPerformanceSummary = res.summary || null;
 
                     // 渲染表格
                     renderTeamPerformanceTable(window.teamPerformanceTableData);
+                    updateTeamPaneSummary(res.summary);
 
                     // 如果在分栏布局中，实现联动刷新
                     if ($('#teamPerformanceSplitLayout').is(':visible') && window.TeamSplit) {
@@ -1002,6 +1013,8 @@
                             if (!currentTeamExists && window.TeamSplit.lastTeamId) {
                                 $('#memberPane').html('<div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i><p style="font-size: 16px; margin: 0;">当前时间范围无数据</p></div>');
                                 $('#memberDetailPane').html('<div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i><p style="font-size: 16px; margin: 0;">请点击业务员名称查看个人业绩清单</p></div>');
+                                updateMemberPaneSummary(null);
+                                updateMemberDetailPaneSummary(null);
                                 // 清空选中状态
                                 window.TeamSplit.lastTeamId = null;
                                 window.TeamSplit.lastTeamName = null;
@@ -1016,6 +1029,7 @@
                         successCallback();
                     }
                 } else {
+                    updateTeamPaneSummary(null);
                     layer.msg(res.msg || '获取团队业绩数据失败', { icon: 2 });
                     if (errorCallback) {
                         errorCallback();
@@ -1026,13 +1040,36 @@
                 layer.close(loading);
                 $filterBtn.prop('disabled', false).html(originalFilterText);
                 $resetBtn.prop('disabled', false).html(originalResetText);
-                
+                updateTeamPaneSummary(null);
                 layer.msg(status === 'timeout' ? '请求超时，请稍后重试' : '网络错误，获取数据失败', { icon: 2 });
                 if (errorCallback) {
                     errorCallback();
                 }
             }
         });
+    }
+
+    function updateTeamPaneSummary(summary) {
+        var s = summary || {};
+        var total_profit = s.total_profit || '0.00';
+        var total_money  = s.total_money  || '0.00';
+        var profit_rate  = s.profit_rate  || '0.00';
+        $('#teamPaneSummary').html('合计：总利润 ' + total_profit + ' ｜ 总金额 ' + total_money + ' ｜ 利润率 ' + profit_rate + '%');
+    }
+
+    function updateMemberPaneSummary(summary) {
+        var s = summary || {};
+        var total_profit = s.total_profit || '0.00';
+        var total_money  = s.total_money  || '0.00';
+        var profit_rate  = s.profit_rate  || '0.00';
+        $('#memberPaneSummary').html('合计：总利润 ' + total_profit + ' ｜ 总金额 ' + total_money + ' ｜ 利润率 ' + profit_rate + '%');
+    }
+
+    function updateMemberDetailPaneSummary(summary) {
+        var s = summary || {};
+        var total_money  = s.total_money  || '0.00';
+        var total_profit = s.total_profit || '0.00';
+        $('#memberDetailPaneSummary').html('合计：订单金额 ' + total_money + ' ｜ 利润 ' + total_profit);
     }
 
     // 渲染团队业绩表（支持弹窗和分栏布局）
@@ -1218,6 +1255,7 @@
                     if (res.code === 200 && res.data && res.data.length > 0) {
                         // 渲染表格
                         self._renderMemberTable($memberPane, res.data, teamName, timeDisplay);
+                        updateMemberPaneSummary(res.summary);
                         
                         // 检查当前选中的成员是否在新数据中存在
                         var currentMemberExists = false;
@@ -1238,18 +1276,22 @@
                             $('#memberDetailPane').html('<div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i><p style="font-size: 16px; margin: 0;">当前时间范围无数据</p></div>');
                             self.lastMemberName = null;
                             $('.member-name-clickable').removeClass('is-active');
+                            updateMemberDetailPaneSummary(null);
                         }
                     } else {
+                        updateMemberPaneSummary(null);
                         $memberPane.html('<div class="text-center" style="padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; display: block; margin-bottom: 15px;"></i><p>暂无数据</p></div>');
                         // 清空右侧面板
                         if (self.lastMemberName) {
                             $('#memberDetailPane').html('<div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i><p style="font-size: 16px; margin: 0;">请点击业务员名称查看个人业绩清单</p></div>');
                             self.lastMemberName = null;
                             $('.member-name-clickable').removeClass('is-active');
+                            updateMemberDetailPaneSummary(null);
                         }
                     }
                 },
                 error: function(xhr, status) {
+                    updateMemberPaneSummary(null);
                     var errorMsg = status === 'timeout' ? '请求超时，请稍后重试' : '数据加载失败，请稍后重试';
                     $memberPane.html('<div class="text-center" style="padding: 60px 20px; color: #dc3545;"><i class="bi bi-exclamation-triangle" style="font-size: 48px; display: block; margin-bottom: 15px;"></i><p>' + errorMsg + '</p></div>');
                 }
@@ -1423,11 +1465,14 @@
                     if (res.code === 200 && res.data && res.data.length > 0) {
                         // 渲染表格
                         self._renderMemberDetailTable($memberDetailPane, res.data, username, timeDisplay);
+                        updateMemberDetailPaneSummary(res.summary);
                     } else {
+                        updateMemberDetailPaneSummary(null);
                         $memberDetailPane.html('<div class="text-center" style="padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; display: block; margin-bottom: 15px;"></i><p>暂无数据</p></div>');
                     }
                 },
                 error: function(xhr, status) {
+                    updateMemberDetailPaneSummary(null);
                     var errorMsg = status === 'timeout' ? '请求超时，请稍后重试' : '数据加载失败，请稍后重试';
                     $memberDetailPane.html('<div class="text-center" style="padding: 60px 20px; color: #dc3545;"><i class="bi bi-exclamation-triangle" style="font-size: 48px; display: block; margin-bottom: 15px;"></i><p>' + errorMsg + '</p></div>');
                 }

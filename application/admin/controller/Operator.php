@@ -2734,12 +2734,22 @@ private function exportToExcel($data)
             ->select();
 
         if (empty($business_users)) {
-            return json(['code' => 0, 'msg' => '获取成功', 'data' => []]);
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
+            ]);
         }
 
         $usernames = array_filter(array_column($business_users, 'username'));
         if (empty($usernames)) {
-            return json(['code' => 0, 'msg' => '获取成功', 'data' => []]);
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
+            ]);
         }
 
         // 2) 构建订单时间条件（逻辑沿用你 getPerformanceData 的写法）
@@ -2816,11 +2826,15 @@ private function exportToExcel($data)
 
         $rows = $query->select();
 
-        // 4) 补充利润率 + 排序
+        // 4) 补充利润率 + 排序，并累计合计
         $result = [];
+        $sum_profit = 0;
+        $sum_money  = 0;
         foreach ($rows as $r) {
             $profit = (float)($r['total_profit'] ?: 0);
             $money  = (float)($r['total_money'] ?: 0);
+            $sum_profit += $profit;
+            $sum_money  += $money;
             $rate   = $money > 0 ? round(($profit / $money) * 100, 2) : 0;
 
             $result[] = [
@@ -2843,7 +2857,17 @@ private function exportToExcel($data)
         }
         unset($item);
 
-        return json(['code' => 0, 'msg' => '获取成功', 'data' => $result]);
+        $sum_rate = $sum_money > 0 ? round($sum_profit / $sum_money * 100, 2) : 0;
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => $result,
+            'summary' => [
+                'total_profit' => number_format($sum_profit, 2),
+                'total_money'  => number_format($sum_money, 2),
+                'profit_rate'  => number_format($sum_rate, 2),
+            ]
+        ]);
     }
 
     /**
@@ -2897,7 +2921,8 @@ private function exportToExcel($data)
             return json([
                 'code' => 200,
                 'msg' => 'ok',
-                'data' => []
+                'data' => [],
+                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
             ]);
         }
 
@@ -2907,7 +2932,8 @@ private function exportToExcel($data)
             return json([
                 'code' => 200,
                 'msg' => 'ok',
-                'data' => []
+                'data' => [],
+                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
             ]);
         }
 
@@ -3099,8 +3125,10 @@ private function exportToExcel($data)
             }
         }
 
-        // 5) 组装结果数据
+        // 5) 组装结果数据，并累计团队合计（使用补齐后的 order_map）
         $result = [];
+        $sum_profit = 0;
+        $sum_money  = 0;
         foreach ($business_users as $user) {
             $username = $user['username'];
 
@@ -3114,6 +3142,8 @@ private function exportToExcel($data)
 
             $total_profit = $order_data['total_profit'];
             $total_money = $order_data['total_money'];
+            $sum_profit += $total_profit;
+            $sum_money  += $total_money;
 
             // 计算利润率
             $profit_rate = $total_money > 0 ? round(($total_profit / $total_money) * 100, 2) : 0;
@@ -3139,10 +3169,16 @@ private function exportToExcel($data)
         }
         unset($item);
 
+        $sum_rate = $sum_money > 0 ? round($sum_profit / $sum_money * 100, 2) : 0;
         return json([
             'code' => 200,
             'msg' => 'ok',
-            'data' => $result
+            'data' => $result,
+            'summary' => [
+                'total_profit' => number_format($sum_profit, 2),
+                'total_money'  => number_format($sum_money, 2),
+                'profit_rate'  => number_format($sum_rate, 2),
+            ]
         ]);
     }
 
@@ -3236,9 +3272,16 @@ private function exportToExcel($data)
             ->limit(1000) // 限制最多返回1000条，避免数据过多
             ->select();
 
-        // 4) 格式化数据
+        // 4) 格式化数据并累计合计（使用原始数值）
         $result = [];
+        $sum_money  = 0;
+        $sum_profit = 0;
         foreach ($orders as $order) {
+            $order_amount = (float)($order['order_amount'] ?: 0);
+            $profit_val   = (float)($order['profit'] ?: 0);
+            $sum_money   += $order_amount;
+            $sum_profit  += $profit_val;
+
             // 格式化日期（只显示日期部分，去掉时间）
             $order_time = $order['order_time'];
             if ($order_time && strpos($order_time, ' ') !== false) {
@@ -3248,15 +3291,19 @@ private function exportToExcel($data)
             $result[] = [
                 'order_time' => $order_time ?: '',
                 'client_name' => $order['client_name'] ?: '',
-                'order_amount' => number_format((float)($order['order_amount'] ?: 0), 2),
-                'profit' => number_format((float)($order['profit'] ?: 0), 2)
+                'order_amount' => number_format($order_amount, 2),
+                'profit' => number_format($profit_val, 2)
             ];
         }
 
         return json([
             'code' => 200,
             'msg' => 'ok',
-            'data' => $result
+            'data' => $result,
+            'summary' => [
+                'total_money'  => number_format($sum_money, 2),
+                'total_profit' => number_format($sum_profit, 2),
+            ]
         ]);
     }
 
