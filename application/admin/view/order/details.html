@@ -133,6 +133,75 @@
         opacity:0.6 !important;
         cursor:not-allowed !important;
         }
+
+        /**************** 产品明细区域布局优化 ****************/
+
+        /* 让产品明细整体占满 */
+        #product-table {
+            width: 100% !important;
+            table-layout: fixed;   /* 固定布局，保证列宽可控 */
+        }
+
+        /* 产品明细标题靠左 */
+        #product-table th {
+            text-align: left;
+            padding-left: 8px;
+        }
+
+        /* 表格内输入框占满单元格 */
+        #product-table td .layui-input,
+        #product-table td .layui-select,
+        #product-table td select {
+            width: 100% !important;
+        }
+
+        /* 新增一行按钮靠左 */
+        #addRow {
+            margin-top: 10px;
+            margin-left: 0;
+        }
+
+        /* 产品明细这一块取消居中限制 */
+        .layui-form-item .layui-input-block {
+            margin-left: 0 !important;
+        }
+
+        /**************** 各列宽度微调（让小框变宽） ****************/
+
+        #product-table th:nth-child(1),
+        #product-table td:nth-child(1) { width: 14%; }   /* 产品名称 */
+
+        #product-table th:nth-child(2),
+        #product-table td:nth-child(2) { width: 12%; }   /* 产品经理 */
+
+        #product-table th:nth-child(3),
+        #product-table td:nth-child(3) { width: 10%; }   /* 规格型号 */
+
+        #product-table th:nth-child(4),
+        #product-table td:nth-child(4) { width: 7%; }    /* 单位 */
+
+        #product-table th:nth-child(5),
+        #product-table td:nth-child(5) { width: 7%; }    /* 数量 */
+
+        #product-table th:nth-child(6),
+        #product-table td:nth-child(6) { width: 10%; }   /* 销售单价 */
+
+        #product-table th:nth-child(7),
+        #product-table td:nth-child(7) { width: 10%; }   /* 销售价合计 */
+
+        #product-table th:nth-child(8),
+        #product-table td:nth-child(8) { width: 10%; }   /* 进价合计 */
+
+        #product-table th:nth-child(9),
+        #product-table td:nth-child(9) { width: 8%; }    /* 利润 */
+
+        #product-table th:nth-child(10),
+        #product-table td:nth-child(10) { width: 8%; }   /* 行备注 */
+
+        #product-table th:nth-child(11),
+        #product-table td:nth-child(11) { width: 6%; }   /* 操作 */
+
+
     </style>
 
 </head>
