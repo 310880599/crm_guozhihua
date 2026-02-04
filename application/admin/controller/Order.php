@@ -725,6 +725,77 @@ class Order extends Common
             // 开启事务，插入订单主表和明细表
             Db::startTrans();
             try {
+                $orderId = null;
+                // ====== 提交保存时：草稿转正（update），不 insert ======
+                if (!$isDraft) {
+                    $draftId = (int)Request::param('draft_id', 0);
+                    $draftOrder = null;
+                    // 优先A：前端传了 draft_id，校验存在/草稿态/权限
+                    if ($draftId > 0) {
+                        $draftOrder = Db::name('crm_client_order')->where('id', $draftId)->find();
+                        if ($draftOrder && (int)$draftOrder['check_status'] === 0) {
+                            $pr_user = Session::get('username') ?? '';
+                            if ($pr_user && ($draftOrder['at_user'] === $pr_user || $draftOrder['pr_user'] === $pr_user)) {
+                                // 校验通过，使用该草稿转正
+                            } else {
+                                $draftOrder = null;
+                            }
+                        } else {
+                            $draftOrder = null;
+                        }
+                    }
+                    // 兜底B：前端没传 draft_id，按 contact 匹配当前用户最新草稿
+                    if (!$draftOrder && $draftId <= 0) {
+                        $username = Session::get('username') ?? '';
+                        $contactRaw = trim((string)Request::param('contact', ''));
+                        $contactNorm = trim(preg_replace('/[+\-\s]/', '', $contactRaw));
+                        if ($username !== '' && $contactNorm !== '') {
+                            $drafts = Db::name('crm_client_order')
+                                ->where('check_status', 0)
+                                ->where(function ($q) use ($username) {
+                                    $q->where('at_user', $username)->whereOr('pr_user', $username);
+                                })
+                                ->orderRaw('COALESCE(ut_time, create_time) DESC')
+                                ->order('id', 'DESC')
+                                ->select();
+                            foreach ($drafts as $d) {
+                                $dContact = trim((string)($d['contact'] ?? ''));
+                                $dNorm = trim(preg_replace('/[+\-\s]/', '', $dContact));
+                                if ($dNorm === $contactNorm) {
+                                    $draftOrder = $d;
+                                    $draftId = (int)$d['id'];
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if ($draftOrder && $draftId > 0) {
+                        // 草稿转正：update 主表，重建明细表
+                        unset($data['create_time']);
+                        $data['check_status'] = 1;
+                        $data['status'] = '待审核';
+                        $data['ut_time'] = date('Y-m-d H:i:s');
+                        Db::name('crm_client_order')->where('id', $draftId)->update($data);
+                        Db::name('crm_order_item')->where('order_id', $draftId)->delete();
+                        if (!empty($itemsData)) {
+                            foreach ($itemsData as &$item) {
+                                $item['order_id'] = $draftId;
+                            }
+                            unset($item);
+                            $res = Db::name('crm_order_item')->insertAll($itemsData);
+                            if ($res === false || $res != count($itemsData)) {
+                                throw new \Exception('订单明细插入失败');
+                            }
+                        }
+                        if (!empty($leadsId)) {
+                            Db::name('crm_leads')->where('id', $leadsId)->update(['issuccess' => 1]);
+                        }
+                        Db::commit();
+                        return json(['code' => 0, 'msg' => '添加成功！', 'data' => ['id' => $draftId, 'from_draft' => 1]]);
+                    }
+                }
+
+                // ====== 原有逻辑：insert 新订单（草稿保存 or 非草稿恢复的正常提交）======
                 $orderId = Db::name('crm_client_order')->insertGetId($data);
                 if (!$orderId) {
                     throw new \Exception('主订单插入失败');

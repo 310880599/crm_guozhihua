@@ -2331,8 +2331,14 @@
 
             // 提交前同步更新总计字段，以防用户未触发输入事件
             updateTotals();
+            // 强制指定提交类型，并传入草稿ID（草稿恢复后转正用）
+            data.field.save_type = 'submit';
+            data.field.draft_id = window.__draftId || __DRAFT_ID__ || 0;
             $.post("{:url('Order/add')}", data.field, function (res) {
                 if (res.code === 0) {
+                    // 提交成功后清空草稿态，避免下次打开 add 页面误判
+                    window.__draftId = null;
+                    __DRAFT_ID__ = 0;
                     layer.msg(res.msg, { time: 2000 }, function () {
                         layer.close(layer.index);
                         window.parent.location.reload();
