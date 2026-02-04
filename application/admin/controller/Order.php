@@ -3754,24 +3754,51 @@ class Order extends Common
     }
 
     /**
+     * 返回当前登录人 id（草稿归属用）
+     * @return int 0 表示未登录/参数异常
+     */
+    private function getDraftOwnerId()
+    {
+        $aid = Session::get('aid');
+        return $aid !== null && $aid !== '' ? (int)$aid : 0;
+    }
+
+    /**
+     * 查询该用户在 crm_client_order 表中的唯一草稿 id
+     * 条件：check_status=0，pr_user_id=$aid，按 COALESCE(ut_time, create_time) 倒序取最新一条
+     * @param int $aid 当前用户 id（admin_id）
+     * @return int 草稿 id 或 0
+     */
+    private function findUserDraftId($aid)
+    {
+        if ($aid <= 0) {
+            return 0;
+        }
+        $row = Db::name('crm_client_order')
+            ->where('check_status', 0)
+            ->where('pr_user_id', $aid)
+            ->orderRaw('COALESCE(ut_time, create_time) DESC, id DESC')
+            ->find();
+        return $row && !empty($row['id']) ? (int)$row['id'] : 0;
+    }
+
+    /**
      * 获取当前用户最新一条草稿（钉钉式断点恢复）
-     * 权限：at_user=当前用户 OR pr_user=当前用户；只返回 add 表单用到的字段为 formData
+     * 按 aid 唯一草稿：findUserDraftId；没草稿返回 code=0, data=null
      */
     public function getLatestDraft()
     {
-        $username = Session::get('username');
-        if ($username === null || $username === '') {
-            return json(['code' => 1, 'msg' => 'no_draft']);
+        $aid = $this->getDraftOwnerId();
+        if ($aid <= 0) {
+            return json(['code' => 1, 'msg' => '未登录']);
         }
-        $order = Db::table('crm_client_order')
-            ->where('check_status', 0)
-            ->where(function ($q) use ($username) {
-                $q->where('at_user', $username)->whereOr('pr_user', $username);
-            })
-            ->orderRaw('COALESCE(ut_time, create_time) DESC, id DESC')
-            ->find();
+        $draftId = $this->findUserDraftId($aid);
+        if ($draftId <= 0) {
+            return json(['code' => 0, 'msg' => 'ok', 'data' => null]);
+        }
+        $order = Db::table('crm_client_order')->where('id', $draftId)->find();
         if (!$order) {
-            return json(['code' => 1, 'msg' => 'no_draft']);
+            return json(['code' => 0, 'msg' => 'ok', 'data' => null]);
         }
         $id = (int)$order['id'];
         // 只返回 add 表单用到的字段
@@ -3841,13 +3868,21 @@ class Order extends Common
     }
 
     /**
-     * 创建一条最小草稿记录（第一次自动保存时调用；保证 NOT NULL 字段有默认值）
+     * 创建草稿：先找唯一草稿，有则返回 id（reused=1），没有才 insert；事务内再查一次防并发多草稿
      */
     public function createDraft()
     {
+        $aid = $this->getDraftOwnerId();
+        if ($aid <= 0) {
+            return json(['code' => 1, 'msg' => '未登录']);
+        }
+        $draftId = $this->findUserDraftId($aid);
+        if ($draftId > 0) {
+            return json(['code' => 0, 'msg' => 'ok', 'draft_id' => $draftId, 'reused' => 1]);
+        }
         $now = date('Y-m-d H:i:s');
-        $currentUsername = Session::get('username');
-        $adminInfo = Db::name('admin')->where('username', $currentUsername)->field('team_name')->find();
+        $currentUsername = Session::get('username') ?: '';
+        $adminInfo = Db::name('admin')->where('admin_id', $aid)->field('team_name')->find();
         $teamName = ($adminInfo && !empty($adminInfo['team_name'])) ? $adminInfo['team_name'] : '';
         $data = [
             'check_status'       => 0,
@@ -3857,9 +3892,9 @@ class Order extends Common
             'ut_time'            => $now,
             'order_no'           => 'DR' . date('YmdHis') . rand(100, 999),
             'pr_user'            => $currentUsername,
-            'pr_user_id'         => (int)Session::get('aid'),
+            'pr_user_id'         => $aid,
             'at_user'            => $currentUsername,
-            'at_user_id'         => (int)Session::get('aid'),
+            'at_user_id'         => $aid,
             'money'              => 0,
             'source_port'        => '',
             'cname'              => '',
@@ -3868,29 +3903,106 @@ class Order extends Common
             'bank_account'       => '',
             'bank_account_name'  => '',
         ];
-        $id = Db::name('crm_client_order')->insertGetId($data);
-        if (!$id) {
-            return json(['code' => 1, 'msg' => 'create_failed']);
+        Db::startTrans();
+        try {
+            $draftId = $this->findUserDraftId($aid);
+            if ($draftId > 0) {
+                Db::commit();
+                return json(['code' => 0, 'msg' => 'ok', 'draft_id' => $draftId, 'reused' => 1]);
+            }
+            $id = Db::name('crm_client_order')->insertGetId($data);
+            if (!$id) {
+                Db::rollback();
+                return json(['code' => 1, 'msg' => '创建草稿失败']);
+            }
+            Db::commit();
+            return json(['code' => 0, 'msg' => 'ok', 'draft_id' => (int)$id]);
+        } catch (\Exception $e) {
+            Db::rollback();
+            return json(['code' => 1, 'msg' => '创建草稿失败']);
         }
-        return json(['code' => 0, 'msg' => 'ok', 'draft_id' => (int)$id]);
     }
 
     /**
-     * 30 秒更新草稿（白名单更新；严禁修改 check_status，必须一直为 0）
+     * 30 秒更新草稿：有 draft_id 更新；没传也能找唯一草稿或创建后更新；严禁改 check_status
      */
     public function autosaveDraft()
     {
-        $draftId = (int)Request::param('draft_id');
+        $aid = $this->getDraftOwnerId();
+        if ($aid <= 0) {
+            return json(['code' => 1, 'msg' => '未登录']);
+        }
+        $draftId = (int)Request::param('draft_id', 0);
         if ($draftId <= 0) {
-            return json(['code' => 1, 'msg' => 'draft_not_found_or_no_permission']);
+            $draftId = $this->findUserDraftId($aid);
+            if ($draftId <= 0) {
+                Db::startTrans();
+                try {
+                    $draftId = $this->findUserDraftId($aid);
+                    if ($draftId <= 0) {
+                        $now = date('Y-m-d H:i:s');
+                        $currentUsername = Session::get('username') ?: '';
+                        $adminInfo = Db::name('admin')->where('admin_id', $aid)->field('team_name')->find();
+                        $teamName = ($adminInfo && !empty($adminInfo['team_name'])) ? $adminInfo['team_name'] : '';
+                        $dataInsert = [
+                            'check_status' => 0, 'status' => '草稿', 'create_time' => $now,
+                            'first_create_time' => $now, 'ut_time' => $now,
+                            'order_no' => 'DR' . date('YmdHis') . rand(100, 999),
+                            'pr_user' => $currentUsername, 'pr_user_id' => $aid,
+                            'at_user' => $currentUsername, 'at_user_id' => $aid,
+                            'money' => 0, 'source_port' => '', 'cname' => '', 'customer_type_flag' => 0,
+                            'team_name' => $teamName, 'bank_account' => '', 'bank_account_name' => '',
+                        ];
+                        $newId = Db::name('crm_client_order')->insertGetId($dataInsert);
+                        if ($newId) {
+                            $draftId = (int)$newId;
+                        }
+                    }
+                    Db::commit();
+                } catch (\Exception $e) {
+                    Db::rollback();
+                    return json(['code' => 1, 'msg' => '创建草稿失败']);
+                }
+                if ($draftId <= 0) {
+                    return json(['code' => 1, 'msg' => '创建草稿失败']);
+                }
+            }
         }
-        $username = Session::get('username') ?? '';
         $order = Db::table('crm_client_order')->where('id', $draftId)->find();
-        if (!$order || (int)$order['check_status'] !== 0) {
-            return json(['code' => 1, 'msg' => 'draft_not_found_or_no_permission']);
-        }
-        if ($username && $order['at_user'] !== $username && $order['pr_user'] !== $username) {
-            return json(['code' => 1, 'msg' => 'draft_not_found_or_no_permission']);
+        if (!$order || (int)$order['check_status'] !== 0 || (int)($order['pr_user_id'] ?? 0) !== $aid) {
+            $draftId = $this->findUserDraftId($aid);
+            if ($draftId <= 0) {
+                Db::startTrans();
+                try {
+                    $draftId = $this->findUserDraftId($aid);
+                    if ($draftId <= 0) {
+                        $now = date('Y-m-d H:i:s');
+                        $currentUsername = Session::get('username') ?: '';
+                        $adminInfo = Db::name('admin')->where('admin_id', $aid)->field('team_name')->find();
+                        $teamName = ($adminInfo && !empty($adminInfo['team_name'])) ? $adminInfo['team_name'] : '';
+                        $dataInsert = [
+                            'check_status' => 0, 'status' => '草稿', 'create_time' => $now,
+                            'first_create_time' => $now, 'ut_time' => $now,
+                            'order_no' => 'DR' . date('YmdHis') . rand(100, 999),
+                            'pr_user' => $currentUsername, 'pr_user_id' => $aid,
+                            'at_user' => $currentUsername, 'at_user_id' => $aid,
+                            'money' => 0, 'source_port' => '', 'cname' => '', 'customer_type_flag' => 0,
+                            'team_name' => $teamName, 'bank_account' => '', 'bank_account_name' => '',
+                        ];
+                        $newId = Db::name('crm_client_order')->insertGetId($dataInsert);
+                        if ($newId) {
+                            $draftId = (int)$newId;
+                        }
+                    }
+                    Db::commit();
+                } catch (\Exception $e) {
+                    Db::rollback();
+                    return json(['code' => 1, 'msg' => '创建草稿失败']);
+                }
+            }
+            if ($draftId <= 0) {
+                return json(['code' => 1, 'msg' => '创建草稿失败']);
+            }
         }
         $now = date('Y-m-d H:i:s');
         $data = [];
@@ -4071,7 +4183,7 @@ class Order extends Common
                 Db::name('crm_order_item')->insertAll($itemsData);
             }
             Db::commit();
-            return json(['code' => 0, 'msg' => 'saved']);
+            return json(['code' => 0, 'msg' => 'ok', 'draft_id' => $draftId]);
         } catch (\Exception $e) {
             Db::rollback();
             return json(['code' => 1, 'msg' => 'autosave_failed']);
@@ -4079,61 +4191,34 @@ class Order extends Common
     }
 
     /**
-     * 删除草稿：仅允许 check_status=0，物理删除订单及 crm_order_item 明细
-     */
-    /**
-     * 删除草稿：仅允许 check_status=0，物理删除订单及 crm_order_item 明细
-     * 兜底：当未传 id 时，自动删除当前用户最新一条草稿（按 COALESCE(ut_time, create_time) 倒序）
+     * 删除草稿：传 id 时校验 owner=aid 且 check_status=0；未传 id 则删 findUserDraftId 唯一草稿
      */
     public function deleteDraft()
     {
-        $id = (int)Request::param('id');
-        if ($id <= 0) {
-            $id = (int)Request::param('draft_id');
+        $aid = $this->getDraftOwnerId();
+        if ($aid <= 0) {
+            return json(['code' => 1, 'msg' => '未登录']);
         }
-
-        $pr_user = Session::get('username') ?? '';
-
-        // ✅兜底：未传 id 时，自动找"当前用户最新草稿"
+        $id = (int)Request::param('id', 0);
         if ($id <= 0) {
-            if (!$pr_user) {
-                return json(['code' => 1, 'msg' => '未登录']);
-            }
-
-            $latest = Db::table('crm_client_order')
-                ->where('check_status', 0)
-                ->where(function ($q) use ($pr_user) {
-                    $q->where('at_user', $pr_user)->whereOr('pr_user', $pr_user);
-                })
-                ->order(Db::raw('COALESCE(ut_time, create_time) DESC'))
-                ->order('id', 'DESC')
-                ->find();
-
-            if (!$latest) {
-                return json(['code' => 1, 'msg' => '暂无可删除草稿']);
-            }
-
-            $id = (int)$latest['id'];
+            $id = (int)Request::param('draft_id', 0);
         }
-
-        // 原有校验：订单存在、必须是草稿、必须有权限
+        if ($id <= 0) {
+            $id = $this->findUserDraftId($aid);
+        }
+        if ($id <= 0) {
+            return json(['code' => 0, 'msg' => '已删除']);
+        }
         $order = Db::table('crm_client_order')->where('id', $id)->find();
-        if (!$order) {
-            return json(['code' => 1, 'msg' => '订单不存在']);
+        if (!$order || (int)$order['check_status'] !== 0 || (int)($order['pr_user_id'] ?? 0) !== $aid) {
+            return json(['code' => 1, 'msg' => '无权限操作该草稿']);
         }
-        if ((int)$order['check_status'] !== 0) {
-            return json(['code' => 1, 'msg' => '仅可删除草稿']);
-        }
-        if ($pr_user && $order['at_user'] !== $pr_user && $order['pr_user'] !== $pr_user) {
-            return json(['code' => 1, 'msg' => '无权限操作该订单']);
-        }
-
         Db::startTrans();
         try {
             Db::table('crm_order_item')->where('order_id', $id)->delete();
             Db::table('crm_client_order')->where('id', $id)->delete();
             Db::commit();
-            return json(['code' => 0, 'msg' => '删除成功']);
+            return json(['code' => 0, 'msg' => '已删除']);
         } catch (\Exception $e) {
             Db::rollback();
             return json(['code' => 1, 'msg' => '删除失败']);
