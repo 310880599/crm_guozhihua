@@ -73,6 +73,120 @@ class Order extends Common
         return $this->fetch();
     }
 
+    // ================= 列宽记忆：读取 =================
+    // POST: page_key, table_id
+    public function getColWidths()
+    {
+        $aid = Session::get('aid');
+        if (empty($aid)) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        $pageKey = trim((string)input('post.page_key', ''));
+        $tableId = trim((string)input('post.table_id', ''));
+
+        if ($pageKey === '' || $tableId === '') {
+            return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+        }
+
+        try {
+            $rows = Db::name('crm_table_colwidth')
+                ->where('admin_id', intval($aid))
+                ->where('page_key', $pageKey)
+                ->where('table_id', $tableId)
+                ->field('field,width')
+                ->select();
+
+            $map = [];
+            foreach ($rows as $r) {
+                if (!empty($r['field'])) {
+                    $map[$r['field']] = intval($r['width']);
+                }
+            }
+            return json(['code' => 0, 'msg' => 'ok', 'data' => $map]);
+        } catch (\Throwable $e) {
+            // 表不存在/异常：直接返回空，不影响页面
+            return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+        }
+    }
+
+    // ================= 列宽记忆：保存 =================
+    // POST: page_key, table_id, widths(JSON字符串 或 数组)
+    public function saveColWidths()
+    {
+        $aid = Session::get('aid');
+        if (empty($aid)) {
+            return json(['code' => 401, 'msg' => '未登录']);
+        }
+
+        $pageKey = trim((string)input('post.page_key', ''));
+        $tableId = trim((string)input('post.table_id', ''));
+        $widths  = input('post.widths');
+
+        if ($pageKey === '' || $tableId === '') {
+            return json(['code' => 0, 'msg' => 'ok']);
+        }
+
+        // widths 兼容：数组 / JSON字符串
+        if (is_string($widths)) {
+            $decoded = json_decode($widths, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $widths = $decoded;
+            } else {
+                $widths = [];
+            }
+        }
+        if (!is_array($widths)) $widths = [];
+
+        $rows = [];
+        $now  = time();
+
+        foreach ($widths as $field => $w) {
+            $field = trim((string)$field);
+            if ($field === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $field)) continue;
+
+            $w = intval($w);
+            if ($w <= 0 || $w > 3000) continue; // 上限与前端一致
+
+            $rows[] = [
+                'admin_id'   => intval($aid),
+                'page_key'   => $pageKey,
+                'table_id'   => $tableId,
+                'field'      => $field,
+                'width'      => $w,
+                'updated_at' => $now,
+            ];
+        }
+
+        if (empty($rows)) {
+            return json(['code' => 0, 'msg' => 'ok']);
+        }
+
+        try {
+            // 批量 upsert：依赖唯一索引 (admin_id,page_key,table_id,field)
+            $values = [];
+            foreach ($rows as $r) {
+                $values[] = "(" .
+                    intval($r['admin_id']) . "," .
+                    "'" . addslashes($r['page_key']) . "'," .
+                    "'" . addslashes($r['table_id']) . "'," .
+                    "'" . addslashes($r['field']) . "'," .
+                    intval($r['width']) . "," .
+                    intval($r['updated_at']) .
+                ")";
+            }
+
+            $sql = "INSERT INTO `crm_table_colwidth` (`admin_id`,`page_key`,`table_id`,`field`,`width`,`updated_at`) VALUES "
+                . implode(',', $values)
+                . " ON DUPLICATE KEY UPDATE `width`=VALUES(`width`), `updated_at`=VALUES(`updated_at`)";
+
+            Db::execute($sql);
+
+            return json(['code' => 0, 'msg' => 'ok']);
+        } catch (\Throwable $e) {
+            return json(['code' => 0, 'msg' => 'ok']);
+        }
+    }
 
     //导出订单
     public function exportindex()

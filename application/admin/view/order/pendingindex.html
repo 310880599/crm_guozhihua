@@ -526,7 +526,151 @@
             {if session('aid') eq 1}
             defaultToolbar = ['filter', 'print', 'exports'];
             {/if}
-            
+
+            // ================= 列宽记忆（数据库优先 + localStorage 兜底）=================
+            var COLWIDTH_PAGE_KEY = 'order_pending'; // 固定键：避免 URL 变化导致丢失
+            var COLWIDTH_TABLE_ID = 'table-list';    // 你的表格 id
+
+            function colwidthStorageKey() {
+                return 'colwidth:' + COLWIDTH_PAGE_KEY + ':' + COLWIDTH_TABLE_ID;
+            }
+
+            function getCurrentWidthsSnapshot() {
+                var map = {};
+                try {
+                    var $ths = $('#table-list')
+                        .next('.layui-table-view')
+                        .find('.layui-table-header thead tr')
+                        .eq(0)
+                        .find('th');
+
+                    $ths.each(function () {
+                        var field = $(this).attr('data-field');
+                        if (!field || field === '0') return;
+                        var w = parseInt($(this).outerWidth(), 10);
+                        if (w > 0) map[field] = w;
+                    });
+                } catch (e) {}
+                return map;
+            }
+
+            function applyWidthsToCols(cols, widthMap) {
+                if (!cols || !cols.length || !widthMap) return;
+                cols.forEach(function (c) {
+                    if (!c || !c.field) return;
+                    if (widthMap[c.field]) c.width = parseInt(widthMap[c.field], 10);
+                });
+            }
+
+            function loadLocalWidths() {
+                try {
+                    var raw = localStorage.getItem(colwidthStorageKey());
+                    if (!raw) return null;
+                    var obj = JSON.parse(raw);
+                    return obj && typeof obj === 'object' ? obj : null;
+                } catch (e) { return null; }
+            }
+
+            function saveLocalWidths(widthMap) {
+                try {
+                    localStorage.setItem(colwidthStorageKey(), JSON.stringify(widthMap || {}));
+                } catch (e) {}
+            }
+
+            function restoreColWidth(cols) {
+                var dbMap = null;
+                try {
+                    $.ajax({
+                        url: "{:url('Order/getColWidths')}",
+                        type: 'post',
+                        dataType: 'json',
+                        async: false,
+                        data: { page_key: COLWIDTH_PAGE_KEY, table_id: COLWIDTH_TABLE_ID },
+                        success: function (res) {
+                            if (res && (res.code === 0 || res.code === 1) && res.data) {
+                                dbMap = res.data;
+                            }
+                        }
+                    });
+                } catch (e) {}
+
+                var localMap = loadLocalWidths();
+                if (dbMap) applyWidthsToCols(cols, dbMap);
+                else if (localMap) applyWidthsToCols(cols, localMap);
+            }
+
+            function saveWidths(widthMap) {
+                saveLocalWidths(widthMap);
+                $.ajax({
+                    url: "{:url('Order/saveColWidths')}",
+                    type: 'post',
+                    dataType: 'json',
+                    data: {
+                        page_key: COLWIDTH_PAGE_KEY,
+                        table_id: COLWIDTH_TABLE_ID,
+                        widths: JSON.stringify(widthMap || {})
+                    }
+                });
+            }
+
+            var __colwidth_last_snapshot = null;
+            function bindResizeSave() {
+                __colwidth_last_snapshot = getCurrentWidthsSnapshot();
+                $(document).off('mouseup.colwidthsave touchend.colwidthsave');
+                $(document).on('mouseup.colwidthsave touchend.colwidthsave', function () {
+                    setTimeout(function () {
+                        var now = getCurrentWidthsSnapshot();
+                        var changed = false;
+
+                        if (!__colwidth_last_snapshot) changed = true;
+                        else {
+                            var aKeys = Object.keys(__colwidth_last_snapshot);
+                            var bKeys = Object.keys(now);
+                            if (aKeys.length !== bKeys.length) changed = true;
+                            else {
+                                for (var i = 0; i < bKeys.length; i++) {
+                                    var k = bKeys[i];
+                                    if (parseInt(now[k], 10) !== parseInt(__colwidth_last_snapshot[k], 10)) {
+                                        changed = true; break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (changed) {
+                            __colwidth_last_snapshot = now;
+                            saveWidths(now);
+                        }
+                    }, 120);
+                });
+            }
+            // ================= 列宽记忆 END =================
+
+            // ===== 列宽记忆：先把 cols 抽成变量，便于渲染前恢复 =====
+            var pendingCols = [[
+                { field: 'id', title: 'ID', width: 180, fixed: true, hide: true },
+                { field: 'order_no', title: '订单编号', totalRowText: '合计：', width: 180 },
+                { field: 'cname', title: '客户名称' , width: 180},
+                { field: 'contact', title: '联系方式' , width: 180},
+                { field: 'customer_type_flag', title: '用户属性' , width: 180, templet: function (res) {
+                        return res.customer_type_flag == 1 ? '个人' : '公司';
+                    }
+                },
+                { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
+                { field: 'profit', title: '利润', totalRow: true , width: 180},
+                { field: 'margin_rate', title: '利润率(%)', totalRow: true, width: 180 },
+                { field: 'order_time', title: '成交时间', width: 180 },
+                { field: 'source', title: '运营渠道', width: 180 },
+                { field: 'source_port', title: '运营端口', width: 180 },
+                { field: 'pr_user', title: '负责人', hide: false , width: 180},
+                { field: 'team_name', title: '团队', hide: false , width: 180},
+                { field: 'create_time', title: '创建时间' ,hide: false , width: 180},
+                { title: '操作', toolbar: '#action', width: 380, minWidth: 380, fixed: 'right', align: 'left' }
+            ]];
+
+            // 渲染前恢复列宽（数据库优先）
+            restoreColWidth(pendingCols[0]);
+
             var tableIn = table.render({
                 elem: '#table-list',
                 url: '{:url("pendingindex")}',
@@ -534,26 +678,7 @@
                 // width:'100%',
                 toolbar: '#topBtn',
                 defaultToolbar: defaultToolbar,
-                cols: [[
-                    { field: 'id', title: 'ID', width: 180, fixed: true, hide: true },
-                    { field: 'order_no', title: '订单编号', totalRowText: '合计：', width: 180 },
-                    { field: 'cname', title: '客户名称' , width: 180},
-                    { field: 'contact', title: '联系方式' , width: 180},
-                    { field: 'customer_type_flag', title: '用户属性' , width: 180, templet: function (res) {
-                            return res.customer_type_flag == 1 ? '个人' : '公司';
-                        }
-                    },
-                    { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
-                    { field: 'profit', title: '利润', totalRow: true , width: 180},
-                    { field: 'margin_rate', title: '利润率(%)', totalRow: true, width: 180 },
-                    { field: 'order_time', title: '成交时间', width: 180 },
-                    { field: 'source', title: '运营渠道', width: 180 },
-                    { field: 'source_port', title: '运营端口', width: 180 },
-                    { field: 'pr_user', title: '负责人', hide: false , width: 180},
-                    { field: 'team_name', title: '团队', hide: false , width: 180},
-                    { field: 'create_time', title: '创建时间' ,hide: false , width: 180},
-                    { title: '操作', toolbar: '#action', width: 380, minWidth: 380, fixed: 'right', align: 'left' }
-                ]],
+                cols: pendingCols,
                 limit: 10, //每页默认显示的数量
 
                 page: { limits: [10, 20, 30, 40, 50, 100, 200, 500,9999999] },
@@ -563,6 +688,7 @@
                     $('#total-profit').text(res.totalProfit);
                     $('#total-inquiries').text(res.totalInquiries);
                     $('#success-rate').text(res.successRate);
+                    bindResizeSave();
                 }
             });
             table.on('tool(table-list)', function (obj) {
