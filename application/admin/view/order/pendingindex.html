@@ -648,24 +648,84 @@
             // ================= 列宽记忆 END =================
 
             // ===== 列宽记忆：先把 cols 抽成变量，便于渲染前恢复 =====
+            // ✅ 待审核订单：列定义（把 crm_client_order 字段全部挂到这里，右侧列控制面板才会“全量可控”）
             var pendingCols = [[
-                { field: 'id', title: 'ID', width: 180, fixed: true, hide: true },
+                // ====== 你当前已存在的常用列（保持默认显示）======
+                { field: 'id', title: 'ID', width: 180, fixed: true, hide: true }, // ID 默认仍隐藏，但可在面板里勾出来
                 { field: 'order_no', title: '订单编号', totalRowText: '合计：', width: 180 },
-                { field: 'cname', title: '客户名称' , width: 180},
-                { field: 'contact', title: '联系方式' , width: 180},
-                { field: 'customer_type_flag', title: '用户属性' , width: 180, templet: function (res) {
-                        return res.customer_type_flag == 1 ? '个人' : '公司';
-                    }
-                },
+                { field: 'cname', title: '客户名称', width: 180 },
+                { field: 'contact', title: '联系方式', width: 180 },
+                { field: 'customer_type_flag', title: '用户属性', width: 180, templet: function (res) {
+        return res.customer_type_flag == 1 ? '个人' : '公司';
+    }},
                 { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
-                { field: 'profit', title: '利润', totalRow: true , width: 180},
+                { field: 'profit', title: '利润', totalRow: true, width: 180 },
                 { field: 'margin_rate', title: '利润率(%)', totalRow: true, width: 180 },
                 { field: 'order_time', title: '成交时间', width: 180 },
                 { field: 'source', title: '运营渠道', width: 180 },
                 { field: 'source_port', title: '运营端口', width: 180 },
-                { field: 'pr_user', title: '负责人', hide: false , width: 180},
-                { field: 'team_name', title: '团队', hide: false , width: 180},
-                { field: 'create_time', title: '创建时间' ,hide: false , width: 180},
+                { field: 'pr_user', title: '负责人', width: 180 },
+                { field: 'team_name', title: '团队', width: 180 },
+                { field: 'create_time', title: '创建时间', width: 180 },
+
+                // ====== 以下：crm_client_order 其它字段（全部补齐，默认隐藏 hide:true）======
+                { field: 'order_type', title: '订单类型', width: 180, hide: true },
+                { field: 'return_count', title: '返单次数', width: 180, hide: true },
+                { field: 'cphone', title: '客户手机号', width: 180, hide: true },
+
+                { field: 'pr_user_id', title: '负责人ID', width: 180, hide: true },
+                { field: 'country', title: '发货详细地址', width: 180, hide: true },
+
+                { field: 'customer_type', title: '客户性质', width: 220, hide: true },
+                { field: 'product_name', title: '产品名称(主表)', width: 220, hide: true },
+                { field: 'product_supplier', title: '供应商(主表)', width: 220, hide: true },
+
+                { field: 'ticheng', title: '提成金额', width: 180, hide: true },
+                { field: 'status', title: '业绩状态', width: 180, hide: true },
+                { field: 'remark', title: '备注', width: 260, hide: true },
+
+                { field: 'first_create_time', title: '首次创建时间', width: 180, hide: true },
+                { field: 'at_user', title: '创建人(at_user)', width: 180, hide: true },
+                { field: 'at_user_id', title: '创建人ID', width: 180, hide: true },
+                { field: 'ut_time', title: '更新时间', width: 180, hide: true },
+                { field: 'oper_user', title: '所属运营', width: 180, hide: true },
+
+                { field: 'client_company', title: '客户公司', width: 220, hide: true },
+                { field: 'province', title: '省', width: 180, hide: true },
+                { field: 'city', title: '市', width: 180, hide: true },
+
+                { field: 'joint_person', title: '协同人(joint_person)', width: 260, hide: true, templet: function (res) {
+        // joint_person 可能是 JSON/字符串，先简单显示（避免炸列）
+        if (!res.joint_person) return '';
+        var s = String(res.joint_person);
+        return s.length > 30 ? s.slice(0, 30) + '…' : s;
+    }},
+
+                { field: 'amount_received', title: '已收款金额', width: 180, hide: true },
+                { field: 'split_remarks', title: '分成备注', width: 260, hide: true },
+                { field: 'sales_commission', title: '佣金', width: 180, hide: true },
+                { field: 'tax_amount', title: '税费', width: 180, hide: true },
+                { field: 'debugging_cost', title: '调试费', width: 180, hide: true },
+                { field: 'invoice_amount', title: '开票金额', width: 180, hide: true },
+                { field: 'invoice_type', title: '发票类型', width: 180, hide: true },
+                { field: 'shipping_cost', title: '运费', width: 180, hide: true },
+
+                { field: 'bank_account', title: '收款账户ID', width: 180, hide: true },
+                { field: 'bank_account_name', title: '收款账户名称', width: 220, hide: true },
+
+                { field: 'wechat_receipt_image', title: '微信收据图', width: 180, hide: true, templet: function (res) {
+        return res.wechat_receipt_image ? '有' : '';
+    }},
+                { field: 'inquiry_assign_image', title: '询盘分配图', width: 180, hide: true, templet: function (res) {
+        return res.inquiry_assign_image ? '有' : '';
+    }},
+
+                { field: 'check_status', title: '审核状态(check_status)', width: 200, hide: true },
+                { field: 'audit_user_id', title: '审核人ID', width: 180, hide: true },
+                { field: 'audit_time', title: '审核时间', width: 180, hide: true },
+                { field: 'audit_remark', title: '审核备注', width: 260, hide: true },
+
+                // ====== 操作列（固定右侧）======
                 { title: '操作', toolbar: '#action', width: 380, minWidth: 380, fixed: 'right', align: 'left' }
             ]];
 
