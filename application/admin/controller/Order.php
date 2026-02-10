@@ -116,7 +116,7 @@ class Order extends Common
     {
         $aid = Session::get('aid');
         if (empty($aid)) {
-            return json(['code' => 401, 'msg' => '未登录']);
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
         }
 
         $pageKey = trim((string)input('post.page_key', ''));
@@ -184,6 +184,102 @@ class Order extends Common
 
             return json(['code' => 0, 'msg' => 'ok']);
         } catch (\Throwable $e) {
+            return json(['code' => 0, 'msg' => 'ok']);
+        }
+    }
+
+    // ================= 列配置记忆（显示/隐藏）：读取 =================
+    // POST: page_key
+    public function getColConfig()
+    {
+        $aid = Session::get('aid');
+        if (empty($aid)) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        $pageKey = trim((string)input('post.page_key', ''));
+        if ($pageKey === '') {
+            return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+        }
+
+        try {
+            $row = Db::name('crm_table_col_config')
+                ->where('uid', intval($aid))
+                ->where('page_key', $pageKey)
+                ->value('config_json');
+
+            if (empty($row)) {
+                return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+            }
+
+            $arr = json_decode($row, true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($arr)) {
+                $arr = [];
+            }
+
+            return json(['code' => 0, 'msg' => 'ok', 'data' => $arr]);
+        } catch (\Throwable $e) {
+            // 表不存在/异常：直接返回空，不影响页面
+            return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+        }
+    }
+
+    // ================= 列配置记忆（显示/隐藏）：保存 =================
+    // POST: page_key, config_json(JSON字符串 或 数组)
+    public function saveColConfig()
+    {
+        $aid = Session::get('aid');
+        if (empty($aid)) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        $pageKey    = trim((string)input('post.page_key', ''));
+        $configJson = input('post.config_json');
+
+        if ($pageKey === '') {
+            return json(['code' => 0, 'msg' => 'ok']);
+        }
+
+        // 兼容：数组 / JSON 字符串；最终转为 JSON 字符串（对象/数组），非法则 {}
+        $configArr = [];
+        if (is_string($configJson) && $configJson !== '') {
+            $decoded = json_decode($configJson, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $configArr = $decoded;
+            }
+        } elseif (is_array($configJson)) {
+            $configArr = $configJson;
+        }
+
+        if (!is_array($configArr)) {
+            $configArr = [];
+        }
+
+        $json = json_encode($configArr, JSON_UNESCAPED_UNICODE);
+        if ($json === false || $json === null) {
+            $json = '{}';
+        }
+
+        // 防御性长度限制，避免异常大数据
+        if (strlen($json) > 200000) {
+            $json = '{}';
+        }
+
+        $now      = time();
+        $uid      = intval($aid);
+        $pageSafe = addslashes($pageKey);
+        $cfgSafe  = addslashes($json);
+
+        try {
+            $sql = "INSERT INTO `crm_table_col_config` (`uid`,`page_key`,`config_json`,`create_time`,`ut_time`) VALUES "
+                . "(" . $uid . ",'" . $pageSafe . "','" . $cfgSafe . "'," . $now . "," . $now . ")"
+                . " ON DUPLICATE KEY UPDATE `config_json`=VALUES(`config_json`), `ut_time`=VALUES(`ut_time`)";
+
+            Db::execute($sql);
+
+            return json(['code' => 0, 'msg' => 'ok']);
+        } catch (\Throwable $e) {
+            // 任意异常都不影响页面：仍返回 code=0
             return json(['code' => 0, 'msg' => 'ok']);
         }
     }
