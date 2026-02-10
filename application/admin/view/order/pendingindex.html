@@ -547,6 +547,7 @@
                     $ths.each(function () {
                         var field = $(this).attr('data-field');
                         if (!field || field === '0') return;
+                        if (/^\d+$/.test(field)) return; // 过滤 Layui 自动生成的纯数字 field（例如 "14"）
                         var w = parseInt($(this).outerWidth(), 10);
                         if (w > 0) map[field] = w;
                     });
