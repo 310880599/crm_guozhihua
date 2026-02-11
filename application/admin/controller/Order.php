@@ -4651,6 +4651,22 @@ class Order extends Common
             ])
             ->toArray();
         
+        // 协同人：收集 joint_person 中的 admin_id，批量查 admin 表得到 username 映射
+        $allAdminIds = [];
+        foreach ($list['data'] as $order) {
+            if (!empty($order['joint_person'])) {
+                $ids = array_filter(array_map('trim', explode(',', $order['joint_person'])));
+                foreach ($ids as $id) {
+                    if (is_numeric($id)) $allAdminIds[] = $id;
+                }
+            }
+        }
+        $allAdminIds = array_unique($allAdminIds);
+        $adminMap = [];
+        if (!empty($allAdminIds)) {
+            $adminMap = Db::name('admin')->whereIn('admin_id', $allAdminIds)->column('username', 'admin_id');
+        }
+        
         // 如果订单主表的 product_name 为空，尝试从订单明细表中获取产品名称
         // 这样可以确保即使产品被删除，订单的产品名称仍然可以显示
         foreach ($list['data'] as &$order) {
@@ -4675,6 +4691,15 @@ class Order extends Common
                 if ($accountInfo) {
                     $order['bank_account_name'] = $accountInfo['account'];
                 }
+            }
+            
+            // 协同人ID转 username（assist_username 供前端“协同人”列展示，空则前端显示 --）
+            if (!empty($order['joint_person'])) {
+                $names = [];
+                foreach (array_filter(array_map('trim', explode(',', $order['joint_person']))) as $id) {
+                    if (is_numeric($id) && isset($adminMap[$id])) $names[] = $adminMap[$id];
+                }
+                $order['assist_username'] = $names ? implode(',', $names) : '';
             }
         }
         unset($order);
