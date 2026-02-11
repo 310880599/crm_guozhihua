@@ -368,6 +368,10 @@
           border:1px solid #e8e8e8;
         }
         /* === 列表缩略图样式（待审核订单）结束 === */
+
+        .col-sort-item { display: flex; align-items: center; padding: 4px 6px; border-radius: 4px; }
+        .col-sort-item.dragging { opacity: .6; }
+        .drag-handle { cursor: move; margin-right: 6px; user-select: none; color: #666; }
     </style>
 
 </head>
@@ -578,6 +582,10 @@
             var COLCFG_PAGE_KEY = 'order_pending'; // 与列宽保持一致（固定键）
             var COLCFG_TABLE_ID = 'table-list';    // 表格 id
 
+            // ================= 列顺序记忆（拖拽排序）（数据库优先 + localStorage 兜底）=================
+            var COLORDER_PAGE_KEY = 'order_pending';
+            var COLORDER_TABLE_KEY = 'main_table';
+
             function colwidthStorageKey() {
                 return 'colwidth:' + COLWIDTH_PAGE_KEY + ':' + COLWIDTH_TABLE_ID;
             }
@@ -699,6 +707,23 @@
                 return 'colcfg:' + COLCFG_PAGE_KEY + ':' + COLCFG_TABLE_ID;
             }
 
+            function colorderStorageKey() {
+                return 'colorder:' + COLORDER_PAGE_KEY + ':' + COLORDER_TABLE_KEY;
+            }
+            function loadLocalColOrder() {
+                try {
+                    var raw = localStorage.getItem(colorderStorageKey());
+                    if (!raw) return null;
+                    var arr = JSON.parse(raw);
+                    return Array.isArray(arr) ? arr : null;
+                } catch (e) { return null; }
+            }
+            function saveLocalColOrder(orderArr) {
+                try {
+                    localStorage.setItem(colorderStorageKey(), JSON.stringify(orderArr || []));
+                } catch (e) {}
+            }
+
             function loadLocalColCfg() {
                 try {
                     var raw = localStorage.getItem(colcfgStorageKey());
@@ -714,6 +739,65 @@
                 try {
                     localStorage.setItem(colcfgStorageKey(), JSON.stringify(obj || {}));
                 } catch (e) {}
+            }
+
+            // 按 orderArr 重排列定义（固定列规则：左固定最前、右固定最后，只排序正常业务列）
+            function applyOrderToCols(cols, orderArr) {
+                if (!cols || !cols.length) return cols || [];
+                var leftFixed = [], rightFixed = [], normal = [], byField = {};
+                cols.forEach(function (c) {
+                    if (!c) return;
+                    var f = c.field;
+                    var isLeft = (c.fixed === 'left' || c.fixed === true) || (c.type === 'numbers' || c.type === 'checkbox');
+                    var isRight = c.fixed === 'right';
+                    if (isLeft) { leftFixed.push(c); return; }
+                    if (isRight) { rightFixed.push(c); return; }
+                    if (f && f !== '0' && !/^\d+$/.test(String(f))) {
+                        normal.push(c);
+                        byField[f] = c;
+                    } else {
+                        normal.push(c);
+                    }
+                });
+                var ordered = [];
+                var used = {};
+                if (orderArr && orderArr.length) {
+                    orderArr.forEach(function (field) {
+                        if (byField[field] && !used[field]) {
+                            ordered.push(byField[field]);
+                            used[field] = true;
+                        }
+                    });
+                }
+                normal.forEach(function (c) {
+                    var f = c.field;
+                    if (f && f !== '0' && !/^\d+$/.test(String(f)) && !used[f]) ordered.push(c);
+                });
+                return leftFixed.concat(ordered).concat(rightFixed);
+            }
+
+            // 从数据库优先恢复列顺序，其次 localStorage；会直接修改 cols 引用内容
+            function restoreColOrder(cols) {
+                var dbOrder = null;
+                try {
+                    $.ajax({
+                        url: "{:url('Order/getColOrder')}",
+                        type: 'post',
+                        dataType: 'json',
+                        async: false,
+                        data: { page_key: COLORDER_PAGE_KEY, table_key: COLORDER_TABLE_KEY },
+                        success: function (res) {
+                            if (res && (res.code === 0 || res.code === 1) && res.data && Array.isArray(res.data)) {
+                                dbOrder = res.data;
+                            }
+                        }
+                    });
+                } catch (e) {}
+                var orderArr = dbOrder || loadLocalColOrder();
+                if (!orderArr || !orderArr.length) return;
+                var ordered = applyOrderToCols(cols, orderArr);
+                cols.splice(0, cols.length);
+                for (var i = 0; i < ordered.length; i++) cols.push(ordered[i]);
             }
 
             // 把隐藏状态应用到列定义（渲染前调用）
@@ -813,6 +897,20 @@
                 return false;
             }
 
+            function saveColOrder(orderArr) {
+                saveLocalColOrder(orderArr);
+                $.ajax({
+                    url: "{:url('Order/saveColOrder')}",
+                    type: 'post',
+                    dataType: 'json',
+                    data: {
+                        page_key: COLORDER_PAGE_KEY,
+                        table_key: COLORDER_TABLE_KEY,
+                        column_order: JSON.stringify(orderArr || [])
+                    }
+                });
+            }
+
             var __colcfg_last_snapshot = null;
             function bindColPanelSave() {
                 __colcfg_last_snapshot = getCurrentHideSnapshot();
@@ -841,6 +939,115 @@
                     });
             }
             // ================= 列配置记忆（显示/隐藏）END =================
+
+            function applyOrderAndRerender(orderArr) {
+                if (!Array.isArray(pendingCols) || !pendingCols[0]) return;
+                var ordered = applyOrderToCols(pendingCols[0], orderArr);
+                pendingCols[0].splice(0, pendingCols[0].length);
+                for (var i = 0; i < ordered.length; i++) pendingCols[0].push(ordered[i]);
+
+                var applied = false;
+                try {
+                    table.reload('table-list', { cols: pendingCols });
+                    applied = true;
+                } catch (e) {}
+                if (!applied) {
+                    var formData = {};
+                    try {
+                        $('#searchForm').find('input, select, textarea').each(function () {
+                            var n = $(this).attr('name');
+                            if (n) formData[n] = $(this).val();
+                        });
+                    } catch (e2) {}
+                    table.render({
+                        elem: '#table-list',
+                        url: '{:url("pendingindex")}',
+                        method: 'post',
+                        toolbar: '#topBtn',
+                        defaultToolbar: defaultToolbar,
+                        cols: pendingCols,
+                        limit: 10,
+                        page: { limits: [10, 20, 30, 40, 50, 100, 200, 500, 9999999] },
+                        totalRow: true,
+                        where: { keyword: formData },
+                        done: function (res, curr, count) {
+                            $('#total-money').text(res.totalMoney);
+                            $('#total-profit').text(res.totalProfit);
+                            $('#total-inquiries').text(res.totalInquiries);
+                            $('#success-rate').text(res.successRate);
+                            bindResizeSave();
+                            bindColPanelSave();
+                            bindColPanelDragSort();
+                            setTimeout(function () { syncFixedRowHeights('table-list'); }, 0);
+                            setTimeout(function () { syncFixedRowHeights('table-list'); }, 200);
+                        }
+                    });
+                } else {
+                    bindResizeSave();
+                    bindColPanelSave();
+                    bindColPanelDragSort();
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 0);
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 200);
+                }
+            }
+
+            function bindColPanelDragSort() {
+                function initDragSort(panel) {
+                    if (!panel || panel.getAttribute('data-col-drag-inited') === '1') return;
+                    var $panel = $(panel);
+                    $panel.find('input[type=checkbox]').each(function () {
+                        var $cb = $(this);
+                        var $item = $cb.closest('label, .layui-form-item').first() || $cb.parent();
+                        if (!$item.length || $item.hasClass('col-sort-item')) return;
+                        var field = ($cb.attr('value') || $cb.val() || '').trim();
+                        if (!field || field === '0' || /^\d+$/.test(field)) return;
+                        $item.attr('data-field', field);
+                        $item.addClass('col-sort-item');
+                        if ($item.find('.drag-handle').length === 0) {
+                            $item.prepend('<span class="drag-handle" title="拖拽排序">&#9776;</span>');
+                        }
+                        $item[0].draggable = true;
+                        $item.attr('draggable', 'true');
+                    });
+                    panel.setAttribute('data-col-drag-inited', '1');
+
+                    $panel.find('.col-sort-item').off('dragstart.colsort dragend.colsort dragover.colsort dragleave.colsort drop.colsort')
+                        .on('dragstart.colsort', function (e) {
+                            e.originalEvent.dataTransfer.setData('text/plain', $(this).attr('data-field') || '');
+                            $(this).addClass('dragging');
+                        })
+                        .on('dragend.colsort', function () {
+                            $(this).removeClass('dragging');
+                            var orderArr = [];
+                            $panel.find('.col-sort-item').each(function () {
+                                var f = $(this).attr('data-field');
+                                if (f && f !== '0' && !/^\d+$/.test(f)) orderArr.push(f);
+                            });
+                            saveColOrder(orderArr);
+                            applyOrderAndRerender(orderArr);
+                        })
+                        .on('dragover.colsort', function (e) {
+                            e.preventDefault();
+                            e.originalEvent.dataTransfer.dropEffect = 'move';
+                            var $drag = $panel.find('.col-sort-item.dragging');
+                            var $target = $(this);
+                            if ($drag.length && $target.length && !$target.is($drag[0])) {
+                                $target.before($drag);
+                            }
+                        })
+                        .on('dragleave.colsort drop.colsort', function (e) {
+                            e.preventDefault();
+                        });
+                }
+
+                var observer = new MutationObserver(function () {
+                    var panel = document.querySelector('.layui-table-tool-panel');
+                    if (panel) initDragSort(panel);
+                });
+                observer.observe(document.body, { childList: true, subtree: true });
+                var panel = document.querySelector('.layui-table-tool-panel');
+                if (panel) initDragSort(panel);
+            }
 
             // 解析多图字段：兼容 JSON 数组、逗号分隔、单张字符串
             function parseImages(val) {
@@ -1009,7 +1216,8 @@
                 { title: '操作', toolbar: '#action', width: 380, minWidth: 380, fixed: 'right', align: 'left' }
             ]];
 
-            // 渲染前恢复列隐藏配置 + 列宽（数据库优先）
+            // 渲染前：先恢复列顺序，再套用隐藏，再套用列宽
+            restoreColOrder(pendingCols[0]);
             restoreColConfig(pendingCols[0]);
             restoreColWidth(pendingCols[0]);
 
@@ -1032,7 +1240,7 @@
                     $('#success-rate').text(res.successRate);
                     bindResizeSave();
                     bindColPanelSave();
-                    // ✅ 多行内容渲染完成后，同步固定列行高（调用两次更稳，防止图片/字体渲染导致高度延迟）
+                    bindColPanelDragSort();
                     setTimeout(function(){ syncFixedRowHeights('table-list'); }, 0);
                     setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
                 }

@@ -284,6 +284,100 @@ class Order extends Common
         }
     }
 
+    // ================= 列顺序记忆：读取 =================
+    // POST: page_key, table_key
+    public function getColOrder()
+    {
+        $aid = Session::get('aid');
+        if (empty($aid)) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        $pageKey  = trim((string)input('post.page_key', ''));
+        $tableKey = trim((string)input('post.table_key', ''));
+
+        if ($pageKey === '' || $tableKey === '') {
+            return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+        }
+
+        try {
+            $row = Db::name('crm_table_column_order')
+                ->where('admin_id', intval($aid))
+                ->where('page_key', $pageKey)
+                ->where('table_key', $tableKey)
+                ->value('column_order');
+
+            if (empty($row)) {
+                return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+            }
+
+            $arr = json_decode($row, true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($arr)) {
+                $arr = [];
+            }
+
+            return json(['code' => 0, 'msg' => 'ok', 'data' => $arr]);
+        } catch (\Throwable $e) {
+            return json(['code' => 0, 'msg' => 'ok', 'data' => []]);
+        }
+    }
+
+    // ================= 列顺序记忆：保存 =================
+    // POST: page_key, table_key, column_order(JSON字符串 或 数组)
+    public function saveColOrder()
+    {
+        $aid = Session::get('aid');
+        if (empty($aid)) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        $pageKey     = trim((string)input('post.page_key', ''));
+        $tableKey    = trim((string)input('post.table_key', ''));
+        $columnOrder = input('post.column_order');
+
+        if ($pageKey === '' || $tableKey === '') {
+            return json(['code' => 0, 'msg' => 'ok']);
+        }
+
+        if (is_string($columnOrder)) {
+            $arr = json_decode($columnOrder, true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($arr)) {
+                $arr = [];
+            }
+        } elseif (is_array($columnOrder)) {
+            $arr = $columnOrder;
+        } else {
+            $arr = [];
+        }
+
+        $arr = array_values(array_unique(array_filter($arr, function ($f) {
+            $f = trim((string)$f);
+            return $f !== '' && preg_match('/^[a-zA-Z0-9_]+$/', $f);
+        })));
+        if (count($arr) > 500) {
+            $arr = array_slice($arr, 0, 500);
+        }
+
+        $json = json_encode($arr, JSON_UNESCAPED_UNICODE);
+        if ($json === false || $json === null) {
+            $json = '[]';
+        }
+        if (strlen($json) > 200000) {
+            $json = '[]';
+        }
+
+        $now = time();
+        try {
+            $sql = "INSERT INTO `crm_table_column_order` (`admin_id`,`page_key`,`table_key`,`column_order`,`create_time`,`update_time`) VALUES "
+                . "(" . intval($aid) . ",'" . addslashes($pageKey) . "','" . addslashes($tableKey) . "','" . addslashes($json) . "'," . $now . "," . $now . ")"
+                . " ON DUPLICATE KEY UPDATE `column_order`=VALUES(`column_order`), `update_time`=VALUES(`update_time`)";
+            Db::execute($sql);
+            return json(['code' => 0, 'msg' => 'ok']);
+        } catch (\Throwable $e) {
+            return json(['code' => 0, 'msg' => 'ok']);
+        }
+    }
+
     //导出订单
     public function exportindex()
     {
