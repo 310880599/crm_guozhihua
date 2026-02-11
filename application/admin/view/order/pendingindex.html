@@ -372,6 +372,9 @@
         .col-sort-item { display: flex; align-items: center; padding: 4px 6px; border-radius: 4px; }
         .col-sort-item.dragging { opacity: .6; }
         .drag-handle { cursor: move; margin-right: 6px; user-select: none; color: #666; }
+        .col-sort-ghost { opacity: .4; }
+        .col-sort-chosen { background: #f5f7fa; }
+        .col-sort-item { display: block; }
     </style>
 
 </head>
@@ -564,6 +567,7 @@
 
 
     {include file="common/foot"/}
+    <script src="/static/admin/js/sortable.min.js"></script>
     <script>
         layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
             const { table, form, laydate, $, upload, util, element } = layui;
@@ -992,61 +996,74 @@
             }
 
             function bindColPanelDragSort() {
-                function initDragSort(panel) {
-                    if (!panel || panel.getAttribute('data-col-drag-inited') === '1') return;
+                function initSortable(panel) {
+                    if (!panel || panel.getAttribute('data-col-sortable-inited') === '1') return;
+                    if (typeof Sortable === 'undefined') return;
+
                     var $panel = $(panel);
+
+                    // 给每个 checkbox 外层元素打标 + 加拖拽把手
                     $panel.find('input[type=checkbox]').each(function () {
                         var $cb = $(this);
-                        var $item = $cb.closest('label, .layui-form-item').first() || $cb.parent();
-                        if (!$item.length || $item.hasClass('col-sort-item')) return;
+
+                        // Layui 面板里 checkbox 外层可能是 label，也可能是 .layui-form-item（兼容写法）
+                        var $item = $cb.closest('label, .layui-form-item').first();
+                        if (!$item.length) $item = $cb.parent();
+
+                        if (!$item.length) return;
+
                         var field = ($cb.attr('value') || $cb.val() || '').trim();
                         if (!field || field === '0' || /^\d+$/.test(field)) return;
+
                         $item.attr('data-field', field);
                         $item.addClass('col-sort-item');
-                        if ($item.find('.drag-handle').length === 0) {
-                            $item.prepend('<span class="drag-handle" title="拖拽排序">&#9776;</span>');
-                        }
-                        $item[0].draggable = true;
-                        $item.attr('draggable', 'true');
-                    });
-                    panel.setAttribute('data-col-drag-inited', '1');
 
-                    $panel.find('.col-sort-item').off('dragstart.colsort dragend.colsort dragover.colsort dragleave.colsort drop.colsort')
-                        .on('dragstart.colsort', function (e) {
-                            e.originalEvent.dataTransfer.setData('text/plain', $(this).attr('data-field') || '');
-                            $(this).addClass('dragging');
-                        })
-                        .on('dragend.colsort', function () {
-                            $(this).removeClass('dragging');
+                        // 加拖拽把手（只允许按把手拖，不影响勾选）
+                        if ($item.find('.drag-handle').length === 0) {
+                            $item.prepend('<span class="drag-handle" title="拖拽排序" style="cursor: move; user-select:none; display:inline-block; margin-right:6px;">&#9776;</span>');
+                        }
+                    });
+
+                    // 初始化 Sortable
+                    new Sortable(panel, {
+                        draggable: '.col-sort-item',
+                        handle: '.drag-handle',
+                        animation: 150,
+                        ghostClass: 'col-sort-ghost',
+                        chosenClass: 'col-sort-chosen',
+
+                        // 只允许拖拽，不要因为拖拽影响 checkbox 勾选
+                        filter: 'input, .layui-form-checkbox, .layui-icon',
+                        preventOnFilter: false,
+
+                        onEnd: function () {
+                            // 读取当前面板顺序 -> 保存 -> 立即重排表格
                             var orderArr = [];
                             $panel.find('.col-sort-item').each(function () {
                                 var f = $(this).attr('data-field');
                                 if (f && f !== '0' && !/^\d+$/.test(f)) orderArr.push(f);
                             });
-                            saveColOrder(orderArr);
-                            applyOrderAndRerender(orderArr);
-                        })
-                        .on('dragover.colsort', function (e) {
-                            e.preventDefault();
-                            e.originalEvent.dataTransfer.dropEffect = 'move';
-                            var $drag = $panel.find('.col-sort-item.dragging');
-                            var $target = $(this);
-                            if ($drag.length && $target.length && !$target.is($drag[0])) {
-                                $target.before($drag);
+
+                            if (orderArr.length) {
+                                saveColOrder(orderArr);
+                                applyOrderAndRerender(orderArr);
                             }
-                        })
-                        .on('dragleave.colsort drop.colsort', function (e) {
-                            e.preventDefault();
-                        });
+                        }
+                    });
+
+                    panel.setAttribute('data-col-sortable-inited', '1');
                 }
 
+                // 监听 Layui 的列面板出现（面板是动态插入的）
                 var observer = new MutationObserver(function () {
                     var panel = document.querySelector('.layui-table-tool-panel');
-                    if (panel) initDragSort(panel);
+                    if (panel) initSortable(panel);
                 });
                 observer.observe(document.body, { childList: true, subtree: true });
-                var panel = document.querySelector('.layui-table-tool-panel');
-                if (panel) initDragSort(panel);
+
+                // 兜底：如果一开始就存在，也初始化
+                var panel0 = document.querySelector('.layui-table-tool-panel');
+                if (panel0) initSortable(panel0);
             }
 
             // 解析多图字段：兼容 JSON 数组、逗号分隔、单张字符串
