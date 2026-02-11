@@ -327,6 +327,13 @@
             border-radius: 50%;
         }
 
+        /* 子表多行列：行高自适应、不单行省略 */
+        .item-multi {
+            white-space: normal;
+            line-height: 18px;
+            padding: 6px 8px;
+        }
+
         /* === 列表缩略图样式（待审核订单）开始 === */
         .img-strip{
           display:flex;
@@ -830,6 +837,25 @@
                 return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean);
             }
 
+            // HTML 转义防注入
+            function escapeHtml(str) {
+                if (str == null || str === '') return '';
+                var s = String(str);
+                return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            }
+            // 多行展示：后端 \n 拆行，逐行转义后用 div 拼接
+            function renderMultiline(val) {
+                if (val == null || val === '') return '--';
+                var s = String(val).trim();
+                if (!s) return '--';
+                var lines = s.split(/\n/);
+                var out = [];
+                for (var i = 0; i < lines.length; i++) {
+                    out.push(escapeHtml(lines[i]));
+                }
+                return out.length ? '<div class="item-multi">' + out.join('<br>') + '</div>' : '--';
+            }
+
             // ===== 列宽记忆：先把 cols 抽成变量，便于渲染前恢复 =====
             // ✅ 待审核订单：列定义（把 crm_client_order 字段全部挂到这里，右侧列控制面板才会“全量可控”）
             var pendingCols = [[
@@ -915,6 +941,18 @@
                 { field: 'audit_user_id', title: '审核人ID', width: 180, hide: true },
                 { field: 'audit_time', title: '审核时间', width: 180, hide: true },
                 { field: 'audit_remark', title: '审核备注', width: 260, hide: true },
+
+                // ====== 订单产品子表列（crm_order_item，多行展示，默认隐藏）======
+                { field: 'item_product_name', title: '产品名称（多行）', width: 200, hide: true, templet: function (res) { return renderMultiline(res.item_product_name); }},
+                { field: 'item_spec_model', title: '规格型号（多行）', width: 160, hide: true, templet: function (res) { return renderMultiline(res.item_spec_model); }},
+                { field: 'item_unit', title: '单位（多行）', width: 100, hide: true, templet: function (res) { return renderMultiline(res.item_unit); }},
+                { field: 'item_qty', title: '数量（多行）', width: 100, hide: true, templet: function (res) { return renderMultiline(res.item_qty); }},
+                { field: 'item_unit_price', title: '销售单价（多行）', width: 120, hide: true, templet: function (res) { return renderMultiline(res.item_unit_price); }},
+                { field: 'item_total_price', title: '销售合计（多行）', width: 120, hide: true, templet: function (res) { return renderMultiline(res.item_total_price); }},
+                { field: 'item_purchase_price', title: '进价合计（多行）', width: 120, hide: true, templet: function (res) { return renderMultiline(res.item_purchase_price); }},
+                { field: 'item_sub_profit', title: '子项利润（多行）', width: 120, hide: true, templet: function (res) { return renderMultiline(res.item_sub_profit); }},
+                { field: 'item_supplier_name', title: '供应商（多行）', width: 160, hide: true, templet: function (res) { return renderMultiline(res.item_supplier_name); }},
+                { field: 'item_product_manager', title: '产品经理（多行）', width: 140, hide: true, templet: function (res) { return renderMultiline(res.item_product_manager); }},
 
                 // ====== 操作列（固定右侧）======
                 { title: '操作', toolbar: '#action', width: 380, minWidth: 380, fixed: 'right', align: 'left' }

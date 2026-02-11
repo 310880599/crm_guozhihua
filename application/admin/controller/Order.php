@@ -4650,6 +4650,26 @@ class Order extends Common
                 'page' => $page
             ])
             ->toArray();
+
+        // 本页订单ID，批量查 crm_order_item 聚合成 item_* 多行字符串（避免 N+1）
+        $orderIds = array_column($list['data'], 'id');
+        $itemMap = [];
+        if (!empty($orderIds)) {
+            $itemRows = Db::table('crm_order_item')
+                ->whereIn('order_id', $orderIds)
+                ->order('line_no asc, id asc')
+                ->field('order_id, product_name, spec_model, unit, qty, unit_price, total_price, purchase_price, sub_profit, supplier_name, manager_id')
+                ->select();
+            $managerIds = array_unique(array_filter(array_column($itemRows, 'manager_id')));
+            $managerMap = [];
+            if (!empty($managerIds)) {
+                $managerMap = Db::name('admin')->whereIn('admin_id', $managerIds)->column('username', 'admin_id');
+            }
+            foreach ($itemRows as $row) {
+                $row['product_manager'] = isset($managerMap[$row['manager_id']]) ? $managerMap[$row['manager_id']] : '';
+                $itemMap[$row['order_id']][] = $row;
+            }
+        }
         
         // 协同人：收集 joint_person 中的 admin_id，批量查 admin 表得到 username 映射
         $allAdminIds = [];
@@ -4667,18 +4687,27 @@ class Order extends Common
             $adminMap = Db::name('admin')->whereIn('admin_id', $allAdminIds)->column('username', 'admin_id');
         }
         
-        // 如果订单主表的 product_name 为空，尝试从订单明细表中获取产品名称
-        // 这样可以确保即使产品被删除，订单的产品名称仍然可以显示
         foreach ($list['data'] as &$order) {
-            if (empty($order['product_name'])) {
-                $firstItem = Db::name('crm_order_item')
-                    ->where('order_id', $order['id'])
-                    ->where('product_name', '<>', '')
-                    ->order('line_no asc')
-                    ->field('product_name')
-                    ->find();
-                if ($firstItem && !empty($firstItem['product_name'])) {
-                    $order['product_name'] = $firstItem['product_name'];
+            $rows = $itemMap[$order['id']] ?? [];
+            // 回填子表聚合字段（多行用 \n 连接，前端 renderMultiline 换行展示）
+            $order['item_product_name'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['product_name'] ?? ''); }, $rows)) : '';
+            $order['item_spec_model'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['spec_model'] ?? ''); }, $rows)) : '';
+            $order['item_unit'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['unit'] ?? ''); }, $rows)) : '';
+            $order['item_qty'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['qty'] ?? ''); }, $rows)) : '';
+            $order['item_unit_price'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['unit_price'] ?? ''); }, $rows)) : '';
+            $order['item_total_price'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['total_price'] ?? ''); }, $rows)) : '';
+            $order['item_purchase_price'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['purchase_price'] ?? ''); }, $rows)) : '';
+            $order['item_sub_profit'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['sub_profit'] ?? ''); }, $rows)) : '';
+            $order['item_supplier_name'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['supplier_name'] ?? ''); }, $rows)) : '';
+            $order['item_product_manager'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['product_manager'] ?? ''); }, $rows)) : '';
+
+            // 主表 product_name 为空时，用本页已查出的明细第一行产品名（不再 N+1 查库）
+            if (empty($order['product_name']) && !empty($rows)) {
+                foreach ($rows as $r) {
+                    if (!empty($r['product_name'])) {
+                        $order['product_name'] = $r['product_name'];
+                        break;
+                    }
                 }
             }
             
