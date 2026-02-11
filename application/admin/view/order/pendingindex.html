@@ -985,56 +985,60 @@
             // ================= 列配置记忆（显示/隐藏）END =================
 
             function applyOrderAndRerender(orderArr) {
-                if (!Array.isArray(pendingCols) || !pendingCols[0]) return;
-                var ordered = applyOrderToCols(pendingCols[0], orderArr);
-                pendingCols[0].splice(0, pendingCols[0].length);
-                for (var i = 0; i < ordered.length; i++) pendingCols[0].push(ordered[i]);
+                ensureColsMaster();
 
-                var applied = false;
+                // 1) 以 master 为基准生成新 cols0（避免反复 splice 污染对象/顺序）
+                var newCols0 = cloneCols0(PENDING_COLS_MASTER);
+
+                // 2) 应用隐藏/列宽（你原本是渲染前做的，这里重渲染也要做）
+                restoreColConfig(newCols0);
+                restoreColWidth(newCols0);
+
+                // 3) 应用顺序（用你现有 applyOrderToCols）
+                newCols0 = applyOrderToCols(newCols0, orderArr);
+
+                // 4) 更新 pendingCols 当前使用值（仅用于后续 snapshot/白名单等）
+                pendingCols[0] = newCols0;
+
+                // 5) 关键：销毁旧的 layui-table-view，再 render（避免 reload 列结构不重建导致串列）
                 try {
-                    table.reload('table-list', { cols: pendingCols });
-                    applied = true;
-                } catch (e) {}
-                if (!applied) {
-                    var formData = {};
-                    try {
-                        $('#searchForm').find('input, select, textarea').each(function () {
-                            var n = $(this).attr('name');
-                            if (n) formData[n] = $(this).val();
-                        });
-                    } catch (e2) {}
-                    table.render({
-                        elem: '#table-list',
-                        url: '{:url("pendingindex")}',
-                        method: 'post',
-                        toolbar: '#topBtn',
-                        defaultToolbar: defaultToolbar,
-                        cols: pendingCols,
-                        limit: 10,
-                        page: { limits: [10, 20, 30, 40, 50, 100, 200, 500, 9999999] },
-                        totalRow: true,
-                        where: { keyword: formData },
-                        done: function (res, curr, count) {
-                            $('#total-money').text(res.totalMoney);
-                            $('#total-profit').text(res.totalProfit);
-                            $('#total-inquiries').text(res.totalInquiries);
-                            $('#success-rate').text(res.successRate);
-                            bindResizeSave();
-                            bindColPanelSave();
-                            bindColPanelDragSort();
-                            setTimeout(function () { syncFixedRowHeights('table-list'); }, 0);
-                            setTimeout(function () { syncFixedRowHeights('table-list'); }, 200);
-                        }
-                    });
-                } else {
-                    bindResizeSave();
-                    bindColPanelSave();
-                    bindColPanelDragSort();
-                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 0);
-                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 200);
-                }
+                    var $view = $('#table-list').next('.layui-table-view');
+                    if ($view.length) $view.remove();
+                    $('#table-list').show(); // 确保 table 还在
+                } catch(e){}
+
+                // 6) 重新 render，并更新 tableIn 句柄
+                tableIn = table.render({
+                    elem: '#table-list',
+                    id: 'table-list',
+                    url: '{:url("pendingindex")}',
+                    method: 'post',
+                    toolbar: '#topBtn',
+                    defaultToolbar: defaultToolbar,
+                    cols: pendingCols,
+                    limit: 10,
+                    page: { limits: [10, 20, 30, 40, 50, 100, 200, 500, 9999999] },
+                    totalRow: true,
+                    done: function (res, curr, count) {
+                        $('#total-money').text(res.totalMoney);
+                        $('#total-profit').text(res.totalProfit);
+                        $('#total-inquiries').text(res.totalInquiries);
+                        $('#success-rate').text(res.successRate);
+
+                        // 重建白名单（顺序变了）
+                        buildOrderColWhitelist(pendingCols[0]);
+
+                        bindResizeSave();
+                        bindColPanelSave();
+                        bindColPanelDragSort();
+
+                        setTimeout(function(){ syncFixedRowHeights('table-list'); }, 0);
+                        setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
+                    }
+                });
             }
 
+            var __colSortObserverInited = false;
             function bindColPanelDragSort() {
                 function initSortable(panel) {
                     if (!panel || panel.getAttribute('data-col-sortable-inited') === '1') return;
@@ -1099,14 +1103,15 @@
                     panel.setAttribute('data-col-sortable-inited', '1');
                 }
 
-                // 监听 Layui 的列面板出现（面板是动态插入的）
-                var observer = new MutationObserver(function () {
-                    var panel = document.querySelector('.layui-table-tool-panel');
-                    if (panel) initSortable(panel);
-                });
-                observer.observe(document.body, { childList: true, subtree: true });
-
-                // 兜底：如果一开始就存在，也初始化
+                // 监听 Layui 的列面板出现（面板是动态插入的）- 只创建一次 observer
+                if (!__colSortObserverInited) {
+                    __colSortObserverInited = true;
+                    var observer = new MutationObserver(function () {
+                        var panel = document.querySelector('.layui-table-tool-panel');
+                        if (panel) initSortable(panel);
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+                }
                 var panel0 = document.querySelector('.layui-table-tool-panel');
                 if (panel0) initSortable(panel0);
             }
@@ -1277,6 +1282,26 @@
                 // ====== 操作列（固定右侧）======
                 { title: '操作', toolbar: '#action', width: 380, minWidth: 380, fixed: 'right', align: 'left' }
             ]];
+
+            // === 列定义 Master（不可变基准）===
+            var PENDING_COLS_MASTER = null;
+
+            // 浅拷贝 col 对象（保留 templet 函数引用，不做 JSON clone）
+            function cloneCols0(cols0){
+              return (cols0 || []).map(function(c){
+                var o = {};
+                for (var k in c) o[k] = c[k];
+                return o;
+              });
+            }
+
+            function ensureColsMaster(){
+              if (!PENDING_COLS_MASTER) {
+                PENDING_COLS_MASTER = cloneCols0(pendingCols[0]);
+              }
+            }
+
+            ensureColsMaster();
 
             // 渲染前：先恢复列顺序，再套用隐藏，再套用列宽
             restoreColOrder(pendingCols[0]);
