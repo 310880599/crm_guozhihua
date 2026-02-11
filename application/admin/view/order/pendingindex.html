@@ -375,6 +375,27 @@
         .col-sort-ghost { opacity: .4; }
         .col-sort-chosen { background: #f5f7fa; }
         .col-sort-item { display: block; }
+        /* 修复列面板文字被隐藏/挤没 */
+        .layui-table-tool-panel .layui-form-checkbox span{
+          display: inline-block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          color: #333 !important;
+        }
+        /* 让每一项占满一行，文字有空间显示 */
+        .layui-table-tool-panel .col-sort-item{
+          display: flex !important;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 6px;
+          box-sizing: border-box;
+        }
+        /* 拖拽把手固定宽度，避免挤压文字 */
+        .layui-table-tool-panel .drag-handle{
+          flex: 0 0 16px;
+          width: 16px;
+          text-align: center;
+        }
     </style>
 
 </head>
@@ -589,6 +610,25 @@
             // ================= 列顺序记忆（拖拽排序）（数据库优先 + localStorage 兜底）=================
             var COLORDER_PAGE_KEY = 'order_pending';
             var COLORDER_TABLE_KEY = 'main_table';
+
+            var ORDER_COL_FIELD_WHITELIST = [];
+            function buildOrderColWhitelist(tableCols) {
+                var arr = [];
+                (tableCols || []).forEach(function (c) {
+                    if (c && c.field) arr.push(String(c.field));
+                });
+                ORDER_COL_FIELD_WHITELIST = arr;
+            }
+
+            function getFieldFromCheckbox($cb) {
+                var v = ($cb.attr('value') || '').trim();
+                if (v && v !== 'on') return v;
+                var n = ($cb.attr('name') || '').trim();
+                if (n && n !== 'on') return n;
+                var d = ($cb.attr('data-field') || $cb.data('field') || '').toString().trim();
+                if (d && d !== 'on') return d;
+                return '';
+            }
 
             function colwidthStorageKey() {
                 return 'colwidth:' + COLWIDTH_PAGE_KEY + ':' + COLWIDTH_TABLE_ID;
@@ -1012,10 +1052,11 @@
 
                         if (!$item.length) return;
 
-                        var field = ($cb.attr('value') || $cb.val() || '').trim();
-                        if (!field || field === '0' || /^\d+$/.test(field)) return;
+                        var field = getFieldFromCheckbox($cb);
+                        if (!field || field === 'on') return;
 
                         $item.attr('data-field', field);
+                        $cb.attr('data-field', field);
                         $item.addClass('col-sort-item');
 
                         // 加拖拽把手（只允许按把手拖，不影响勾选）
@@ -1037,17 +1078,21 @@
                         preventOnFilter: false,
 
                         onEnd: function () {
-                            // 读取当前面板顺序 -> 保存 -> 立即重排表格
                             var orderArr = [];
                             $panel.find('.col-sort-item').each(function () {
-                                var f = $(this).attr('data-field');
-                                if (f && f !== '0' && !/^\d+$/.test(f)) orderArr.push(f);
+                                var f = ($(this).attr('data-field') || '').trim();
+                                if (f && f !== 'on') orderArr.push(f);
                             });
-
-                            if (orderArr.length) {
-                                saveColOrder(orderArr);
-                                applyOrderAndRerender(orderArr);
+                            if (!orderArr.length || (orderArr.length === 1 && orderArr[0] === 'on')) {
+                                console.warn('column order invalid:', orderArr);
+                                return;
                             }
+                            orderArr = orderArr.filter(function (f) {
+                                return ORDER_COL_FIELD_WHITELIST.indexOf(f) !== -1;
+                            });
+                            if (!orderArr.length) return;
+                            saveColOrder(orderArr);
+                            applyOrderAndRerender(orderArr);
                         }
                     });
 
@@ -1262,6 +1307,7 @@
                     setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
                 }
             });
+            buildOrderColWhitelist(pendingCols[0]);
             // ✅ 包装 reload：每次 reload 后自动同步行高
             (function(){
               var _reload = tableIn.reload;
