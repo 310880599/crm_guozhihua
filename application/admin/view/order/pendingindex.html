@@ -334,6 +334,24 @@
             padding: 6px 8px;
         }
 
+        /* ✅ 只让子表多行列的 cell 取消 Layui 默认固定高度/省略号 */
+        .layui-table-view td[data-field^="item_"] .layui-table-cell{
+          height: auto !important;          /* 关键：解除固定高度 */
+          line-height: 18px !important;
+          white-space: normal !important;   /* 允许换行 */
+          overflow: visible !important;     /* 允许撑开 */
+          text-overflow: initial !important;
+          padding-top: 6px;
+          padding-bottom: 6px;
+        }
+
+        /* 避免 .item-multi 仍被 inline/行高限制 */
+        .layui-table-view td[data-field^="item_"] .item-multi{
+          display: block;
+          white-space: normal;
+          word-break: break-word;
+        }
+
         /* === 列表缩略图样式（待审核订单）开始 === */
         .img-strip{
           display:flex;
@@ -856,6 +874,39 @@
                 return out.length ? '<div class="item-multi">' + out.join('<br>') + '</div>' : '--';
             }
 
+            // ✅ 同步主表 / 左固定列 / 右固定列 的每一行高度，解决多行撑高后固定列不跟随的问题
+            function syncFixedRowHeights(layIdOrElemId) {
+              // layId 优先：.layui-table-view[lay-id="xxx"]
+              var $view = $('.layui-table-view[lay-id="' + layIdOrElemId + '"]');
+              if (!$view.length) {
+                // 兜底：通过表格 elem id 找到 view
+                $view = $('#' + layIdOrElemId).next('.layui-table-view');
+              }
+              if (!$view.length) return;
+
+              var $mainTrs  = $view.find('.layui-table-body tbody tr');
+              var $leftTrs  = $view.find('.layui-table-fixed-l .layui-table-body tbody tr');
+              var $rightTrs = $view.find('.layui-table-fixed-r .layui-table-body tbody tr');
+
+              // 先清空高度，重新计算
+              $mainTrs.css('height', 'auto');
+              $leftTrs.css('height', 'auto');
+              $rightTrs.css('height', 'auto');
+
+              $mainTrs.each(function(i){
+                var hMain = $(this).outerHeight() || 0;
+                var hLeft = $leftTrs.eq(i).outerHeight() || 0;
+                var hRight = $rightTrs.eq(i).outerHeight() || 0;
+                var maxH = Math.max(hMain, hLeft, hRight);
+
+                if (maxH > 0) {
+                  $(this).height(maxH);
+                  if ($leftTrs.length) $leftTrs.eq(i).height(maxH);
+                  if ($rightTrs.length) $rightTrs.eq(i).height(maxH);
+                }
+              });
+            }
+
             // ===== 列宽记忆：先把 cols 抽成变量，便于渲染前恢复 =====
             // ✅ 待审核订单：列定义（把 crm_client_order 字段全部挂到这里，右侧列控制面板才会“全量可控”）
             var pendingCols = [[
@@ -981,8 +1032,21 @@
                     $('#success-rate').text(res.successRate);
                     bindResizeSave();
                     bindColPanelSave();
+                    // ✅ 多行内容渲染完成后，同步固定列行高（调用两次更稳，防止图片/字体渲染导致高度延迟）
+                    setTimeout(function(){ syncFixedRowHeights('table-list'); }, 0);
+                    setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
                 }
             });
+            // ✅ 包装 reload：每次 reload 后自动同步行高
+            (function(){
+              var _reload = tableIn.reload;
+              tableIn.reload = function(){
+                var ret = _reload.apply(tableIn, arguments);
+                setTimeout(function(){ syncFixedRowHeights('table-list'); }, 0);
+                setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
+                return ret;
+              };
+            })();
             table.on('tool(table-list)', function (obj) {
                 var data = obj.data;
 
