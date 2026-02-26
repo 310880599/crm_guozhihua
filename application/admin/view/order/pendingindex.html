@@ -1343,6 +1343,22 @@
                 return ret;
               };
             })();
+            // ====== BEGIN 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+            function reloadTableWithDbCols(extraOpt) {
+              ensureColsMaster();
+              var cols0 = cloneCols0(PENDING_COLS_MASTER);
+              restoreColOrder(cols0);
+              restoreColConfig(cols0);
+              restoreColWidth(cols0);
+              var where = (tableIn.config && tableIn.config.where) ? tableIn.config.where : {};
+              var url = (tableIn.config && tableIn.config.url) ? tableIn.config.url : '{:url("pendingindex")}';
+              var opt = { cols: [cols0], where: where, url: url };
+              if (extraOpt && typeof extraOpt === 'object') {
+                for (var k in extraOpt) opt[k] = extraOpt[k];
+              }
+              tableIn.reload(opt);
+            }
+            // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
             table.on('tool(table-list)', function (obj) {
                 var data = obj.data;
 
@@ -1378,7 +1394,9 @@
                             layer.close(loading);
                             if (res.code === 0) {
                                 layer.msg(res.msg, { time: 1000, icon: 1 });
-                                tableIn.reload();
+                                // ====== BEGIN 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+                                reloadTableWithDbCols();
+                                // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
                             } else {
                                 layer.msg(res.msg, { time: 2000, icon: 2 });
                             }
@@ -1412,7 +1430,9 @@
                             layer.close(loading);
                             if (res.code === 0) {
                                 layer.msg(res.msg, { time: 1000, icon: 1 });
-                                tableIn.reload();
+                                // ====== BEGIN 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+                                reloadTableWithDbCols();
+                                // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
                             } else {
                                 layer.msg(res.msg, { time: 2000, icon: 2 });
                             }
@@ -1451,7 +1471,9 @@
                                 if (res.code === 0 || res.code === 1) {
                                     layer.msg(res.msg || '已拒绝该订单', { time: 1000, icon: 1 });
                                     layer.close(index);
-                                    tableIn.reload();
+                                    // ====== BEGIN 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+                                    reloadTableWithDbCols();
+                                    // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
                                 } else {
                                     layer.msg(res.msg || '操作失败', { time: 2000, icon: 2 });
                                 }
