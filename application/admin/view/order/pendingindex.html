@@ -1388,7 +1388,25 @@
                 }
                 // 审核通过
                 else if (obj.event === 'pass') {
-                    layer.confirm('确认要通过此订单么？', function (index) {
+                    layer.confirm('确认要通过此订单么？', {
+                        btn: ['确定','取消'],
+                        success: function(layero, index){
+
+                            // 绑定键盘回车事件
+                            $(document).on('keydown.enterConfirm', function(e){
+                                if(e.key === 'Enter'){
+                                    e.preventDefault();
+                                    $('.layui-layer-btn0').click();
+                                }
+                            });
+                        },
+                        end: function(){
+                            // 解绑键盘事件，防止重复绑定
+                            $(document).off('keydown.enterConfirm');
+                        }
+                    }, function(index){
+
+                        // ===== 保持原来的通过逻辑不变 =====
                         var loading = layer.load(1, { shade: [0.1, '#fff'] });
                         $.post("{:url('passIndex')}", { id: data.id }, function (res) {
                             layer.close(loading);
