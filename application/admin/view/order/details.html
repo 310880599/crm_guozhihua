@@ -1097,10 +1097,60 @@
                     return false;
                 });
 
-                // 7) 根据凭证豁免条件更新凭证展示块的显示/隐藏
+                // 7) 根据豁免条件更新凭证展示块的显示/隐藏
                 updateVoucherUI();
 
             })();
+
+            // ====================== 订单详情 ESC 关闭逻辑 ======================
+            // 1）未打开图片预览时，ESC 直接关闭当前订单详情弹窗
+            // 2）打开图片预览后，第一次 ESC 只关闭图片预览；第二次 ESC 再关闭订单详情
+            // 3）当仍存在图片预览层时，ESC 不允许把订单详情 iframe 一起关掉
+            // 4）用命名空间绑定，防止重复绑定和内存泄漏
+            $(document).off('keydown.detailsEsc').on('keydown.detailsEsc', function (e) {
+                e = e || window.event;
+                var key = e.key || e.keyCode;
+
+                if (key === 'Escape' || key === 'Esc' || key === 27) {
+                    // 先检查父窗口里是否存在图片预览层（兼容 parent.layer.photos / parent.layer.open 图片层）
+                    var hasPhotoLayer = false;
+                    try {
+                        var parentDoc = window.parent && window.parent.document;
+                        if (parentDoc) {
+                            hasPhotoLayer = parentDoc.querySelectorAll('.layui-layer-photos, .layui-layer-img, .layui-layer-photo').length > 0;
+                        }
+                    } catch (err) {
+                        // 跨域或其他异常时忽略，继续检查当前窗口
+                    }
+
+                    // 如果父窗口没有，再检查当前 iframe 内是否有图片预览层
+                    if (!hasPhotoLayer) {
+                        hasPhotoLayer = document.querySelectorAll('.layui-layer-photos, .layui-layer-img, .layui-layer-photo').length > 0;
+                    }
+
+                    // 如果还有图片预览层，就交给 layer 自己处理 ESC（只关闭预览，不关闭详情 iframe）
+                    if (hasPhotoLayer) {
+                        return;
+                    }
+
+                    // 没有任何图片预览层时，ESC 负责关闭当前订单详情 iframe 弹窗
+                    try {
+                        if (window.parent && window.parent.layer && window.parent.layer.getFrameIndex) {
+                            var idx = window.parent.layer.getFrameIndex(window.name);
+                            if (idx !== null && idx !== undefined) {
+                                window.parent.layer.close(idx);
+                            }
+                        }
+                    } catch (err2) {
+                        // 忽略异常，避免影响其他按键事件
+                    }
+                }
+            });
+
+            // 页面卸载时解绑 ESC 事件，防止内存泄漏和重复绑定
+            $(window).on('unload.detailsEsc', function () {
+                $(document).off('keydown.detailsEsc');
+            });
         });
     </script>
 </body>
