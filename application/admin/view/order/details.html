@@ -908,7 +908,7 @@
                     + '  </div>'
                     + '</div>';
 
-                layer.open({
+                var previewIndex = layer.open({
                     type: 1,
                     title: '图片预览（可放大缩小，滚轮缩放，拖拽移动）',
                     closeBtn: 1,
@@ -980,8 +980,10 @@
 
                         // 清理拖拽事件
                         $(document).off('mousemove.previewDrag mouseup.previewDrag');
+                        window.__DETAIL_IMG_PREVIEW_IDX__ = null;
                     }
                 });
+                window.__DETAIL_IMG_PREVIEW_IDX__ = previewIndex;
             });
 
 
@@ -1112,28 +1114,27 @@
                 var key = e.key || e.keyCode;
 
                 if (key === 'Escape' || key === 'Esc' || key === 27) {
-                    // 先检查父窗口里是否存在图片预览层（兼容 parent.layer.photos / parent.layer.open 图片层）
-                    var hasPhotoLayer = false;
-                    try {
-                        var parentDoc = window.parent && window.parent.document;
-                        if (parentDoc) {
-                            hasPhotoLayer = parentDoc.querySelectorAll('.layui-layer-photos, .layui-layer-img, .layui-layer-photo').length > 0;
+                    // 优先处理图片预览 ESC：如果预览层已打开，则只关闭预览层，不关闭订单详情 iframe
+                    if (window.__DETAIL_IMG_PREVIEW_IDX__ != null) {
+                        if (e.preventDefault) e.preventDefault();
+                        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+                        if (e.stopPropagation) e.stopPropagation();
+                        try {
+                            if (typeof layer !== 'undefined' && layer && layer.close) {
+                                layer.close(window.__DETAIL_IMG_PREVIEW_IDX__);
+                            }
+                        } catch (err) {
+                            // 忽略关闭预览时的异常
                         }
-                    } catch (err) {
-                        // 跨域或其他异常时忽略，继续检查当前窗口
+                        return;  // 关键：直接返回，绝对不能继续执行关闭详情弹窗的逻辑
                     }
 
-                    // 如果父窗口没有，再检查当前 iframe 内是否有图片预览层
-                    if (!hasPhotoLayer) {
-                        hasPhotoLayer = document.querySelectorAll('.layui-layer-photos, .layui-layer-img, .layui-layer-photo').length > 0;
-                    }
-
-                    // 如果还有图片预览层，就交给 layer 自己处理 ESC（只关闭预览，不关闭详情 iframe）
-                    if (hasPhotoLayer) {
+                    // 兜底：如果当前页面仍存在预览容器节点，也视为预览打开，防止误关详情弹窗
+                    if (document.getElementById('previewWrap') || document.getElementById('previewZoomImg')) {
                         return;
                     }
 
-                    // 没有任何图片预览层时，ESC 负责关闭当前订单详情 iframe 弹窗
+                    // 只有在确认没有预览层时，才执行关闭订单详情 iframe 弹窗
                     try {
                         if (window.parent && window.parent.layer && window.parent.layer.getFrameIndex) {
                             var idx = window.parent.layer.getFrameIndex(window.name);
