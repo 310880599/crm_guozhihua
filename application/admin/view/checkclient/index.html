@@ -1252,7 +1252,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var tableIns = table.render({
         elem: '#' + tableId,
         id: tableId,
-        url: "{:url('perClilist')}",   // 若你的路由为 perCliList，请改成 perCliList
+        url: "{:url('checkClient')}",   // 若你的路由为 checkClient，请改成 checkClient
         method: 'post',
         toolbar: '#topBtn',
         defaultToolbar: ['filter'],
@@ -2165,7 +2165,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }
 
         table.reload('table-list', {
-            url: "{:url('Client/personClientSearch')}",
+            url: "{:url('Client/checkClientSearch')}",
             where: { keyword: data.field },
             page: { curr: 1 }
         });

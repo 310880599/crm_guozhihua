@@ -329,6 +329,121 @@ class Client extends Model
             return $result;
         }
     }
+
+    //检查客户
+    public function getCheckClientSearchList($page, $limit, $keyword)
+    {
+
+
+        $mapAtTime = []; //添加时间
+        $mapKhRank = []; //客户级别
+        $mapKhStatus = []; //客户状态
+        $mapPhone = []; //手机号模糊查询
+        $mapKhName = []; //客户名称
+        $mapXsSource = []; //线索/客户来源
+        $where = [];
+        $mapInquiry = [];
+        $mapPort    = [];
+
+
+        if (!empty($keyword['timebucket'])) {
+            $mapAtTime[] = $keyword['timebucket'];
+        }
+
+        if ($keyword['kh_rank'] != '') {
+
+            $mapKhRank =  ['kh_rank' => $keyword['kh_rank']];
+        }
+
+        if ($keyword['kh_status'] != '') {
+
+            $mapKhStatus =  ['kh_status' => $keyword['kh_status']];
+        }
+
+        if ($keyword['inquiry_id'] != '') {
+            $mapInquiry = ['inquiry_id' => $keyword['inquiry_id']];
+        }
+
+        if ($keyword['phone'] != '') {
+            $mapPhone = $this->getContactSearch($keyword['phone']);
+        }
+
+        if (!empty($keyword['oper_user'])) {
+            $where[] = ['oper_user', 'like', '%' . $keyword['oper_user'] . '%'];
+        }
+
+        if ($keyword['kh_name'] != '') {
+            $mapKhName = [['kh_name', 'like', '%' . $keyword['kh_name'] . '%']];
+        }
+
+        if ($keyword['xs_source'] != '') {
+
+            $mapXsSource =  ['xs_source' => $keyword['xs_source']];
+        }
+
+        if ($keyword['port_id'] != '') {
+            $mapPort = ['port_id' => $keyword['port_id']];
+        }
+
+        $mapSourcePort = []; // 来源端口
+        if (!empty($keyword['source_port'])) {
+            $mapSourcePort = ['source_port' => $keyword['source_port']];
+        }
+
+        // 【新增-跟进筛选】最新跟进时间筛选条件
+        $mapFollow = [];
+        $followNoFlag = false; // recent_no_follow 标记
+        $followBoundary = ''; // 边界时间（用于 recent_no_follow）
+
+        // 【新增-跟进筛选】处理最新跟进时间筛选
+        if (!empty($keyword['__follow_filter']) && !empty($keyword['__follow_boundary'])) {
+            $ff = $keyword['__follow_filter'];
+            $bd = $keyword['__follow_boundary'];
+
+            if ($ff === 'recent_follow') {
+                // 最近有跟进：last_up_time >= 边界
+                $mapFollow = [['last_up_time', '>=', $bd]];
+            } elseif ($ff === 'recent_no_follow') {
+                // 最近无跟进（反选）：last_up_time IS NULL OR last_up_time < 边界
+                // 需要用闭包实现 OR 条件，此处设置标记
+                $followNoFlag = true;
+                $followBoundary = $bd;
+            }
+        }
+
+        $result  = Db::table('crm_leads')
+            ->where($mapPhone)
+            ->where($mapKhName)
+            ->where($mapInquiry)     // 使用所属渠道筛选
+            ->where($mapKhRank)
+            ->where($mapXsSource)
+            ->where($mapPort)        // 使用运营端口筛选
+            ->where($mapAtTime)
+            ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
+            ->where($where)
+            ->where(['status' => 1, 'issuccess' => -1]) //0 线索，1客户，2公海
+            ->where(['pr_user' => session('username')]) //负责人
+            ->where(function($q) use ($followNoFlag, $followBoundary) {
+                // 【新增-跟进反选】最近无跟进：last_up_time IS NULL OR last_up_time < 边界
+                if ($followNoFlag) {
+                    $q->whereNull('last_up_time')
+                        ->whereOr('last_up_time', '<', $followBoundary);
+                }
+            })
+            ->order('at_time desc')
+            ->paginate(array('list_rows' => $limit, 'page' => $page))
+            ->toArray();
+
+        //数据集判断方式
+        //if($result->isEmpty()){return null;}
+        if ($result['total'] == 0) {
+            return null;
+        } else {
+            return $result;
+        }
+    }
+
+
     //成交客户查询
     public function getChengjiaoClientSearchList($page, $limit, $keyword)
     {

@@ -3304,7 +3304,204 @@ class Client extends Common
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
     }
 
+    //（检查客户）搜索
+    public function checkClientSearch()
+    {
+        // TP5.1 建议使用 input() 获取参数
+        $page    = input('page/d', 1);
+        $limit   = input('limit/d', config('pageSize'));
+        $keyword = input('keyword/a', []); // 强制为数组
 
+        // 处理时间范围筛选（与原有 buildTimeWhere 兼容）
+        if (!empty($keyword['timebucket'])) {
+            $keyword['timebucket'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
+        }
+        if (!empty($keyword['at_time'])) {
+            $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
+        }
+
+        // 【新增-跟进筛选-参数归一】最新跟进时间筛选参数处理
+        $followFilter = isset($keyword['follow_filter']) ? trim($keyword['follow_filter']) : '';
+        $followDays   = isset($keyword['follow_days']) ? intval($keyword['follow_days']) : 0;
+
+        // 只有当 follow_filter 非空 且 follow_days > 0 时才计算边界并写入 keyword
+        if (!empty($followFilter) && $followDays > 0) {
+            $boundaryTime = date('Y-m-d H:i:s', time() - $followDays * 86400);
+            $keyword['__follow_filter']   = $followFilter;
+            $keyword['__follow_boundary'] = $boundaryTime;
+            // 移除原始字段避免其他旧逻辑误判
+            unset($keyword['follow_filter'], $keyword['follow_days']);
+        }
+
+        // 取列表（保留你原来的模型查询逻辑）
+        $list = model('client')->getCheckClientSearchList($page, $limit, $keyword);
+
+        if (empty($list) || empty($list['data'])) {
+            return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
+        }
+
+        // ===== 补充展示所需的派生字段 =====
+        $rows    = &$list['data'];
+        $leadIds = array_column($rows, 'id');
+
+        // 1) 客户来源(ID->名称) 映射：若表不存在则优雅降级为原值
+        $statusMap = [];
+        try {
+            $hasStatusTable = Db::query("SHOW TABLES LIKE 'crm_client_status'");
+            if (!empty($hasStatusTable)) {
+                $statusMap = Db::table('crm_client_status')->column('status_name', 'id');
+            }
+        } catch (\Exception $e) {
+            $statusMap = [];
+        }
+        
+        // 2) 产品名称映射表（product_name ID -> product_name 文字）
+        $productMap = Db::table('crm_products')->column('product_name', 'id');
+        
+        // 3) 所属渠道和运营端口名称映射表
+        $inquiryMap = Db::table('crm_inquiry')->column('inquiry_name', 'id');
+        $portMap = Db::table('crm_inquiry_port')->column('port_name', 'id');
+
+        // 4) 批量查询主/辅电话（crm_contacts：1=主，3=辅；按 leads_id 汇总）
+        $phoneMap = [];
+        if (!empty($leadIds)) {
+            $contacts = Db::table('crm_contacts')
+                ->where('is_delete', 0)
+                ->where('leads_id', 'in', $leadIds)
+                ->where('contact_type', 'in', [1, 3])
+                ->order('id', 'asc')
+                ->field('leads_id, contact_type, contact_value')
+                ->select();
+
+            foreach ($contacts as $c) {
+                $lid = $c['leads_id'];
+                if (!isset($phoneMap[$lid])) {
+                    $phoneMap[$lid] = ['main' => '', 'aux' => ''];
+                }
+                if ($c['contact_type'] == 1 && $phoneMap[$lid]['main'] === '') {
+                    $phoneMap[$lid]['main'] = $c['contact_value'];
+                } elseif ($c['contact_type'] == 3 && $phoneMap[$lid]['aux'] === '') {
+                    $phoneMap[$lid]['aux'] = $c['contact_value'];
+                }
+            }
+        }
+
+        // 5) 协同人姓名：从 admin 表按 joint_person 映射（若表/ID不存在则回退为原ID）
+        $uidSet = [];
+        foreach ($rows as &$row) {
+            // 客户来源中文名（若映射不到则用原值）
+            $row['kh_status_name'] = isset($statusMap[$row['kh_status']]) ? $statusMap[$row['kh_status']] : (string)$row['kh_status'];
+            
+            // 所属渠道名称（如无对应名称则用自身ID）
+            $row['inquiry_name'] = isset($inquiryMap[$row['inquiry_id']]) 
+                                    ? $inquiryMap[$row['inquiry_id']] 
+                                    : (string)$row['inquiry_id'];
+            // 运营端口名称（如无对应名称则用自身ID）
+            $row['port_name'] = isset($portMap[$row['port_id']]) 
+                                ? $portMap[$row['port_id']] 
+                                : (string)$row['port_id'];
+            
+            // 产品名称（将ID转换为文字名称）
+            if (!empty($row['product_name'])) {
+                $row['product_name'] = isset($productMap[$row['product_name']]) 
+                                      ? $productMap[$row['product_name']] 
+                                      : (string)$row['product_name'];
+            }
+
+            // 主/辅电话
+            $row['main_phone'] = isset($phoneMap[$row['id']]) ? $phoneMap[$row['id']]['main'] : '';
+            $row['aux_phone']  = isset($phoneMap[$row['id']]) ? $phoneMap[$row['id']]['aux'] : '';
+
+            // joint_person 可能是 JSON 数组或逗号分隔的 ID 字符串（crm_leads 有该字段）:contentReference[oaicite:3]{index=3}
+            $idsArr = [];
+            if (!empty($row['joint_person'])) {
+                $jp = $row['joint_person'];
+                if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
+                    $tmp = json_decode($jp, true);
+                    if (is_array($tmp)) $idsArr = $tmp;
+                } else {
+                    $idsArr = preg_split('/[,，\s]+/', $jp, -1, PREG_SPLIT_NO_EMPTY);
+                }
+            }
+            $row['_joint_ids'] = $idsArr;
+            foreach ($idsArr as $uid) {
+                $uidSet[$uid] = true;
+            }
+        }
+        unset($row);
+
+        // 一次性把协同人的 username 查出来（若 admin 表不存在则跳过）
+        $adminMap = [];
+        try {
+            if (!empty($uidSet) && Db::query("SHOW TABLES LIKE 'admin'")) {
+                $adminMap = Db::table('admin')
+                    ->where('admin_id', 'in', array_keys($uidSet))
+                    ->column('username', 'admin_id');
+            }
+        } catch (\Exception $e) {
+            $adminMap = [];
+        }
+
+        foreach ($rows as &$row) {
+            $names = [];
+            foreach ($row['_joint_ids'] as $uid) {
+                $names[] = isset($adminMap[$uid]) ? $adminMap[$uid] : (string)$uid;
+            }
+            $row['joint_person_names'] = $names ? implode('、', $names) : '';
+            unset($row['_joint_ids']);
+
+            // 处理来源端口（source_port）字段，将MD5加密值转换为店铺名称
+            $row['source_port_name'] = '';
+            try {
+                $columns = Db::query("SHOW COLUMNS FROM `crm_leads` LIKE 'source_port'");
+                if (!empty($columns) && !empty($row['source_port'])) {
+                    $sourcePortId = $row['source_port'];
+                    
+                    // 尝试从 crm_operation_shops 表查找店铺名称
+                    $shopInfo = Db::table('crm_operation_shops')
+                        ->where('id', $sourcePortId)
+                        ->where('is_active', 1)
+                        ->field('shop_name')
+                        ->find();
+                    
+                    if ($shopInfo) {
+                        $row['source_port_name'] = $shopInfo['shop_name'];
+                    } else {
+                        // 如果表中找不到，尝试从 crm_client_status 的 shop_names 字段查找
+                        // source_port 可能是 md5(status_id + '_' + shop_name) 格式，需要反向查找
+                        $statusId = $row['kh_status'];
+                        if (!empty($statusId)) {
+                            $statusInfo = Db::table('crm_client_status')
+                                ->where('id', $statusId)
+                                ->field('id, shop_names')
+                                ->find();
+                            
+                            if ($statusInfo && !empty($statusInfo['shop_names'])) {
+                                $shop_names = array_filter(array_map('trim', explode(',', $statusInfo['shop_names'])));
+                                foreach ($shop_names as $shop_name) {
+                                    $expectedId = md5($statusInfo['id'] . '_' . $shop_name);
+                                    if ($expectedId === $sourcePortId) {
+                                        $row['source_port_name'] = $shop_name;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 如果还是找不到，显示ID
+                        if (empty($row['source_port_name'])) {
+                            $row['source_port_name'] = $sourcePortId;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                // 忽略错误
+            }
+        }
+        unset($row);
+
+        return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
+    }
 
 
     // 在 application/admin/controller/Client.php 内新增以下方法
