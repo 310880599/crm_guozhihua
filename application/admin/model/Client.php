@@ -331,7 +331,7 @@ class Client extends Model
     }
 
     //检查客户
-    public function getCheckClientSearchList($page, $limit, $keyword)
+    public function getCheckClientSearchList($page, $limit, $keyword, array $visibleUsers = [])
     {
 
 
@@ -422,7 +422,15 @@ class Client extends Model
             ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
             ->where($where)
             ->where(['status' => 1, 'issuccess' => -1]) //0 线索，1客户，2公海
-            ->where(['pr_user' => session('username')]) //负责人
+            // 负责人：团队可见 / 个人可见
+            ->where(function ($q) use ($visibleUsers) {
+                if (!empty($visibleUsers)) {
+                    $q->whereIn('pr_user', $visibleUsers);
+                } else {
+                    // 极端情况兜底：只看自己
+                    $q->where('pr_user', session('username'));
+                }
+            })
             ->where(function($q) use ($followNoFlag, $followBoundary) {
                 // 【新增-跟进反选】最近无跟进：last_up_time IS NULL OR last_up_time < 边界
                 if ($followNoFlag) {

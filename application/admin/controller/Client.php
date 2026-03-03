@@ -440,17 +440,82 @@ class Client extends Common
         return $this->fetch('personclient/index');
     }
 
+    /**
+     * （检查客户）当前登录人可见的负责人用户名列表
+     */
+    private function getCheckClientVisibleUsernames(): array
+    {
+        // 默认兜底为当前会话用户名
+        $sessionUsername = (string) Session::get('username');
+        $defaultUsers    = $sessionUsername !== '' ? [$sessionUsername] : [];
+
+        $aid = (int) Session::get('aid');
+        if ($aid <= 0) {
+            return $defaultUsers;
+        }
+
+        $me = Db::name('admin')
+            ->where('admin_id', $aid)
+            ->field('username,group_id,team_name')
+            ->find();
+
+        if (empty($me)) {
+            return $defaultUsers;
+        }
+
+        $username = trim((string) ($me['username'] ?? ''));
+        $groupId  = (int) ($me['group_id'] ?? 0);
+        $teamName = trim((string) ($me['team_name'] ?? ''));
+
+        if ($username === '') {
+            return $defaultUsers;
+        }
+
+        // 普通加检委 / 产经加检委：按 team_name 查看本团队所有客户
+        if (in_array($groupId, [16, 17], true)) {
+            // team_name 为空时不放开，仍然只看自己
+            if ($teamName === '') {
+                return [$username];
+            }
+
+            $teamUsers = Db::name('admin')
+                ->where('team_name', $teamName)
+                ->where('username', '<>', '')
+                ->column('username');
+
+            if (!is_array($teamUsers)) {
+                $teamUsers = [];
+            }
+
+            // 去重、过滤空值
+            $teamUsers = array_values(array_unique(array_filter(array_map('trim', $teamUsers))));
+
+            // 团队没人或异常时，兜底只看自己
+            if (empty($teamUsers)) {
+                return [$username];
+            }
+
+            return $teamUsers;
+        }
+
+        // 其他角色：只看自己
+        return [$username];
+    }
+
     //（检查客户）
     public function checkClient()
     {
         if (request()->isPost()) {
-            $page = input('page') ? input('page') : 1;
+            $page     = input('page') ? input('page') : 1;
             $pageSize = input('limit') ? input('limit') : config('pageSize');
 
-            // 基础列表（我的客户）
+            // 获取当前登录人可见的负责人列表（支持团队可见）
+            $visibleUsers = $this->getCheckClientVisibleUsernames();
+
+            // 基础列表（我的/本团队客户）
             $list = Db::table('crm_leads')
                 ->where(['status' => 1, 'issuccess' => -1])
-                ->where(['pr_user' => Session::get('username')])
+                ->whereIn('pr_user', $visibleUsers)
                 ->order('at_time desc')
                 ->paginate(['list_rows' => $pageSize, 'page' => $page])
                 ->toArray();
@@ -3333,8 +3398,11 @@ class Client extends Common
             unset($keyword['follow_filter'], $keyword['follow_days']);
         }
 
+        // 获取当前登录人可见的负责人列表（支持团队可见）
+        $visibleUsers = $this->getCheckClientVisibleUsernames();
+
         // 取列表（保留你原来的模型查询逻辑）
-        $list = model('client')->getCheckClientSearchList($page, $limit, $keyword);
+        $list = model('client')->getCheckClientSearchList($page, $limit, $keyword, $visibleUsers);
 
         if (empty($list) || empty($list['data'])) {
             return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
