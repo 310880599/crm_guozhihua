@@ -440,7 +440,157 @@ class Client extends Common
         return $this->fetch('personclient/index');
     }
 
+    //（检查客户）
+    public function checkClient()
+    {
+        if (request()->isPost()) {
+            $page = input('page') ? input('page') : 1;
+            $pageSize = input('limit') ? input('limit') : config('pageSize');
 
+            // 基础列表（我的客户）
+            $list = Db::table('crm_leads')
+                ->where(['status' => 1, 'issuccess' => -1])
+                ->where(['pr_user' => Session::get('username')])
+                ->order('at_time desc')
+                ->paginate(['list_rows' => $pageSize, 'page' => $page])
+                ->toArray();
+
+            if (empty($list) || empty($list['data'])) {
+                return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
+            }
+
+            $rows = &$list['data'];
+            $leadIds = array_column($rows, 'id');
+
+            // 询盘来源映射（id -> 中文名），若 kh_status 已是中文则回退自身
+            //$statusMap = Db::table('crm_client_status')->column('status_name', 'id');
+            // 构建所属渠道和运营端口名称映射表
+            $inquiryMap = Db::table('crm_inquiry')->column('inquiry_name', 'id');
+            $portMap    = Db::table('crm_inquiry_port')->column('port_name', 'id');
+
+            // 【新增】批量获取产品名称和供应商名称映射
+            $productIds = array_column($rows, 'product_name');
+            $productIds = array_filter($productIds);
+            $productIds = array_unique($productIds);
+            $productNameMap = [];
+            if (!empty($productIds)) {
+                // 查询所涉及的产品信息
+                $productRows = Db::table('crm_products')->whereIn('id', $productIds)->select();
+                // 提取所有相关供应商ID并查询对应供应商名称
+                $categoryIds = array_unique(array_column($productRows, 'category_id'));
+                $categoryNameMap = !empty($categoryIds)
+                    ? Db::table('crm_product_category')->whereIn('id', $categoryIds)->column('category_name', 'id')
+                    : [];
+                // 生成 产品名称(供应商) 映射表
+                foreach ($productRows as $prod) {
+                    $supplierName = isset($categoryNameMap[$prod['category_id']]) ? $categoryNameMap[$prod['category_id']] : '';
+                    $productNameMap[$prod['id']] = $prod['product_name'] . ($supplierName ? "({$supplierName})" : '');
+                }
+            }
+
+            // 一次性取出所有客户的主/辅电话：1=主电话，3=辅助电话
+            $phoneMap = []; // leads_id => ['main'=>'', 'aux'=>'']
+            if (!empty($leadIds)) {
+                $contacts = Db::table('crm_contacts')
+                    ->where('is_delete', 0)
+                    ->whereIn('leads_id', $leadIds)
+                    ->whereIn('contact_type', [1, 3])
+                    ->order('id', 'asc')
+                    ->field('leads_id, contact_type, contact_value')
+                    ->select();
+                foreach ($contacts as $c) {
+                    $lid = $c['leads_id'];
+                    if (!isset($phoneMap[$lid])) $phoneMap[$lid] = ['main' => '', 'aux' => ''];
+
+                    if ($c['contact_type'] == 1) {
+                        if ($phoneMap[$lid]['main'] === '') {
+                            $phoneMap[$lid]['main'] = $c['contact_value'];
+                        } else {
+                            $phoneMap[$lid]['main'] .= ',' . $c['contact_value'];
+                        }
+                    } elseif ($c['contact_type'] == 3 && $phoneMap[$lid]['aux'] === '') {
+                        $phoneMap[$lid]['aux'] = $c['contact_value'];
+                    }
+
+                }
+            }
+
+            // 收集协同人ID，后续统一查用户名
+            $uidSet = [];
+            foreach ($rows as &$row) {
+                // 询盘来源中文
+                //$row['kh_status_name'] = isset($statusMap[$row['kh_status']]) ? $statusMap[$row['kh_status']] : (string)$row['kh_status'];
+                
+                // 所属渠道名称（如无对应名称则用自身ID）
+                $row['inquiry_name'] = isset($inquiryMap[$row['inquiry_id']]) 
+                                        ? $inquiryMap[$row['inquiry_id']] 
+                                        : (string)$row['inquiry_id'];
+                // 运营端口名称（如无对应名称则用自身ID）
+                $row['port_name'] = isset($portMap[$row['port_id']]) 
+                                    ? $portMap[$row['port_id']] 
+                                    : (string)$row['port_id'];
+                
+                // 【替换】将产品ID替换为“产品名称（供应商）”格式
+                $row['product_name'] = isset($productNameMap[$row['product_name']]) 
+                                    ? $productNameMap[$row['product_name']] 
+                                    : (string)$row['product_name'];  
+
+                // 主/辅电话
+                $row['main_phone'] = $phoneMap[$row['id']]['main'] ?? '';
+                $row['aux_phone']  = $phoneMap[$row['id']]['aux'] ?? '';
+
+                // 协同人ID解析（支持 JSON 数组或逗号分隔）
+                $idsArr = [];
+                if (!empty($row['joint_person'])) {
+                    $jp = $row['joint_person'];
+                    if (preg_match('/^\\s*\\[.*\\]\\s*$/', $jp)) {
+                        $tmp = json_decode($jp, true);
+                        if (is_array($tmp)) $idsArr = $tmp;
+                    } else {
+                        $idsArr = array_values(array_filter(explode(',', $jp)));
+                    }
+                }
+                $row['_joint_ids'] = $idsArr;
+                foreach ($idsArr as $uid) $uidSet[$uid] = true;
+            }
+            unset($row);
+
+            // 协同人ID -> 用户名
+            $adminMap = [];
+            if (!empty($uidSet)) {
+                $adminMap = Db::table('admin')
+                    ->whereIn('admin_id', array_keys($uidSet))
+                    ->column('username', 'admin_id');
+            }
+            foreach ($rows as &$row) {
+                $names = [];
+                foreach ($row['_joint_ids'] as $uid) {
+                    $names[] = $adminMap[$uid] ?? (string)$uid;
+                }
+                $row['joint_person_names'] = $names ? implode('、', $names) : '';
+                unset($row['_joint_ids']);
+            }
+            unset($row);
+
+            return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
+        }
+
+        // 页面渲染所需下拉数据
+        $khRankList = Db::table('crm_client_rank')->select();
+        $inquiryList  = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
+        $khStatusList = Db::table('crm_client_status')->select();
+        $xsSourceList = Db::table('crm_clues_source')->select();
+        $yyList = $this->getYyList();
+        $this->assign('_yyList', json_encode($yyList['_yyList']));
+        $this->assign('khRankList', $khRankList);
+        $this->assign('inquiryList', $inquiryList);
+        $this->assign('xsSourceList', $xsSourceList);  //线索/客户来源
+
+
+        
+
+        return $this->fetch('checkclient/index');
+    }
 
 
 

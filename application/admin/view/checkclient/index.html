@@ -1,0 +1,2315 @@
+{include file="common/head"/}
+<link rel="stylesheet" href="/static/admin/css/select.css" media="all">
+<style>
+    /* 个人客户列表页面样式优化 - 撑满页面 */
+    body {
+        background: #f5f7fa !important;
+    }
+    
+    .personclient-list-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #f5f7fa;
+        overflow: auto;
+    }
+    
+    .filtrate-warp {
+        margin-bottom: 10px;
+    }
+
+    .filtrate-warp .title {
+        padding: 5px 12px 7px 12px;
+        font-size: 14px;
+        font-weight: normal;
+        text-align: left;
+        cursor: pointer;
+        width: 90px;
+        background-color: transparent !important;
+        color: #333 !important;
+    }
+
+    .filtrate-warp .title:hover {
+        color: #4285f4;
+    }
+
+    .filtrate-warp .flag {
+        padding: 6px 12px 6px 12px;
+        cursor: pointer;
+    }
+
+    .filtrate-warp .flag:hover {
+        color: #4285f4;
+    }
+
+    .filtrate-warp .layui-badge:hover {
+        color: white !important;
+    }
+    
+    /* 查询区域样式优化 */
+    .wukong-search-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 20px;
+        margin-bottom: 20px;
+        display: block !important;
+        visibility: visible !important;
+    }
+    
+    .wukong-search-card .layui-form {
+        display: flex !important;
+    }
+    .layui-table-view .layui-table td .layui-btn-xs{
+        color: #fff !important;
+    }
+    .wukong-search-card .layui-form-item {
+        margin-bottom: 15px;
+        display: block !important;
+    }
+    .layui-table-view .layui-table td, .layui-table-view .layui-table th{
+        background-color: #fff !important;
+    }
+    .wukong-search-card .layui-form-label {
+        width: 100px;
+        color: #333;
+        font-weight: 500;
+        background-color: transparent !important;
+        display: inline-block !important;
+    }
+    
+    .wukong-search-card .layui-inline {
+        display: inline-block !important;
+        margin-right: 15px;
+        margin-bottom: 15px;
+        vertical-align: top;
+    }
+    
+    .wukong-search-card .layui-input-inline {
+        display: inline-block !important;
+    }
+    
+    .wukong-search-card .layui-input,
+    .wukong-search-card .layui-select {
+        border-radius: 6px;
+        border: 1px solid #e0e0e0;
+        transition: all 0.3s ease;
+    }
+    
+    .wukong-search-card .layui-input:focus,
+    .wukong-search-card .layui-select:focus {
+        border-color: #4285f4;
+        box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.1);
+    }
+    
+    .wukong-search-card .layui-btn {
+        border-radius: 6px;
+        background: #4285f4;
+        border-color: #4285f4;
+        transition: all 0.3s ease;
+    }
+    
+    .wukong-search-card .layui-btn:hover {
+        background: #3367d6;
+        border-color: #3367d6;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+    }
+    
+    /* 表格容器样式 */
+    .personclient-table-wrapper {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        overflow: visible;
+        padding: 0;
+        height: calc(100vh - 280px);
+        display: flex;
+        flex-direction: column;
+    }
+    
+     /* LayUI 表格视图撑满 */
+     .layui-table-view {
+         flex: 1;
+         display: flex;
+         flex-direction: column;
+         height: 100%;
+         border: none !important;
+         overflow: visible !important;
+         position: relative;
+     }
+     
+     .layui-table-box {
+         overflow-x: auto !important;
+         overflow-y: auto !important;
+         width: 100%;
+         flex: 1;
+     }
+     
+     .layui-table-main {
+         overflow-x: auto !important;
+         overflow-y: auto !important;
+         width: 100%;
+     }
+     
+     .layui-table-body {
+         overflow-x: auto !important;
+         overflow-y: auto !important;
+         width: 100%;
+     }
+     
+     /* ✅表格宽度严格按列宽总和，不强制撑满 */
+     .layui-table {
+        width: max-content !important;
+        min-width: 0 !important;
+        table-layout: fixed !important;
+    }
+     
+    /* ✅ 默认：所有列单行显示 + 省略号（利于拖拽列宽） */
+    .layui-table-view .layui-table-cell{
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+     
+
+    /* ✅ 仅这两列：最多两行，多的省略 */
+    .layui-table-view td[data-field="product_name"] .layui-table-cell,
+    .layui-table-view td[data-field="last_up_records"] .layui-table-cell{
+        white-space: normal !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;      /* 最多 2 行 */
+        -webkit-box-orient: vertical;
+        word-break: break-word !important;
+    }
+
+     /* 表头单元格 */
+     .layui-table th {
+         white-space: nowrap !important;
+     }
+    
+    /* 确保固定列在横向滚动时正常显示 */
+    .layui-table-fixed-l,
+    .layui-table-fixed-r {
+        z-index: 999 !important;
+    }
+    
+    /* LayUI 表格工具栏样式优化 */
+    .layui-table-tool {
+        background: #fff !important;
+        padding: 16px 20px !important;
+        border-bottom: 1px solid #e0e0e0 !important;
+        margin: 0 !important;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .layui-table-tool .layui-btn {
+        border-radius: 6px !important;
+        transition: all 0.3s ease !important;
+        vertical-align: middle !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px;
+    }
+    
+    .layui-table-tool .layui-btn-primary {
+        background: #4285f4 !important;
+        border-color: #4285f4 !important;
+        color: #fff !important;
+    }
+    
+    .layui-table-tool .layui-btn-primary:hover {
+        background: #3367d6 !important;
+        border-color: #3367d6 !important;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+    }
+    
+    .layui-table-tool .layui-btn-normal {
+        background: #34a853 !important;
+        border-color: #34a853 !important;
+        color: #fff !important;
+    }
+    
+    .layui-table-tool .layui-btn-normal:hover {
+        background: #2d8f47 !important;
+        border-color: #2d8f47 !important;
+    }
+    
+    .layui-table-tool .layui-btn-danger {
+        background: #ea4335 !important;
+        border-color: #ea4335 !important;
+        color: #fff !important;
+    }
+    
+    .layui-table-tool .layui-btn-danger:hover {
+        background: #d33b2c !important;
+        border-color: #d33b2c !important;
+    }
+    
+    /* 操作按钮样式优化 */
+    .layui-table-view .layui-table td {
+        vertical-align: middle !important;
+    }
+    
+    .layui-table-view .layui-table td .layui-btn-xs {
+        border-radius: 4px !important;
+        padding: 4px 12px !important;
+        font-size: 12px !important;
+        transition: all 0.3s ease !important;
+        margin: 0 4px !important;
+        vertical-align: middle !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px;
+        line-height: 1.5 !important;
+    }
+    
+    .layui-table-view .layui-table td .layui-btn-xs:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* 操作列图标按钮紧凑样式（只影响操作列的图标按钮） */
+    .layui-table-view .layui-table td .action-icon-btn {
+        padding: 4px 6px !important;
+        min-width: 30px !important;
+        justify-content: center !important;
+        gap: 0 !important;
+    }
+
+    /* ✅只针对“检查客户”操作列：带文字的两个按钮（全部记录/转移） */
+    .layui-table-view .layui-table td .action-icon-btn.action-text-btn {
+        padding: 4px 10px !important;
+        min-width: 78px !important;
+        width: auto !important;
+        gap: 6px !important;
+        justify-content: center !important;
+    }
+    .layui-table-view .layui-table td .action-icon-btn.action-text-btn .btn-text {
+        display: inline-block;
+        line-height: 1;
+        white-space: nowrap;
+    }
+    
+    /* 操作列单元格保持一行显示（针对固定列） */
+    .layui-table-fixed-r .layui-table td {
+        white-space: nowrap !important;
+    }
+    
+    .layui-table-view .layui-table td .layui-btn-primary {
+        background: #4285f4 !important;
+        border-color: #4285f4 !important;
+        color: #fff !important;
+    }
+    
+    .layui-table-view .layui-table td .layui-btn-primary:hover {
+        background: #3367d6 !important;
+        border-color: #3367d6 !important;
+    }
+    
+    /* 客户名称链接样式 */
+    .layui-table-view .layui-table td a {
+        color: #4285f4 !important;
+        text-decoration: none;
+        transition: all 0.3s ease;
+    }
+    
+    .layui-table-view .layui-table td a:hover {
+        color: #3367d6 !important;
+        text-decoration: underline;
+    }
+    
+    /* 分页栏样式 */
+    .layui-table-page {
+        flex-shrink: 0;
+        background: #fff !important;
+        border-top: 1px solid #e0e0e0 !important;
+        padding: 12px 20px !important;
+    }
+    
+    /* 固定列白色背景 */
+    .layui-table-fixed-l {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-l .layui-table {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-l .layui-table thead {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-l .layui-table tbody {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-l .layui-table tbody tr {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-l .layui-table tbody tr:hover {
+        background: #f8f9fa !important;
+    }
+    
+    .layui-table-fixed-l .layui-table-cell {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-r {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-r .layui-table {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-r .layui-table thead {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-r .layui-table tbody {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-r .layui-table tbody tr {
+        background: #fff !important;
+    }
+    
+    .layui-table-fixed-r .layui-table tbody tr:hover {
+        background: #f8f9fa !important;
+    }
+    
+    .layui-table-fixed-r .layui-table-cell {
+        background: #fff !important;
+    }
+    
+    /* ✅ 确保固定列行高可动态调整（不写死高度） */
+    .layui-table-fixed-l tbody tr,
+    .layui-table-fixed-r tbody tr {
+        height: auto !important;
+        min-height: auto !important;
+    }
+    
+    .layui-table-fixed-l tbody td,
+    .layui-table-fixed-r tbody td {
+        height: auto !important;
+        vertical-align: middle !important;
+    }
+    
+    /* ===============================
+       【新增】A) CSS：让 fixed 操作列单元格"可被拉伸并居中"
+       =============================== */
+    /* 让 fixed 右侧每个 td 内部 .layui-table-cell 高度可以 100% 撑满，并用 flex 垂直居中 */
+    .layui-table-fixed-r td .layui-table-cell {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-wrap: wrap !important; /* 允许按钮换行（如果空间不足） */
+        gap: 4px !important; /* 按钮间距 */
+        padding: 4px 8px !important; /* 保留适当 padding，确保按钮不贴边 */
+        box-sizing: border-box !important;
+    }
+    
+    /* 左侧固定列也做同样处理（如果存在） */
+    .layui-table-fixed-l td .layui-table-cell {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-wrap: wrap !important;
+        gap: 4px !important;
+        padding: 4px 8px !important;
+        box-sizing: border-box !important;
+    }
+    
+    /* 操作列按钮容器：不允许把高度"撑坏"或"缩小"，确保按钮容器不改变行高，只负责居中 */
+    .layui-table-fixed-r td .layui-table-cell .layui-btn-xs,
+    .layui-table-fixed-l td .layui-table-cell .layui-btn-xs {
+        height: 26px !important; /* 保持按钮紧凑高度，不改变行高 */
+        line-height: 26px !important;
+        margin: 0 !important; /* 使用 gap 替代 margin，避免间距问题 */
+        flex-shrink: 0 !important; /* 不允许按钮被压缩 */
+    }
+    
+    /* 确保 fixed 列的 td 高度也能被拉伸 */
+    .layui-table-fixed-r tbody td,
+    .layui-table-fixed-l tbody td {
+        height: 100% !important;
+        box-sizing: border-box !important;
+    }
+    
+    /* 跟进弹窗样式 */
+    .follow-container {
+        padding: 20px;
+        background: #fff;
+    }
+    
+    .follow-header {
+        border-bottom: 2px solid #4285f4;
+        padding-bottom: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .follow-header h3 {
+        margin: 0;
+        color: #333;
+        font-size: 18px;
+        font-weight: 600;
+    }
+    
+    .follow-content {
+        display: flex;
+        gap: 30px;
+    }
+    
+    .follow-info {
+        flex: 1;
+        padding-right: 20px;
+        border-right: 1px solid #e0e0e0;
+    }
+    
+    .follow-history {
+        flex: 1;
+        padding-left: 20px;
+    }
+    
+    .follow-history h4 {
+        margin: 0 0 15px 0;
+        color: #333;
+        font-size: 16px;
+        font-weight: 600;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .info-item {
+        margin-bottom: 15px;
+        padding: 8px 0;
+        border-bottom: 1px solid #f5f5f5;
+    }
+    
+    .info-item:last-child {
+        border-bottom: none;
+    }
+    
+    .info-label {
+        font-weight: 600;
+        display: inline-block;
+        width: 100px;
+        color: #666;
+        font-size: 14px;
+    }
+    
+    .info-item span:not(.info-label) {
+        color: #333;
+        font-size: 14px;
+    }
+    
+    .timeline-item {
+        margin-bottom: 20px;
+        padding: 12px;
+        background: #f8f9fa;
+        border-radius: 6px;
+        border-left: 3px solid #4285f4;
+    }
+    
+    .timeline-title {
+        color: #4285f4;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    
+    .timeline-content {
+        margin-left: 0;
+        color: #333;
+        font-size: 14px;
+        line-height: 1.6;
+    }
+    
+    .timeline-content strong {
+        color: #4285f4;
+        margin-right: 5px;
+    }
+    
+    #follow-history-list {
+        max-height: 300px;
+        overflow-y: auto;
+        padding-right: 10px;
+    }
+    
+    #follow-history-list::-webkit-scrollbar {
+        width: 6px;
+    }
+    
+    #follow-history-list::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 3px;
+    }
+    
+    #follow-history-list::-webkit-scrollbar-thumb {
+        background: #4285f4;
+        border-radius: 3px;
+    }
+    
+    #follow-history-list::-webkit-scrollbar-thumb:hover {
+        background: #3367d6;
+    }
+    
+    #follow-last-record {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 10px;
+        font-size: 14px;
+        line-height: 1.6;
+        resize: none;
+    }
+    
+    #reply_msg {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 10px;
+        font-size: 14px;
+        line-height: 1.6;
+        transition: all 0.3s ease;
+    }
+    
+    #reply_msg:focus {
+        border-color: #4285f4;
+        box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.1);
+        outline: none;
+    }
+    
+    #submit-comment {
+        background: #4285f4;
+        border-color: #4285f4;
+        color: #fff;
+        border-radius: 6px;
+        padding: 8px 24px;
+        font-size: 14px;
+        transition: all 0.3s ease;
+    }
+    
+    #submit-comment:hover {
+        background: #3367d6;
+        border-color: #3367d6;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+    }
+    
+    .layui-form-item {
+        margin-bottom: 15px;
+    }
+    
+    .layui-form-item:last-child {
+        margin-bottom: 0;
+        text-align: right;
+    }
+    
+    @media (max-width: 992px) {
+        .follow-content {
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .follow-info {
+            padding-right: 0;
+            border-right: none;
+            border-bottom: 1px solid #e0e0e0;
+            padding-bottom: 20px;
+        }
+        
+        .follow-history {
+            padding-left: 0;
+        }
+    }
+    .layui-table-view .layui-table td .yincang{
+        display: none !important;
+    }
+    .avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        margin-right: 5px;
+        vertical-align: middle;
+    }
+    
+    /* 写跟进弹窗标题栏样式 */
+    .follow-title-bar {
+        position: relative;
+        padding-right: 40px;
+        line-height: 40px;
+        font-weight: 600;
+    }
+    
+    .follow-title-close {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        cursor: pointer;
+        font-size: 18px;
+        color: #999;
+    }
+    
+    .follow-title-close:hover {
+        color: #000;
+    }
+    
+    /* 自定义遮罩层样式 */
+    .follow-mask {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, .3);
+        display: none;
+    }
+    
+    /* ===============================
+       ✅ 方案A：表格按"列宽总和"渲染，不分摊空白
+       =============================== */
+    .layui-table-view .layui-table-header table,
+    .layui-table-view .layui-table-body table{
+        width: max-content !important;  /* 表格宽度由列宽总和决定 */
+        min-width: 0 !important;        /* 取消 min-width:100% 导致的强制撑满 */
+        table-layout: fixed !important; /* 避免空白被分摊到列上 */
+    }
+
+    /* 横向滚动由外层负责（你本来就有，这里再加固一次） */
+    .layui-table-box,
+    .layui-table-main,
+    .layui-table-body{
+        overflow-x: auto !important;
+    }
+
+    /* 【新增】跟进筛选联合提示样式 */
+    .follow-filter-wrap{
+        display: inline-block;
+        vertical-align: top;
+    }
+    .follow-filter-tip{
+        margin-top: 6px;
+        padding-left: 100px; /* 对齐 label 宽度（你当前 label 宽 100px） */
+        font-size: 12px;
+        color: #999;
+        line-height: 18px;
+    }
+    .follow-filter-tip .layui-icon{
+        font-size: 12px;
+        margin-right: 4px;
+        color: #ff9800;
+    }
+
+    /* ===============================
+       ✅ 表格行高：紧凑模式（我的客户）
+       说明：只影响 layui table，不影响页面其它区域
+       =============================== */
+
+    /* 1) 表头/单元格整体 padding 变小 */
+    .layui-table-view .layui-table th,
+    .layui-table-view .layui-table td{
+        padding: 4px 0 !important;   /* 原来行高偏高，先把上下 padding 收紧 */
+    }
+
+    /* 2) 单元格内容区域：统一紧凑高度与行高 */
+    .layui-table-view .layui-table-cell{
+        padding: 4px 8px !important;     /* 控制"内容区"上下左右留白 */
+        line-height: 18px !important;    /* 文字更紧凑但仍清晰 */
+        min-height: 32px !important;     /* 让大多数行变矮（可微调 30~36） */
+        box-sizing: border-box !important;
+    }
+
+    /* 3) 两行省略列：保证两行仍可读（不让它被压成一团） */
+    .layui-table-view td[data-field="product_name"] .layui-table-cell,
+    .layui-table-view td[data-field="last_up_records"] .layui-table-cell{
+        line-height: 17px !important;
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        /* 两行内容最小高度：17*2 + padding(8) ≈ 42，可按体验微调 */
+        min-height: 42px !important;
+    }
+
+    /* 4) 操作列：按钮整体同步紧凑 + 垂直居中 */
+    .layui-table-view .layui-table td .layui-btn-xs{
+        height: 26px !important;         /* 按钮高度更矮 */
+        line-height: 26px !important;
+        padding: 0 8px !important;       /* 比你原来的 4px 12px 更紧凑 */
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    /* 5) 只影响你这种"图标按钮"（action-icon-btn）让它更方更紧凑 */
+    .layui-table-view .layui-table td .action-icon-btn{
+        width: 28px !important;
+        min-width: 28px !important;
+        padding: 0 !important;
+    }
+
+    /* 6) 操作列单元格整体垂直居中（避免行高变化后按钮漂） */
+    .layui-table-view .layui-table td{
+        vertical-align: middle !important;
+    }
+
+    /* 7) 确保固定列也应用相同的紧凑样式 */
+    .layui-table-fixed-l .layui-table-cell,
+    .layui-table-fixed-r .layui-table-cell{
+        padding: 4px 8px !important;
+        line-height: 18px !important;
+        min-height: 32px !important;
+        box-sizing: border-box !important;
+    }
+
+    /* 8) 固定列中的两行省略列也要保证可读性 */
+    .layui-table-fixed-l td[data-field="product_name"] .layui-table-cell,
+    .layui-table-fixed-l td[data-field="last_up_records"] .layui-table-cell,
+    .layui-table-fixed-r td[data-field="product_name"] .layui-table-cell,
+    .layui-table-fixed-r td[data-field="last_up_records"] .layui-table-cell{
+        line-height: 17px !important;
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        min-height: 42px !important;
+    }
+</style>
+<div class="personclient-list-container">
+    <!-- 查询区域 -->
+    <div class="wukong-search-card">
+        <div class="layui-form" lay-filter="LAY-app-contlist-search">
+
+                <div class="layui-form-item" style="text-align:left;padding-left:20px;">
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">客户级别：</label>
+                        <div class="layui-input-inline">
+                            <select name="kh_rank" id="kh_rank">
+                                <option value="">请选择客户级别</option>
+                                {volist name='khRankList' id='vo'}
+                                <!-- 这里 value 用 ID，后端才能按 ID 等值筛选 -->
+                                <option value="{$vo.id}">{$vo.rank_name}</option>
+                                {/volist}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">所属渠道：</label>
+                        <div class="layui-input-inline">
+                            <select name="inquiry_id" id="inquiry_id" lay-filter="inquiry_id">
+                                <option value="">请选择所属渠道</option>
+                                {volist name='inquiryList' id='vo'}
+                                <!-- 使用 inquiry_id 作为选项值，显示 inquiry_name -->
+                                <option value="{$vo.id}">{$vo.inquiry_name}</option>
+                                {/volist}
+                            </select>
+                        </div>
+                    </div>
+
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">手机：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="phone" name="phone" placeholder="请输入手机号码" class="layui-input">
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">客户名称：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="kh_name" name="kh_name" placeholder="请输入客户名称" class="layui-input">
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">运营人员：</label>
+                        <div class="layui-input-4">
+                            <input type="text" id="oper_user_input" name="oper_user" placeholder="请选择运营人员" class="layui-input">
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">运营端口：</label>
+                        <div class="layui-input-inline">
+                            <select name="port_id" id="port_id" lay-search>
+                                <option value="">请先选择所属渠道</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
+                        <label class="layui-form-label">日期查询：</label>
+                        <div class="layui-input-inline">
+                            <select id="dateRange" lay-filter="dateRange" name="timebucket" class="layui-select">
+                                <option value="" selected>自定义</option>
+                                <option value="today">今天</option>
+                                <option value="yesterday">昨天</option>
+                                <option value="week">本周</option>
+                                <option value="last week">上周</option>
+                                <option value="month">本月</option>
+                                <option value="last month">上月</option>
+                                <option value="year">今年</option>
+                                <option value="last year">去年</option>
+                                <option value="-2 hours">两个小时内</option>
+                            </select>
+                        </div>
+                        <div class="layui-input-inline">
+                            <input type="text" class="layui-input" id="at_time" name="at_time" placeholder="选择日期范围">
+                        </div>
+                    </div>
+
+                    <!-- 【新增-跟进筛选】最新跟进时间筛选 -->
+                    <div class="follow-filter-wrap"><!-- 【新增】联合条件容器 -->
+
+                        <div class="layui-inline">
+                            <label class="layui-form-label">跟进类型：</label>
+                            <div class="layui-input-inline">
+                                <select name="follow_filter" id="follow_filter">
+                                    <!-- 【修改】默认提示：强调需配合时间 -->
+                                    <option value="">不限（需配合跟进时间）</option>
+                                    <option value="recent_follow">最近有跟进</option>
+                                    <option value="recent_no_follow">最近无跟进（反选）</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="layui-inline">
+                            <label class="layui-form-label">跟进时间：</label>
+                            <div class="layui-input-inline">
+                                <!-- 【修改】placeholder：强调需选择类型 -->
+                                <input type="number" name="follow_days" id="follow_days" class="layui-input" placeholder="如 2（天）（需选择跟进类型）">
+                            </div>
+                        </div>
+
+                        <!-- 【新增】字段下方提示文案（方案一） -->
+                        <div class="follow-filter-tip">
+                            <i class="layui-icon layui-icon-tips"></i>
+                            跟进类型 与 跟进时间 需同时选择才会生效
+                        </div>
+
+                    </div>
+
+                </div>
+
+                <div class="layui-inline" style="float:right;padding-bottom:15px">
+                    <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
+                        <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align:sub;"></i>查询数据
+                    </button>
+                </div>
+
+            </div>
+        </div>
+        <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+    </div>
+    
+  
+</div>
+  <!-- 表格区域 -->
+  <!-- <div class="personclient-list-container">
+        
+    <div class="personclient-table-wrapper">
+      
+    </div>
+    </div> -->
+<!-- 跟进弹窗 -->
+<div id="follow-dialog" style="display: none;">
+    <div class="follow-container">
+        <div class="follow-header">
+            <h3>客户跟进</h3>
+        </div>
+        <div class="follow-content">
+            <div class="follow-info">
+                <div class="info-item">
+                    <span class="info-label">客户ID:</span>
+                    <span id="follow-client-id"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">客户名称:</span>
+                    <span id="follow-client-name"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">联系人:</span>
+                    <span id="follow-contact"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">主电话:</span>
+                    <span id="follow-main-phone"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">辅助电话:</span>
+                    <span id="follow-aux-phone"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">地区:</span>
+                    <span id="follow-area"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">所属渠道:</span>
+                    <span id="follow-source"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">运营端口:</span>
+                    <span id="follow-source-port"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">客户级别:</span>
+                    <span id="follow-rank"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">负责人:</span>
+                    <span id="follow-user"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">协同人:</span>
+                    <span id="follow-joint-person"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">创建时间:</span>
+                    <span id="follow-create-time"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">最后跟进:</span>
+                    <span id="follow-last-time"></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">跟进记录:</span>
+                    <textarea id="follow-last-record" class="layui-textarea" readonly style="height: 80px;"></textarea>
+                </div>
+            </div>
+            <div class="follow-history">
+                <h4>跟进历史</h4>
+                <div id="follow-history-list" style="max-height: 300px; overflow-y: auto;">
+                    <!-- 跟进历史将通过JS动态加载 -->
+                </div>
+                <div style="margin-top: 20px;">
+                    <h4>添加跟进记录</h4>
+                    <div class="layui-form-item layui-form-text">
+                        <textarea name="reply_msg" id="reply_msg" required lay-verify="required"
+                            placeholder="请输入跟进内容" class="layui-textarea" style="height: 100px;"></textarea>
+                    </div>
+                    <div class="layui-form-item">
+                        <input type="hidden" name="leads_id" id="leads_id" value="">
+                        <button type="button" class="layui-btn" id="submit-comment">提交记录</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- 自定义遮罩层（替代 layui 的 shade） -->
+<div id="follow-mask" class="follow-mask" style="display:none;"></div>
+
+<!-- ✅新增：全部跟进弹窗 -->
+<div id="all-follow-dialog" style="display: none;">
+    <div class="follow-container">
+        <div class="follow-header">
+            <h3>全部跟进记录</h3>
+        </div>
+        <!-- 客户基本信息 -->
+        <div style="padding: 15px 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 20px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+                <div class="info-item" style="margin-bottom: 0;">
+                    <span class="info-label">客户名称:</span>
+                    <span id="af-kh-name"></span>
+                </div>
+                <div class="info-item" style="margin-bottom: 0;">
+                    <span class="info-label">产品名称:</span>
+                    <span id="af-product-name"></span>
+                </div>
+                <div class="info-item" style="margin-bottom: 0;">
+                    <span class="info-label">主电话:</span>
+                    <span id="af-main-phone"></span>
+                </div>
+                <div class="info-item" style="margin-bottom: 0;">
+                    <span class="info-label">辅助电话:</span>
+                    <span id="af-aux-phone"></span>
+                </div>
+            </div>
+        </div>
+        <!-- 筛选区域 -->
+        <div class="layui-form" style="margin-bottom: 20px;">
+            <div class="layui-form-item" style="margin-bottom: 15px;">
+                <div class="layui-inline">
+                    <label class="layui-form-label" style="width: 120px;">关键字搜索:</label>
+                    <div class="layui-input-inline" style="width: 200px;">
+                        <input type="text" id="af-keyword" name="keyword" placeholder="输入跟进内容关键字" class="layui-input">
+                    </div>
+                </div>
+                <div class="layui-inline">
+                    <label class="layui-form-label" style="width: 100px;">时间范围:</label>
+                    <div class="layui-input-inline" style="width: 300px;">
+                        <input type="text" id="af-date-range" name="date_range" placeholder="选择时间范围" class="layui-input">
+                    </div>
+                </div>
+                <div class="layui-inline">
+                    <button type="button" class="layui-btn" id="af-search-btn"><i class="layui-icon">&#xe615;</i>查询</button>
+                    <button type="button" class="layui-btn layui-btn-primary" id="af-reset-btn"><i class="layui-icon">&#xe669;</i>重置</button>
+                </div>
+            </div>
+        </div>
+        <!-- 表格区域 -->
+        <table id="af-table" lay-filter="af-table"></table>
+    </div>
+</div>
+
+<!-- 操作列 -->
+<script type="text/html" id="action">
+    <!-- <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a> -->
+    <!-- ✅全部记录：图标+文字，保留 all-follow-btn 点击逻辑 -->
+    <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn action-text-btn all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="全部记录" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i><span class="btn-text">全部记录</span></a>
+    <!-- <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a> -->
+    <!-- ✅转移：图标+文字，保留 lay-event="alter" -->
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn action-text-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i><span class="btn-text">转移</span></a>
+    <!-- {if session('aid') eq 1}
+    <a class="layui-btn layui-btn-primary layui-btn-xs yincang" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>成交</a>
+    {/if} -->
+</script>
+
+<!-- 顶部工具栏 -->
+<script type="text/html" id="topBtn">
+    <!-- <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加客户</button> -->
+    <!-- <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="toAll" style="margin-right:10px"><i class="layui-icon">&#xe681;</i>导入客户</button> -->
+    <!-- <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="downloadTemplate">
+        <i class="layui-icon">&#xe601;</i>下载模板
+    </button> -->
+    <!-- <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="viewImportLog">
+        <i class="layui-icon">&#xe621;</i>导入日志
+    </button> -->
+    {if session('aid') eq 1}
+    <button type="button" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" id="moveGh" lay-event="moveGh"><i class="layui-icon">&#xe770;</i>移入公海</button>
+    {/if}
+    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="alterAll" lay-event="alterAll"><i class="layui-icon">&#xe60e;</i>转移客户</button>
+    {if session('aid') eq 1}
+    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="chengjiaoAll" lay-event="chengjiaoAll"><i class="layui-icon">&#xe63c;</i>客户成交</button>
+    <button type="button" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" id="delAlls" lay-event="delAlls"><i class="layui-icon">&#xe640;</i>选中删除</button>
+    {/if}
+</script>
+
+{include file="common/foot"/}
+<script>
+layui.use(['table','form','upload','util','laydate','layer'], function () {
+    var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery, upload = layui.upload, layer = layui.layer;
+    var followIndex = null; // 记住"写跟进弹窗"的 layer index
+    var isMobile = $(window).width() < 768;
+    var currentUsername = "{$Think.session.username}" || "default";
+    var tableId = "table-list";
+    // 生成 page_key：使用 location.pathname（不要 replace 下划线，否则和数据库存的不一致）
+    var pageKey = location.pathname;
+    // localStorage 的 key（用于兜底）
+    var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
+
+     // 列定义
+     var cols = [[
+         { type: 'checkbox',  width: 50 },
+         { field: 'id', title: 'ID',  width: 120, fixed: true, hide: true },
+         { field: 'kh_name', title: '客户名称',  width: 120, sort: true, templet: function(res){
+             return "<a href='{:url('dialogue')}?id=" + res.id + "'>" + (res.kh_name || '') + "</a>";
+         }},
+         { field: 'product_name', title: '产品名称',  width: 120 }, 
+         { field: 'main_phone', title: '主电话', width: 120 },
+         { field: 'last_up_records', title: '最新跟进记录', width: 120 },
+         { field: 'last_up_time', title: '最新跟进时间', width: 120 },
+         { field: 'aux_phone', title: '辅助电话', width: 120 },
+         { field: 'inquiry_name', title: '所属渠道', width: 120},     // 原"询盘来源"列
+         { field: 'port_name', title: '运营端口', width: 120 },       // 原"来源端口"列
+         { field: 'joint_person_names', title: '协同人', width: 120 },
+         { field: 'issuccess', title: '成交状态', width: 120, templet: function(res){ return res.issuccess == 1 ? '已成交' : '未成交'; } },
+         { field: 'pr_user', title: '负责人', width: 120 },
+         { field: 'at_time', title: '创建时间', width: 120, sort: true },
+         { field: 'ut_time', title: '更新于', width: 120, sort: true },
+         { field: 'original_creation_time', title: '原来创建时间', width: 120, hide: false,
+             templet: function(d){
+             var v = d.original_creation_time;
+             if (!v) return '';
+             // 如果是纯数字（秒级时间戳）
+             if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
+             // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
+             return v;
+             }
+         },
+         { field: 'original_modification_time', title: '原来修改时间', width: 120, hide: false,
+             templet: function(d){
+             var v = d.original_modification_time;
+             if (!v) return '';
+             // 如果是纯数字（秒级时间戳）
+             if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
+             // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
+             return v;
+             }
+         },
+         { fixed: 'right', title: '操作', width: isMobile ? 130 : 250, align: 'center', toolbar: '#action' }
+     ]];
+
+    /**
+     * ✅ 批量收窄默认列宽：不会覆盖数据库/本地记忆（记忆在 restoreColWidth 里优先级更高）
+     */
+    function shrinkDefaultWidths(colArr){
+        var map = {
+            kh_name: 120,
+            product_name: 160,
+            last_up_records: 200,
+            main_phone: 120,
+            aux_phone: 120,
+            last_up_time: 140,
+            at_time: 150,
+            ut_time: 150,
+            inquiry_name: 120,
+            port_name: 120,
+            joint_person_names: 120,
+            pr_user: 100,
+            issuccess: 90,
+            original_creation_time: 150,
+            original_modification_time: 150
+        };
+
+        colArr.forEach(function(c){
+            if(!c) return;
+            if(!c.field) return; // checkbox/操作列等
+            // 统一更窄的默认值
+            c.width = map[c.field] || 90;
+        });
+    }
+
+    /**
+     * 恢复列宽（在渲染前执行）
+     * 优先级：数据库 > localStorage > 默认值
+     * 如果数据库无数据/请求失败，仍然走 localStorage 兜底，确保表格能正常渲染
+     * 
+     * 验收方式：
+     * 1. 登录 A 用户，拖拽"产品名称"列宽到 300，刷新页面：列宽仍为 300
+     * 2. 换 B 用户登录：列宽不受影响（仍是默认或 B 自己的）
+     * 3. 数据表 crm_table_colwidth 能看到对应记录更新 updated_at
+     */
+    function restoreColWidth(colArr) {
+        var dbWidths = {}; // 存储从数据库读取的列宽
+        
+        // 先从数据库读取列宽
+        $.ajax({
+            url: "{:url('Client/getColWidths')}",
+            type: 'GET',
+            data: {
+                page_key: pageKey,
+                table_id: tableId
+            },
+            async: false, // 同步请求，确保在表格渲染前完成
+            success: function(res) {
+                if (res.code === 0 && res.data && Object.keys(res.data).length > 0) {
+                    dbWidths = res.data;
+                    console.log('✅ 从数据库恢复列宽:', dbWidths);
+                } else if (res.code === 401) {
+                    console.warn('⚠️ 未登录，无法从数据库恢复列宽');
+                }
+            },
+            error: function(xhr, status, error) {
+                // 如果请求失败，静默处理，继续使用 localStorage 兜底
+                console.warn('⚠️ 从数据库读取列宽失败，使用 localStorage 兜底:', error);
+            }
+        });
+
+        // 应用列宽：优先使用数据库，其次使用 localStorage
+        try {
+            var saved = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
+            
+            // ✅ 同步写回 localStorage：如果数据库有值，以数据库为准覆盖 localStorage（确保两边一致）
+            var finalWidths = saved; // 默认使用 localStorage
+            if (Object.keys(dbWidths).length > 0) {
+                finalWidths = Object.assign({}, saved, dbWidths); // 以数据库为准覆盖
+                localStorage.setItem(columnWidthKey, JSON.stringify(finalWidths));
+                console.log('✅ 列宽已同步到 localStorage:', finalWidths);
+            }
+            
+            colArr.forEach(function (c) {
+                // 只处理有 field 的列，checkbox/操作列也可以按需处理
+                if (c.field) {
+                    // 优先使用数据库中的列宽，否则使用 localStorage 中的列宽（作为兜底）
+                    if (finalWidths[c.field] && finalWidths[c.field] > 0) {
+                        c.width = finalWidths[c.field];
+                    }
+                }
+            });
+        } catch (e) {
+            console.warn('恢复列宽失败:', e);
+        }
+    }
+    
+    // 先设置更窄的默认宽度
+    shrinkDefaultWidths(cols[0]);
+    
+    // 再用数据库/本地记忆覆盖默认宽度（保持优先级：数据库 > localStorage > 默认）
+    restoreColWidth(cols[0]);
+
+    // 列表初始化（注意：根据你的实际路由改这里）
+    var tableIns = table.render({
+        elem: '#' + tableId,
+        id: tableId,
+        url: "{:url('perClilist')}",   // 若你的路由为 perCliList，请改成 perCliList
+        method: 'post',
+        toolbar: '#topBtn',
+        defaultToolbar: ['filter'],
+        page: true,
+        cols: cols,
+        limit: 8,
+        page: { limits: [5,8,10, 20, 50, 100, 200, 500] },
+        done: function(res, curr, count) {
+            // 绑定列宽拖拽保存监听（每次 done 都会执行，先 off 再 on 避免重复绑定）
+            bindResizeSave();
+            
+            // ===============================
+            // 【修改】同步固定列行高 - 升级版（解决 Layui fixed 列晚生成问题）
+            // ===============================
+            // ✅ 更稳：同步 3 次（下一帧 + 60ms + 180ms），每次都跑最新算法
+            requestAnimationFrame(function () {
+                syncFixedRowHeights();
+                // 再补一次：防止 fixed 列刚生成/图片刚加载导致高度再次变化
+                setTimeout(syncFixedRowHeights, 0);
+            });
+
+            setTimeout(function () {
+                syncFixedRowHeights();
+                setTimeout(syncFixedRowHeights, 0);
+            }, 60);
+
+            setTimeout(function () {
+                syncFixedRowHeights();
+                setTimeout(syncFixedRowHeights, 0);
+            }, 180);
+
+            
+            // ===============================
+            // 【新增】表格 body 滚动时触发行高同步（节流处理）
+            // ===============================
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if ($view.length) {
+                var $tableMain = $view.find('.layui-table-main');
+                if ($tableMain.length) {
+                    // 先解绑旧的监听，避免重复绑定
+                    $tableMain.off('scroll.syncRowHeight');
+                    // 绑定新的滚动监听（节流处理）
+                    var scrollSyncTimer = null;
+                    $tableMain.on('scroll.syncRowHeight', function() {
+                        if (scrollSyncTimer) {
+                            clearTimeout(scrollSyncTimer);
+                        }
+                        scrollSyncTimer = setTimeout(function() {
+                            syncFixedRowHeights();
+                        }, 100);
+                    });
+                }
+            }
+        }
+    });
+    
+ // 点击写跟进按钮打开弹窗
+    $(document).on('click', '.follow-btn, .client-link', function() {
+        var clientId = $(this).data('id');
+        openFollowDialog(clientId);
+    });
+
+    // ✅新增：全部跟进按钮点击事件
+    var allFollowIndex = null; // 记住"全部跟进弹窗"的 layer index
+    var afTableIns = null; // 全部跟进表格实例
+    var currentLeadsId = null; // 当前查看的客户ID
+
+    $(document).on('click', '.all-follow-btn', function() {
+        var clientId = $(this).data('id');
+        openAllFollowDialog(clientId);
+    });
+
+    // ✅新增：打开全部跟进弹窗
+    function openAllFollowDialog(clientId) {
+        currentLeadsId = clientId;
+        var loading = layer.load(1, {shade: 0});
+        
+        // 获取客户信息
+        $.ajax({
+            url: "{:url('Client/getClientDetailAndComments')}",
+            method: 'GET',
+            data: {id: clientId},
+            success: function(res) {
+                layer.close(loading);
+                if (res.code === 0) {
+                    var clientData = res.data.client;
+                    
+                    // 填充客户基本信息
+                    $('#af-kh-name').text(clientData.kh_name || '');
+                    $('#af-product-name').text(clientData.product_name || '暂无');
+                    $('#af-main-phone').text(clientData.main_phone || '暂无');
+                    $('#af-aux-phone').text(clientData.aux_phone || '暂无');
+                    
+                    // 如果上一次弹窗没关干净，先强制关闭
+                    if (allFollowIndex !== null) {
+                        layer.close(allFollowIndex);
+                        allFollowIndex = null;
+                    }
+                    
+                    // 显示弹窗
+                    allFollowIndex = layer.open({
+                        type: 1,
+                        title: '全部跟进 - ' + clientData.kh_name,
+                        area: ['90%', '80%'],
+                        content: $('#all-follow-dialog'),
+                        closeBtn: 1,
+                        shade: 0,
+                        shadeClose: false,
+                        key: true,
+                        anim: -1,
+                        success: function(layero, index) {
+                            $('#all-follow-dialog').show();
+                            
+                            // 让弹窗置顶
+                            layer.setTop(layero);
+                            
+                            // 显示自定义遮罩
+                            showFollowMaskUnderLayer(layero);
+                            
+                            // 接管右上角 X
+                            $(layero).find('.layui-layer-close').off('click.allfollow').on('click.allfollow', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                layer.close(index);
+                            });
+                            
+                            // ✅新增：初始化日期选择器
+                            laydate.render({
+                                elem: '#af-date-range',
+                                type: 'date',
+                                range: true,
+                                trigger: 'click'
+                            });
+                            
+                            // ✅新增：初始化表格（只在弹窗打开后渲染）
+                            initAllFollowTable(clientId);
+                        },
+                        end: function() {
+                            // 把 DOM 放回去
+                            $('#all-follow-dialog').hide().appendTo('body');
+                            
+                            // 移除自定义遮罩
+                            hideFollowMask();
+                            
+                            // 清理残留的 layui 遮罩
+                            $('.layui-layer-shade').remove();
+                            
+                            // 清空筛选条件
+                            $('#af-keyword').val('');
+                            $('#af-date-range').val('');
+                            
+                            // ✅清理表格实例和DOM
+                            if (afTableIns) {
+                                try {
+                                    var $table = $('#af-table');
+                                    if ($table.length && $table.next('.layui-table-view').length) {
+                                        $table.next('.layui-table-view').remove();
+                                    }
+                                } catch(e) {
+                                    console.warn('清理表格失败:', e);
+                                }
+                                afTableIns = null;
+                            }
+                            
+                            allFollowIndex = null;
+                            currentLeadsId = null;
+                        }
+                    });
+                } else {
+                    layer.msg(res.msg || '获取客户信息失败');
+                }
+            },
+            error: function() {
+                layer.close(loading);
+                layer.msg('网络错误，获取客户信息失败');
+            }
+        });
+    }
+
+    // ✅新增：初始化全部跟进表格
+    function initAllFollowTable(leadsId) {
+        // 如果表格已存在，先销毁（使用 setTimeout 确保 DOM 已准备好）
+        setTimeout(function() {
+            if (afTableIns) {
+                try {
+                    // 尝试销毁旧表格实例
+                    var $table = $('#af-table');
+                    if ($table.length && $table.next('.layui-table-view').length) {
+                        // 如果表格已渲染，先移除
+                        $table.next('.layui-table-view').remove();
+                    }
+                } catch(e) {
+                    console.warn('销毁旧表格失败:', e);
+                }
+                afTableIns = null;
+            }
+            
+            // 初始化表格
+            afTableIns = table.render({
+                elem: '#af-table',
+                id: 'af-table',
+                url: "{:url('Client/getClientCommentsPage')}",
+                method: 'post',
+                page: true,
+                limit: 10,
+                limits: [5,10, 20, 50, 100, 200, 500],
+                cols: [[
+                    {field: 'create_date', title: '跟进时间', width: 180, sort: true},
+                    {field: 'username', title: '跟进人', width: 120},
+                    {field: 'reply_msg', title: '跟进内容', minWidth: 300}
+                ]],
+                where: {
+                    leads_id: leadsId,
+                    keyword: '',
+                    start_date: '',
+                    end_date: ''
+                },
+                done: function(res, curr, count) {
+                    // 表格渲染完成
+                }
+            });
+        }, 100);
+    }
+
+    // ✅新增：全部跟进搜索按钮（使用事件委托）
+    $(document).on('click', '#af-search-btn', function() {
+        if (!afTableIns || !currentLeadsId) {
+            layer.msg('表格未初始化', {icon: 0});
+            return;
+        }
+        
+        var keyword = $('#af-keyword').val().trim();
+        var dateRange = $('#af-date-range').val().trim();
+        var startDate = '';
+        var endDate = '';
+        
+        // 解析时间范围
+        if (dateRange) {
+            var parts = dateRange.split(' - ');
+            if (parts.length === 2) {
+                startDate = parts[0].trim();
+                endDate = parts[1].trim();
+            }
+        }
+        
+        // 重新加载表格
+        table.reload('af-table', {
+            page: {curr: 1},
+            where: {
+                leads_id: currentLeadsId,
+                keyword: keyword,
+                start_date: startDate,
+                end_date: endDate
+            }
+        });
+    });
+
+    // ✅新增：全部跟进重置按钮（使用事件委托）
+    $(document).on('click', '#af-reset-btn', function() {
+        if (!afTableIns || !currentLeadsId) {
+            layer.msg('表格未初始化', {icon: 0});
+            return;
+        }
+        
+        // 清空筛选条件
+        $('#af-keyword').val('');
+        $('#af-date-range').val('');
+        
+        // 重新加载表格
+        table.reload('af-table', {
+            page: {curr: 1},
+            where: {
+                leads_id: currentLeadsId,
+                keyword: '',
+                start_date: '',
+                end_date: ''
+            }
+        });
+    });
+
+    // 自定义遮罩层工具函数
+    function ensureFollowMask() {
+        var $mask = $('#follow-mask');
+        if (!$mask.length) {
+            $('body').append('<div id="follow-mask" class="follow-mask" style="display:none;"></div>');
+            $mask = $('#follow-mask');
+        }
+        return $mask;
+    }
+
+    // 把遮罩放到弹层下面（关键：必须在 layer.setTop 之后再调用一次）
+    function showFollowMaskUnderLayer(layero) {
+        var $mask = ensureFollowMask();
+        var z = parseInt($(layero).css('z-index'), 10);
+        if (!isNaN(z)) {
+            $mask.css('z-index', z - 1);
+        } else {
+            $mask.css('z-index', 19999999);
+        }
+        $mask.show();
+    }
+
+    function hideFollowMask() {
+        $('#follow-mask').hide();
+    }
+
+    /**
+     * ✅ 同步主表与固定列（右/左）的每一行高度 —— 像素级对齐版
+     * 核心改进：
+     * 1) 同步前先 reset 高度（否则测量会被上一次写入的高度污染）
+     * 2) 统一写入：主表/固定列 的 tr + td + .layui-table-cell 全部写同一个高度
+     * 3) 取三者最大高度作为最终高度（主表、fixed-r、fixed-l）
+     */
+     function syncFixedRowHeights() {
+            try {
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if (!$view.length) return;
+
+                var $mainRows = $view.find('.layui-table-main tbody tr');
+                if (!$mainRows.length) return;
+
+                var $fixRRows = $view.find('.layui-table-fixed-r tbody tr');
+                var $fixLRows = $view.find('.layui-table-fixed-l tbody tr');
+
+                // ✅ 写入 height:xxxpx!important
+                function setHImportant(el, h) {
+                    if (!el) return;
+                    el.style.setProperty('height', h + 'px', 'important');
+                }
+
+                // ✅ 清空 height 的 important（恢复测量用）
+                function resetHImportant(el) {
+                    if (!el) return;
+                    el.style.removeProperty('height');
+                }
+
+                // =========================
+                // ① 同步前：reset（避免上一次写入污染测量）
+                // =========================
+                $mainRows.each(function () {
+                    resetHImportant(this);
+                    $(this).find('td').each(function(){ resetHImportant(this); });
+                    $(this).find('td .layui-table-cell').each(function(){ resetHImportant(this); });
+                });
+
+                if ($fixRRows.length) {
+                    $fixRRows.each(function () {
+                        resetHImportant(this);
+                        $(this).find('td').each(function(){ resetHImportant(this); });
+                        $(this).find('td .layui-table-cell').each(function(){ resetHImportant(this); });
+                    });
+                }
+
+                if ($fixLRows.length) {
+                    $fixLRows.each(function () {
+                        resetHImportant(this);
+                        $(this).find('td').each(function(){ resetHImportant(this); });
+                        $(this).find('td .layui-table-cell').each(function(){ resetHImportant(this); });
+                    });
+                }
+
+                // =========================
+                // ② 逐行计算最大高度 -> 写入 important
+                // =========================
+                $mainRows.each(function (index) {
+                    var mainRow = this;
+                    var fixRRow = ($fixRRows.length > index) ? $fixRRows.get(index) : null;
+                    var fixLRow = ($fixLRows.length > index) ? $fixLRows.get(index) : null;
+
+                    var hMain = $(mainRow).outerHeight() || 0;
+                    var hR = fixRRow ? ($(fixRRow).outerHeight() || 0) : 0;
+                    var hL = fixLRow ? ($(fixLRow).outerHeight() || 0) : 0;
+
+                    var h = Math.max(hMain, hR, hL);
+                    if (h <= 0) return;
+
+                    // 主表
+                    setHImportant(mainRow, h);
+                    $(mainRow).find('td').each(function(){ setHImportant(this, h); });
+                    $(mainRow).find('td .layui-table-cell').each(function(){ setHImportant(this, h); });
+
+                    // 右 fixed
+                    if (fixRRow) {
+                        setHImportant(fixRRow, h);
+                        $(fixRRow).find('td').each(function(){ setHImportant(this, h); });
+                        $(fixRRow).find('td .layui-table-cell').each(function(){ setHImportant(this, h); });
+                    }
+
+                    // 左 fixed
+                    if (fixLRow) {
+                        setHImportant(fixLRow, h);
+                        $(fixLRow).find('td').each(function(){ setHImportant(this, h); });
+                        $(fixLRow).find('td .layui-table-cell').each(function(){ setHImportant(this, h); });
+                    }
+                });
+
+            } catch (e) {
+                console.warn('同步固定列行高失败:', e);
+            }
+        }
+
+
+    // ✅ 窗口resize防抖处理
+    var resizeTimer = null;
+    $(window).on('resize', function() {
+        if (resizeTimer) {
+            clearTimeout(resizeTimer);
+        }
+        resizeTimer = setTimeout(function() {
+            syncFixedRowHeights();
+        }, 150);
+    });
+
+    function reloadKeepColWidth() {
+        // 1) 先快照当前列宽（不丢你刚做好的列宽记忆）
+        var snapshot = {};
+        if (typeof getCurrentWidthsSnapshot === 'function') {
+            snapshot = getCurrentWidthsSnapshot() || {};
+        }
+
+        // 2) 把快照回写到当前 tableIns 的 cols（避免 reload 后宽度被默认值覆盖）
+        if (window.tableIns && tableIns.config && tableIns.config.cols && tableIns.config.cols[0]) {
+            tableIns.config.cols[0].forEach(function (col) {
+                if (!col || !col.field) return;
+                if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, col.field)) {
+                    col.width = snapshot[col.field];
+                }
+            });
+        }
+
+        // 3) 同步兜底到 localStorage（可选，但建议保留）
+        if (snapshot && Object.keys(snapshot).length && typeof columnWidthKey !== 'undefined') {
+            localStorage.setItem(columnWidthKey, JSON.stringify(snapshot));
+        }
+
+        // 4) 关键：刷新列表（两种写法二选一）
+        // 写法A：用实例 reload（推荐）
+        if (window.tableIns) {
+            tableIns.reload();
+            return;
+        }
+
+        // 写法B：用 table.reload（如果你某些页面 tableIns 作用域拿不到）
+        layui.table.reload(tableId);
+    }
+
+
+
+    // 打开跟进弹窗
+    function openFollowDialog(clientId) {
+        // 显示加载提示
+        var loading = layer.load(1, {shade: 0});
+        
+        // 获取客户信息和跟进记录
+        $.ajax({
+            url: "{:url('Client/getClientDetailAndComments')}",
+            method: 'GET',
+            data: {id: clientId},
+            success: function(res) {
+                layer.close(loading);
+                if (res.code === 0) {
+                    var clientData = res.data.client;
+                    var comments = res.data.comments;
+                    
+                    // 填充客户信息
+                    $('#follow-client-id').text(clientData.id || '');
+                    $('#follow-client-name').text(clientData.kh_name || '');
+                    $('#follow-contact').text(clientData.kh_contact || '');
+                    $('#follow-main-phone').text(clientData.main_phone || '暂无');
+                    $('#follow-aux-phone').text(clientData.aux_phone || '暂无');
+                    $('#follow-area').text(clientData.xs_area || '');
+                    $('#follow-source').text(clientData.inquiry_name || clientData.inquiry_id || '');        // 所属渠道
+                    $('#follow-source-port').text(clientData.port_name || clientData.port_id || '暂无');    // 运营端口
+                    $('#follow-rank').text(clientData.kh_rank_name || clientData.kh_rank || '');
+                    $('#follow-user').text(clientData.pr_user || '');
+                    $('#follow-joint-person').text(clientData.joint_person_names || '暂无');
+                    $('#follow-create-time').text(clientData.at_time || '');
+                    $('#follow-last-time').text(clientData.last_up_time || '暂无');
+                    $('#follow-last-record').val(clientData.last_up_records || '暂无记录');
+                    $('#leads_id').val(clientData.id);
+                    
+                    // 填充跟进历史
+                    var html = '';
+                    if (comments.length > 0) {
+                        $.each(comments, function(index, item) {
+                            html += '<div class="timeline-item">' +
+                                '<div class="timeline-title">' + item.create_date + '</div>' +
+                                '<div class="timeline-content">' +
+                                '<img src="' + (item.avatar || '/static/admin/images/0.jpg') + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
+                                '<strong>' + item.username + '：</strong>' +
+                                item.reply_msg +
+                                '</div>' +
+                                '</div>';
+                        });
+                    } else {
+                        html = '<p>暂无跟进记录</p>';
+                    }
+                    $('#follow-history-list').html(html);
+
+
+                    // 如果上一次弹窗没关干净，先强制关闭
+                    if (followIndex !== null) {
+                        layer.close(followIndex);
+                        followIndex = null;
+                    }
+                                        
+                    // 显示弹窗
+                    followIndex = layer.open({
+                        type: 1,
+                        title: '客户跟进 - ' + clientData.kh_name,
+                        area: ['90%', '80%'],
+                        content: $('#follow-dialog'),
+                        closeBtn: 1,
+                        shade: 0,              // ✅禁用 layui 自动遮罩
+                        shadeClose: false,
+                        key: true,
+                        anim: -1,
+
+                        success: function(layero, index) {
+                            $('#follow-dialog').show();
+
+                            // ✅让弹窗置顶（layui 会重排 z-index）
+                            layer.setTop(layero);
+
+                            // ✅关键：setTop 之后再把自定义遮罩放到弹窗下面
+                            showFollowMaskUnderLayer(layero);
+
+                            // ✅接管右上角 X：保证点击一定会走 layer.close
+                            $(layero).find('.layui-layer-close').off('click.follow').on('click.follow', function(e) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                layer.close(index);
+                            });
+                        },
+
+                        end: function() {
+                            // ✅把 DOM 放回去
+                            $('#follow-dialog').hide().appendTo('body');
+
+                            // ✅移除自定义遮罩
+                            hideFollowMask();
+
+                            // ✅历史兜底：清掉所有残留的 layui 遮罩（因为你之前多次残留过）
+                            $('.layui-layer-shade').remove();
+
+                            followIndex = null;
+                        }
+                    });
+
+                } else {
+                    layer.msg(res.msg || '获取客户信息失败');
+                }
+            },
+            error: function() {
+                layer.close(loading);
+                layer.msg('网络错误，获取客户信息失败');
+            }
+        });
+    }
+    // 提交跟进记录
+    $('#submit-comment').on('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var replyMsg = $('#reply_msg').val();
+        var leadsId = $('#leads_id').val();
+        
+        if (!replyMsg) {
+            layer.msg('请输入跟进内容');
+            return;
+        }
+        
+        // 显示加载提示
+        var loading = layer.load(1, {shade: [0.1, '#fff']});
+        
+        $.ajax({
+            method: 'post',
+            url: "{:url('Client/comment')}",
+            data: {
+                reply_msg: replyMsg,
+                leads_id: leadsId
+            },
+            success: function (res) {
+                layer.close(loading);
+                if (res.code === 0) {
+                    layer.msg(res.msg);
+                    $('#reply_msg').val('');
+                    
+                    // 更新历史记录
+                    var now = new Date();
+                    var createDate = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日 ' 
+                        + now.getHours() + ':' + (now.getMinutes() < 10 ? '0' : '') + now.getMinutes();
+                    
+                    var historyHtml = '<div class="timeline-item">' +
+                        '<div class="timeline-title">' + createDate + '</div>' +
+                        '<div class="timeline-content">' +
+                        '<img src="{$Think.session.avatar|default="/static/admin/images/0.jpg"}" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
+                        '<strong>{$Think.session.username}：</strong>' +
+                        replyMsg +
+                        '</div>' +
+                        '</div>';
+                    $('#follow-history-list').prepend(historyHtml);
+                    
+                    $('#follow-last-record').val(replyMsg);
+                    $('#follow-last-time').text(createDate);
+                    
+                    // 更新表格中的最新跟进记录
+                    reloadKeepColWidth();
+                } else {
+                    layer.msg(res.msg);
+                }
+            },
+            error: function () {
+                layer.close(loading);
+                layer.msg('提交失败');
+            }
+        });
+    });
+
+
+
+    // ========== 列宽拖拽保存（更稳：用 colgroup + mouseup 兜底）==========
+    var lastSnapshot = {}; // 全局变量：保存上一次的列宽快照
+
+    /**
+     * 读表头 colgroup 的真实宽度（Layui 改的是 col 的 width）
+     * 保存逻辑：先保存到 localStorage（兜底），再保存到数据库
+     * 保存失败要提示（layer.msg）
+     */
+     function saveWidths() {
+        try {
+            var widths = {};
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if (!$view.length) return;
+
+            // ✅只取主表头（不取 fixed 的那套）
+            var $headerTable = $view.find('.layui-table-header table').eq(0);
+            var $ths = $headerTable.find('thead tr th');
+
+            $ths.each(function () {
+                var $th = $(this);
+                var field = $th.attr('data-field');
+                if (!field || field === '0') return;
+
+                var w = parseInt($th.width(), 10); // ✅只取内容宽度（不含 padding/border）
+                // ✅合理边界检查，防止极小/极大异常值
+                if (w >= 30 && w <= 3000) {
+                    widths[field] = w;
+                }
+            });
+
+            // 没取到就直接跳过
+            if (!Object.keys(widths).length) {
+                console.warn('[colwidth] widths empty, skip save');
+                return;
+            }
+
+            // ✅localStorage 兜底
+            localStorage.setItem(columnWidthKey, JSON.stringify(widths));
+
+            // ✅保存到数据库
+            $.ajax({
+                url: "{:url('Client/saveColWidths')}",
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    page_key: pageKey,
+                    table_id: tableId,
+                    widths: JSON.stringify(widths)
+                },
+                success: function(res) {
+                    if (res.code === 0) {
+                        console.log('✅ 列宽已保存到数据库', widths);
+                    } else {
+                        layer.msg(res.msg || '保存列宽失败', { icon: 2, time: 2000 });
+                        console.error('❌ 列宽保存失败:', res);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    layer.msg('保存列宽失败：网络错误', { icon: 2, time: 2000 });
+                    console.error('❌ 列宽保存失败（网络错误）:', error);
+                }
+            });
+
+        } catch (e) {
+            console.warn('保存列宽失败:', e);
+        }
+    }
+
+
+    /**
+     * 获取当前列宽快照
+     * 读取 #table-list 对应的 .layui-table-view
+     * 找到主表头：$view.find('.layui-table-header table')
+     * 遍历 thead tr th 与 colgroup col，生成 {field: width} 的对象（跳过 data-field="0"）
+     * 返回对象（空对象也返回）
+     */
+     function getCurrentWidthsSnapshot() {
+        var snapshot = {};
+        try {
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if (!$view.length) return snapshot;
+
+            // ✅只取主表头（不取 fixed 的那套）
+            var $headerTable = $view.find('.layui-table-header table').eq(0);
+            var $ths = $headerTable.find('thead tr th');
+
+            $ths.each(function () {
+                var $th = $(this);
+                var field = $th.attr('data-field');
+                if (!field || field === '0') return; // 跳过 checkbox / 空字段
+
+                // ✅只取内容宽度（不含 padding/border），统一口径
+                var w = parseInt($th.width(), 10);
+                // ✅合理边界检查，防止极小/极大异常值
+                if (w >= 30 && w <= 3000) {
+                    snapshot[field] = w;
+                }
+            });
+        } catch (e) {
+            console.warn('获取列宽快照失败:', e);
+        }
+        return snapshot;
+    }
+
+
+    /**
+     * 绑定列宽拖拽保存监听
+     * 策略：监听 document 的 mouseup/touchend，对比快照变化后保存
+     */
+     function bindResizeSave() {
+        var $view = $('#' + tableId).next('.layui-table-view');
+        if (!$view.length) return;
+
+        // 防止 done 多次绑定
+        $(document).off('mouseup.colwidth_auto touchend.colwidth_auto');
+
+        lastSnapshot = getCurrentWidthsSnapshot();
+        // console.log('[colwidth] listener bound', lastSnapshot); // ✅降低日志噪音
+
+        $(document).on('mouseup.colwidth_auto touchend.colwidth_auto', function(e) {
+            // console.log('[colwidth] mouseup fired', e && e.target); // ✅降低日志噪音
+
+            setTimeout(function() {
+                var newSnapshot = getCurrentWidthsSnapshot();
+                // console.log('[colwidth] snapshot after mouseup', newSnapshot); // ✅降低日志噪音
+
+                if (Object.keys(newSnapshot).length === 0) return;
+
+                if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
+                    console.log('[colwidth] changed -> saving', newSnapshot); // ✅保留真正保存时的日志
+                    saveWidths();
+                    lastSnapshot = newSnapshot;
+                }
+            }, 120);
+        });
+    }
+
+
+
+
+
+
+    // 添加按钮
+    $('#add').on('click', function () {
+        layer.open({
+            type: 2,
+            title: '添加客户',
+            area: ['100%', '86%'],
+            content: "{:url('Client/add')}"
+        });
+    });
+
+    // 顶部工具栏事件
+    table.on('toolbar(table-list)', function (obj) {
+        var checkStatus = table.checkStatus(obj.config.id), data = checkStatus.data;
+        switch (obj.event) {
+            case 'moveGh':
+                if (data.length === 0) { layer.msg('请选择要操作的数据'); return; }
+                var ids1 = data.map(function(it){ return it.id; });
+                layer.confirm('确定将 ' + data.length + ' 个客户转入公海？', function(index){
+                    layer.open({
+                        type: 2, title: '移入公海', area: ['100%','86%'],
+                        content: "{:url('Client/toMoveGh')}?ids=" + ids1.join(',')
+                    });
+                    layer.close(index);
+                });
+                break;
+            case 'alterAll':
+                if (data.length === 0) { layer.msg('请选择要操作的数据'); return; }
+                var ids2 = data.map(function(it){ return it.id; });
+                layer.confirm('确定要转移选中的 ' + data.length + ' 个客户吗？', function(index){
+                    layer.open({
+                        type: 2, title: '转移客户', area: ['100%','86%'],
+                        content: "{:url('Client/alterPrUserPri')}?ids=" + ids2.join(',')
+                    });
+                    layer.close(index);
+                });
+                break;
+            case 'chengjiaoAll':
+                if (data.length === 0) { layer.msg('请选择要操作的数据'); return; }
+                var ids3 = data.map(function(it){ return it.id; });
+                layer.confirm('确定将选中的 ' + data.length + ' 个客户标记为已成交吗？', function(index){
+                    $.post("{:url('Client/chengjiao')}", { ids: ids3 }, function(res){
+                        layer.close(index);
+                        if (res.code === 0) {
+                            layer.msg(res.msg, { time: 1000, icon: 1 });
+                            tableIns.reload();
+                        } else {
+                            layer.msg(res.msg || '操作失败', { time: 1500, icon: 2 });
+                        }
+                    });
+                });
+                break;
+            case 'delAlls':
+                if (data.length === 0) { layer.msg('请先选择要删除的客户'); return; }
+                var ids4 = data.map(function(it){ return it.id; });
+                layer.confirm('确定删除选中的 ' + ids4.length + ' 个客户吗？', function(index){
+                    var loading = layer.load(1, { shade: [0.1,'#fff'] });
+                    $.post("{:url('del')}", { ids: ids4 }, function(res){
+                        layer.close(loading);
+                        if (res.code === 0) {
+                            layer.msg(res.msg, { time: 1000, icon: 1 });
+                            tableIns.reload();
+                        } else {
+                            layer.msg(res.msg || '删除失败', { time: 1500, icon: 2 });
+                        }
+                    });
+                    layer.close(index);
+                });
+                break;
+        }
+    });
+
+    // 行内事件
+    table.on('tool(table-list)', function (obj) {
+        var layEvent = obj.event, id = obj.data.id;
+        lineEvent(layEvent, id);
+    });
+    // 弹层内按钮事件委托
+    $('body').on('click', '.layui-layer-content [lay-event]', function(){
+        var layEvent = $(this).attr('lay-event');
+        var id = $(this).data('id');
+        lineEvent(layEvent, id);
+    });
+    // 行内事件处理
+    function lineEvent(event, id) {
+        if (event === 'del') {
+            layer.confirm('确定要删除这个客户吗？', function(index){
+                var loading = layer.load(1, { shade: [0.1,'#fff'] });
+                $.post("{:url('del')}", { ids: [id] }, function(res){
+                    layer.close(loading);
+                    if (res.code === 0) {
+                        layer.msg(res.msg, { time: 1000, icon: 1 });
+                        tableIns.reload();
+                    } else {
+                        layer.msg('操作失败！', { time: 1000, icon: 2 });
+                    }
+                });
+                layer.close(index);
+            });
+        } else if (event === 'edit') {
+            layer_add("编辑客户", "{:url('Client/edit')}?id=" + id);
+        } else if (event === 'alter') {
+            layer_add("转移客户", "{:url('Client/alterPrUserPri')}?ids=" + id);
+        } else if (event === 'chengjiao') {
+            layer.confirm('确定这个客户已成交吗？', function(index){
+                $.post("{:url('Client/chengjiao')}", { ids: id }, function(res){
+                    layer.close(index);
+                    if (res.code === 0) {
+                        layer.msg(res.msg, { time: 1000, icon: 1 });
+                        tableIns.reload();
+                    } else {
+                        layer.msg('操作失败！', { time: 1000, icon: 2 });
+                    }
+                });
+            });
+        }
+    }
+
+    // 搜索表单提交
+    form.on('submit(LAY-app-contlist-search)', function (data) {
+
+        // 【新增】跟进类型 + 跟进时间：联合使用轻提示（不拦截查询）
+        try{
+            var followType = (data.field.follow_filter || '').toString().trim();
+            var followDaysRaw = (data.field.follow_days || '').toString().trim();
+            var followDays = followDaysRaw === '' ? null : parseInt(followDaysRaw, 10);
+
+            var msgShown = false;
+
+            // 情况1：只选了类型，没填时间/<=0
+            if (followType && (!followDays || followDays <= 0)) {
+                layer.msg('【跟进类型】与【跟进时间】需同时选择才会生效', {icon:0});
+                msgShown = true;
+            }
+
+            // 情况2：只填了时间（>0），没选类型
+            if (!msgShown && (!followType) && (followDays && followDays > 0)) {
+                layer.msg('【跟进类型】与【跟进时间】需同时选择才会生效', {icon:0});
+                msgShown = true;
+            }
+
+            // 情况3：输入了 0/负数（且尚未提示联合规则），提示天数必须>0（仍不拦截）
+            if (!msgShown && followDaysRaw !== '' && (isNaN(followDays) || followDays <= 0)) {
+                layer.msg('请填写大于 0 的天数', {icon:0});
+                msgShown = true;
+            }
+        }catch(e){
+            console.warn('follow filter tip error:', e);
+        }
+
+        table.reload('table-list', {
+            url: "{:url('Client/personClientSearch')}",
+            where: { keyword: data.field },
+            page: { curr: 1 }
+        });
+        return false;
+    });
+
+    // 日期控件
+    laydate.render({ elem: '#at_time', range: true, trigger: 'click' });
+    form.on('select(dateRange)', function (data) {
+        var isCustom = data.value === '';
+        $('#at_time').toggle(isCustom);
+        if (!isCustom) $('#at_time').val('');
+    });
+
+    // 运营人员下拉（防重复初始化：避免脚本重复执行时再次 new）
+    if (!window.__crm_oper_user_select_inited) {
+        window.__crm_oper_user_select_inited = true;
+        window.__crm_oper_user_select = new EditableSelect(
+            document.getElementById('oper_user_input'),
+            {$_yyList|raw},
+            '运营人员',
+            '',
+            'name'
+        );
+    }
+
+    // 来源端口联动逻辑
+    //var shopList = {$shopList|raw}; // 店铺列表分组数据：{ 来源名称: [ {id:..., name:...}, ... ], ... }
+    
+    function fillSourcePortBySourceName(sourceName) {
+        var shops = shopList[sourceName] || [];
+        var $sourcePort = $('#source_port');
+        $sourcePort.empty();
+        if (shops.length > 0) {
+            $sourcePort.append('<option value="">请选择来源端口</option>');
+            $.each(shops, function (index, shop) {
+                $sourcePort.append('<option value="' + shop.id + '">' + shop.name + '</option>');
+            });
+        } else {
+            $sourcePort.append('<option value="">该来源暂无店铺数据</option>');
+        }
+        form.render('select');
+    }
+
+    // 监听客户来源变化，动态更新来源端口选项
+    // form.on('select(kh_status)', function (data) {
+    //     var sourceName = $(data.elem).find("option:selected").text();
+    //     fillSourcePortBySourceName(sourceName);
+    // });
+    // 当选择所属渠道后，请求对应的运营端口列表并填充下拉框
+    form.on('select(inquiry_id)', function (data) {
+        var inquiryId = data.value;
+        var $portSelect = $('#port_id');
+        $portSelect.empty();
+        if (!inquiryId) {
+            // 未选择渠道时，提示先选择渠道
+            $portSelect.append('<option value="">请先选择所属渠道</option>');
+            form.render('select');
+            return;
+        }
+        // AJAX获取选定渠道的运营端口列表
+        $.ajax({
+            url: "{:url('Client/getPortsByInquiry')}",
+            type: 'GET',
+            data: { inquiry_id: inquiryId },
+            success: function (res) {
+                if (res.code === 0 && res.data) {
+                    $portSelect.append('<option value="">请选择运营端口</option>');
+                    $.each(res.data, function(index, port) {
+                        $portSelect.append('<option value="' + port.id + '">' + port.port_name + '</option>');
+                    });
+                } else {
+                    $portSelect.append('<option value="">该渠道暂无端口数据</option>');
+                }
+                form.render('select');  // 刷新下拉框渲染
+            },
+            error: function () {
+                $portSelect.append('<option value="">获取端口失败</option>');
+                form.render('select');
+            }
+        });
+    });
+
+
+    // 批量导入
+    var indexMsg;
+    upload.render({
+        elem: '#toAll',
+        url: "{:url('Client/xlsUpload')}",
+        accept: 'file',
+        field: 'xlsFile',
+        exts: 'xls|xlsx',
+        before: function(){
+            indexMsg = layer.msg('正在导入数据，请稍等...', { icon: 16, shade: 0.04, time: false });
+        },
+        done: function(res){
+            layer.close(indexMsg);
+            if(res.code === 0){
+                // 导入任务提交成功，提示并在回调中刷新页面
+                layer.msg(res.msg, { icon: 1, time: 2000 }, function(){
+                    // 标记导入完成，用于页面刷新后检查失败情况
+                    localStorage.setItem('importDone', '1');
+                    location.reload();
+                });
+            } else {
+                layer.msg(res.msg, { icon: 2, time: 3000 });
+            }
+        },
+        error: function(){
+            layer.close(indexMsg);
+            layer.msg('系统繁忙，请稍后重试', { time: 2000, icon: 5 });
+        }
+    });
+    // “下载模板”按钮点击事件：直接下载Excel模板
+    $('#downloadTemplate').on('click', function(){
+        window.location.href = "{:url('Client/tpl')}";
+    });
+    // “导入日志”按钮点击事件：弹出导入失败记录日志窗口
+    $('#viewImportLog').on('click', function(){
+        $.get("{:url('Client/importLog')}", function(html){
+            layer.open({
+                type: 1,
+                title: '导入失败记录',
+                area: ['800px','600px'],
+                shadeClose: true,
+                content: html
+            });
+        });
+    });
+    // 页面加载后检查最近导入结果是否有失败需要提醒
+    if(localStorage.getItem('importDone') === '1'){
+        localStorage.removeItem('importDone');
+        $.get("{:url('Client/checkImportFail')}", function(res){
+            if(res.code === 0 && res.fail === 1){
+                layer.alert('部分数据导入失败，请查看日志', { icon: 0, title: '提示' });
+            }
+        });
+    }
+});
+
+// 公共弹窗
+function layer_add(title, url) {
+    layer.open({ type: 2, title: title, area: ['100%','80%'], maxmin: true, content: url });
+}
+</script>
+</body>
+</html>
