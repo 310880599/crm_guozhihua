@@ -209,7 +209,7 @@ class Index extends Common
             ->field('l.id,a.username,a.avatar,l.kh_name,c.reply_msg,c.create_date')
             ->order('c.create_date desc')
             ->where(['l.pr_user' => Session::get('username')])
-            ->limit(10)->select();
+            ->limit(20)->select();
         $this->assign('result', $result);
 
 
