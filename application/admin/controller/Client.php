@@ -508,17 +508,34 @@ class Client extends Common
         if (request()->isPost()) {
             $page     = input('page') ? input('page') : 1;
             $pageSize = input('limit') ? input('limit') : config('pageSize');
+            // ===== 【超级查看权限判断开始】 =====
+            // 当前登录用户 admin_id
+            $adminId = (int) Session::get('aid');
+
+            // 超级查看权限 admin 列表（可按需增删）
+            $superAdminIds = [1,391, 392, 393, 394];
+
+            // 是否为超级查看用户
+            $isSuperAdmin = in_array($adminId, $superAdminIds, true);
 
             // 获取当前登录人可见的负责人列表（支持团队可见）
             $visibleUsers = $this->getCheckClientVisibleUsernames();
 
-            // 基础列表（我的/本团队客户）
-            $list = Db::table('crm_leads')
-                ->where(['status' => 1, 'issuccess' => -1])
-                ->whereIn('pr_user', $visibleUsers)
+            // 构建基础查询
+            $query = Db::table('crm_leads')
+                ->where(['status' => 1, 'issuccess' => -1]);
+
+            // 非超级查看用户才按负责人限制
+            if (!$isSuperAdmin) {
+                $query = $query->whereIn('pr_user', $visibleUsers);
+            }
+
+            // 保持原有排序与分页逻辑
+            $list = $query
                 ->order('at_time desc')
                 ->paginate(['list_rows' => $pageSize, 'page' => $page])
                 ->toArray();
+            // ===== 【超级查看权限判断结束】 =====
 
             if (empty($list) || empty($list['data'])) {
                 return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
