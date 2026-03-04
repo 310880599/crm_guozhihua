@@ -782,6 +782,20 @@
         padding-bottom: 4px !important;
         min-height: 42px !important;
     }
+
+
+    /* ✅解决：固定列区域(右侧操作列)悬浮内容被裁切 */
+    .layui-table-view .layui-table-fixed,
+    .layui-table-view .layui-table-fixed-r,
+    .layui-table-view .layui-table-fixed-l{
+        overflow: visible !important;
+    }
+
+    .layui-table-view .layui-table-fixed .layui-table-body,
+    .layui-table-view .layui-table-fixed-r .layui-table-body,
+    .layui-table-view .layui-table-fixed-l .layui-table-body{
+        overflow: visible !important;  /* 关键：干掉 layui.css 里的 overflow:hidden */
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域 -->
