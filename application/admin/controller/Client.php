@@ -445,6 +445,8 @@ class Client extends Common
      */
     private function getCheckClientVisibleUsernames(): array
     {
+        $teamGroupIds = [17, 18];
+
         // 默认兜底为当前会话用户名
         $sessionUsername = (string) Session::get('username');
         $defaultUsers    = $sessionUsername !== '' ? [$sessionUsername] : [];
@@ -472,7 +474,7 @@ class Client extends Common
         }
 
         // 普通加检委 / 产经加检委：按 team_name 查看本团队所有客户
-        if (in_array($groupId, [16, 17], true)) {
+        if (in_array($groupId, $teamGroupIds, true)) {
             // team_name 为空时不放开，仍然只看自己
             if ($teamName === '') {
                 return [$username];
