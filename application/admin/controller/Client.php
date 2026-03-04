@@ -3971,37 +3971,10 @@ class Client extends Common
             return json(['code' => 1, 'msg' => '缺少客户ID', 'count' => 0, 'data' => []]);
         }
 
-        // 校验客户是否存在（可选：检查权限，只能查看自己负责的客户）
+        // 校验客户是否存在（crm_leads 能查到客户才允许继续）
         $client = Db::table('crm_leads')->where(['id' => $leadsId])->find();
         if (!$client) {
             return json(['code' => 1, 'msg' => '客户不存在', 'count' => 0, 'data' => []]);
-        }
-
-        // 权限检查：如果是个人客户列表，只能查看自己负责的客户
-        $currentUsername = session('username');
-        if ($client['pr_user'] !== $currentUsername) {
-            // 可以扩展为检查协同人权限等
-            // 这里先简单处理：如果不是负责人，检查是否是协同人
-            $isJointPerson = false;
-            if (!empty($client['joint_person'])) {
-                $currentAdminId = session('aid');
-                $jp = $client['joint_person'];
-                if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
-                    $tmp = json_decode($jp, true);
-                    if (is_array($tmp) && in_array($currentAdminId, $tmp)) {
-                        $isJointPerson = true;
-                    }
-                } else {
-                    $idsArr = preg_split('/[,，\s]+/', $jp, -1, PREG_SPLIT_NO_EMPTY);
-                    if (in_array($currentAdminId, $idsArr)) {
-                        $isJointPerson = true;
-                    }
-                }
-            }
-            // 如果不是负责人也不是协同人，且不是超级管理员，则拒绝访问
-            if (!$isJointPerson && session('aid') != 1) {
-                return json(['code' => 1, 'msg' => '无权查看该客户的跟进记录', 'count' => 0, 'data' => []]);
-            }
         }
 
         // 构建查询条件
