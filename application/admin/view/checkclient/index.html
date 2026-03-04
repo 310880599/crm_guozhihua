@@ -1069,7 +1069,9 @@
     <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn action-text-btn all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="全部记录" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i><span class="btn-text">全部记录</span></a>
     <!-- <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a> -->
     <!-- ✅转移：图标+文字，保留 lay-event="alter" -->
+    {if in_array(session('aid'), [1,395])}
     <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn action-text-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i><span class="btn-text">转移</span></a>
+    {/if}
     <!-- {if session('aid') eq 1}
     <a class="layui-btn layui-btn-primary layui-btn-xs yincang" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>成交</a>
     {/if} -->
@@ -1088,7 +1090,9 @@
     {if session('aid') eq 1}
     <button type="button" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" id="moveGh" lay-event="moveGh"><i class="layui-icon">&#xe770;</i>移入公海</button>
     {/if}
+    {if in_array(session('aid'), [1,395])}
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="alterAll" lay-event="alterAll"><i class="layui-icon">&#xe60e;</i>转移客户</button>
+    {/if}
     {if session('aid') eq 1}
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="chengjiaoAll" lay-event="chengjiaoAll"><i class="layui-icon">&#xe63c;</i>客户成交</button>
     <button type="button" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" id="delAlls" lay-event="delAlls"><i class="layui-icon">&#xe640;</i>选中删除</button>

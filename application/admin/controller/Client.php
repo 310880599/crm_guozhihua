@@ -513,7 +513,7 @@ class Client extends Common
             $adminId = (int) Session::get('aid');
 
             // 超级查看权限 admin 列表（可按需增删）
-            $superAdminIds = [1,391, 392, 393, 394];
+            $superAdminIds = [1,350,375,387,395];
 
             // 是否为超级查看用户
             $isSuperAdmin = in_array($adminId, $superAdminIds, true);
