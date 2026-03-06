@@ -341,6 +341,7 @@ class Client extends Model
         $mapPhone = []; //手机号模糊查询
         $mapKhName = []; //客户名称
         $mapXsSource = []; //线索/客户来源
+        $mapPrUser = []; //业务员/负责人
         $where = [];
         $mapInquiry = [];
         $mapPort    = [];
@@ -381,6 +382,10 @@ class Client extends Model
             $mapXsSource =  ['xs_source' => $keyword['xs_source']];
         }
 
+        if (!empty($keyword['pr_user'])) {
+            $mapPrUser = [['pr_user', 'like', '%' . $keyword['pr_user'] . '%']];
+        }
+
         if ($keyword['port_id'] != '') {
             $mapPort = ['port_id' => $keyword['port_id']];
         }
@@ -418,6 +423,7 @@ class Client extends Model
             ->where($mapKhRank)
             ->where($mapXsSource)
             ->where($mapPort)        // 使用运营端口筛选
+            ->where($mapPrUser)
             ->where($mapAtTime)
             ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
             ->where($where)

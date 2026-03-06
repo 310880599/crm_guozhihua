@@ -664,7 +664,14 @@ class Client extends Common
         $inquiryList  = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
         $khStatusList = Db::table('crm_client_status')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
+        $team_name   = session('team_name') ?? '';
+        $adminResult = Db::name('admin')->where('group_id', '<>', 1)
+            ->where(function ($query) use ($team_name) {
+                if ($team_name) $query->where('team_name', $team_name);
+            })
+            ->field('admin_id,username')->select();
         $yyList = $this->getYyList();
+        $this->assign('adminResult', $adminResult);
         $this->assign('_yyList', json_encode($yyList['_yyList']));
         $this->assign('khRankList', $khRankList);
         $this->assign('inquiryList', $inquiryList);

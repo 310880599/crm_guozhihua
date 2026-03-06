@@ -846,6 +846,18 @@
                     </div>
 
                     <div class="layui-inline">
+                        <label class="layui-form-label">业务员：</label>
+                        <div class="layui-input-inline">
+                            <select name="pr_user" id="pr_user" lay-search="">
+                                <option value="">请选择业务员</option>
+                                {volist name="adminResult" id="vo"}
+                                <option value="{$vo.username}">{$vo.username}</option>
+                                {/volist}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
                         <label class="layui-form-label">运营人员：</label>
                         <div class="layui-input-4">
                             <input type="text" id="oper_user_input" name="oper_user" placeholder="请选择运营人员" class="layui-input">
