@@ -1228,7 +1228,7 @@ class Order extends Common
         $teamName = session('team_name') ?: '';
         $adminList = Db::name('admin')
             ->where('group_id', '<>', 1)
-            ->whereIn('group_id', [10, 11, 14])
+            ->whereIn('group_id', [10, 11, 14, 17, 18])
             ->field('admin_id, username')
             ->select();
         $collaboratorData = [];
@@ -1241,7 +1241,7 @@ class Order extends Common
         $extraManagerIds = [395]; // 李营
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14])
+                $q->whereIn('group_id', [13, 14, 18])
                   ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
             })
             ->field('admin_id, username')
@@ -1509,7 +1509,7 @@ class Order extends Common
     }
 
 
-    // //编辑客户第3版
+    //编辑客户第3版
     public function edit()
     {
         if (request()->isPost()) {
@@ -2176,7 +2176,7 @@ class Order extends Common
         $teamName = $currentAdmin['team_name'] ?? Session::get('team_name') ?: '';
         $adminList = Db::name('admin')
             ->where('group_id', '<>', 1)
-            ->whereIn('group_id', [10, 11, 14])
+            ->whereIn('group_id', [10, 11, 14, 17, 18])
             ->field('admin_id, username')
             ->select();
         $collaboratorData = [];
@@ -2197,7 +2197,7 @@ class Order extends Common
         $extraManagerIds = [395]; // 李营
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14])
+                $q->whereIn('group_id', [13, 14, 18])
                   ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
             })
             ->field('admin_id, username')
@@ -2818,7 +2818,7 @@ class Order extends Common
         $teamName = $currentAdmin['team_name'] ?? Session::get('team_name') ?: '';
         $adminList = Db::name('admin')
             ->where('group_id', '<>', 1)
-            ->whereIn('group_id', [10, 11, 14])
+            ->whereIn('group_id', [10, 11, 14, 17, 18])
             ->field('admin_id, username')
             ->select();
         $collaboratorData = [];
@@ -2839,7 +2839,7 @@ class Order extends Common
         $extraManagerIds = [395]; // 李营
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14])
+                $q->whereIn('group_id', [13, 14, 18])
                   ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
             })
             ->field('admin_id, username')
