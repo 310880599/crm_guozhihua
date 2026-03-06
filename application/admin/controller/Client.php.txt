@@ -664,72 +664,12 @@ class Client extends Common
         $inquiryList  = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
         $khStatusList = Db::table('crm_client_status')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
-
-        // 当前登录用户基础信息（优先使用 session，必要时从 admin 表补全）
-        $currentAdminId   = (int) session('aid');
-        $currentUsername  = (string) session('username');
-        $currentGroupId   = (int) session('group_id');
-        $currentTeamName  = (string) (session('team_name') ?? '');
-
-        if (!$currentGroupId || $currentTeamName === '' || $currentUsername === '') {
-            if ($currentAdminId) {
-                $currentAdmin = Db::name('admin')
-                    ->where('admin_id', $currentAdminId)
-                    ->field('admin_id,username,group_id,team_name')
-                    ->find();
-                if ($currentAdmin) {
-                    $currentUsername  = (string) $currentAdmin['username'];
-                    $currentGroupId   = (int) $currentAdmin['group_id'];
-                    $currentTeamName  = (string) $currentAdmin['team_name'];
-                }
-            }
-        }
-
-        // 角色相关常量，方便后续维护修改
-        $specialAdminIds     = [1, 395, 337, 375, 385];
-        $allVisibleGroupIds  = [10, 11, 14, 17, 18];
-        $teamVisibleGroupIds = [17, 18];
-        $selfVisibleGroupIds = [10, 11, 14];
-
-        // 基础查询（用于需要返回多人列表的场景）
-        $adminBaseQuery = Db::name('admin')
-            ->field('admin_id,username')
-            ->where('username', '<>', '')
-            ->order('admin_id', 'asc');
-
-        // 1）特殊登录用户：看到指定 group_id 的全部人员（不受 team_name 限制）
-        if (in_array($currentAdminId, $specialAdminIds, true)) {
-            $adminResult = $adminBaseQuery
-                ->where('group_id', 'in', $allVisibleGroupIds)
-                ->select();
-
-        // 2）团队负责人/团队可见角色：看到本 team_name 下的全部人员
-        } elseif (in_array($currentGroupId, $teamVisibleGroupIds, true) && $currentTeamName !== '') {
-            $adminResult = $adminBaseQuery
-                ->where('team_name', $currentTeamName)
-                ->select();
-
-        // 3）普通业务员角色：只看到自己
-        } elseif (in_array($currentGroupId, $selfVisibleGroupIds, true) && $currentAdminId) {
-            $adminResult = Db::name('admin')
-                ->field('admin_id,username')
-                ->where('admin_id', $currentAdminId)
-                ->where('username', '<>', '')
-                ->order('admin_id', 'asc')
-                ->select();
-
-        // 4）兜底规则：不在以上 3 种情况，也只看到自己
-        } elseif ($currentAdminId) {
-            $adminResult = Db::name('admin')
-                ->field('admin_id,username')
-                ->where('admin_id', $currentAdminId)
-                ->where('username', '<>', '')
-                ->order('admin_id', 'asc')
-                ->select();
-        } else {
-            $adminResult = [];
-        }
-
+        $team_name   = session('team_name') ?? '';
+        $adminResult = Db::name('admin')->where('group_id', '<>', 1)
+            ->where(function ($query) use ($team_name) {
+                if ($team_name) $query->where('team_name', $team_name);
+            })
+            ->field('admin_id,username')->select();
         $yyList = $this->getYyList();
         $this->assign('adminResult', $adminResult);
         $this->assign('_yyList', json_encode($yyList['_yyList']));
