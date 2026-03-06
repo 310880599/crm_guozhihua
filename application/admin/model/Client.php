@@ -333,32 +333,27 @@ class Client extends Model
     //检查客户
     public function getCheckClientSearchList($page, $limit, $keyword, array $visibleUsers = [])
     {
-
-
-        $mapAtTime = []; //添加时间
-        $mapKhRank = []; //客户级别
-        $mapKhStatus = []; //客户状态
-        $mapPhone = []; //手机号模糊查询
-        $mapKhName = []; //客户名称
-        $mapXsSource = []; //线索/客户来源
-        $mapPrUser = []; //业务员/负责人
-        $where = [];
-        $mapInquiry = [];
-        $mapPort    = [];
-
+        $mapAtTime   = []; // 添加时间
+        $mapKhRank   = []; // 客户级别
+        $mapKhStatus = []; // 客户状态
+        $mapPhone    = []; // 手机号模糊查询
+        $mapKhName   = []; // 客户名称
+        $mapXsSource = []; // 线索/客户来源
+        $mapPrUser   = []; // 业务员/负责人（精确匹配）
+        $where       = [];
+        $mapInquiry  = [];
+        $mapPort     = [];
 
         if (!empty($keyword['timebucket'])) {
             $mapAtTime[] = $keyword['timebucket'];
         }
 
         if ($keyword['kh_rank'] != '') {
-
-            $mapKhRank =  ['kh_rank' => $keyword['kh_rank']];
+            $mapKhRank = ['kh_rank' => $keyword['kh_rank']];
         }
 
         if ($keyword['kh_status'] != '') {
-
-            $mapKhStatus =  ['kh_status' => $keyword['kh_status']];
+            $mapKhStatus = ['kh_status' => $keyword['kh_status']];
         }
 
         if ($keyword['inquiry_id'] != '') {
@@ -378,12 +373,7 @@ class Client extends Model
         }
 
         if ($keyword['xs_source'] != '') {
-
-            $mapXsSource =  ['xs_source' => $keyword['xs_source']];
-        }
-
-        if (!empty($keyword['pr_user'])) {
-            $mapPrUser = [['pr_user', 'like', '%' . $keyword['pr_user'] . '%']];
+            $mapXsSource = ['xs_source' => $keyword['xs_source']];
         }
 
         if ($keyword['port_id'] != '') {
@@ -396,9 +386,9 @@ class Client extends Model
         }
 
         // 【新增-跟进筛选】最新跟进时间筛选条件
-        $mapFollow = [];
-        $followNoFlag = false; // recent_no_follow 标记
-        $followBoundary = ''; // 边界时间（用于 recent_no_follow）
+        $mapFollow      = [];
+        $followNoFlag   = false; // recent_no_follow 标记
+        $followBoundary = '';    // 边界时间（用于 recent_no_follow）
 
         // 【新增-跟进筛选】处理最新跟进时间筛选
         if (!empty($keyword['__follow_filter']) && !empty($keyword['__follow_boundary'])) {
@@ -411,9 +401,30 @@ class Client extends Model
             } elseif ($ff === 'recent_no_follow') {
                 // 最近无跟进（反选）：last_up_time IS NULL OR last_up_time < 边界
                 // 需要用闭包实现 OR 条件，此处设置标记
-                $followNoFlag = true;
+                $followNoFlag   = true;
                 $followBoundary = $bd;
             }
+        }
+
+        // 统一清洗可见用户名列表，并做兜底（当前登录人）
+        $visibleUsers = array_values(array_unique(array_filter(array_map('trim', $visibleUsers))));
+        $currentUsername = trim((string) session('username'));
+        if (empty($visibleUsers) && $currentUsername !== '') {
+            $visibleUsers = [$currentUsername];
+        }
+
+        // 业务员精确筛选 + 权限校验
+        $selectedPrUser = '';
+        if (isset($keyword['pr_user'])) {
+            $selectedPrUser = trim((string) $keyword['pr_user']);
+        }
+        if ($selectedPrUser !== '') {
+            // 若前端传入的业务员不在可见范围内，直接返回空结果，防止越权
+            if (empty($visibleUsers) || !in_array($selectedPrUser, $visibleUsers, true)) {
+                return null;
+            }
+            // 精确匹配指定业务员
+            $mapPrUser = ['pr_user' => $selectedPrUser];
         }
 
         $result  = Db::table('crm_leads')
@@ -423,18 +434,18 @@ class Client extends Model
             ->where($mapKhRank)
             ->where($mapXsSource)
             ->where($mapPort)        // 使用运营端口筛选
-            ->where($mapPrUser)
+            ->where($mapPrUser)      // 精确业务员筛选（若有）
             ->where($mapAtTime)
             ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
             ->where($where)
             ->where(['status' => 1, 'issuccess' => -1]) //0 线索，1客户，2公海
-            // 负责人：团队可见 / 个人可见
-            ->where(function ($q) use ($visibleUsers) {
+            // 负责人：团队可见 / 个人可见（整体可见范围限制始终保留）
+            ->where(function ($q) use ($visibleUsers, $currentUsername) {
                 if (!empty($visibleUsers)) {
                     $q->whereIn('pr_user', $visibleUsers);
-                } else {
+                } elseif ($currentUsername !== '') {
                     // 极端情况兜底：只看自己
-                    $q->where('pr_user', session('username'));
+                    $q->where('pr_user', $currentUsername);
                 }
             })
             ->where(function($q) use ($followNoFlag, $followBoundary) {

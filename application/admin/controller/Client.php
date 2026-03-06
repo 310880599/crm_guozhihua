@@ -441,67 +441,83 @@ class Client extends Common
     }
 
     /**
-     * （检查客户）当前登录人可见的负责人用户名列表
+     * （检查客户）统一计算当前登录人可见的业务员用户名列表
+     * 返回经过 trim / 去空 / 去重 处理后的 username 数组
      */
-    private function getCheckClientVisibleUsernames(): array
+    private function getCheckClientAllowedUsernames(): array
     {
-        $teamGroupIds = [17, 18];
+        $currentAdminId  = (int) Session::get('aid');
+        $currentUsername = trim((string) Session::get('username'));
+        $currentGroupId  = (int) Session::get('group_id');
+        $currentTeamName = trim((string) (Session::get('team_name') ?? ''));
 
-        // 默认兜底为当前会话用户名
-        $sessionUsername = (string) Session::get('username');
-        $defaultUsers    = $sessionUsername !== '' ? [$sessionUsername] : [];
-
-        $aid = (int) Session::get('aid');
-        if ($aid <= 0) {
-            return $defaultUsers;
+        if (!$currentAdminId && $currentUsername === '') {
+            return [];
         }
 
-        $me = Db::name('admin')
-            ->where('admin_id', $aid)
-            ->field('username,group_id,team_name')
-            ->find();
-
-        if (empty($me)) {
-            return $defaultUsers;
-        }
-
-        $username = trim((string) ($me['username'] ?? ''));
-        $groupId  = (int) ($me['group_id'] ?? 0);
-        $teamName = trim((string) ($me['team_name'] ?? ''));
-
-        if ($username === '') {
-            return $defaultUsers;
-        }
-
-        // 普通加检委 / 产经加检委：按 team_name 查看本团队所有客户
-        if (in_array($groupId, $teamGroupIds, true)) {
-            // team_name 为空时不放开，仍然只看自己
-            if ($teamName === '') {
-                return [$username];
+        // 如 session 信息不完整，则从 admin 表补全
+        if (!$currentGroupId || $currentTeamName === '' || $currentUsername === '') {
+            if ($currentAdminId) {
+                $currentAdmin = Db::name('admin')
+                    ->where('admin_id', $currentAdminId)
+                    ->field('admin_id,username,group_id,team_name')
+                    ->find();
+                if ($currentAdmin) {
+                    $currentUsername = trim((string) $currentAdmin['username']);
+                    $currentGroupId  = (int) $currentAdmin['group_id'];
+                    $currentTeamName = trim((string) $currentAdmin['team_name']);
+                }
             }
+        }
 
-            $teamUsers = Db::name('admin')
-                ->where('team_name', $teamName)
+        // 角色相关常量
+        $specialAdminIds     = [1, 395, 337, 375, 385];
+        $allVisibleGroupIds  = [10, 11, 14, 17, 18];
+        $teamVisibleGroupIds = [17, 18];
+        $selfVisibleGroupIds = [10, 11, 14];
+
+        $allowed = [];
+
+        // 特殊 admin：可看指定 group_id 的所有人
+        if (in_array($currentAdminId, $specialAdminIds, true)) {
+            $allowed = Db::name('admin')
+                ->where('group_id', 'in', $allVisibleGroupIds)
                 ->where('username', '<>', '')
                 ->column('username');
 
-            if (!is_array($teamUsers)) {
-                $teamUsers = [];
-            }
+        // 团队角色：可看本 team_name 下所有人
+        } elseif (in_array($currentGroupId, $teamVisibleGroupIds, true) && $currentTeamName !== '') {
+            $allowed = Db::name('admin')
+                ->where('team_name', $currentTeamName)
+                ->where('username', '<>', '')
+                ->column('username');
 
-            // 去重、过滤空值
-            $teamUsers = array_values(array_unique(array_filter(array_map('trim', $teamUsers))));
+        // 自己可见角色：只看自己
+        } elseif (in_array($currentGroupId, $selfVisibleGroupIds, true) && $currentUsername !== '') {
+            $allowed = [$currentUsername];
 
-            // 团队没人或异常时，兜底只看自己
-            if (empty($teamUsers)) {
-                return [$username];
-            }
-
-            return $teamUsers;
+        // 兜底：只看自己
+        } elseif ($currentUsername !== '') {
+            $allowed = [$currentUsername];
         }
 
-        // 其他角色：只看自己
-        return [$username];
+        // 统一清洗：trim / 去空 / 去重
+        $allowed = array_values(array_unique(array_filter(array_map('trim', (array) $allowed))));
+
+        // 兜底：若前面逻辑异常导致结果为空，但当前用户名有效，则只返回自己
+        if (empty($allowed) && $currentUsername !== '') {
+            $allowed = [$currentUsername];
+        }
+
+        return $allowed;
+    }
+
+    /**
+     * 兼容旧方法名，内部统一调用 getCheckClientAllowedUsernames
+     */
+    private function getCheckClientVisibleUsernames(): array
+    {
+        return $this->getCheckClientAllowedUsernames();
     }
 
     //（检查客户）
@@ -510,34 +526,26 @@ class Client extends Common
         if (request()->isPost()) {
             $page     = input('page') ? input('page') : 1;
             $pageSize = input('limit') ? input('limit') : config('pageSize');
-            // ===== 【超级查看权限判断开始】 =====
-            // 当前登录用户 admin_id
-            $adminId = (int) Session::get('aid');
+            
+            // 统一使用“检查客户业务员可见名单”
+            $allowedUsernames = $this->getCheckClientAllowedUsernames();
+            $currentUsername  = (string) Session::get('username');
 
-            // 超级查看权限 admin 列表（可按需增删）
-            $superAdminIds = [1,350,375,387,395];
+            // 构建基础查询（受可见用户名限制）
+            $query = Db::table('crm_leads')->where(['status' => 1, 'issuccess' => -1]);
 
-            // 是否为超级查看用户
-            $isSuperAdmin = in_array($adminId, $superAdminIds, true);
-
-            // 获取当前登录人可见的负责人列表（支持团队可见）
-            $visibleUsers = $this->getCheckClientVisibleUsernames();
-
-            // 构建基础查询
-            $query = Db::table('crm_leads')
-                ->where(['status' => 1, 'issuccess' => -1]);
-
-            // 非超级查看用户才按负责人限制
-            if (!$isSuperAdmin) {
-                $query = $query->whereIn('pr_user', $visibleUsers);
+            if (!empty($allowedUsernames)) {
+                $query = $query->whereIn('pr_user', $allowedUsernames);
+            } elseif ($currentUsername !== '') {
+                // 极端情况下兜底：只看自己
+                $query = $query->where('pr_user', $currentUsername);
             }
 
-            // 保持原有排序与分页逻辑
+            // 排序与分页逻辑保持不变
             $list = $query
                 ->order('at_time desc')
                 ->paginate(['list_rows' => $pageSize, 'page' => $page])
                 ->toArray();
-            // ===== 【超级查看权限判断结束】 =====
 
             if (empty($list) || empty($list['data'])) {
                 return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
@@ -660,74 +668,21 @@ class Client extends Common
         }
 
         // 页面渲染所需下拉数据
-        $khRankList = Db::table('crm_client_rank')->select();
-        $inquiryList  = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
+        $khRankList  = Db::table('crm_client_rank')->select();
+        $inquiryList = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
         $khStatusList = Db::table('crm_client_status')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
 
-        // 当前登录用户基础信息（优先使用 session，必要时从 admin 表补全）
-        $currentAdminId   = (int) session('aid');
-        $currentUsername  = (string) session('username');
-        $currentGroupId   = (int) session('group_id');
-        $currentTeamName  = (string) (session('team_name') ?? '');
+        // 统一使用“检查客户业务员可见名单”生成业务员下拉
+        $allowedUsernames = $this->getCheckClientAllowedUsernames();
 
-        if (!$currentGroupId || $currentTeamName === '' || $currentUsername === '') {
-            if ($currentAdminId) {
-                $currentAdmin = Db::name('admin')
-                    ->where('admin_id', $currentAdminId)
-                    ->field('admin_id,username,group_id,team_name')
-                    ->find();
-                if ($currentAdmin) {
-                    $currentUsername  = (string) $currentAdmin['username'];
-                    $currentGroupId   = (int) $currentAdmin['group_id'];
-                    $currentTeamName  = (string) $currentAdmin['team_name'];
-                }
-            }
-        }
-
-        // 角色相关常量，方便后续维护修改
-        $specialAdminIds     = [1, 395, 337, 375, 385];
-        $allVisibleGroupIds  = [10, 11, 14, 17, 18];
-        $teamVisibleGroupIds = [17, 18];
-        $selfVisibleGroupIds = [10, 11, 14];
-
-        // 基础查询（用于需要返回多人列表的场景）
-        $adminBaseQuery = Db::name('admin')
-            ->field('admin_id,username')
-            ->where('username', '<>', '')
-            ->order('admin_id', 'asc');
-
-        // 1）特殊登录用户：看到指定 group_id 的全部人员（不受 team_name 限制）
-        if (in_array($currentAdminId, $specialAdminIds, true)) {
-            $adminResult = $adminBaseQuery
-                ->where('group_id', 'in', $allVisibleGroupIds)
-                ->select();
-
-        // 2）团队负责人/团队可见角色：看到本 team_name 下的全部人员
-        } elseif (in_array($currentGroupId, $teamVisibleGroupIds, true) && $currentTeamName !== '') {
-            $adminResult = $adminBaseQuery
-                ->where('team_name', $currentTeamName)
-                ->select();
-
-        // 3）普通业务员角色：只看到自己
-        } elseif (in_array($currentGroupId, $selfVisibleGroupIds, true) && $currentAdminId) {
+        $adminResult = [];
+        if (!empty($allowedUsernames)) {
             $adminResult = Db::name('admin')
                 ->field('admin_id,username')
-                ->where('admin_id', $currentAdminId)
-                ->where('username', '<>', '')
+                ->where('username', 'in', $allowedUsernames)
                 ->order('admin_id', 'asc')
                 ->select();
-
-        // 4）兜底规则：不在以上 3 种情况，也只看到自己
-        } elseif ($currentAdminId) {
-            $adminResult = Db::name('admin')
-                ->field('admin_id,username')
-                ->where('admin_id', $currentAdminId)
-                ->where('username', '<>', '')
-                ->order('admin_id', 'asc')
-                ->select();
-        } else {
-            $adminResult = [];
         }
 
         $yyList = $this->getYyList();
