@@ -471,7 +471,7 @@ class Client extends Common
         }
 
         // 角色相关常量
-        $specialAdminIds     = [1, 395, 350, 375, 387];
+        $specialAdminIds     = [1, 395, 337, 375, 385];
         $allVisibleGroupIds  = [10, 11, 14, 17, 18];
         $teamVisibleGroupIds = [17, 18];
         $selfVisibleGroupIds = [10, 11, 14];
