@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{:config('sys_name')}后台管理</title>
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <link rel="stylesheet" href="/static/plugins/layui/css/layui.css" media="all" />
+    <link rel="stylesheet" href="/static/admin/css/global.css" media="all">
+    <link rel="stylesheet" href="/static/common/css/font.css" media="all">
+    <style>
+        /* 隐藏模板脚本标签，避免在页面上显示为代码 */
+        script[type="text/html"] {
+            display: none !important;
+        }
+
+        /* 筛选区域样式优化 */
+        .filtrate-warp {
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .filtrate-warp .title {
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 500;
+            text-align: left;
+            cursor: pointer;
+            width: 90px;
+            background-color: transparent !important;
+            color: #333 !important;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .filtrate-warp .title:hover {
+            color: #1890ff !important;
+            background-color: #f0f7ff !important;
+        }
+
+        .filtrate-warp .flag {
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .filtrate-warp .flag:hover {
+            color: #1890ff;
+            background-color: #f0f7ff;
+        }
+
+        .filtrate-warp .layui-badge:hover {
+            color: white !important;
+            transform: scale(1.05);
+            transition: transform 0.2s ease;
+        }
+
+        /* 高级查询区域优化 */
+        .layui-elem-field {
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e8e8e8;
+            overflow: hidden;
+            background: #fafafa;
+        }
+
+        .layui-elem-field legend {
+            font-size: 16px;
+            font-weight: 600;
+            background: #6695ea;
+            border-radius: 8px;
+            color: #fff;
+            padding: 10px 15px;
+        }
+
+        .layui-card {
+            background: #fafafa;
+            border-radius: 6px;
+        }
+
+        .layui-form-item {
+            margin-bottom: 15px;
+        }
+
+        .layui-form-label {
+            font-weight: 500;
+            color: #555;
+        }
+
+        .layui-input, .layui-select {
+            border-radius: 4px;
+            border: 1px solid #d9d9d9;
+            transition: all 0.3s ease;
+        }
+
+        .layui-input:focus, .layui-select:focus {
+            border-color: #1890ff;
+            box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+        }
+
+        /* 折叠面板样式优化 */
+        .layui-collapse {
+            border: none;
+            margin-top: 15px;
+        }
+
+        .layui-colla-item {
+            border: 1px solid #e8e8e8;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            background: #fff;
+            /* overflow: hidden; */
+            transition: all 0.3s ease;
+        }
+
+        .layui-colla-item:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .layui-colla-title {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e8e8e8 100%);
+            color: #333;
+            font-weight: 600;
+            padding: 12px 15px;
+            border-bottom: 1px solid #e8e8e8;
+            transition: all 0.3s ease;
+        }
+
+        .layui-colla-title:hover {
+            background: linear-gradient(135deg, #e8e8e8 0%, #d9d9d9 100%);
+        }
+
+        .layui-colla-content {
+            padding: 15px;
+            background: #fff;
+        }
+
+        .layui-colla-icon {
+            transition: transform 0.3s ease;
+        }
+
+        .layui-colla-item.layui-colla-open .layui-colla-icon {
+            transform: rotate(90deg);
+        }
+
+        /* 按钮样式优化 */
+        .layui-btn {
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+
+        .layui-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        /* 查询按钮优化 */
+        .layuiadmin-btn-list {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.4);
+        }
+
+        .layuiadmin-btn-list:hover {
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.6);
+        }
+
+        /* 统计信息卡片优化 */
+        #summary-info {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            border: none;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        #summary-info span {
+            color: #fff;
+            font-size: 14px;
+        }
+
+        #summary-info span[style*="font-weight: 600"] {
+            font-weight: 600 !important;
+            color: #fff !important;
+        }
+
+        #summary-info span[style*="font-weight: 300"] {
+            font-weight: 300 !important;
+            color: rgba(255, 255, 255, 0.9) !important;
+            font-size: 16px;
+        }
+
+        #summary-info #total-money,
+        #summary-info #total-profit,
+        #summary-info #total-inquiries,
+        #summary-info #success-rate {
+            color: #fff !important;
+            font-weight: 600 !important;
+            font-size: 18px;
+        }
+
+        /* 表格样式优化 */
+        .layui-table {
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .layui-table thead tr {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .layui-table thead th {
+            color: #fff;
+            font-weight: 600;
+            padding: 15px 10px;
+        }
+
+        .layui-table tbody tr {
+            transition: all 0.2s ease;
+        }
+
+        .layui-table tbody tr:hover {
+            background-color: #f5f7fa;
+            transform: scale(1.01);
+        }
+
+        .layui-table tbody td {
+            padding: 12px 10px;
+        }
+
+        /* 表格中的图片样式 */
+        .layui-table td img {
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            border: 2px solid #e8e8e8;
+        }
+
+        .layui-table td img:hover {
+            transform: scale(1.1);
+            border-color: #1890ff;
+            box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
+        }
+
+        /* 微信沟通凭证图片横向滚动容器样式 */
+        .img-strip {
+            display: flex;
+            gap: 4px;
+            width: 100%;
+            max-width: 100%;      /* 关键：不要再限制 260px */
+            overflow-x: auto;     /* 窄屏不够宽时允许滚动 */
+            overflow-y: hidden;
+            padding: 2px 0;
+            /* 优化滚动条样式 */
+            scrollbar-width: thin;
+            scrollbar-color: #c1c1c1 #f1f1f1;
+        }
+
+        .img-strip::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .img-strip::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .img-strip::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .img-strip::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        .img-strip img {
+            flex-shrink: 0;
+            max-width: 60px;
+            max-height: 60px;
+            margin: 0;
+        }
+
+        /* 统计行样式 */
+        .layui-table-total {
+            background: #f0f7ff !important;
+            font-weight: 600;
+        }
+
+        .layui-table-total td {
+            color: #1890ff;
+        }
+
+        /* 主容器优化 */
+        .admin-main {
+            padding: 15px;
+            background: #f5f7fa;
+            border-radius: 8px;
+        }
+
+        /* 响应式优化 */
+        @media (max-width: 768px) {
+            .layui-form-item {
+                margin-bottom: 10px;
+            }
+
+            .layui-inline {
+                display: block;
+                width: 100%;
+                margin-bottom: 10px;
+            }
+
+            .layui-table {
+                font-size: 12px;
+            }
+
+            #summary-info {
+                padding: 15px;
+            }
+
+            #summary-info span {
+                display: block;
+                margin-bottom: 8px;
+            }
+
+            #summary-info span[style*="margin-left: 20px"] {
+                margin-left: 0 !important;
+            }
+        }
+
+        /* 加载动画优化 */
+        .layui-layer-loading {
+            border-radius: 50%;
+        }
+
+        /* 让"产品明细"列支持多行换行，并自动撑高行高 */
+        .layui-table-view .layui-table td[data-field="order_items"] .layui-table-cell {
+            white-space: normal !important;
+            height: auto !important;
+            line-height: 20px !important;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            overflow: visible !important;
+        }
+        /* 下拉面板层级提升 */
+        .layui-form-select dl,
+        .layui-select-dropdown,
+        .xm-select-dropdown {
+            z-index: 999999 !important;
+        }
+        /* 1) 让“高级查询/自定义筛选”这块整体在表格上面 */
+        #searchForm {
+            position: relative;
+            z-index: 99999;
+        }
+
+        /* 2) 重点：这些父容器别裁剪下拉框（你这里下拉就在这些容器里） */
+        #searchForm .layui-card,
+        #searchForm .layui-card-header,
+        #searchForm .layuiadmin-card-header-auto,
+        #searchForm .layui-form-item,
+        #searchForm .layui-collapse,
+        #searchForm .layui-colla-content,
+        fieldset.layui-elem-field {
+            overflow: visible !important;
+        }
+
+        /* 3) 下拉层级（保留你原来的，顺便补全几个 layui 常用层） */
+        #searchForm .layui-form-select dl,
+        #searchForm .layui-form-selectup dl,
+        #searchForm .layui-select-dropdown {
+            z-index: 999999 !important;
+        }
+
+    </style>
+
+</head>
+
+<body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
+
+    <div class="admin-main layui-anim layui-anim-upbit">
+        <fieldset class="layui-elem-field ">
+            <form class="layui-form" id="searchForm">
+                <legend>高级查询</legend>
+                <div class="layui-card" style="box-shadow: none; margin-top: 10px">
+                    <div class="layui-form layui-card-header layuiadmin-card-header-auto"
+                        style="border-bottom: transparent; height: auto">
+                        <div class="layui-form-item" style="text-align: left; padding-left: 20px;">
+                            <div class="layui-inline">
+                                <label class="layui-form-label">订单编号：</label>
+                                <div class="layui-input-inline">
+                                    <input type="text" name="order_no" placeholder="请输入订单编号" class="layui-input">
+                                </div>
+                            </div>
+                            <div class="layui-inline">
+                                <label class="layui-form-label">联系方式：</label>
+                                <div class="layui-input-inline">
+                                    <input type="text" name="contact" placeholder="请输入联系方式" class="layui-input">
+                                </div>
+                            </div>
+
+                            <div class="layui-inline">
+                                <label class="layui-form-label">时间查询：</label>
+                                <div class="layui-input-inline">
+                                    <select id="dateRange" lay-filter="dateRange" name="timebucket" class="layui-select">
+                                        <option value="">自定义</option>
+                                        <option value="today">今天</option>
+                                        <option value="yesterday">昨天</option>
+                                        <option value="week">本周</option>
+                                        <option value="last week">上周</option>
+                                        <option value="month" selected>本月</option>
+                                        <option value="last month">上月</option>
+                                        <option value="year">今年</option>
+                                        <option value="last year">去年</option>
+                                        <option value="-2 hours">两个小时内</option>
+                                    </select>
+                                </div>
+                                <div class="layui-input-inline">
+                                    <input type="text" class="layui-input" id="at_time" name="at_time" placeholder="选择日期范围">
+                                </div>
+                            </div>
+
+                            <!-- 自定义筛选折叠面板 -->
+                            <div class="layui-collapse">
+                                <div class="layui-colla-item">
+                                    <h2 class="layui-colla-title">自定义筛选 <i class="layui-icon layui-colla-icon"></i></h2>
+                                    <div class="layui-colla-content  layui-show">
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">客户名称：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="text" id="cname" name="cname" placeholder="请输入客户名称"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">客户性质：</label>
+                                            <div class="layui-input-inline">
+                                                <select name="customer_type" lay-search="">
+                                                    <option value="">请选择客户性质</option>
+                                                    {volist name='customer_type' id='vo'}
+                                                    <option value="{$vo}" {if $vo==$orderInfo.customer_type}
+                                                        selected="selected" {/if}>{$vo}
+                                                    </option>
+                                                    {/volist}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">产品名称：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="text" name="product_name" placeholder="请输入产品名称"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">成交金额：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="min_money" placeholder="最小值"
+                                                    class="layui-input">
+                                            </div>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="max_money" placeholder="最大值"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">利润：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="min_profit" placeholder="最小值"
+                                                    class="layui-input">
+                                            </div>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="max_profit" placeholder="最大值"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">利润率：</label>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="min_margin_rate" placeholder="最小值(%)"
+                                                    class="layui-input">
+                                            </div>
+                                            <div class="layui-input-inline">
+                                                <input type="number" name="max_margin_rate" placeholder="最大值(%)"
+                                                    class="layui-input">
+                                            </div>
+                                        </div>
+
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">询盘渠道：</label>
+                                            <div class="layui-input-inline">
+                                                <select name="source" id="source" lay-search="">
+                                                    <option value="">请选择询盘渠道</option>
+                                                    {volist name='channelList' id='vo'}
+                                                    <option value="{$vo}">{$vo}</option>
+                                                    {/volist}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">询盘端口：</label>
+                                            <div class="layui-input-inline">
+                                                <select name="source_port" id="source_port" lay-search="">
+                                                    <option value="">请选择询盘端口</option>
+                                                    {volist name='portList' id='vo'}
+                                                    <option value="{$vo}">{$vo}</option>
+                                                    {/volist}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">团队名称：</label>
+                                            <div class="layui-input-inline">
+                                                <select name="team_name" id="team_name" lay-search="">
+                                                    <option value="">请选择团队名称</option>
+                                                    {volist name='teamList' id='vo'}
+                                                    <option value="{$vo}">{$vo}</option>
+                                                    {/volist}
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <div class="layui-inline">
+                                            <label class="layui-form-label">业务员：</label>
+                                            <div class="layui-input-inline">
+                                                <select name="pr_user" id="pr_user" lay-search="">
+                                                    <option value="">请选择业务员</option>
+                                                    {volist name='adminResult' id='vo'}
+                                                    <option value="{$vo.username}">{$vo.username}</option>
+                                                    {/volist}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="layui-inline" style="float: right; padding-bottom: 15px">
+                            <button type="button" class="layui-btn" onclick="resetForm()">重置</button>
+                            <button class="layui-btn layuiadmin-btn-list" lay-submit
+                                lay-filter="LAY-app-contlist-search">
+                                <i class="layui-icon layui-icon-search layuiadmin-button-btn"
+                                    style="vertical-align: sub;"></i>查询数据
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+
+        </fieldset>
+
+        <div id="summary-info" class="layui-card" style="margin-bottom: 10px; padding: 10px;">
+            <span style="font-weight: 600;">成交金额总计：￥<span style="font-weight: 300;" id="total-money"> 0</span>
+                <span style="font-weight: 600; margin-left: 20px;">利润总计：￥<span style="font-weight: 300;"
+                        id="total-profit">
+                        0</span>
+                    <span style="font-weight: 600; margin-left: 20px;">询盘数量：<span style="font-weight: 300;"
+                            id="total-inquiries">0</span></span>
+                    <span style="font-weight: 600; margin-left: 20px;">成单率：<span style="font-weight: 300;"
+                            id="success-rate">0</span>%</span>
+        </div>
+
+
+        <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+    </div>
+
+
+</script>
+
+
+    {include file="common/foot"/}
+    <script>
+        layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
+            const { table, form, laydate, upload, util, element } = layui;
+            var $ = layui.$;
+            var layer = layui.layer;
+            // 根据超级管理员权限设置工具栏按钮
+            var defaultToolbar = ['filter'];
+            {if session('aid') eq 1}
+            defaultToolbar = ['filter', 'print', 'exports'];
+            {/if}
+            
+            var tableIn = table.render({
+                elem: '#table-list',
+                url: '{:url("checkOrder")}',
+                method: 'post',
+                // width:'100%',
+                height: 'full-260', // ✅ 关键：给表格一个高度（260 按你页面头部高度微调）
+                toolbar: '#topBtn',
+                defaultToolbar: defaultToolbar,
+                cols: [[
+                    { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
+                    { field: 'order_no', title: '订单编号', totalRowText: '合计：',width: 180 },
+                    { field: 'cname', title: '客户名称',width: 180 },
+                    { field: 'contact', title: '联系方式',width: 180 },
+                    { field: 'order_items', title: '产品明细', width: 280, templet: function(d){
+                        if (!d.order_items || d.order_items.length === 0) {
+                            return '';
+                        }
+                        return d.order_items.map(function(item){
+                            return item.product_name || '';
+                        }).filter(function(name){
+                            return name;
+                        }).join('<br>');
+                    }},
+                    { field: 'money', title: '成交金额(￥)', totalRow: true,width: 180 },
+                    { field: 'profit', title: '利润', totalRow: true,width: 180 },
+                    { field: 'margin_rate', title: '利润率(%)', totalRow: true,width: 180 },
+                    { field: 'order_time', title: '成交时间',width: 180 },
+                    { field: 'source', title: '询盘来源',width: 180 },
+                    { field: 'source_port', title: '来源端口',width: 180 },
+                    { 
+                        field: 'wechat_receipt_image', 
+                        title: '微信沟通及付款凭证', 
+                        width: 780,
+                        templet: function(res){
+                            // === wechat_receipt_images 解析兼容开始 ===
+                            var images = res.wechat_receipt_images || [];
+                            
+                            // 如果后端提供了 wechat_receipt_images 数组
+                            if (images && images.length > 0) {
+                                // 修改：显示全部图片，不再截断为3张
+                                // 构建图片数组（统一为 full 地址数组，用于预览）
+                                var html = '<div class="img-strip" data-images="' + encodeURIComponent(JSON.stringify(images.map(function(img) {
+                                    var thumb = img.thumb || img.full || '';
+                                    var full = img.full || thumb;
+                                    return {
+                                        thumb: thumb,
+                                        full: full
+                                    };
+                                }))) + '">';
+                                
+                                // 遍历全部图片，渲染所有缩略图
+                                for (var i = 0; i < images.length; i++) {
+                                    var img = images[i];
+                                    var thumb = img.thumb || img.full || '';
+                                    var full = img.full || thumb;
+                                    if (thumb) {
+                                        // 添加 data-index 用于标识图片索引，data-full 用于单图预览兼容
+                                        html += '<img class="js-img-gallery-preview" data-index="' + i + '" data-full="' + full + '" src="' + thumb + '" loading="lazy" style="cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                                    }
+                                }
+                                html += '</div>';
+                                return html || '-';
+                            }
+                            
+                            // 兼容旧数据：如果后端没给 wechat_receipt_images，尝试使用 wechat_receipt_image
+                            if (res.wechat_receipt_image) {
+                                return '<img class="js-img-preview" data-full="' + res.wechat_receipt_image + '" src="' + res.wechat_receipt_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                            }
+                            
+                            return '-';
+                            // === wechat_receipt_images 解析兼容结束 ===
+                        }
+                    },
+                    { 
+                        field: 'inquiry_assign_image', 
+                        title: '询盘来源凭证', 
+                        width: 180,
+                        templet: function(res){
+                            // === wechat_receipt_images 解析兼容开始 ===
+                            if(res.inquiry_assign_image){
+                                return '<img class="js-img-preview" data-full="' + res.inquiry_assign_image + '" src="' + res.inquiry_assign_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                            }
+                            return '-';
+                            // === wechat_receipt_images 解析兼容结束 ===
+                        }
+                    },
+                    { field: 'pr_user', title: '负责人', hide: false,width: 180 },
+                    { field: 'team_name', title: '团队', hide: false,width: 180 },
+                    { field: 'create_time', title: '创建时间',width: 180 },
+                    { field: 'update_time', title: '更新时间',width: 180 },
+                ]],
+                limit: 100, //每页默认显示的数量
+
+                page: { limits: [10, 20, 30, 40, 50, 100, 9999999] },
+                totalRow: true,// 开启统计行
+                done: function (res, curr, count) {
+                    $('#total-money').text(res.totalMoney);
+                    $('#total-profit').text(res.totalProfit);
+                    $('#total-inquiries').text(res.totalInquiries);
+                    $('#success-rate').text(res.successRate);
+                }
+            });
+            table.on('tool(table-list)', function (obj) {
+                var data = obj.data;
+            })
+
+            //监听事件
+            table.on('toolbar(table-list)', function (obj) {
+
+                var checkStatus = table.checkStatus(obj.config.id)
+                    , data = checkStatus.data; //获取选中的数据
+            });
+
+
+            //监听搜索
+            form.on('submit(LAY-app-contlist-search)', function (data) {
+                var field = data.field;
+                table.reload('table-list', {
+                    url: "{:url('checkOrderSearch')}",
+                    where: {
+                        keyword: data.field
+                    },
+                    page: {
+                        curr: 1
+                    }
+                });
+                return false;
+
+            });
+
+            // 初始化折叠面板
+            element.render('collapse');
+            
+            // 日期控件（自定义日期范围）
+            laydate.render({
+                elem: '#at_time',
+                range: true, // 开启范围选择
+                trigger: 'click'
+            });
+            
+            // 控制日期范围选择框的显示与隐藏
+            form.on('select(dateRange)', function (data) {
+                const isCustom = data.value === '';
+                $('#at_time').toggle(isCustom);
+                if (!isCustom) {
+                    $('#at_time').val('');
+                }
+            });
+
+            // 初始隐藏日期范围选择框
+            $('#at_time').hide();
+
+            // === 图片预览功能（支持缩放/拖拽）开始 ===
+            // 统一的图片预览函数（从 add.html 复制，支持缩放/拖拽）
+            function openZoomPreview(imgSrc) {
+                if (!imgSrc) return;
+
+                // 缩放参数
+                var scale = 1;
+                var minScale = 0.2;
+                var maxScale = 6;
+
+                // 位置（用于拖拽）
+                var translateX = 0, translateY = 0;
+                var isDragging = false;
+                var startX = 0, startY = 0;
+
+                function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+                function applyTransform() {
+                    var $img = $('#previewZoomImg');
+                    $img.css('transform', 'translate(' + translateX + 'px,' + translateY + 'px) scale(' + scale + ')');
+                    $('#zoomRateText').text(Math.round(scale * 100) + '%');
+                }
+
+                function resetTransform() {
+                    scale = 1;
+                    translateX = 0;
+                    translateY = 0;
+                    applyTransform();
+                }
+
+                function zoomBy(delta, centerX, centerY) {
+                    var oldScale = scale;
+                    scale = clamp(scale + delta, minScale, maxScale);
+
+                    // 以鼠标点为中心缩放（体验更好）
+                    if (centerX != null && centerY != null) {
+                        translateX = translateX - centerX * (scale / oldScale - 1);
+                        translateY = translateY - centerY * (scale / oldScale - 1);
+                    }
+                    applyTransform();
+                }
+
+                var html = ''
+                    + '<div id="previewWrap" style="position:relative; width:100%; height:100%; background:#000;">'
+                    + '  <div id="previewToolbar" style="position:absolute; top:12px; left:12px; z-index:9999; display:flex; gap:8px; align-items:center;">'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomIn">放大 +</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomOut">缩小 -</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm layui-btn-primary" id="btnZoomReset">重置</button>'
+                    + '    <span id="zoomRateText" style="color:#fff; font-size:12px; margin-left:6px;">100%</span>'
+                    + '  </div>'
+                    + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
+                    + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
+                    + '      <img id="previewZoomImg" src="' + imgSrc + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
+                    + '    </div>'
+                    + '  </div>'
+                    + '</div>';
+
+                layer.open({
+                    type: 1,
+                    title: '图片预览（可放大缩小，滚轮缩放，拖拽移动）',
+                    closeBtn: 1,
+                    shadeClose: true,
+                    area: ['90vw', '90vh'],
+                    content: html,
+                    success: function(layero) {
+                        // 初始化
+                        resetTransform();
+
+                        // 关键：关闭按钮点击阻止冒泡（可选但更稳）
+                        layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
+                            ev.stopPropagation();
+                        });
+
+                        // 按钮事件（先解绑再绑定，避免重复）
+                        $('#btnZoomIn').off('click.preview').on('click.preview', function() { zoomBy(0.2); });
+                        $('#btnZoomOut').off('click.preview').on('click.preview', function() { zoomBy(-0.2); });
+                        $('#btnZoomReset').off('click.preview').on('click.preview', function() {
+                            resetTransform();
+                        });
+
+                        // 鼠标滚轮缩放（在预览区域内）
+                        $('#previewStage').off('wheel.preview').on('wheel.preview', function(ev) {
+                            ev.preventDefault();
+                            var oe = ev.originalEvent || ev;
+                            var delta = (oe.deltaY > 0) ? -0.12 : 0.12;
+
+                            var rect = this.getBoundingClientRect();
+                            var cx = (oe.clientX || 0) - rect.left;
+                            var cy = (oe.clientY || 0) - rect.top;
+
+                            zoomBy(delta, cx, cy);
+                        });
+
+                        // 拖拽移动（按住图片拖动）
+                        $('#previewZoomImg').off('mousedown.preview').on('mousedown.preview', function(ev) {
+                            isDragging = true;
+                            startX = ev.clientX;
+                            startY = ev.clientY;
+                            $(this).css('cursor', 'grabbing');
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                        });
+
+                        // 用命名空间绑定，避免影响别的页面逻辑
+                        $(document)
+                            .off('mousemove.previewDrag').on('mousemove.previewDrag', function(ev) {
+                                if (!isDragging) return;
+                                var dx = ev.clientX - startX;
+                                var dy = ev.clientY - startY;
+                                startX = ev.clientX;
+                                startY = ev.clientY;
+                                translateX += dx;
+                                translateY += dy;
+                                applyTransform();
+                            })
+                            .off('mouseup.previewDrag').on('mouseup.previewDrag', function() {
+                                if (!isDragging) return;
+                                isDragging = false;
+                                $('#previewZoomImg').css('cursor', 'grab');
+                            });
+                    },
+                    end: function() {
+                        // 记录关闭时间：防止点右上角 X 时 click 穿透到底下图片又触发打开
+                        window.__IMG_PREVIEW_CLOSE_AT__ = Date.now();
+
+                        // 清理拖拽事件
+                        $(document).off('mousemove.previewDrag mouseup.previewDrag');
+                    }
+                });
+            }
+
+            // 新增：图片组预览函数（支持上一张/下一张切换，保持缩放/拖拽功能）
+            function openZoomPreviewGallery(images, startIndex) {
+                if (!images || images.length === 0) return;
+                if (startIndex < 0 || startIndex >= images.length) startIndex = 0;
+
+                // 统一处理：将 images 转换为 full 地址数组
+                var fullImages = [];
+                for (var i = 0; i < images.length; i++) {
+                    var img = images[i];
+                    if (typeof img === 'string') {
+                        fullImages.push(img);
+                    } else if (img && img.full) {
+                        fullImages.push(img.full);
+                    } else if (img && img.thumb) {
+                        fullImages.push(img.thumb);
+                    }
+                }
+                if (fullImages.length === 0) return;
+
+                var currentIndex = startIndex;
+                var totalImages = fullImages.length;
+
+                // 缩放参数
+                var scale = 1;
+                var minScale = 0.2;
+                var maxScale = 6;
+
+                // 位置（用于拖拽）
+                var translateX = 0, translateY = 0;
+                var isDragging = false;
+                var startX = 0, startY = 0;
+
+                function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+                function applyTransform() {
+                    var $img = $('#previewZoomImg');
+                    $img.css('transform', 'translate(' + translateX + 'px,' + translateY + 'px) scale(' + scale + ')');
+                    $('#zoomRateText').text(Math.round(scale * 100) + '%');
+                }
+
+                // 重置缩放和位置（切换图片时调用）
+                function resetTransform() {
+                    scale = 1;
+                    translateX = 0;
+                    translateY = 0;
+                    applyTransform();
+                }
+
+                function zoomBy(delta, centerX, centerY) {
+                    var oldScale = scale;
+                    scale = clamp(scale + delta, minScale, maxScale);
+
+                    // 以鼠标点为中心缩放（体验更好）
+                    if (centerX != null && centerY != null) {
+                        translateX = translateX - centerX * (scale / oldScale - 1);
+                        translateY = translateY - centerY * (scale / oldScale - 1);
+                    }
+                    applyTransform();
+                }
+
+                // 切换图片
+                function switchImage(newIndex) {
+                    if (newIndex < 0 || newIndex >= totalImages) return;
+                    currentIndex = newIndex;
+                    
+                    // 切换图片时自动重置缩放和位置（避免继承上一张的 transform）
+                    resetTransform();
+                    
+                    // 更新图片源
+                    $('#previewZoomImg').attr('src', fullImages[currentIndex]);
+                    
+                    // 更新计数器显示
+                    $('#galleryCounter').text((currentIndex + 1) + ' / ' + totalImages);
+                    
+                    // 更新按钮状态
+                    $('#btnPrev').prop('disabled', currentIndex === 0);
+                    $('#btnNext').prop('disabled', currentIndex === totalImages - 1);
+                }
+
+                var html = ''
+                    + '<div id="previewWrap" style="position:relative; width:100%; height:100%; background:#000;">'
+                    + '  <div id="previewToolbar" style="position:absolute; top:12px; left:12px; z-index:9999; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnPrev">上一张 ←</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnNext">下一张 →</button>'
+                    + '    <span id="galleryCounter" style="color:#fff; font-size:12px; margin:0 8px;">' + (currentIndex + 1) + ' / ' + totalImages + '</span>'
+                    + '    <span style="color:#fff; font-size:12px; margin:0 4px;">|</span>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomIn">放大 +</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm" id="btnZoomOut">缩小 -</button>'
+                    + '    <button type="button" class="layui-btn layui-btn-sm layui-btn-primary" id="btnZoomReset">重置</button>'
+                    + '    <span id="zoomRateText" style="color:#fff; font-size:12px; margin-left:6px;">100%</span>'
+                    + '  </div>'
+                    + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
+                    + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
+                    + '      <img id="previewZoomImg" src="' + fullImages[currentIndex] + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
+                    + '    </div>'
+                    + '  </div>'
+                    + '</div>';
+
+                var layerIndex = layer.open({
+                    type: 1,
+                    title: '图片预览（可放大缩小，滚轮缩放，拖拽移动，键盘左右键切换）',
+                    closeBtn: 1,
+                    shadeClose: true,
+                    area: ['90vw', '90vh'],
+                    content: html,
+                    success: function(layero) {
+                        // 初始化
+                        resetTransform();
+                        $('#btnPrev').prop('disabled', currentIndex === 0);
+                        $('#btnNext').prop('disabled', currentIndex === totalImages - 1);
+
+                        // 关键：关闭按钮点击阻止冒泡
+                        layero.find('.layui-layer-close').off('click.previewCloseFix').on('click.previewCloseFix', function(ev){
+                            ev.stopPropagation();
+                        });
+
+                        // 上一张/下一张按钮
+                        $('#btnPrev').off('click.gallery').on('click.gallery', function() {
+                            if (currentIndex > 0) {
+                                switchImage(currentIndex - 1);
+                            }
+                        });
+                        $('#btnNext').off('click.gallery').on('click.gallery', function() {
+                            if (currentIndex < totalImages - 1) {
+                                switchImage(currentIndex + 1);
+                            }
+                        });
+
+                        // 缩放按钮
+                        $('#btnZoomIn').off('click.preview').on('click.preview', function() { zoomBy(0.2); });
+                        $('#btnZoomOut').off('click.preview').on('click.preview', function() { zoomBy(-0.2); });
+                        $('#btnZoomReset').off('click.preview').on('click.preview', function() {
+                            resetTransform();
+                        });
+
+                        // 键盘左右键切换图片
+                        $(document).off('keydown.galleryPreview').on('keydown.galleryPreview', function(ev) {
+                            // 只在预览弹窗打开时响应
+                            if (!layero || !layero.is(':visible')) return;
+                            
+                            if (ev.key === 'ArrowLeft' || ev.keyCode === 37) {
+                                ev.preventDefault();
+                                if (currentIndex > 0) {
+                                    switchImage(currentIndex - 1);
+                                }
+                            } else if (ev.key === 'ArrowRight' || ev.keyCode === 39) {
+                                ev.preventDefault();
+                                if (currentIndex < totalImages - 1) {
+                                    switchImage(currentIndex + 1);
+                                }
+                            } else if (ev.key === 'Escape' || ev.keyCode === 27) {
+                                ev.preventDefault();
+                                layer.close(layerIndex);
+                            }
+                        });
+
+                        // 鼠标滚轮缩放（在预览区域内）
+                        $('#previewStage').off('wheel.preview').on('wheel.preview', function(ev) {
+                            ev.preventDefault();
+                            var oe = ev.originalEvent || ev;
+                            var delta = (oe.deltaY > 0) ? -0.12 : 0.12;
+
+                            var rect = this.getBoundingClientRect();
+                            var cx = (oe.clientX || 0) - rect.left;
+                            var cy = (oe.clientY || 0) - rect.top;
+
+                            zoomBy(delta, cx, cy);
+                        });
+
+                        // 拖拽移动（按住图片拖动）
+                        $('#previewZoomImg').off('mousedown.preview').on('mousedown.preview', function(ev) {
+                            isDragging = true;
+                            startX = ev.clientX;
+                            startY = ev.clientY;
+                            $(this).css('cursor', 'grabbing');
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                        });
+
+                        // 用命名空间绑定，避免影响别的页面逻辑
+                        $(document)
+                            .off('mousemove.previewDrag').on('mousemove.previewDrag', function(ev) {
+                                if (!isDragging) return;
+                                var dx = ev.clientX - startX;
+                                var dy = ev.clientY - startY;
+                                startX = ev.clientX;
+                                startY = ev.clientY;
+                                translateX += dx;
+                                translateY += dy;
+                                applyTransform();
+                            })
+                            .off('mouseup.previewDrag').on('mouseup.previewDrag', function() {
+                                if (!isDragging) return;
+                                isDragging = false;
+                                $('#previewZoomImg').css('cursor', 'grab');
+                            });
+                    },
+                    end: function() {
+                        // 记录关闭时间：防止点右上角 X 时 click 穿透到底下图片又触发打开
+                        window.__IMG_PREVIEW_CLOSE_AT__ = Date.now();
+
+                        // 清理事件
+                        $(document).off('mousemove.previewDrag mouseup.previewDrag keydown.galleryPreview');
+                    }
+                });
+            }
+
+            // 事件委托：绑定图片组预览（.js-img-gallery-preview）
+            $(document).on('click', '.js-img-gallery-preview', function() {
+                // 防止关闭后立即点击穿透
+                if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
+                    return;
+                }
+
+                // 获取图片组容器
+                var $container = $(this).closest('.img-strip');
+                if ($container.length === 0) {
+                    // 如果没有容器，降级为单图预览
+                    var imgSrc = $(this).data('full') || $(this).attr('src');
+                    if (imgSrc) openZoomPreview(imgSrc);
+                    return;
+                }
+
+                // 从 data-images 属性读取图片数组（使用 attr 直接读取，因为数据是 encodeURIComponent 编码的）
+                var imagesData = null;
+                var encodedData = $container.attr('data-images');
+                if (encodedData) {
+                    try {
+                        imagesData = JSON.parse(decodeURIComponent(encodedData));
+                    } catch(e) {
+                        console.error('解析图片数据失败', e);
+                    }
+                }
+
+                if (!imagesData || imagesData.length === 0) {
+                    // 降级为单图预览
+                    var imgSrc = $(this).data('full') || $(this).attr('src');
+                    if (imgSrc) openZoomPreview(imgSrc);
+                    return;
+                }
+
+                // 获取当前点击的图片索引
+                var startIndex = parseInt($(this).data('index')) || 0;
+                if (startIndex < 0 || startIndex >= imagesData.length) startIndex = 0;
+
+                // 打开图片组预览
+                openZoomPreviewGallery(imagesData, startIndex);
+            });
+
+            // 事件委托：绑定单图预览（.js-img-preview，兼容旧数据和其他列）
+            $(document).on('click', '.js-img-preview', function() {
+                // 防止关闭后立即点击穿透
+                if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
+                    return;
+                }
+
+                // 优先读取data-full属性（原图URL），如果没有则使用src（兼容旧数据）
+                var imgSrc = $(this).data('full') || $(this).attr('src');
+                if (!imgSrc) return;
+
+                openZoomPreview(imgSrc);
+            });
+            // === 图片预览功能（支持缩放/拖拽）结束 ===
+
+        });
+
+        /*添加*/
+        function resetForm() {
+            document.getElementById('searchForm').reset();
+        }
+    </script>
+
+
+</body>
+
+</html>
+</html>
