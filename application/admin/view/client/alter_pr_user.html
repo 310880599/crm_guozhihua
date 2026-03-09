@@ -29,8 +29,7 @@
 
         <div class="layui-form-item">
             <div class="layui-input-block">
-                <button type="button" class="layui-btn"  lay-submit="" lay-filter="submit">确认分配</button>
-
+                <button type="button" class="layui-btn" lay-submit="" lay-filter="submit">确认分配</button>
             </div>
         </div>
     </form>
@@ -46,27 +45,31 @@
 
         //监听提交
         form.on('submit(submit)', function(data){
+            var $submitBtn = $('button[lay-filter="submit"]');
+            var originalText = $submitBtn.text();
 
-            /*layer.alert(JSON.stringify(data.field), {
-                title: '最终的提交信息'
-            })
-            return false;*/
+            // 防重复点击：提交期间禁用按钮并提示“提交中...”
+            $submitBtn.prop('disabled', true).addClass('layui-btn-disabled').text('提交中...');
 
-            $.post("{:url('Client/alterPrUser')}",data.field,function (res) {
-
-
+            var request = $.post("{:url('Client/alterPrUser')}", data.field, function (res) {
                 if (res.code == 0){
                     layer.msg(res.msg,{time:1000},function () {
                         var index = parent.layer.getFrameIndex(window.name); //获取窗口索引
                         parent.layer.close(index); // 关闭layer
                     });
-
                     window.parent.location.reload();
-                }else {
+                } else {
                     layer.msg(res.msg,{time:2000});
                 }
+            }, 'json');
 
-            },'json')
+            // 网络错误等情况的处理
+            request.fail(function () {
+                layer.msg('请求失败，请稍后重试',{time:2000});
+            }).always(function () {
+                // 请求结束后恢复按钮状态（成功时一般已经关闭弹窗，这里是兜底）
+                $submitBtn.prop('disabled', false).removeClass('layui-btn-disabled').text(originalText);
+            });
 
             return false;
         });

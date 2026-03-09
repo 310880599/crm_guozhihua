@@ -4481,41 +4481,95 @@ class Client extends Common
     }
 
 
-    //客户转移，变更负责人
+    //客户转移，变更负责人（客户列表页批量）
     public function alterPrUser()
     {
-        //1，获取提交的线索ID 【1,2,3,4,】
+        // 1，获取提交的线索ID 【1,2,3,4,】
         $ids = Request::param('ids');
         $this->assign('ids', $ids);
 
-
-        //查询所有管理员（去除admin）
+        // 查询所有管理员（去除admin）
         $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
         $this->assign('adminResult', $adminResult);
 
         if (Request::isAjax()) {
-            $username = Request::param('username');
-            $idsArr = explode(",", $ids);
+            // 参数校验
+            $idsParam = trim((string)Request::param('ids'));
+            $username = trim((string)Request::param('username'));
 
-
-            $count = 0;
-            foreach ($idsArr as $key => $value) {
-                $data['pr_user_bef'] = Db::table('crm_leads')->where(['id' => $value])->field('pr_user')->find();
-                $data['pr_user'] = $username;
-                $data['id'] = $value;
-                $insertAll = Db::name('crm_leads')->update($data);
-                if ($insertAll) {
-                    $count++;
-                }
+            if ($idsParam === '') {
+                return json(['code' => 500, 'msg' => '未选择需要转移的客户', 'data' => []]);
             }
 
+            if ($username === '') {
+                return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
+            }
 
+            // 新负责人是否存在
+            $newPrUserId = Db::name('admin')->where('username', $username)->value('admin_id');
+            if (empty($newPrUserId)) {
+                return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
+            }
 
+            // 批量 IDs 清洗：explode / trim / 去空 / 去重
+            $idsArr = explode(',', $idsParam);
+            $idsArr = array_map('trim', $idsArr);
+            $idsArr = array_filter($idsArr, function ($v) {
+                return $v !== '';
+            });
+            $idsArr = array_unique($idsArr);
 
-            if ($count > 0) {
-                $msg = ['code' => 0, 'msg' => '转移' . $count . '个客户成功！', 'data' => []];
-                return json($msg);
-            } else {
+            if (empty($idsArr)) {
+                return json(['code' => 500, 'msg' => '未找到有效的客户ID', 'data' => []]);
+            }
+
+            Db::startTrans();
+            try {
+                $count = 0;
+                foreach ($idsArr as $value) {
+                    // 读取旧负责人信息
+                    $old = Db::name('crm_leads')->where('id', $value)->field('pr_user,pr_user_id')->find();
+                    if (!$old) {
+                        // 任意一条异常，整体回滚
+                        throw new \Exception('客户不存在：' . $value);
+                    }
+
+                    $data = [];
+                    $data['id'] = $value;
+                    $data['pr_user_bef'] = isset($old['pr_user']) ? $old['pr_user'] : '';
+                    $data['pr_user_bef_id'] = isset($old['pr_user_id']) ? (int)$old['pr_user_id'] : 0;
+                    $data['pr_user'] = $username;
+                    $data['pr_user_id'] = (int)$newPrUserId;
+
+                    $res = Db::name('crm_leads')->update($data);
+                    if ($res === false) {
+                        // 更新失败，抛异常回滚
+                        throw new \Exception('更新客户失败：' . $value);
+                    }
+
+                    if ($res) {
+                        $count++;
+                        // 日志记录（仅对成功转移的客户）
+                        $oldPrUser = $data['pr_user_bef'];
+                        $this->addOperLog(
+                            $value,
+                            '转移负责人',
+                            "从 [{$oldPrUser}] 转移给 [{$username}]"
+                        );
+                    }
+                }
+
+                if ($count > 0) {
+                    Db::commit();
+                    $msg = ['code' => 0, 'msg' => '转移' . $count . '个客户成功！', 'data' => []];
+                    return json($msg);
+                } else {
+                    Db::rollback();
+                    $msg = ['code' => 500, 'msg' => '转移失败！', 'data' => []];
+                    return json($msg);
+                }
+            } catch (\Exception $e) {
+                Db::rollback();
                 $msg = ['code' => 500, 'msg' => '转移失败！', 'data' => []];
                 return json($msg);
             }
