@@ -731,8 +731,17 @@ class Client extends Common
             ->select();
         $portList = array_column($portList, 'port_name');
         
-        //查询所有管理员（去除admin，排除 group_id=1 的 admin）
-        $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
+        // 统一使用“检查客户业务员可见名单”生成业务员下拉
+        $allowedUsernames = $this->getCheckClientAllowedUsernames();
+
+        $adminResult = [];
+        if (!empty($allowedUsernames)) {
+            $adminResult = Db::name('admin')
+                ->field('admin_id,username')
+                ->where('username', 'in', $allowedUsernames)
+                ->order('admin_id', 'asc')
+                ->select();
+        }
         $this->assign('adminResult', $adminResult);
         
         //查询所有团队
@@ -752,18 +761,14 @@ class Client extends Common
 
         // 只查询审核通过订单
         $where[] = ['o.check_status', '=', 2];
-        
-        // 获取当前登录用户信息
-        $current_admin = Admin::getMyInfo();
-        
-        // 统一的权限判断变量 $isSuper
-        $isSuper = (
-            (int)session('aid') === 1
-            || ($current_admin['username'] ?? '') === 'admin'
-            || (int)($current_admin['group_id'] ?? 0) === 12
-            || (int)($current_admin['group_id'] ?? 0) === 13
-            || (int)($current_admin['group_id'] ?? 0) === 16
-        );
+
+        // 统一使用“检查客户业务员可见名单”作为检查订单的可见业务员列表
+        $visibleUsers = $this->getCheckClientAllowedUsernames();
+        $visibleUsers = array_values(array_unique(array_filter(array_map('trim', (array) $visibleUsers))));
+        $currentUsername = trim((string) Session::get('username'));
+        if (empty($visibleUsers) && $currentUsername !== '') {
+            $visibleUsers = [$currentUsername];
+        }
         
         $page = input('page') ?? 1;
         $limit = input('limit') ?? config('pageSize');
@@ -811,63 +816,57 @@ class Client extends Common
         if (isset($keyword['product_name'])) {
             $where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
         }
-        
-        // 权限过滤逻辑
-        $current_username = $current_admin['username'] ?? '';
-        
-        if ($isSuper === true) {
-            // 超级管理员：不添加任何权限过滤条件，可以查看所有成交订单
-            // 但保留用户主动筛选条件（team_name、org、pr_user）
-        } else {
-            // 普通员工：只能查看自己创建/负责的成交订单
-            if ($current_username) {
-                $where[] = ['pr_user', '=', $current_username];
-                $client_where[] = ['pr_user', '=', $current_username];
-            }
-        }
-        
+
+        /**
+         * 基于“检查客户”的权限名单，统一计算本次查询可见的业务员列表
+         * 规则：
+         * 1）基础可见范围：$visibleUsers（getCheckClientAllowedUsernames）
+         * 2）若用户选择 team_name / org，则在基础可见范围内再做一次筛选
+         * 3）若用户选择 pr_user，则必须在上一步可见范围内，否则直接返回空结果
+         * 4）最终所有订单/客户查询都叠加 whereIn(pr_user, $scopedUsers)，防止越权
+         */
+
         // 用户主动筛选：团队名称筛选（仅当用户主动选择时）
-        if (isset($keyword['team_name']) && !empty($keyword['team_name'])) {
+        $filter_team_name = '';
+        if (isset($keyword['team_name']) && $keyword['team_name'] !== '') {
             $where[] = ['team_name', '=', $keyword['team_name']];
+            $filter_team_name = $keyword['team_name'];
         }
-        
+
         // 用户主动筛选：组织过滤（仅当用户主动选择时）
         $org_where = [];
         if (!empty($keyword['org'])) {
             $org_where[] = $this->getOrgWhere($keyword['org']);
         }
-        
-        // 如果用户主动筛选了团队名称或组织，需要根据筛选条件进一步过滤业务员列表
-        $filter_team_name = $keyword['team_name'] ?? '';
+
+        // 基于“可见业务员名单”+ 团队/组织进一步收窄本次查询的业务员范围
+        $scopedUsers = $visibleUsers;
         if ($filter_team_name || !empty($org_where)) {
-            $filter_query = Db::table('admin');
+            $filterQuery = Db::table('admin')->where('username', 'in', $visibleUsers);
             if ($filter_team_name) {
-                $filter_query->where('team_name', $filter_team_name);
+                $filterQuery->where('team_name', $filter_team_name);
             }
             if (!empty($org_where)) {
-                $filter_query->where($org_where);
+                $filterQuery->where($org_where);
             }
-            $filtered_usernames = $filter_query->column('username');
-            
-            // 如果筛选后没有匹配的业务员，返回空结果
-            if (empty($filtered_usernames)) {
-                $client_where[] = ['pr_user', '=', time()];
-                $where[] = ['pr_user', '=', time()];
-            } else {
-                if ($isSuper) {
-                    // 超级管理员：使用筛选后的业务员列表
-                    $client_where[] = ['pr_user', 'in', $filtered_usernames];
-                    $where[] = ['pr_user', 'in', $filtered_usernames];
-                } else {
-                    // 普通员工：检查当前用户是否在筛选范围内
-                    if (!in_array($current_username, $filtered_usernames)) {
-                        // 当前用户不在筛选范围内，返回空结果
-                        $client_where[] = ['pr_user', '=', time()];
-                        $where[] = ['pr_user', '=', time()];
-                    }
-                    // 如果当前用户在筛选范围内，保持原有权限过滤（pr_user = 当前登录用户名）
-                }
+            $filteredUsernames = $filterQuery->column('username');
+
+            // 团队/组织筛选后若无任何可见业务员，直接返回空结果，防止越权
+            if (empty($filteredUsernames)) {
+                return [
+                    'code' => 0,
+                    'msg' => '获取成功!',
+                    'data' => [],
+                    'count' => 0,
+                    'rel' => 1,
+                    'totalInquiries' => 0,
+                    'successRate' => number_format(0, 2),
+                    'totalMoney' => number_format(0, 2),
+                    'totalProfit' => number_format(0, 2),
+                ];
             }
+
+            $scopedUsers = $filteredUsernames;
         }
         
         // 询盘渠道查询
@@ -882,20 +881,42 @@ class Client extends Common
             $where[] = ['source_port', '=', $keyword['source_port']];
         }
         
-        // 业务员筛选：若传了 pr_user，则追加 ['pr_user','=',$keyword['pr_user']]
+        // 业务员筛选：若传了 pr_user，则在可见范围内进一步精确筛选
+        $selectedPrUser = '';
         if (isset($keyword['pr_user'])) {
-            if ($isSuper) {
-                // 超级管理员：可以使用筛选的业务员
-                $where[] = ['pr_user', '=', $keyword['pr_user']];
-                $client_where[] = ['pr_user', '=', $keyword['pr_user']];
-            } else {
-                // 普通员工：只能查看自己的订单，如果筛选的不是自己，返回空结果
-                if ($keyword['pr_user'] !== $current_username) {
-                    $client_where[] = ['pr_user', '=', time()];
-                    $where[] = ['pr_user', '=', time()];
-                }
-                // 如果筛选的是自己，保持原有权限过滤（pr_user = 当前登录用户名）
+            $selectedPrUser = trim((string) $keyword['pr_user']);
+        }
+
+        if ($selectedPrUser !== '') {
+            // 若选择的业务员不在本次可见范围内，直接返回空结果，防止越权
+            if (empty($scopedUsers) || !in_array($selectedPrUser, $scopedUsers, true)) {
+                return [
+                    'code' => 0,
+                    'msg' => '获取成功!',
+                    'data' => [],
+                    'count' => 0,
+                    'rel' => 1,
+                    'totalInquiries' => 0,
+                    'successRate' => number_format(0, 2),
+                    'totalMoney' => number_format(0, 2),
+                    'totalProfit' => number_format(0, 2),
+                ];
             }
+
+            $where[] = ['pr_user', '=', $selectedPrUser];
+            $client_where[] = ['pr_user', '=', $selectedPrUser];
+            // 本次查询只看这个业务员
+            $scopedUsers = [$selectedPrUser];
+        }
+
+        // 最终统一的权限边界：订单负责人必须在本次可见业务员范围内
+        if (!empty($scopedUsers)) {
+            $where[] = ['pr_user', 'in', $scopedUsers];
+            $client_where[] = ['pr_user', 'in', $scopedUsers];
+        } elseif ($currentUsername !== '') {
+            // 极端情况兜底：只看自己
+            $where[] = ['pr_user', '=', $currentUsername];
+            $client_where[] = ['pr_user', '=', $currentUsername];
         }
         
         // 客户查询条件：只查询启用状态的客户
