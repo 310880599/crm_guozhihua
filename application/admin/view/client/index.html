@@ -697,6 +697,26 @@
                 }
             });
 
+            // 清空表格勾选状态：DOM + 表头 + layui 缓存，避免多次搜索后转移客户拿到旧 ids
+            function clearTableCheckState(tableId) {
+                try { table.clearCheck(tableId); } catch (e) {}
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if ($view.length) {
+                    $view.find('tbody tr').removeClass('layui-table-checked');
+                    $view.find('tbody .layui-form-checkbox').removeClass('layui-form-checked');
+                    $view.find('thead .layui-form-checkbox').removeClass('layui-form-checked');
+                    $view.find('input[type="checkbox"]').prop('checked', false);
+                }
+                var cache = table.cache[tableId];
+                if (cache && Array.isArray(cache)) {
+                    cache.forEach(function (row) {
+                        if (row && Object.prototype.hasOwnProperty.call(row, 'LAY_CHECKED')) {
+                            delete row.LAY_CHECKED;
+                        }
+                    });
+                }
+            }
+
             function reloadKeepColWidth() {
                 var snapshot = {};
                 if (typeof getCurrentWidthsSnapshot === 'function') {
@@ -720,6 +740,7 @@
 
                 console.log('[colwidth] reloadKeepColWidth snapshot', snapshot);
                 tableIn.reload();
+                setTimeout(function () { clearTableCheckState('table-list'); }, 80);
             }
             // 打开跟进弹窗
             function openFollowDialog(clientId) {
@@ -1148,7 +1169,8 @@
                         id: data.id,
                         kh_name: data.kh_name || '',
                         pr_user: data.pr_user || '',
-                        main_phone: data.main_phone || ''
+                        main_phone: data.main_phone || '',
+                        url_ids: String(data.id)
                     });
                     layer_add("转移客户", "{:url('Client/alterPrUser')}?ids=" + data.id)
                 } else if (obj.event === 'chengjiao') {
@@ -1178,7 +1200,7 @@
                 });
             });
 
-            // 工具栏批量操作（原样保留）
+            // 工具栏批量操作（原样保留）；alterAll 仅从当前页可见且已勾选的行取 id，避免缓存残留
             table.on('toolbar(table-list)', function (obj) {
                 var checkStatus = table.checkStatus(obj.config.id), data = checkStatus.data;
                 switch (obj.event) {
@@ -1201,14 +1223,44 @@
                         }
                         break;
                     case 'alterAll':
-                        if (data.length > 0) {
-                            var alterList2 = data.map(function (o) { return parseInt(o.id, 10); })
-                                .filter(function (id) { return !!id; });
-                            alterList2 = Array.from(new Set(alterList2));
-                            console.log('[转移客户-批量]', {
-                                ids: alterList2,
-                                kh_names: data.map(function (o) { return o.kh_name || ''; })
+                        (function () {
+                            var tableId = 'table-list';
+                            var $view = $('#' + tableId).next('.layui-table-view');
+                            var cache = table.cache[tableId];
+                            if (!cache || !Array.isArray(cache)) {
+                                console.log('[转移客户-批量] 当前页可见行', []);
+                                layer.msg('请选择当前列表中的客户');
+                                return;
+                            }
+                            var visibleList = cache.map(function (row, idx) {
+                                return { index: idx, id: row.id, kh_name: (row.kh_name || '') };
                             });
+                            console.log('[客户列表-当前页可见行]', visibleList.map(function (o) { return { id: o.id, kh_name: o.kh_name }; }));
+                            var alterList2 = [];
+                            var namesList = [];
+                            var seenIndex = {};
+                            $view.find('tbody tr').each(function () {
+                                var $tr = $(this);
+                                if (!$tr.hasClass('layui-table-checked')) return;
+                                var idx = $tr.attr('data-index');
+                                if (idx === undefined || seenIndex[idx]) return;
+                                seenIndex[idx] = true;
+                                var row = cache[idx];
+                                if (row && row.id) {
+                                    var id = parseInt(row.id, 10);
+                                    if (id > 0) {
+                                        alterList2.push(id);
+                                        namesList.push(row.kh_name || '');
+                                    }
+                                }
+                            });
+                            alterList2 = alterList2.filter(function (id, i) { return alterList2.indexOf(id) === i; });
+                            console.log('[客户列表-真实勾选] ids', alterList2, 'kh_name', namesList);
+                            console.log('[客户列表-转移弹窗] 传给 Client/alterPrUser 的 ids=', alterList2.join(','));
+                            if (alterList2.length === 0) {
+                                layer.msg('请选择当前列表中的客户');
+                                return;
+                            }
                             var currConfirm2 = layer.confirm('您确定要转移这' + alterList2.length + '个客户吗？', function () {
                                 layer.close(currConfirm2);
                                 layer.open({
@@ -1222,9 +1274,7 @@
                                     content: ["{:url('Client/alterPrUser')}?ids=" + alterList2.join(',')]
                                 });
                             });
-                        } else {
-                            layer.msg("请选择需要转移的客户");
-                        }
+                        })();
                         break;
                     case 'chengjiaoAll':
                         if (data.length > 0) {
@@ -1266,16 +1316,18 @@
                 }
             });
 
-            // 监听搜索提交事件
+            // 监听搜索提交事件：每次查询回到第一页，reload 完成后强制清空勾选
             form.on('submit(LAY-app-contlist-search)', function (data) {
-                // 重载表格，根据筛选条件精确查询；重载后清空勾选，避免批量转移拿到旧数据
+                var keyword = data.field;
+                console.log('[客户列表-搜索] keyword', keyword);
                 table.reload('table-list', {
-                    url: "{:url('index')}",           // 统一使用 index 接口
+                    url: "{:url('index')}",
                     method: 'post',
-                    where: { keyword: data.field },   // 将所有字段参数打包进 keyword
+                    where: { keyword: keyword },
                     page: { curr: 1 }
                 }, function () {
-                    try { table.clearCheck('table-list'); } catch (e) {}
+                    clearTableCheckState('table-list');
+                    console.log('[客户列表-reload] 查询完成，已清空勾选');
                 });
                 return false;
             });

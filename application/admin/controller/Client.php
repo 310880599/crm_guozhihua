@@ -4484,7 +4484,7 @@ class Client extends Common
     //客户转移，变更负责人（客户列表页批量）
     public function alterPrUser()
     {
-        // IDs 严格清洗：拆分为数组、trim、过滤空值、转整数、去重、过滤非法值
+        // IDs 防御性清洗：trim、explode、转整型、过滤空值与非正整数、去重、保持首次出现顺序
         $idsParam = trim((string)Request::param('ids'));
         $idsArr = array_values(array_unique(array_filter(array_map('intval', explode(',', $idsParam)), function ($v) {
             return $v > 0;
