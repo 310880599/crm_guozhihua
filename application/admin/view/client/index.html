@@ -1144,6 +1144,12 @@
                 } else if (obj.event === 'edit') {
                     layer_add("编辑客户", "{:url('Client/edit')}?id=" + data.id);
                 } else if (obj.event === 'alter') {
+                    console.log('[转移客户-单条]', {
+                        id: data.id,
+                        kh_name: data.kh_name || '',
+                        pr_user: data.pr_user || '',
+                        main_phone: data.main_phone || ''
+                    });
                     layer_add("转移客户", "{:url('Client/alterPrUser')}?ids=" + data.id)
                 } else if (obj.event === 'chengjiao') {
                     layer.confirm('您确定这个客户成交了吗？', function (index) {
@@ -1196,8 +1202,14 @@
                         break;
                     case 'alterAll':
                         if (data.length > 0) {
-                            var alterList2 = data.map(function (o) { return o.id; });
-                            var currConfirm2 = layer.confirm('您确定要转移这' + data.length + '个客户吗？', function () {
+                            var alterList2 = data.map(function (o) { return parseInt(o.id, 10); })
+                                .filter(function (id) { return !!id; });
+                            alterList2 = Array.from(new Set(alterList2));
+                            console.log('[转移客户-批量]', {
+                                ids: alterList2,
+                                kh_names: data.map(function (o) { return o.kh_name || ''; })
+                            });
+                            var currConfirm2 = layer.confirm('您确定要转移这' + alterList2.length + '个客户吗？', function () {
                                 layer.close(currConfirm2);
                                 layer.open({
                                     type: 2,
@@ -1207,7 +1219,7 @@
                                     anim: 2,
                                     shadeClose: false,
                                     maxmin: false,
-                                    content: ["{:url('Client/alterPrUser')}?ids=" + alterList2]
+                                    content: ["{:url('Client/alterPrUser')}?ids=" + alterList2.join(',')]
                                 });
                             });
                         } else {
@@ -1256,12 +1268,14 @@
 
             // 监听搜索提交事件
             form.on('submit(LAY-app-contlist-search)', function (data) {
-                // 重载表格，根据筛选条件精确查询
+                // 重载表格，根据筛选条件精确查询；重载后清空勾选，避免批量转移拿到旧数据
                 table.reload('table-list', {
                     url: "{:url('index')}",           // 统一使用 index 接口
                     method: 'post',
                     where: { keyword: data.field },   // 将所有字段参数打包进 keyword
                     page: { curr: 1 }
+                }, function () {
+                    try { table.clearCheck('table-list'); } catch (e) {}
                 });
                 return false;
             });

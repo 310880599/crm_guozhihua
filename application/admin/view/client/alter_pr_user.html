@@ -8,7 +8,9 @@
         <div class="layui-form-item">
             <label class="layui-form-label">客户</label>
             <div class="layui-input-4">
-                <input type="text" id="ids" name="ids" disabled value="{$ids}" lay-verify="required"  class="layui-input">
+                <input type="text" id="client_name_display" class="layui-input" disabled value="{$client_name}" placeholder="未找到客户">
+                <input type="hidden" name="ids" id="ids" value="{$ids}" lay-verify="required">
+                {if $ids}<div class="layui-form-mid layui-word-aux" style="margin-top:4px;">客户ID（只读）：{$ids}</div>{/if}
             </div>
         </div>
 

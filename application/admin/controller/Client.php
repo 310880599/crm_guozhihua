@@ -4484,97 +4484,97 @@ class Client extends Common
     //客户转移，变更负责人（客户列表页批量）
     public function alterPrUser()
     {
-        // 1，获取提交的线索ID 【1,2,3,4,】
-        $ids = Request::param('ids');
-        $this->assign('ids', $ids);
+        // IDs 严格清洗：拆分为数组、trim、过滤空值、转整数、去重、过滤非法值
+        $idsParam = trim((string)Request::param('ids'));
+        $idsArr = array_values(array_unique(array_filter(array_map('intval', explode(',', $idsParam)), function ($v) {
+            return $v > 0;
+        })));
+        $ids = implode(',', $idsArr);
 
         // 查询所有管理员（去除admin）
         $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
         $this->assign('adminResult', $adminResult);
 
         if (Request::isAjax()) {
-            // 参数校验
-            $idsParam = trim((string)Request::param('ids'));
             $username = trim((string)Request::param('username'));
 
-            if ($idsParam === '') {
-                return json(['code' => 500, 'msg' => '未选择需要转移的客户', 'data' => []]);
+            if (empty($idsArr)) {
+                return json(['code' => 500, 'msg' => '参数错误或未选择客户', 'data' => []]);
             }
-
             if ($username === '') {
                 return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
             }
 
-            // 新负责人是否存在
             $newPrUserId = Db::name('admin')->where('username', $username)->value('admin_id');
             if (empty($newPrUserId)) {
                 return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
             }
 
-            // 批量 IDs 清洗：explode / trim / 去空 / 去重
-            $idsArr = explode(',', $idsParam);
-            $idsArr = array_map('trim', $idsArr);
-            $idsArr = array_filter($idsArr, function ($v) {
-                return $v !== '';
-            });
-            $idsArr = array_unique($idsArr);
-
-            if (empty($idsArr)) {
-                return json(['code' => 500, 'msg' => '未找到有效的客户ID', 'data' => []]);
-            }
-
             Db::startTrans();
             try {
-                $count = 0;
+                $successCount = 0;
+                $failCount = 0;
                 foreach ($idsArr as $value) {
-                    // 读取旧负责人信息
-                    $old = Db::name('crm_leads')->where('id', $value)->field('pr_user,pr_user_id')->find();
+                    $old = Db::name('crm_leads')->where('id', $value)->field('id,kh_name,pr_user,pr_user_id')->find();
                     if (!$old) {
-                        // 任意一条异常，整体回滚
-                        throw new \Exception('客户不存在：' . $value);
+                        $failCount++;
+                        continue;
                     }
-
-                    $data = [];
-                    $data['id'] = $value;
-                    $data['pr_user_bef'] = isset($old['pr_user']) ? $old['pr_user'] : '';
-                    $data['pr_user_bef_id'] = isset($old['pr_user_id']) ? (int)$old['pr_user_id'] : 0;
-                    $data['pr_user'] = $username;
-                    $data['pr_user_id'] = (int)$newPrUserId;
-
-                    $res = Db::name('crm_leads')->update($data);
+                    $updateData = [
+                        'pr_user_bef' => isset($old['pr_user']) ? $old['pr_user'] : '',
+                        'pr_user_bef_id' => isset($old['pr_user_id']) ? (int)$old['pr_user_id'] : 0,
+                        'pr_user' => $username,
+                        'pr_user_id' => (int)$newPrUserId
+                    ];
+                    $res = Db::name('crm_leads')->where('id', $value)->update($updateData);
                     if ($res === false) {
-                        // 更新失败，抛异常回滚
-                        throw new \Exception('更新客户失败：' . $value);
+                        $failCount++;
+                        continue;
                     }
-
-                    if ($res) {
-                        $count++;
-                        // 日志记录（仅对成功转移的客户）
-                        $oldPrUser = $data['pr_user_bef'];
-                        $this->addOperLog(
-                            $value,
-                            '转移负责人',
-                            "从 [{$oldPrUser}] 转移给 [{$username}]"
-                        );
-                    }
+                    $successCount++;
+                    $khName = isset($old['kh_name']) ? $old['kh_name'] : ('ID:' . $value);
+                    $oldPrUser = isset($old['pr_user']) ? $old['pr_user'] : '';
+                    $this->addOperLog(
+                        $value,
+                        '转移负责人',
+                        "客户[{$khName}] 从 [{$oldPrUser}] 转移给 [{$username}]"
+                    );
                 }
 
-                if ($count > 0) {
-                    Db::commit();
-                    $msg = ['code' => 0, 'msg' => '转移' . $count . '个客户成功！', 'data' => []];
-                    return json($msg);
-                } else {
-                    Db::rollback();
-                    $msg = ['code' => 500, 'msg' => '转移失败！', 'data' => []];
-                    return json($msg);
+                Db::commit();
+                if ($successCount === 0) {
+                    return json(['code' => 500, 'msg' => '转移失败，未找到有效客户或更新异常', 'data' => []]);
                 }
+                if ($failCount > 0) {
+                    return json(['code' => 0, 'msg' => "成功转移 {$successCount} 个客户，失败 {$failCount} 个客户", 'data' => []]);
+                }
+                return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
             } catch (\Exception $e) {
                 Db::rollback();
-                $msg = ['code' => 500, 'msg' => '转移失败！', 'data' => []];
-                return json($msg);
+                return json(['code' => 500, 'msg' => '转移失败！', 'data' => []]);
             }
         }
 
+        // GET 打开弹窗页面：根据清洗后的 ids 查询客户名称并展示
+        $this->assign('ids', $ids);
+        $clientName = '';
+        $clientList = [];
+        if (!empty($idsArr)) {
+            $clientList = Db::name('crm_leads')->where('id', 'in', $idsArr)->field('id,kh_name')->select();
+            $orderMap = array_flip($idsArr);
+            usort($clientList, function ($a, $b) use ($orderMap) {
+                $pa = isset($orderMap[(int)$a['id']]) ? $orderMap[(int)$a['id']] : 9999;
+                $pb = isset($orderMap[(int)$b['id']]) ? $orderMap[(int)$b['id']] : 9999;
+                return $pa - $pb;
+            });
+            $names = array_column($clientList, 'kh_name');
+            $clientName = implode('，', array_map(function ($n) { return $n === '' || $n === null ? '未命名' : $n; }, $names));
+        }
+        if ($clientName === '') {
+            $clientName = '未找到客户';
+        }
+        $this->assign('client_name', $clientName);
+        $this->assign('client_list', $clientList);
         return $this->fetch('client/alter_pr_user');
     }
 
