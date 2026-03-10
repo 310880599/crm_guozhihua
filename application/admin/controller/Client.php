@@ -6,6 +6,7 @@ use think\Db;
 use think\facade\Request;
 use think\facade\Session;
 use think\facade\Env;
+use think\facade\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use think\facade\Cache;
 use app\admin\model\Admin;
@@ -4484,12 +4485,37 @@ class Client extends Common
     //客户转移，变更负责人（客户列表页批量）
     public function alterPrUser()
     {
-        // IDs 防御性清洗：trim、explode、转整型、过滤空值与非正整数、去重、保持首次出现顺序
-        $idsParam = trim((string)Request::param('ids'));
-        $idsArr = array_values(array_unique(array_filter(array_map('intval', explode(',', $idsParam)), function ($v) {
-            return $v > 0;
-        })));
+        // ids 严格清洗：仅保留正整数，去重并保持顺序
+        $idsRawInput = Request::param('ids', '');
+        if (is_array($idsRawInput)) {
+            $idsRawInput = implode(',', $idsRawInput);
+        }
+        $idsParam = trim((string)$idsRawInput);
+        $idParts = preg_split('/[,\s，]+/', $idsParam, -1, PREG_SPLIT_NO_EMPTY);
+        $idsArr = [];
+        $seenIds = [];
+        foreach ($idParts as $part) {
+            $id = (int)$part;
+            if ($id > 0 && !isset($seenIds[$id])) {
+                $seenIds[$id] = 1;
+                $idsArr[] = $id;
+            }
+        }
         $ids = implode(',', $idsArr);
+
+        Log::info('[Client.alterPrUser] ids', [
+            'ids_raw' => $idsParam,
+            'ids_clean' => $idsArr,
+            'is_ajax' => Request::isAjax() ? 1 : 0
+        ]);
+
+        $debugKhNameMap = [];
+        if (!empty($idsArr)) {
+            $debugKhNameMap = Db::name('crm_leads')->where('id', 'in', $idsArr)->column('kh_name', 'id');
+        }
+        Log::info('[Client.alterPrUser] kh_name_by_id', [
+            'kh_name_map' => $debugKhNameMap
+        ]);
 
         // 查询所有管理员（去除admin）
         $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
@@ -4551,6 +4577,11 @@ class Client extends Common
                 return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
             } catch (\Exception $e) {
                 Db::rollback();
+                Log::error('[Client.alterPrUser] transfer exception', [
+                    'ids_clean' => $idsArr,
+                    'username' => $username,
+                    'error' => $e->getMessage()
+                ]);
                 return json(['code' => 500, 'msg' => '转移失败！', 'data' => []]);
             }
         }
@@ -4567,8 +4598,13 @@ class Client extends Common
                 $pb = isset($orderMap[(int)$b['id']]) ? $orderMap[(int)$b['id']] : 9999;
                 return $pa - $pb;
             });
-            $names = array_column($clientList, 'kh_name');
-            $clientName = implode('，', array_map(function ($n) { return $n === '' || $n === null ? '未命名' : $n; }, $names));
+            $clientCount = count($clientList);
+            if ($clientCount > 1) {
+                $clientName = '已选择' . $clientCount . '个客户';
+            } elseif ($clientCount === 1) {
+                $singleName = trim((string)$clientList[0]['kh_name']);
+                $clientName = $singleName === '' ? '未命名' : $singleName;
+            }
         }
         if ($clientName === '') {
             $clientName = '未找到客户';

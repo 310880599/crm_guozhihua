@@ -636,6 +636,7 @@
             // 表格初始化（默认不加任何筛选条件）
             var tableIn = table.render({
                 elem: '#table-list',
+                id: 'table-list',
                 url: "{:url('index')}",
                 method: 'post',
                 toolbar: '#topBtn',
@@ -697,13 +698,13 @@
                 }
             });
 
-            // 清空表格勾选状态：DOM + 表头 + layui 缓存，避免多次搜索后转移客户拿到旧 ids
+            // 清空表格勾选状态：表格 DOM + 表头 + layui 缓存，避免多次搜索后拿到旧 ids
             function clearTableCheckState(tableId) {
                 try { table.clearCheck(tableId); } catch (e) {}
                 var $view = $('#' + tableId).next('.layui-table-view');
                 if ($view.length) {
-                    $view.find('tbody tr').removeClass('layui-table-checked');
-                    $view.find('tbody .layui-form-checkbox').removeClass('layui-form-checked');
+                    $view.find('.layui-table-body tbody tr, .layui-table-fixed tbody tr').removeClass('layui-table-checked');
+                    $view.find('.layui-table-body tbody .layui-form-checkbox, .layui-table-fixed tbody .layui-form-checkbox').removeClass('layui-form-checked');
                     $view.find('thead .layui-form-checkbox').removeClass('layui-form-checked');
                     $view.find('input[type="checkbox"]').prop('checked', false);
                 }
@@ -1202,7 +1203,8 @@
 
             // 工具栏批量操作（原样保留）；alterAll 仅从当前页可见且已勾选的行取 id，避免缓存残留
             table.on('toolbar(table-list)', function (obj) {
-                var checkStatus = table.checkStatus(obj.config.id), data = checkStatus.data;
+                var checkStatus = table.checkStatus('table-list');
+                var data = checkStatus.data || [];
                 switch (obj.event) {
                     case 'moveGh':
                         if (data.length === 0) { layer.msg('请选择一行'); }
@@ -1225,37 +1227,28 @@
                     case 'alterAll':
                         (function () {
                             var tableId = 'table-list';
-                            var $view = $('#' + tableId).next('.layui-table-view');
-                            var cache = table.cache[tableId];
-                            if (!cache || !Array.isArray(cache)) {
-                                console.log('[转移客户-批量] 当前页可见行', []);
-                                layer.msg('请选择当前列表中的客户');
-                                return;
-                            }
-                            var visibleList = cache.map(function (row, idx) {
-                                return { index: idx, id: row.id, kh_name: (row.kh_name || '') };
-                            });
-                            console.log('[客户列表-当前页可见行]', visibleList.map(function (o) { return { id: o.id, kh_name: o.kh_name }; }));
-                            var alterList2 = [];
-                            var namesList = [];
-                            var seenIndex = {};
-                            $view.find('tbody tr').each(function () {
-                                var $tr = $(this);
-                                if (!$tr.hasClass('layui-table-checked')) return;
-                                var idx = $tr.attr('data-index');
-                                if (idx === undefined || seenIndex[idx]) return;
-                                seenIndex[idx] = true;
-                                var row = cache[idx];
-                                if (row && row.id) {
-                                    var id = parseInt(row.id, 10);
-                                    if (id > 0) {
-                                        alterList2.push(id);
-                                        namesList.push(row.kh_name || '');
-                                    }
+                            var currentPageRows = Array.isArray(table.cache[tableId]) ? table.cache[tableId] : [];
+                            var currentPageMap = {};
+                            currentPageRows.forEach(function (row) {
+                                var rowId = parseInt(row.id, 10);
+                                if (rowId > 0) {
+                                    currentPageMap[rowId] = row;
                                 }
                             });
-                            alterList2 = alterList2.filter(function (id, i) { return alterList2.indexOf(id) === i; });
-                            console.log('[客户列表-真实勾选] ids', alterList2, 'kh_name', namesList);
+                            var checkedRows = table.checkStatus('table-list').data || [];
+                            console.log('[转移客户-批量] checkStatus.data', checkedRows);
+                            var alterList2 = [];
+                            var namesList = [];
+                            var seenId = {};
+                            checkedRows.forEach(function (row) {
+                                var id = parseInt(row.id, 10);
+                                if (id > 0 && !seenId[id] && currentPageMap[id]) {
+                                    seenId[id] = true;
+                                    alterList2.push(id);
+                                    namesList.push(currentPageMap[id].kh_name || row.kh_name || '');
+                                }
+                            });
+                            console.log('[转移客户-批量] 最终 ids', alterList2, 'kh_name', namesList);
                             console.log('[客户列表-转移弹窗] 传给 Client/alterPrUser 的 ids=', alterList2.join(','));
                             if (alterList2.length === 0) {
                                 layer.msg('请选择当前列表中的客户');
@@ -1320,14 +1313,16 @@
             form.on('submit(LAY-app-contlist-search)', function (data) {
                 var keyword = data.field;
                 console.log('[客户列表-搜索] keyword', keyword);
+                clearTableCheckState('table-list');
                 table.reload('table-list', {
                     url: "{:url('index')}",
                     method: 'post',
                     where: { keyword: keyword },
-                    page: { curr: 1 }
-                }, function () {
-                    clearTableCheckState('table-list');
-                    console.log('[客户列表-reload] 查询完成，已清空勾选');
+                    page: { curr: 1 },
+                    done: function () {
+                        clearTableCheckState('table-list');
+                        console.log('[客户列表-reload] 查询完成，已清空勾选');
+                    }
                 });
                 return false;
             });
