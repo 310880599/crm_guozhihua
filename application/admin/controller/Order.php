@@ -1238,11 +1238,13 @@ class Order extends Common
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
 
         // 查询所有产品经理（admin表中 group_id=14），按用户名升序
-        $extraManagerIds = [395]; // 李营
+        $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14, 18])
-                  ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+                $q->whereIn('group_id', [13, 14, 18, 19]);
+                if (!empty($extraManagerIds)) {
+                    $q->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+                }
             })
             ->field('admin_id, username')
             ->order('username', 'asc')
@@ -2194,11 +2196,13 @@ class Order extends Common
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
 
         // 产品经理列表（group_id = 13/14）
-        $extraManagerIds = [395]; // 李营
+        $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14, 18])
-                  ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+                $q->whereIn('group_id', [13, 14, 18, 19]);
+                if (!empty($extraManagerIds)) {
+                    $q->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+                }
             })
             ->field('admin_id, username')
             ->order('username', 'asc')
@@ -2836,11 +2840,13 @@ class Order extends Common
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
 
         // 产品经理列表（group_id = 14）
-        $extraManagerIds = [395]; // 李营
+        $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14, 18])
-                  ->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+                $q->whereIn('group_id', [13, 14, 18, 19]);
+                if (!empty($extraManagerIds)) {
+                    $q->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
+                }
             })
             ->field('admin_id, username')
             ->order('username', 'asc')

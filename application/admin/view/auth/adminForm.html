@@ -185,8 +185,7 @@
                 <select name="parent_id">
                     <option value="0">无（不设上级）</option>
                     {volist name="leaderList" id="vo"}
-                    <option value="{$vo.admin_id}" {if $result['username']==$vo.username}selected{/if}>{$vo.username}
-                    </option>
+                    <option value="{$vo.admin_id}" {if isset($parent_id) && $parent_id == $vo.admin_id}selected{/if}>{$vo.username}</option>
                     {/volist}
                 </select>
             </div>

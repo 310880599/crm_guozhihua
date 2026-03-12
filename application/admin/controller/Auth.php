@@ -17,6 +17,7 @@ class Auth extends Common
     private  function checkAuth($rule)
     {
         $current_admin = Admin::getMyInfo();
+        // 统一：超级管理员、运营主管、业务主管类账号拥有增删改管理员权限
         //超级管理员
         if ($current_admin['group_id'] == 1) {
             return true;
@@ -27,12 +28,42 @@ class Auth extends Common
             return true;
         }
 
-        //业务主管
-        if ($current_admin['group_id'] == $this->ywzgid) {
-
+        //业务主管类（包含：11 业务主管；19 主管加产经）
+        //说明：如果某个账号业务上应为“主管加产经”，数据库中应设置为 group_id = 19；
+        //     若误设置为其它组（例如 18 产经加检委），则这里不会被识别为业务主管类，权限范围会异常。
+        if ($this->isBusinessLeader($current_admin)) {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 业务主管类 group_id 列表统一维护
+     *
+     * 当前约定：
+     *  - 11：业务主管（$this->ywzgid）
+     *  - 19：主管加产经
+     *
+     * 注意：
+     *  - 18 为“产经加检委”，不属于业务主管类；
+     *    如果某个账号业务上应为“主管加产经”，应在数据库中将该账号的 group_id 调整为 19，
+     *    否则其在管理员列表中的可见范围仍然只能是“普通员工/非主管”。
+     */
+    private function getBusinessLeaderGroupIds()
+    {
+        return [$this->ywzgid, 19];
+    }
+
+    /**
+     * 是否为业务主管类账号（统一入口）
+     *
+     * 之前代码中仅判断 group_id == 11，导致“主管加产经”（19）账号如“李营”只能看到自己，
+     * 这里统一改为：只要 group_id 属于 getBusinessLeaderGroupIds()，都视为业务主管类账号。
+     */
+    private function isBusinessLeader($admin)
+    {
+        $groupIds = $this->getBusinessLeaderGroupIds();
+        return in_array($admin['group_id'], $groupIds);
     }
 
 
@@ -59,17 +90,17 @@ class Auth extends Common
             if ($current_admin['group_id'] != 1 && $current_admin['org'] != 'admin') {
                 $where[]=$this->getOrgWhere($current_admin['org']);
             }
-            // 权限控制逻辑
-            if ($current_admin['group_id'] == 11) {
-                // 如果是主管(group_id=11)，显示同team_name的管理员
+            // 权限控制逻辑（统一业务主管类判断）
+            if ($this->isBusinessLeader($current_admin)) {
+                // 业务主管类账号（包含：11 主管；19 主管加产经），按团队维度查看
                 if (!empty($current_admin['team_name'])) {
                     $map['team_name'] = $current_admin['team_name'];
                 } else {
                     // 如果team_name为空，只显示自己
                     $map['admin_id'] = $admin_id;
                 }
-            } else if ($current_admin['group_id'] == 12) {
-                //运营主管
+            } else if ($current_admin['group_id'] == $this->yygid) {
+                //运营主管相关逻辑（保持原有行为不变）
                 if (!empty($current_admin['team_name'])) {
                     $map['team_name'] = $current_admin['team_name'];
                     if ($current_admin['position'] == 0) {
@@ -202,8 +233,8 @@ class Auth extends Common
             $result['is_position'] = $current_admin['position'] == 1 ? 1 : 0;
 
 
-            // 获取主管列表
-            $leaderList = $this->getLeaderList($current_admin['group_id']);
+            // 获取主管列表（包含主管与主管加产经）
+            $leaderList = $this->getLeaderAndLeaderProductManagerList($current_admin['group_id']);
             $info['org'] = $this->getOrg($current_admin['org']);
             $this->assign('team_name', $current_admin['team_name']);
             $this->assign('orgList', $orgList);
@@ -212,6 +243,8 @@ class Auth extends Common
             $this->assign('title', lang('add') . lang('admin'));
             $this->assign('info', json_encode($info, true));
             $this->assign('selected', 'null');
+            // 新增时默认无上级
+            $this->assign('parent_id', 0);
             $this->assign('result', $result);
             return view('adminForm');
         }
@@ -224,7 +257,21 @@ class Auth extends Common
             $leaderList = \app\admin\model\Admin::where('group_id', $group_id)->where('position', '<>', 0)
                 ->field('admin_id, username')->select();
         } else {
-            $leaderList = \app\admin\model\Admin::where('group_id', 11)
+            // 业务端主管列表：使用统一的业务主管类 group_id 列表（11 业务主管；19 主管加产经）
+            $leaderList = \app\admin\model\Admin::whereIn('group_id', $this->getBusinessLeaderGroupIds())
+                ->field('admin_id, username')->select();
+        }
+        return $leaderList;
+    }
+
+    //获取主管和主管加产经列表
+    private function getLeaderAndLeaderProductManagerList($group_id)  
+    {
+        if ($group_id == $this->yygid) {
+            $leaderList = \app\admin\model\Admin::where('group_id', $group_id)->where('position', '<>', 0)
+                ->field('admin_id, username')->select();
+        } else {
+            $leaderList = \app\admin\model\Admin::whereIn('group_id', [11, 19])
                 ->field('admin_id, username')->select();
         }
         return $leaderList;
@@ -369,9 +416,11 @@ class Auth extends Common
 
             //当前用户信息
             $current_admin = Admin::getInfo(session('aid'));
-            // 获取主管列表供下拉选择
-            $leaderList = $this->getLeaderList($current_admin['group_id']);
+            // 获取主管列表供下拉选择（包含主管与主管加产经）
+            $leaderList = $this->getLeaderAndLeaderProductManagerList($current_admin['group_id']);
             $this->assign('leaderList', $leaderList);
+            // 当前编辑管理员的上级ID
+            $this->assign('parent_id', isset($info['parent_id']) ? $info['parent_id'] : 0);
             // 组织列表
             $orgList = self::ORG;
             if ($current_admin['group_id'] == 1 || strpos($current_admin['org'],'admin') !== false) {
