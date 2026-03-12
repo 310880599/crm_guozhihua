@@ -532,8 +532,8 @@ class Client extends Common
             $allowedUsernames = $this->getCheckClientAllowedUsernames();
             $currentUsername  = (string) Session::get('username');
 
-            // 构建基础查询（受可见用户名限制）
-            $query = Db::table('crm_leads')->where(['status' => 1, 'issuccess' => -1]);
+            // 构建基础查询（受可见用户名限制）——显示所有客户（包含成交与未成交），仅保留有效状态过滤
+            $query = Db::table('crm_leads')->where(['status' => 1]);
 
             if (!empty($allowedUsernames)) {
                 $query = $query->whereIn('pr_user', $allowedUsernames);

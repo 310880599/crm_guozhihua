@@ -438,7 +438,7 @@ class Client extends Model
             ->where($mapAtTime)
             ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
             ->where($where)
-            ->where(['status' => 1, 'issuccess' => -1]) //0 线索，1客户，2公海
+            ->where(['status' => 1]) //0 线索，1客户，2公海；不再限制成交状态，已成交+未成交都可见
             // 负责人：团队可见 / 个人可见（整体可见范围限制始终保留）
             ->where(function ($q) use ($visibleUsers, $currentUsername) {
                 if (!empty($visibleUsers)) {
