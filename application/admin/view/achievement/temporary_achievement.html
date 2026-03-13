@@ -2,9 +2,10 @@
 // 变量容错，避免未定义报错（数据由 Achievement 控制器赋值）
 // 后续改活动名单、统计周期等，请到控制器 application/admin/controller/Achievement.php 顶部配置区修改
 $dashboardTitle     = isset($dashboardTitle) ? $dashboardTitle : '旺春PK小组 · 业绩看板';
-$periodText          = isset($periodText) ? $periodText : '';
-$groupAvgRankList    = isset($groupAvgRankList) && is_array($groupAvgRankList) ? $groupAvgRankList : [];
-$memberRankGroupList = isset($memberRankGroupList) && is_array($memberRankGroupList) ? $memberRankGroupList : [];
+$periodText         = isset($periodText) ? $periodText : '';
+$groupAvgRankList   = isset($groupAvgRankList) && is_array($groupAvgRankList) ? $groupAvgRankList : [];
+$memberRankGroupList= isset($memberRankGroupList) && is_array($memberRankGroupList) ? $memberRankGroupList : [];
+$wcStamp            = isset($wcStamp) ? $wcStamp : '';
 ?>
 <style>
     /* ========== 看板容器 ========== */
@@ -384,68 +385,70 @@ $memberRankGroupList = isset($memberRankGroupList) && is_array($memberRankGroupL
                     <div class="wc-card-head-desc">按人均业绩从高到低排序</div>
                 </div>
                 <div class="layui-card-body wc-card-body">
-                    <?php if (!empty($groupAvgRankList)): ?>
-                        <table class="wc-rank-table">
-                            <thead>
-                                <tr>
-                                    <th class="wc-col-rank">排名</th>
-                                    <th class="wc-col-name">小组名称</th>
-                                    <th class="wc-col-total">小组总业绩</th>
-                                    <th class="wc-col-num">成员人数</th>
-                                    <th class="wc-col-amount">人均业绩</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($groupAvgRankList as $item): ?>
-                                    <?php
-                                    $rank = isset($item['rank']) ? (int)$item['rank'] : 0;
-                                    $badgeClass = 'wc-rank-badge-n';
-                                    if ($rank === 1) $badgeClass = 'wc-rank-badge-1';
-                                    elseif ($rank === 2) $badgeClass = 'wc-rank-badge-2';
-                                    elseif ($rank === 3) $badgeClass = 'wc-rank-badge-3';
-                                    $totalAmount = isset($item['total_amount']) ? (float)$item['total_amount'] : 0.0;
-                                    $avgAmount = isset($item['avg_amount']) ? (float)$item['avg_amount'] : 0.0;
-                                    $rowClass = '';
-                                    if ($rank === 1) $rowClass = 'wc-row-top3';
-                                    elseif ($rank === 2) $rowClass = 'wc-row-top3 wc-row-2';
-                                    elseif ($rank === 3) $rowClass = 'wc-row-top3 wc-row-3';
-                                    $groupName = isset($item['group_name']) ? $item['group_name'] : '';
-                                    $memberCount = isset($item['member_count']) ? (int)$item['member_count'] : 0;
-                                    ?>
-                                    <tr class="<?php echo $rowClass; ?>">
-                                        <td class="wc-col-rank">
-                                            <span class="wc-rank-badge <?php echo $badgeClass; ?>"><?php echo $rank; ?></span>
-                                        </td>
-                                        <td class="wc-col-name">
-                                            <span class="wc-group-name"><?php echo htmlspecialchars($groupName); ?></span>
-                                        </td>
-                                        <td class="wc-col-total">
-                                            <?php if ($totalAmount > 0): ?>
-                                                <span class="wc-amount-highlight"><?php echo number_format($totalAmount, 2); ?></span>
-                                            <?php else: ?>
-                                                <span class="wc-amount-zero">0.00</span>
-                                            <?php endif; ?>
-                                            <span class="wc-amount-unit">元</span>
-                                        </td>
-                                        <td class="wc-col-num"><?php echo $memberCount; ?> 人</td>
-                                        <td class="wc-col-amount">
-                                            <?php if ($avgAmount > 0): ?>
-                                                <span class="wc-amount-highlight"><?php echo number_format($avgAmount, 2); ?></span>
-                                            <?php else: ?>
-                                                <span class="wc-amount-zero">0.00</span>
-                                            <?php endif; ?>
-                                            <span class="wc-amount-unit">元</span>
-                                        </td>
+                    <div id="wc-left-rank-container">
+                        <?php if (!empty($groupAvgRankList)): ?>
+                            <table class="wc-rank-table">
+                                <thead>
+                                    <tr>
+                                        <th class="wc-col-rank">排名</th>
+                                        <th class="wc-col-name">小组名称</th>
+                                        <th class="wc-col-total">小组总业绩</th>
+                                        <th class="wc-col-num">成员人数</th>
+                                        <th class="wc-col-amount">人均业绩</th>
                                     </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    <?php else: ?>
-                        <div class="wc-empty-state">
-                            <div class="wc-empty-state-icon">📊</div>
-                            <div>暂无排名数据</div>
-                        </div>
-                    <?php endif; ?>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($groupAvgRankList as $item): ?>
+                                        <?php
+                                        $rank = isset($item['rank']) ? (int)$item['rank'] : 0;
+                                        $badgeClass = 'wc-rank-badge-n';
+                                        if ($rank === 1) $badgeClass = 'wc-rank-badge-1';
+                                        elseif ($rank === 2) $badgeClass = 'wc-rank-badge-2';
+                                        elseif ($rank === 3) $badgeClass = 'wc-rank-badge-3';
+                                        $totalAmount = isset($item['total_amount']) ? (float)$item['total_amount'] : 0.0;
+                                        $avgAmount = isset($item['avg_amount']) ? (float)$item['avg_amount'] : 0.0;
+                                        $rowClass = '';
+                                        if ($rank === 1) $rowClass = 'wc-row-top3';
+                                        elseif ($rank === 2) $rowClass = 'wc-row-top3 wc-row-2';
+                                        elseif ($rank === 3) $rowClass = 'wc-row-top3 wc-row-3';
+                                        $groupName = isset($item['group_name']) ? $item['group_name'] : '';
+                                        $memberCount = isset($item['member_count']) ? (int)$item['member_count'] : 0;
+                                        ?>
+                                        <tr class="<?php echo $rowClass; ?>">
+                                            <td class="wc-col-rank">
+                                                <span class="wc-rank-badge <?php echo $badgeClass; ?>"><?php echo $rank; ?></span>
+                                            </td>
+                                            <td class="wc-col-name">
+                                                <span class="wc-group-name"><?php echo htmlspecialchars($groupName); ?></span>
+                                            </td>
+                                            <td class="wc-col-total">
+                                                <?php if ($totalAmount > 0): ?>
+                                                    <span class="wc-amount-highlight"><?php echo number_format($totalAmount, 2); ?></span>
+                                                <?php else: ?>
+                                                    <span class="wc-amount-zero">0.00</span>
+                                                <?php endif; ?>
+                                                <span class="wc-amount-unit">元</span>
+                                            </td>
+                                            <td class="wc-col-num"><?php echo $memberCount; ?> 人</td>
+                                            <td class="wc-col-amount">
+                                                <?php if ($avgAmount > 0): ?>
+                                                    <span class="wc-amount-highlight"><?php echo number_format($avgAmount, 2); ?></span>
+                                                <?php else: ?>
+                                                    <span class="wc-amount-zero">0.00</span>
+                                                <?php endif; ?>
+                                                <span class="wc-amount-unit">元</span>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php else: ?>
+                            <div class="wc-empty-state">
+                                <div class="wc-empty-state-icon">📊</div>
+                                <div>暂无排名数据</div>
+                            </div>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
         </div>
@@ -458,76 +461,78 @@ $memberRankGroupList = isset($memberRankGroupList) && is_array($memberRankGroupL
                         <div class="wc-card-head-desc">小组按总业绩从高到低，组内成员按业绩从高到低</div>
                 </div>
                 <div class="layui-card-body wc-card-body">
-                    <?php if (!empty($memberRankGroupList)): ?>
-                        <?php foreach ($memberRankGroupList as $group): ?>
-                            <?php
-                            $gName = isset($group['group_name']) ? $group['group_name'] : '';
-                            $gTotal = isset($group['total_amount']) ? (float)$group['total_amount'] : 0.0;
-                            $gAvg = isset($group['avg_amount']) ? (float)$group['avg_amount'] : 0.0;
-                            $gMembers = isset($group['members']) && is_array($group['members']) ? $group['members'] : [];
-                            ?>
-                            <div class="wc-group-block">
-                                <div class="wc-group-block-head">
-                                    <div class="wc-group-block-title"><?php echo htmlspecialchars($gName); ?></div>
-                                    <div class="wc-group-block-meta">
-                                        <span class="wc-meta-amount">小组总业绩：<?php echo number_format($gTotal, 2); ?> 元</span>
-                                        <span>人均：<?php echo number_format($gAvg, 2); ?> 元</span>
+                    <div id="wc-right-group-container">
+                        <?php if (!empty($memberRankGroupList)): ?>
+                            <?php foreach ($memberRankGroupList as $group): ?>
+                                <?php
+                                $gName = isset($group['group_name']) ? $group['group_name'] : '';
+                                $gTotal = isset($group['total_amount']) ? (float)$group['total_amount'] : 0.0;
+                                $gAvg = isset($group['avg_amount']) ? (float)$group['avg_amount'] : 0.0;
+                                $gMembers = isset($group['members']) && is_array($group['members']) ? $group['members'] : [];
+                                ?>
+                                <div class="wc-group-block">
+                                    <div class="wc-group-block-head">
+                                        <div class="wc-group-block-title"><?php echo htmlspecialchars($gName); ?></div>
+                                        <div class="wc-group-block-meta">
+                                            <span class="wc-meta-amount">小组总业绩：<?php echo number_format($gTotal, 2); ?> 元</span>
+                                            <span>人均：<?php echo number_format($gAvg, 2); ?> 元</span>
+                                        </div>
                                     </div>
-                                </div>
-                                <?php if (!empty($gMembers)): ?>
-                                    <table class="wc-member-table">
-                                        <thead>
-                                            <tr>
-                                                <th class="wc-mcol-rank">排名</th>
-                                                <th class="wc-mcol-name">成员姓名</th>
-                                                <th class="wc-mcol-amount">总业绩</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($gMembers as $member): ?>
-                                                <?php
-                                                $mRank = isset($member['rank']) ? (int)$member['rank'] : 0;
-                                                $mAmount = isset($member['amount']) ? (float)$member['amount'] : 0.0;
-                                                $mName = isset($member['name']) ? $member['name'] : '';
-                                                $rowClass = $mRank === 1 ? 'wc-member-row-first' : ($mAmount <= 0 ? 'wc-member-row-zero' : '');
-                                                $badgeClass = 'wc-rank-badge-n';
-                                                if ($mRank === 1) $badgeClass = 'wc-rank-badge-1';
-                                                elseif ($mRank === 2) $badgeClass = 'wc-rank-badge-2';
-                                                elseif ($mRank === 3) $badgeClass = 'wc-rank-badge-3';
-                                                ?>
-                                                <tr class="<?php echo $rowClass; ?>">
-                                                    <td class="wc-mcol-rank">
-                                                        <span class="wc-rank-badge <?php echo $badgeClass; ?>"><?php echo $mRank; ?></span>
-                                                    </td>
-                                                    <td class="wc-mcol-name">
-                                                        <span class="wc-member-name"><?php echo htmlspecialchars($mName); ?></span>
-                                                    </td>
-                                                    <td class="wc-mcol-amount">
-                                                        <?php if ($mAmount > 0): ?>
-                                                            <span class="wc-amount-highlight"><?php echo number_format($mAmount, 2); ?></span>
-                                                        <?php else: ?>
-                                                            <span class="wc-amount-zero">0.00</span>
-                                                        <?php endif; ?>
-                                                        <span class="wc-amount-unit">元</span>
-                                                    </td>
+                                    <?php if (!empty($gMembers)): ?>
+                                        <table class="wc-member-table">
+                                            <thead>
+                                                <tr>
+                                                    <th class="wc-mcol-rank">排名</th>
+                                                    <th class="wc-mcol-name">成员姓名</th>
+                                                    <th class="wc-mcol-amount">总业绩</th>
                                                 </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                <?php else: ?>
-                                    <div class="wc-empty-state" style="padding: 24px;">
-                                        <div class="wc-empty-state-icon">👥</div>
-                                        <div>暂无成员业绩数据</div>
-                                    </div>
-                                <?php endif; ?>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($gMembers as $member): ?>
+                                                    <?php
+                                                    $mRank = isset($member['rank']) ? (int)$member['rank'] : 0;
+                                                    $mAmount = isset($member['amount']) ? (float)$member['amount'] : 0.0;
+                                                    $mName = isset($member['name']) ? $member['name'] : '';
+                                                    $rowClass = $mRank === 1 ? 'wc-member-row-first' : ($mAmount <= 0 ? 'wc-member-row-zero' : '');
+                                                    $badgeClass = 'wc-rank-badge-n';
+                                                    if ($mRank === 1) $badgeClass = 'wc-rank-badge-1';
+                                                    elseif ($mRank === 2) $badgeClass = 'wc-rank-badge-2';
+                                                    elseif ($mRank === 3) $badgeClass = 'wc-rank-badge-3';
+                                                    ?>
+                                                    <tr class="<?php echo $rowClass; ?>">
+                                                        <td class="wc-mcol-rank">
+                                                            <span class="wc-rank-badge <?php echo $badgeClass; ?>"><?php echo $mRank; ?></span>
+                                                        </td>
+                                                        <td class="wc-mcol-name">
+                                                            <span class="wc-member-name"><?php echo htmlspecialchars($mName); ?></span>
+                                                        </td>
+                                                        <td class="wc-mcol-amount">
+                                                            <?php if ($mAmount > 0): ?>
+                                                                <span class="wc-amount-highlight"><?php echo number_format($mAmount, 2); ?></span>
+                                                            <?php else: ?>
+                                                                <span class="wc-amount-zero">0.00</span>
+                                                            <?php endif; ?>
+                                                            <span class="wc-amount-unit">元</span>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    <?php else: ?>
+                                        <div class="wc-empty-state" style="padding: 24px;">
+                                            <div class="wc-empty-state-icon">👥</div>
+                                            <div>暂无成员业绩数据</div>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="wc-empty-state">
+                                <div class="wc-empty-state-icon">📋</div>
+                                <div>暂无成员业绩数据</div>
                             </div>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <div class="wc-empty-state">
-                            <div class="wc-empty-state-icon">📋</div>
-                            <div>暂无成员业绩数据</div>
-                        </div>
-                    <?php endif; ?>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
         </div>
@@ -535,7 +540,273 @@ $memberRankGroupList = isset($memberRankGroupList) && is_array($memberRankGroupL
 </div>
 
 <script>
+    // 初始版本标识，由后端首次渲染时注入
+    var wcCurrentStamp = '<?php echo addslashes($wcStamp); ?>';
+
+    // 轮询相关配置
+    window.wcAchievementHeartbeatTimer = window.wcAchievementHeartbeatTimer || null;
+    window.wcAchievementPollingInterval = 15000; // 15 秒轮询一次，兼顾实时性和服务器压力
+
+    var wcHeartbeatLoading = false;
+    var wcDataLoading = false;
+
+    var wcHeartbeatUrl = "<?php echo url('Achievement/temporaryAchievementHeartbeat'); ?>";
+    var wcDataUrl = "<?php echo url('Achievement/temporaryAchievementData'); ?>";
+
+    // 渲染左侧“小组人均业绩排行”表格
+    function wcRenderLeftRankTable(groupList) {
+        var html = '';
+        if (!groupList || !groupList.length) {
+            html += '<div class="wc-empty-state">';
+            html += '  <div class="wc-empty-state-icon">📊</div>';
+            html += '  <div>暂无排名数据</div>';
+            html += '</div>';
+            $('#wc-left-rank-container').html(html);
+            return;
+        }
+
+        html += '<table class="wc-rank-table">';
+        html += '  <thead>';
+        html += '    <tr>';
+        html += '      <th class="wc-col-rank">排名</th>';
+        html += '      <th class="wc-col-name">小组名称</th>';
+        html += '      <th class="wc-col-total">小组总业绩</th>';
+        html += '      <th class="wc-col-num">成员人数</th>';
+        html += '      <th class="wc-col-amount">人均业绩</th>';
+        html += '    </tr>';
+        html += '  </thead>';
+        html += '  <tbody>';
+
+        for (var i = 0; i < groupList.length; i++) {
+            var item = groupList[i] || {};
+            var rank = parseInt(item.rank || (i + 1), 10);
+            var badgeClass = 'wc-rank-badge-n';
+            if (rank === 1) badgeClass = 'wc-rank-badge-1';
+            else if (rank === 2) badgeClass = 'wc-rank-badge-2';
+            else if (rank === 3) badgeClass = 'wc-rank-badge-3';
+
+            var totalAmount = parseFloat(item.total_amount || 0);
+            var avgAmount = parseFloat(item.avg_amount || 0);
+            var groupName = item.group_name || '';
+            var memberCount = parseInt(item.member_count || 0, 10);
+
+            var rowClass = '';
+            if (rank === 1) rowClass = 'wc-row-top3';
+            else if (rank === 2) rowClass = 'wc-row-top3 wc-row-2';
+            else if (rank === 3) rowClass = 'wc-row-top3 wc-row-3';
+
+            html += '<tr class="' + rowClass + '">';
+            html += '  <td class="wc-col-rank"><span class="wc-rank-badge ' + badgeClass + '">' + rank + '</span></td>';
+            html += '  <td class="wc-col-name"><span class="wc-group-name">' + $('<div/>').text(groupName).html() + '</span></td>';
+            html += '  <td class="wc-col-total">';
+            if (totalAmount > 0) {
+                html += '    <span class="wc-amount-highlight">' + totalAmount.toFixed(2) + '</span>';
+            } else {
+                html += '    <span class="wc-amount-zero">0.00</span>';
+            }
+            html += '    <span class="wc-amount-unit">元</span>';
+            html += '  </td>';
+            html += '  <td class="wc-col-num">' + memberCount + ' 人</td>';
+            html += '  <td class="wc-col-amount">';
+            if (avgAmount > 0) {
+                html += '    <span class="wc-amount-highlight">' + avgAmount.toFixed(2) + '</span>';
+            } else {
+                html += '    <span class="wc-amount-zero">0.00</span>';
+            }
+            html += '    <span class="wc-amount-unit">元</span>';
+            html += '  </td>';
+            html += '</tr>';
+        }
+
+        html += '  </tbody>';
+        html += '</table>';
+
+        $('#wc-left-rank-container').html(html);
+    }
+
+    // 渲染右侧“成员总业绩排行”小组块
+    function wcRenderRightGroupBlocks(groupList) {
+        var html = '';
+        if (!groupList || !groupList.length) {
+            html += '<div class="wc-empty-state">';
+            html += '  <div class="wc-empty-state-icon">📋</div>';
+            html += '  <div>暂无成员业绩数据</div>';
+            html += '</div>';
+            $('#wc-right-group-container').html(html);
+            return;
+        }
+
+        for (var i = 0; i < groupList.length; i++) {
+            var group = groupList[i] || {};
+            var gName = group.group_name || '';
+            var gTotal = parseFloat(group.total_amount || 0);
+            var gAvg = parseFloat(group.avg_amount || 0);
+            var members = group.members || [];
+
+            html += '<div class="wc-group-block">';
+            html += '  <div class="wc-group-block-head">';
+            html += '    <div class="wc-group-block-title">' + $('<div/>').text(gName).html() + '</div>';
+            html += '    <div class="wc-group-block-meta">';
+            html += '      <span class="wc-meta-amount">小组总业绩：' + gTotal.toFixed(2) + ' 元</span>';
+            html += '      <span>人均：' + gAvg.toFixed(2) + ' 元</span>';
+            html += '    </div>';
+            html += '  </div>';
+
+            if (members && members.length) {
+                html += '  <table class="wc-member-table">';
+                html += '    <thead>';
+                html += '      <tr>';
+                html += '        <th class="wc-mcol-rank">排名</th>';
+                html += '        <th class="wc-mcol-name">成员姓名</th>';
+                html += '        <th class="wc-mcol-amount">总业绩</th>';
+                html += '      </tr>';
+                html += '    </thead>';
+                html += '    <tbody>';
+
+                for (var j = 0; j < members.length; j++) {
+                    var m = members[j] || {};
+                    var mRank = parseInt(m.rank || (j + 1), 10);
+                    var mAmount = parseFloat(m.amount || 0);
+                    var mName = m.name || '';
+
+                    var rowClass = '';
+                    if (mRank === 1) rowClass = 'wc-member-row-first';
+                    else if (mAmount <= 0) rowClass = 'wc-member-row-zero';
+
+                    var badgeClass = 'wc-rank-badge-n';
+                    if (mRank === 1) badgeClass = 'wc-rank-badge-1';
+                    else if (mRank === 2) badgeClass = 'wc-rank-badge-2';
+                    else if (mRank === 3) badgeClass = 'wc-rank-badge-3';
+
+                    html += '      <tr class="' + rowClass + '">';
+                    html += '        <td class="wc-mcol-rank"><span class="wc-rank-badge ' + badgeClass + '">' + mRank + '</span></td>';
+                    html += '        <td class="wc-mcol-name"><span class="wc-member-name">' + $('<div/>').text(mName).html() + '</span></td>';
+                    html += '        <td class="wc-mcol-amount">';
+                    if (mAmount > 0) {
+                        html += '          <span class="wc-amount-highlight">' + mAmount.toFixed(2) + '</span>';
+                    } else {
+                        html += '          <span class="wc-amount-zero">0.00</span>';
+                    }
+                    html += '          <span class="wc-amount-unit">元</span>';
+                    html += '        </td>';
+                    html += '      </tr>';
+                }
+
+                html += '    </tbody>';
+                html += '  </table>';
+            } else {
+                html += '  <div class="wc-empty-state" style="padding: 24px;">';
+                html += '    <div class="wc-empty-state-icon">👥</div>';
+                html += '    <div>暂无成员业绩数据</div>';
+                html += '  </div>';
+            }
+
+            html += '</div>';
+        }
+
+        $('#wc-right-group-container').html(html);
+    }
+
+    // 拉取完整数据并局部刷新
+    function wcFetchTemporaryAchievementData() {
+        if (wcDataLoading) {
+            return;
+        }
+        wcDataLoading = true;
+
+        $.ajax({
+            url: wcDataUrl,
+            type: 'GET',
+            dataType: 'json',
+            timeout: 15000,
+            success: function (res) {
+                if (!res || res.code !== 1 || !res.data) {
+                    console && console.error && console.error('temporaryAchievementData 接口返回异常', res);
+                    return;
+                }
+
+                var data = res.data;
+
+                // 更新顶部标题和统计周期（如果有变化）
+                if (data.dashboardTitle) {
+                    $('.wc-dashboard-main-title').text(data.dashboardTitle);
+                }
+                if (data.periodText) {
+                    $('.wc-period-value').text(data.periodText);
+                }
+
+                // 局部刷新左右列表
+                wcRenderLeftRankTable(data.groupAvgRankList || []);
+                wcRenderRightGroupBlocks(data.memberRankGroupList || []);
+
+                // 更新当前 stamp
+                if (data.stamp) {
+                    wcCurrentStamp = data.stamp;
+                }
+            },
+            error: function (xhr, status, error) {
+                // 不弹窗，避免打扰，只在控制台记录
+                console && console.error && console.error('temporaryAchievementData 请求失败', status, error);
+            },
+            complete: function () {
+                wcDataLoading = false;
+            }
+        });
+    }
+
+    // 心跳轮询：只返回 stamp，变化时再拉完整数据
+    function wcStartHeartbeatPolling() {
+        // 避免脚本多次执行导致重复定时器
+        if (window.wcAchievementHeartbeatTimer) {
+            clearInterval(window.wcAchievementHeartbeatTimer);
+            window.wcAchievementHeartbeatTimer = null;
+        }
+
+        window.wcAchievementHeartbeatTimer = setInterval(function () {
+            if (wcHeartbeatLoading) {
+                return;
+            }
+            wcHeartbeatLoading = true;
+
+            $.ajax({
+                url: wcHeartbeatUrl,
+                type: 'GET',
+                dataType: 'json',
+                timeout: 8000,
+                success: function (res) {
+                    if (!res || res.code !== 1 || !res.data) {
+                        // 静默失败，不打断轮询
+                        return;
+                    }
+                    var newStamp = res.data.stamp || '';
+                    if (!newStamp) {
+                        return;
+                    }
+
+                    if (!wcCurrentStamp) {
+                        wcCurrentStamp = newStamp;
+                        return;
+                    }
+
+                    if (newStamp !== wcCurrentStamp) {
+                        // 只有发现变化时才拉完整数据
+                        wcFetchTemporaryAchievementData();
+                    }
+                },
+                error: function () {
+                    // 心跳错误也静默处理，下一轮继续
+                },
+                complete: function () {
+                    wcHeartbeatLoading = false;
+                }
+            });
+        }, window.wcAchievementPollingInterval);
+    }
+
     layui.use(['element'], function () {
         var element = layui.element;
+
+        // 页面加载完成后，启动心跳轮询
+        wcStartHeartbeatPolling();
     });
 </script>

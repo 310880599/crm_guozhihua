@@ -70,12 +70,16 @@ class Achievement extends Common
 
     public function temporaryAchievement()
     {
-        $data = $this->buildTemporaryAchievementData();
+        // 首次进入页面仍然采用服务端渲染完整数据
+        $data  = $this->buildTemporaryAchievementData();
+        $stamp = $this->getTemporaryAchievementStamp();
 
         $this->assign('dashboardTitle', $this->wcDashboardTitle);
         $this->assign('periodText', $this->wcStatPeriodText);
         $this->assign('groupAvgRankList', $data['groupAvgRankList']);
         $this->assign('memberRankGroupList', $data['memberRankGroupList']);
+        // 首次渲染时把当前版本标识传给前端，便于心跳对比
+        $this->assign('wcStamp', $stamp);
 
         return $this->fetch('achievement/temporary_achievement');
     }
@@ -312,5 +316,129 @@ class Achievement extends Common
             'groupAvgRankList'    => $groupAvgRankList,
             'memberRankGroupList' => $memberRankGroupList,
         ];
+    }
+
+    /**
+     * 生成旺春PK小组临时业绩看板的轻量级变化标识
+     * 仅做聚合统计，不构建完整排行榜，供心跳接口与数据接口复用。
+     *
+     * 统计条件需与 buildTemporaryAchievementData 保持一致：
+     * - 订单表：crm_client_order
+     * - check_status = 2
+     * - 使用相同的时间字段与统计周期
+     *
+     * @return string
+     */
+    private function getTemporaryAchievementStamp()
+    {
+        $startTime = $this->wcStatStartTime;
+        $endTime   = $this->wcStatEndTime;
+        $timeField = $this->wcOrderTimeField;
+
+        // 时间字段白名单，防止被错误值污染（需与 buildTemporaryAchievementData 中保持一致）
+        $allowedTimeFields = ['order_time', 'create_time'];
+        if (!in_array($timeField, $allowedTimeFields, true)) {
+            $timeField = 'order_time';
+        }
+
+        // 轻量级聚合：当前周期内审核通过订单
+        // 使用 COUNT(*)、SUM(profit)、MAX(id)、MAX(时间字段) 共同生成变化标识
+        $row = Db::table('crm_client_order')
+            ->alias('o')
+            ->field([
+                'COUNT(1) AS cnt',
+                'SUM(COALESCE(o.profit,0)) AS sum_profit',
+                'MAX(o.id) AS max_id',
+                'MAX(o.' . $timeField . ') AS max_time',
+            ])
+            ->where('o.check_status', 2)
+            ->where('o.' . $timeField, '>=', $startTime)
+            ->where('o.' . $timeField, '<=', $endTime)
+            ->find();
+
+        $count     = isset($row['cnt']) ? (int)$row['cnt'] : 0;
+        $sumProfit = isset($row['sum_profit']) ? (float)$row['sum_profit'] : 0.0;
+        $maxId     = isset($row['max_id']) ? (int)$row['max_id'] : 0;
+        $maxTime   = isset($row['max_time']) ? (string)$row['max_time'] : '';
+
+        // 使用字符串拼接 + md5 生成稳定的轻量标识
+        $stampSource = $count . '|' . number_format($sumProfit, 2, '.', '') . '|' . $maxId . '|' . $maxTime;
+
+        return md5($stampSource);
+    }
+
+    /**
+     * 旺春PK小组临时业绩心跳接口
+     * 仅返回轻量级变化标识 stamp，用于前端轮询检测是否需要刷新数据。
+     *
+     * 访问路径示例：/admin/achievement/temporaryAchievementHeartbeat
+     */
+    public function temporaryAchievementHeartbeat()
+    {
+        if (!request()->isAjax()) {
+            return json([
+                'code' => 0,
+                'msg'  => '非法请求',
+                'data' => [],
+            ]);
+        }
+
+        try {
+            $stamp = $this->getTemporaryAchievementStamp();
+
+            return json([
+                'code' => 1,
+                'msg'  => 'success',
+                'data' => [
+                    'stamp' => $stamp,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return json([
+                'code' => 0,
+                'msg'  => '心跳检测失败：' . $e->getMessage(),
+                'data' => [],
+            ]);
+        }
+    }
+
+    /**
+     * 旺春PK小组临时业绩完整数据接口
+     * 前端在心跳检测到 stamp 变化后再调用本接口获取完整排行榜数据。
+     *
+     * 访问路径示例：/admin/achievement/temporaryAchievementData
+     */
+    public function temporaryAchievementData()
+    {
+        if (!request()->isAjax()) {
+            return json([
+                'code' => 0,
+                'msg'  => '非法请求',
+                'data' => [],
+            ]);
+        }
+
+        try {
+            $data  = $this->buildTemporaryAchievementData();
+            $stamp = $this->getTemporaryAchievementStamp();
+
+            return json([
+                'code' => 1,
+                'msg'  => 'success',
+                'data' => [
+                    'dashboardTitle'      => $this->wcDashboardTitle,
+                    'periodText'          => $this->wcStatPeriodText,
+                    'groupAvgRankList'    => $data['groupAvgRankList'],
+                    'memberRankGroupList' => $data['memberRankGroupList'],
+                    'stamp'               => $stamp,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return json([
+                'code' => 0,
+                'msg'  => '数据获取失败：' . $e->getMessage(),
+                'data' => [],
+            ]);
+        }
     }
 }
