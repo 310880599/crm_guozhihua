@@ -38,6 +38,12 @@ class Achievement extends Common
     // 右侧每组成员是否按业绩降序排列（true：按业绩从高到低排序；false：按配置顺序）
     private $wcRightMemberSortDesc = true;
 
+    // 右侧小组块排序字段：total_amount / avg_amount
+    private $wcRightGroupSortField = 'total_amount';
+
+    // 右侧小组块排序方向：desc / asc
+    private $wcRightGroupSortDirection = 'desc';
+
     // 小组人均业绩排序方向：desc / asc
     private $wcGroupAvgSortDirection = 'desc';
 
@@ -225,15 +231,76 @@ class Achievement extends Common
 
         // 小组人均排序与左侧排名
         if (!empty($groupAvgRankList)) {
-            $direction = strtolower($this->wcGroupAvgSortDirection) === 'asc' ? 1 : -1;
-            usort($groupAvgRankList, function ($a, $b) use ($direction) {
-                if ($a['avg_amount'] == $b['avg_amount']) return 0;
-                return $a['avg_amount'] < $b['avg_amount'] ? $direction : -$direction;
+            // 左侧小组人均排行排序规则：
+            // 1）按 avg_amount 降序
+            // 2）avg_amount 相同则按 total_amount 降序
+            // 3）avg_amount 和 total_amount 都相同则按 group_name 升序，保证顺序稳定
+            usort($groupAvgRankList, function ($a, $b) {
+                $aAvg = isset($a['avg_amount']) ? (float)$a['avg_amount'] : 0.0;
+                $bAvg = isset($b['avg_amount']) ? (float)$b['avg_amount'] : 0.0;
+                if ($aAvg !== $bAvg) {
+                    return ($aAvg < $bAvg) ? 1 : -1; // avg_amount 降序
+                }
+
+                $aTotal = isset($a['total_amount']) ? (float)$a['total_amount'] : 0.0;
+                $bTotal = isset($b['total_amount']) ? (float)$b['total_amount'] : 0.0;
+                if ($aTotal !== $bTotal) {
+                    return ($aTotal < $bTotal) ? 1 : -1; // total_amount 降序
+                }
+
+                $aName = isset($a['group_name']) ? (string)$a['group_name'] : '';
+                $bName = isset($b['group_name']) ? (string)$b['group_name'] : '';
+                if ($aName === $bName) {
+                    return 0;
+                }
+                return strcmp($aName, $bName); // group_name 升序
             });
             $rank = 1;
             foreach ($groupAvgRankList as $idx => $item) {
                 $groupAvgRankList[$idx]['rank'] = $rank++;
             }
+        }
+
+        // 右侧小组块排序：默认按总业绩从高到低，同业绩时按人均业绩从高到低，再按小组名升序
+        // 当前实现：优先使用配置字段（wcRightGroupSortField），仅允许 total_amount / avg_amount；
+        // 如果配置异常会自动回退到 total_amount，方向默认按 wcRightGroupSortDirection（非法值回退为 desc）。
+        if (!empty($memberRankGroupList)) {
+            $sortField = $this->wcRightGroupSortField;
+            $allowedFields = ['total_amount', 'avg_amount'];
+            if (!in_array($sortField, $allowedFields, true)) {
+                $sortField = 'total_amount';
+            }
+
+            $direction = strtolower($this->wcRightGroupSortDirection) === 'asc' ? 'asc' : 'desc';
+
+            usort($memberRankGroupList, function ($a, $b) use ($sortField, $direction) {
+                $aPrimary = isset($a[$sortField]) ? (float)$a[$sortField] : 0.0;
+                $bPrimary = isset($b[$sortField]) ? (float)$b[$sortField] : 0.0;
+
+                if ($aPrimary !== $bPrimary) {
+                    if ($direction === 'asc') {
+                        return ($aPrimary < $bPrimary) ? -1 : 1;
+                    }
+                    return ($aPrimary < $bPrimary) ? 1 : -1;
+                }
+
+                // 主字段相同，使用另一业绩字段做二次排序（始终按降序）
+                $secondaryField = ($sortField === 'total_amount') ? 'avg_amount' : 'total_amount';
+                $aSecondary = isset($a[$secondaryField]) ? (float)$a[$secondaryField] : 0.0;
+                $bSecondary = isset($b[$secondaryField]) ? (float)$b[$secondaryField] : 0.0;
+
+                if ($aSecondary !== $bSecondary) {
+                    return ($aSecondary < $bSecondary) ? 1 : -1; // 二级字段降序
+                }
+
+                // 两个业绩字段都相同，按 group_name 升序保证顺序稳定
+                $aName = isset($a['group_name']) ? (string)$a['group_name'] : '';
+                $bName = isset($b['group_name']) ? (string)$b['group_name'] : '';
+                if ($aName === $bName) {
+                    return 0;
+                }
+                return strcmp($aName, $bName);
+            });
         }
 
         $leftLimit = (int)$this->wcLeftGroupTopLimit;
