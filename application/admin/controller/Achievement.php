@@ -52,6 +52,14 @@ class Achievement extends Common
         // 示例（请按实际名单替换）：
         // '破局队' => ['周岚', '李燕慧', '卢慧贤'],
         // '飞马队' => [['id' => 1, 'name' => '张红玲'], '田丽园', '杨惠岚'],
+        '破局队' => ['周岚', '李燕慧', '卢慧贤', '曹玲艳', '冯婷婷', '张杰', '宋蒙', '闫雪'],
+        '飞马队' => ['张红玲', '田丽园', '杨惠岚', '钱秀霞', '张甜甜', '胡沙沙', '司月鹅', '杨青青'],
+        '领航队' => ['张二凤', '贾聪乐', '魏红岩', '赵静', '刘丹丹', '张艳艳', '张书芹', '陈培培'],
+        '启胜队' => ['胡晓惠', '张珊珊', '职利杰', '周燕', '谢园园', '刘小方', '安晓娜', '罗亭'],
+        '冲锋队' => ['刘燕燕', '韩利敏', '樊培培', '张春辉', '常绍瑞', '陈义笑', '张景春', '田瑞云'],
+        '亿马当先' => ['苗雪会', '王静', '刘玉杰', '张莹', '王俊', '李剪阁', '彭怀能', '邵朋杰', '李小萌'],
+        '金马队' => ['张岩', '李灵燕', '李营', '连书会', '冯燕平', '周勤勤', '毛卫娟', '范晶晶'],
+        '战神队' => ['拜云梦', '王亚丽', '高慢慢', '袁璟', '申振宇', '何文可', '吴银霞', '宋秀丽'],
     ];
 
     public function temporaryAchievement()
@@ -93,13 +101,20 @@ class Achievement extends Common
         $endTime   = $this->wcStatEndTime;
         $timeField = $this->wcOrderTimeField;
 
+        // 时间字段白名单，防止被错误值污染
+        $allowedTimeFields = ['order_time', 'create_time'];
+        if (!in_array($timeField, $allowedTimeFields, true)) {
+            $timeField = 'order_time';
+        }
+
         // 一次查询：当前周期内审核通过订单，按 pr_user_id 聚合（避免 N+1）
         $orderRows = Db::table('crm_client_order')
-            ->field('pr_user_id, pr_user, SUM(COALESCE(money, 0)) AS total_money')
-            ->where('check_status', 2)
-            ->where($timeField, '>=', $startTime)
-            ->where($timeField, '<=', $endTime)
-            ->group('pr_user_id')
+            ->alias('o')
+            ->field('o.pr_user_id, o.pr_user, SUM(COALESCE(o.money, 0)) AS total_money')
+            ->where('o.check_status', 2)
+            ->where('o.' . $timeField, '>=', $startTime)
+            ->where('o.' . $timeField, '<=', $endTime)
+            ->group('o.pr_user_id, o.pr_user')
             ->select();
 
         // 按 pr_user_id 与 pr_user（trim）建立业绩映射，金额空按 0
