@@ -107,24 +107,24 @@ class Achievement extends Common
             $timeField = 'order_time';
         }
 
-        // 一次查询：当前周期内审核通过订单，按 pr_user_id 聚合（避免 N+1）
+        // 一次查询：当前周期内审核通过订单，按 pr_user_id 聚合纯利润（profit 作为业绩口径，避免 N+1）
         $orderRows = Db::table('crm_client_order')
             ->alias('o')
-            ->field('o.pr_user_id, o.pr_user, SUM(COALESCE(o.money, 0)) AS total_money')
+            ->field('o.pr_user_id, o.pr_user, SUM(COALESCE(o.profit, 0)) AS total_profit')
             ->where('o.check_status', 2)
             ->where('o.' . $timeField, '>=', $startTime)
             ->where('o.' . $timeField, '<=', $endTime)
             ->group('o.pr_user_id, o.pr_user')
             ->select();
 
-        // 按 pr_user_id 与 pr_user（trim）建立业绩映射，金额空按 0
+        // 按 pr_user_id 与 pr_user（trim）建立业绩映射，此处业绩统计口径为 profit 纯利润，空值按 0
         $achievementByUserId = [];
         $achievementByName   = [];
         if (is_array($orderRows)) {
             foreach ($orderRows as $row) {
                 $uid    = isset($row['pr_user_id']) ? (int)$row['pr_user_id'] : 0;
                 $name   = isset($row['pr_user']) ? trim((string)$row['pr_user']) : '';
-                $amount = isset($row['total_money']) ? (float)$row['total_money'] : 0.0;
+                $amount = isset($row['total_profit']) ? (float)$row['total_profit'] : 0.0;
                 $amount = round($amount, 2);
                 if ($uid > 0) {
                     if (!isset($achievementByUserId[$uid])) {
