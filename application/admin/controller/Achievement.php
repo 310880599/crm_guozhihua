@@ -97,9 +97,9 @@ class Achievement extends Common
 
     public function permanentAchievement()
     {
-        // 首次进入页面仍然采用服务端渲染完整数据
+        // 首次进入页面仍然采用服务端渲染完整数据；使用永久团队专属 stamp，解决复制 PK 小组后错误复用 temporary 轮询链路的问题
         $data  = $this->buildPermanentAchievementData();
-        $stamp = $this->getTemporaryAchievementStamp();
+        $stamp = $this->getPermanentAchievementStamp();
 
         $this->assign('dashboardTitle', $this->wcDashboardTitlePermanent);
         $this->assign('periodText', $this->wcStatPeriodText);
@@ -680,6 +680,96 @@ class Achievement extends Common
     }
 
     /**
+     * 构建旺春现有团队（永久）业绩看板的签名摘要数据
+     * 与临时 PK 小组解耦：永久团队页面有独立的 stamp 计算链路，避免轮询串数据。
+     * 统计口径与 buildPermanentAchievementData 一致：同一统计周期、check_status=2、同一订单表。
+     *
+     * @return array
+     */
+    private function buildPermanentAchievementSignatureData()
+    {
+        $startTime = $this->wcStatStartTime;
+        $endTime   = $this->wcStatEndTime;
+        $timeField = $this->wcOrderTimeField;
+
+        $allowedTimeFields = ['order_time', 'create_time'];
+        if (!in_array($timeField, $allowedTimeFields, true)) {
+            $timeField = 'order_time';
+        }
+
+        // 第一层：当前统计周期内、审核通过订单的聚合摘要（与永久团队看板统计口径一致）
+        $periodRow = Db::table('crm_client_order')
+            ->alias('o')
+            ->field([
+                'COUNT(1) AS cnt',
+                'SUM(COALESCE(o.profit,0)) AS sum_profit',
+                'MAX(o.id) AS max_id',
+                'MAX(o.' . $timeField . ') AS max_order_time',
+                'MAX(o.create_time) AS max_create_time',
+                'MAX(o.ut_time) AS max_ut_time',
+                'MAX(o.audit_time) AS max_audit_time',
+            ])
+            ->where('o.check_status', 2)
+            ->where('o.' . $timeField, '>=', $startTime)
+            ->where('o.' . $timeField, '<=', $endTime)
+            ->find();
+
+        $periodSummary = [
+            'cnt'             => isset($periodRow['cnt']) ? (int)$periodRow['cnt'] : 0,
+            'sum_profit'      => isset($periodRow['sum_profit']) ? (float)$periodRow['sum_profit'] : 0.0,
+            'max_id'          => isset($periodRow['max_id']) ? (int)$periodRow['max_id'] : 0,
+            'max_order_time'  => isset($periodRow['max_order_time']) ? (string)$periodRow['max_order_time'] : '',
+            'max_create_time' => isset($periodRow['max_create_time']) ? (string)$periodRow['max_create_time'] : '',
+            'max_ut_time'     => isset($periodRow['max_ut_time']) ? (string)$periodRow['max_ut_time'] : '',
+            'max_audit_time'  => isset($periodRow['max_audit_time']) ? (string)$periodRow['max_audit_time'] : '',
+        ];
+
+        $recentStart = date('Y-m-d H:i:s', strtotime('-3 days'));
+
+        $recentRow = Db::table('crm_client_order')
+            ->alias('o')
+            ->field([
+                'COUNT(1) AS recent_cnt',
+                'MAX(o.id) AS recent_max_id',
+                'MAX(o.create_time) AS recent_max_create_time',
+                'MAX(o.ut_time) AS recent_max_ut_time',
+                'MAX(o.audit_time) AS recent_max_audit_time',
+            ])
+            ->where(function ($query) use ($recentStart) {
+                $query->where('o.create_time', '>=', $recentStart)
+                      ->whereOr('o.ut_time', '>=', $recentStart)
+                      ->whereOr('o.audit_time', '>=', $recentStart);
+            })
+            ->find();
+
+        $recentSummary = [
+            'recent_cnt'             => isset($recentRow['recent_cnt']) ? (int)$recentRow['recent_cnt'] : 0,
+            'recent_max_id'          => isset($recentRow['recent_max_id']) ? (int)$recentRow['recent_max_id'] : 0,
+            'recent_max_create_time' => isset($recentRow['recent_max_create_time']) ? (string)$recentRow['recent_max_create_time'] : '',
+            'recent_max_ut_time'     => isset($recentRow['recent_max_ut_time']) ? (string)$recentRow['recent_max_ut_time'] : '',
+            'recent_max_audit_time'  => isset($recentRow['recent_max_audit_time']) ? (string)$recentRow['recent_max_audit_time'] : '',
+        ];
+
+        return [
+            'period_summary' => $periodSummary,
+            'recent_changes' => $recentSummary,
+        ];
+    }
+
+    /**
+     * 生成旺春现有团队（永久）业绩看板的轻量级变化标识
+     * 与临时 PK 小组独立，保证永久团队页面只在自己的数据变化时刷新。
+     *
+     * @return string
+     */
+    private function getPermanentAchievementStamp()
+    {
+        $signatureData = $this->buildPermanentAchievementSignatureData();
+
+        return md5(json_encode($signatureData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
      * 旺春PK小组临时业绩心跳接口
      * 仅返回轻量级变化标识 stamp，用于前端轮询检测是否需要刷新数据。
      *
@@ -739,6 +829,81 @@ class Achievement extends Common
                 'msg'  => 'success',
                 'data' => [
                     'dashboardTitle'      => $this->wcDashboardTitle,
+                    'periodText'          => $this->wcStatPeriodText,
+                    'groupAvgRankList'    => $data['groupAvgRankList'],
+                    'memberRankGroupList' => $data['memberRankGroupList'],
+                    'stamp'               => $stamp,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return json([
+                'code' => 0,
+                'msg'  => '数据获取失败：' . $e->getMessage(),
+                'data' => [],
+            ]);
+        }
+    }
+
+    /**
+     * 旺春现有团队（永久）业绩心跳接口
+     * 仅返回永久团队专属的 stamp，供永久团队页面轮询检测，与临时 PK 小组接口互不串用。
+     *
+     * 访问路径示例：/admin/achievement/permanentAchievementHeartbeat
+     */
+    public function permanentAchievementHeartbeat()
+    {
+        if (!request()->isAjax()) {
+            return json([
+                'code' => 0,
+                'msg'  => '非法请求',
+                'data' => [],
+            ]);
+        }
+
+        try {
+            $stamp = $this->getPermanentAchievementStamp();
+
+            return json([
+                'code' => 1,
+                'msg'  => 'success',
+                'data' => [
+                    'stamp' => $stamp,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            return json([
+                'code' => 0,
+                'msg'  => '心跳检测失败：' . $e->getMessage(),
+                'data' => [],
+            ]);
+        }
+    }
+
+    /**
+     * 旺春现有团队（永久）业绩完整数据接口
+     * 永久团队页面在心跳检测到 stamp 变化后调用本接口获取完整榜单，与 temporaryAchievementData 独立。
+     *
+     * 访问路径示例：/admin/achievement/permanentAchievementData
+     */
+    public function permanentAchievementData()
+    {
+        if (!request()->isAjax()) {
+            return json([
+                'code' => 0,
+                'msg'  => '非法请求',
+                'data' => [],
+            ]);
+        }
+
+        try {
+            $data  = $this->buildPermanentAchievementData();
+            $stamp = $this->getPermanentAchievementStamp();
+
+            return json([
+                'code' => 1,
+                'msg'  => 'success',
+                'data' => [
+                    'dashboardTitle'      => $this->wcDashboardTitlePermanent,
                     'periodText'          => $this->wcStatPeriodText,
                     'groupAvgRankList'    => $data['groupAvgRankList'],
                     'memberRankGroupList' => $data['memberRankGroupList'],

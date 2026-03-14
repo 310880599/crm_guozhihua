@@ -1,7 +1,7 @@
 <?php
 // 变量容错，避免未定义报错（数据由 Achievement 控制器赋值）
 // 后续改活动名单、统计周期等，请到控制器 application/admin/controller/Achievement.php 顶部配置区修改
-$dashboardTitle     = isset($dashboardTitle) ? $dashboardTitle : '旺春PK小组 · 业绩看板';
+$dashboardTitle     = isset($dashboardTitle) ? $dashboardTitle : '旺春现有团队 · 业绩看板';
 $periodText         = isset($periodText) ? $periodText : '';
 $groupAvgRankList   = isset($groupAvgRankList) && is_array($groupAvgRankList) ? $groupAvgRankList : [];
 $memberRankGroupList= isset($memberRankGroupList) && is_array($memberRankGroupList) ? $memberRankGroupList : [];
@@ -543,13 +543,13 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 </div>
 
 <script>
-    console.log('[WC] 页面脚本已加载');
+    console.log('[WC-Permanent] 页面脚本已加载');
     (function() {
-        // ========== 旺春PK小组业绩看板 · 前端轮询（依赖 layui jquery，确保 iframe 内 $ 可用） ==========
-        var wcHeartbeatUrl = "<?php echo url('Achievement/temporaryAchievementHeartbeat'); ?>";
-        var wcDataUrl = "<?php echo url('Achievement/temporaryAchievementData'); ?>";
-        console.log('[WC] heartbeat url:', wcHeartbeatUrl);
-        console.log('[WC] data url:', wcDataUrl);
+        // ========== 旺春现有团队业绩看板 · 前端轮询（永久团队专属接口，与 PK 小组互不串用） ==========
+        var wcHeartbeatUrl = "<?php echo url('Achievement/permanentAchievementHeartbeat'); ?>";
+        var wcDataUrl = "<?php echo url('Achievement/permanentAchievementData'); ?>";
+        console.log('[WC-Permanent] heartbeat url:', wcHeartbeatUrl);
+        console.log('[WC-Permanent] data url:', wcDataUrl);
 
         var achievementTimer = null;
         var achievementLastStamp = '<?php echo isset($wcStamp) ? addslashes($wcStamp) : ''; ?>';
@@ -650,7 +650,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 timeout: 15000,
                 success: function (res) {
                     if (!res || res.code != 1 || !res.data) {
-                        console.warn('[WC] temporaryAchievementData 返回异常', res ? res.msg : '');
+                        console.warn('[WC-Permanent] permanentAchievementData 返回异常', res ? res.msg : '');
                         return;
                     }
                     var data = res.data;
@@ -659,10 +659,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     achievementLastStamp = data.stamp || achievementLastStamp;
                     renderGroupAvgRankList($, data.groupAvgRankList || []);
                     renderMemberRankGroupList($, data.memberRankGroupList || []);
-                    console.log('[WC] 完整数据拉取成功，DOM 已刷新');
+                    console.log('[WC-Permanent] 完整数据拉取成功，DOM 已刷新');
                 },
                 error: function (xhr, status, error) {
-                    console.warn('[WC] temporaryAchievementData 请求失败', status, error);
+                    console.warn('[WC-Permanent] permanentAchievementData 请求失败', status, error);
                 }
             });
         }
@@ -672,7 +672,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             if (achievementIsPolling) return;
             achievementIsPolling = true;
             var heartbeatUrl = wcHeartbeatUrl + (wcHeartbeatUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now();
-            console.log('[WC] heartbeat request send', heartbeatUrl);
+            console.log('[WC-Permanent] heartbeat request send', heartbeatUrl);
             $.ajax({
                 url: heartbeatUrl,
                 type: 'GET',
@@ -681,7 +681,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 timeout: 8000,
                 success: function (res) {
                     achievementIsPolling = false;
-                    console.log('[WC] heartbeat success:', res);
+                    console.log('[WC-Permanent] heartbeat success:', res);
                     if (!res || res.code != 1) {
                         achievementFailCount++;
                         scheduleNextAchievementPoll($);
@@ -689,7 +689,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     }
                     var stamp = (res.data && res.data.stamp) ? res.data.stamp : '';
                     var changed = stamp !== achievementLastStamp;
-                    console.log('[WC] stamp 是否变化:', changed ? '是' : '否', '当前 stamp=', stamp);
+                    console.log('[WC-Permanent] stamp 是否变化:', changed ? '是' : '否', '当前 stamp=', stamp);
                     if (!changed) {
                         achievementFailCount = 0;
                         scheduleNextAchievementPoll($);
@@ -703,7 +703,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 error: function (xhr, status, error) {
                     achievementIsPolling = false;
                     achievementFailCount++;
-                    console.warn('[WC] heartbeat error:', status, error);
+                    console.warn('[WC-Permanent] heartbeat error:', status, error);
                     scheduleNextAchievementPoll($);
                 }
             });
@@ -744,17 +744,17 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         window.addEventListener('beforeunload', function() { stopAchievementPolling(); });
 
         if (typeof layui === 'undefined') {
-            console.error('[WC] 未找到 layui，轮询将不启动。请确保本页已引入 /static/plugins/layui/layui.js');
+            console.error('[WC-Permanent] 未找到 layui，轮询将不启动。请确保本页已引入 /static/plugins/layui/layui.js');
             return;
         }
         layui.use(['jquery'], function() {
             var $ = layui.jquery;
             if (!$ || !$.ajax) {
-                console.error('[WC] jQuery 不可用，轮询将不启动');
+                console.error('[WC-Permanent] jQuery 不可用，轮询将不启动');
                 return;
             }
-            console.log('[WC] jQuery ready');
-            console.log('[WC] start polling');
+            console.log('[WC-Permanent] jQuery ready');
+            console.log('[WC-Permanent] start polling');
             startAchievementPolling($);
         });
     })();
