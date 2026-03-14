@@ -540,317 +540,215 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 </div>
 
 <script>
-    // 初始版本标识，由后端首次渲染时注入
-    var wcCurrentStamp = '<?php echo addslashes($wcStamp); ?>';
-
-    // 轮询相关配置
-    window.wcAchievementHeartbeatTimer = window.wcAchievementHeartbeatTimer || null;
-    window.wcAchievementPollingInterval = 15000; // 15 秒轮询一次，兼顾实时性和服务器压力
-
-    var wcHeartbeatLoading = false;
-    var wcDataLoading = false;
-
-    var wcHeartbeatUrl = "<?php echo url('Achievement/temporaryAchievementHeartbeat'); ?>";
-    var wcDataUrl = "<?php echo url('Achievement/temporaryAchievementData'); ?>";
-
-    // 渲染左侧“小组人均业绩排行”表格
-    function wcRenderLeftRankTable(groupList) {
-        var html = '';
-        if (!groupList || !groupList.length) {
-            html += '<div class="wc-empty-state">';
-            html += '  <div class="wc-empty-state-icon">📊</div>';
-            html += '  <div>暂无排名数据</div>';
-            html += '</div>';
-            $('#wc-left-rank-container').html(html);
+    (function() {
+        // ========== 旺春PK小组业绩看板 · 前端轮询（参考 main 控制面板 notifyHeartbeat 实现） ==========
+        var $ = window.jQuery || window.$;
+        if (!$) {
+            console.warn('旺春看板：未找到 jQuery，轮询将不启动');
             return;
         }
 
-        html += '<table class="wc-rank-table">';
-        html += '  <thead>';
-        html += '    <tr>';
-        html += '      <th class="wc-col-rank">排名</th>';
-        html += '      <th class="wc-col-name">小组名称</th>';
-        html += '      <th class="wc-col-total">小组总业绩</th>';
-        html += '      <th class="wc-col-num">成员人数</th>';
-        html += '      <th class="wc-col-amount">人均业绩</th>';
-        html += '    </tr>';
-        html += '  </thead>';
-        html += '  <tbody>';
+        // 接口地址（由后端模板注入）
+        var wcHeartbeatUrl = "<?php echo url('Achievement/temporaryAchievementHeartbeat'); ?>";
+        var wcDataUrl = "<?php echo url('Achievement/temporaryAchievementData'); ?>";
 
-        for (var i = 0; i < groupList.length; i++) {
-            var item = groupList[i] || {};
-            var rank = parseInt(item.rank || (i + 1), 10);
-            var badgeClass = 'wc-rank-badge-n';
-            if (rank === 1) badgeClass = 'wc-rank-badge-1';
-            else if (rank === 2) badgeClass = 'wc-rank-badge-2';
-            else if (rank === 3) badgeClass = 'wc-rank-badge-3';
+        // ---------- 一、轮询状态变量 ----------
+        var achievementTimer = null;
+        var achievementLastStamp = '<?php echo isset($wcStamp) ? addslashes($wcStamp) : ''; ?>';
+        var achievementFailCount = 0;
+        var achievementIsPolling = false;
 
-            var totalAmount = parseFloat(item.total_amount || 0);
-            var avgAmount = parseFloat(item.avg_amount || 0);
-            var groupName = item.group_name || '';
-            var memberCount = parseInt(item.member_count || 0, 10);
-
-            var rowClass = '';
-            if (rank === 1) rowClass = 'wc-row-top3';
-            else if (rank === 2) rowClass = 'wc-row-top3 wc-row-2';
-            else if (rank === 3) rowClass = 'wc-row-top3 wc-row-3';
-
-            html += '<tr class="' + rowClass + '">';
-            html += '  <td class="wc-col-rank"><span class="wc-rank-badge ' + badgeClass + '">' + rank + '</span></td>';
-            html += '  <td class="wc-col-name"><span class="wc-group-name">' + $('<div/>').text(groupName).html() + '</span></td>';
-            html += '  <td class="wc-col-total">';
-            if (totalAmount > 0) {
-                html += '    <span class="wc-amount-highlight">' + totalAmount.toFixed(2) + '</span>';
+        // ---------- 二、获取下一次轮询延迟（带退避） ----------
+        function getAchievementNextDelay() {
+            if (achievementFailCount === 0) {
+                return 8000 + Math.floor(Math.random() * 2000) - 1000; // 7~9 秒
+            } else if (achievementFailCount === 1) {
+                return 15000;
+            } else if (achievementFailCount === 2) {
+                return 30000;
             } else {
-                html += '    <span class="wc-amount-zero">0.00</span>';
+                return 60000;
             }
-            html += '    <span class="wc-amount-unit">元</span>';
-            html += '  </td>';
-            html += '  <td class="wc-col-num">' + memberCount + ' 人</td>';
-            html += '  <td class="wc-col-amount">';
-            if (avgAmount > 0) {
-                html += '    <span class="wc-amount-highlight">' + avgAmount.toFixed(2) + '</span>';
-            } else {
-                html += '    <span class="wc-amount-zero">0.00</span>';
-            }
-            html += '    <span class="wc-amount-unit">元</span>';
-            html += '  </td>';
-            html += '</tr>';
         }
 
-        html += '  </tbody>';
-        html += '</table>';
-
-        $('#wc-left-rank-container').html(html);
-    }
-
-    // 渲染右侧“成员总业绩排行”小组块
-    function wcRenderRightGroupBlocks(groupList) {
-        var html = '';
-        if (!groupList || !groupList.length) {
-            html += '<div class="wc-empty-state">';
-            html += '  <div class="wc-empty-state-icon">📋</div>';
-            html += '  <div>暂无成员业绩数据</div>';
-            html += '</div>';
-            $('#wc-right-group-container').html(html);
-            return;
+        // ---------- 三、渲染：左侧小组人均业绩排行 ----------
+        function renderGroupAvgRankList(list) {
+            var $container = $('#wc-left-rank-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!list || !list.length) {
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📊</div><div>暂无排名数据</div></div>';
+                $container.html(html);
+                return;
+            }
+            html += '<table class="wc-rank-table"><thead><tr>';
+            html += '<th class="wc-col-rank">排名</th><th class="wc-col-name">小组名称</th><th class="wc-col-total">小组总业绩</th><th class="wc-col-num">成员人数</th><th class="wc-col-amount">人均业绩</th>';
+            html += '</tr></thead><tbody>';
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i] || {};
+                var rank = parseInt(item.rank || (i + 1), 10);
+                var badgeClass = rank === 1 ? 'wc-rank-badge-1' : (rank === 2 ? 'wc-rank-badge-2' : (rank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
+                var totalAmount = parseFloat(item.total_amount || 0);
+                var avgAmount = parseFloat(item.avg_amount || 0);
+                var groupName = (item.group_name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                var memberCount = parseInt(item.member_count || 0, 10);
+                var rowClass = rank === 1 ? 'wc-row-top3' : (rank === 2 ? 'wc-row-top3 wc-row-2' : (rank === 3 ? 'wc-row-top3 wc-row-3' : ''));
+                html += '<tr class="' + rowClass + '">';
+                html += '<td class="wc-col-rank"><span class="wc-rank-badge ' + badgeClass + '">' + rank + '</span></td>';
+                html += '<td class="wc-col-name"><span class="wc-group-name">' + groupName + '</span></td>';
+                html += '<td class="wc-col-total">' + (totalAmount > 0 ? '<span class="wc-amount-highlight">' + totalAmount.toFixed(2) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '<td class="wc-col-num">' + memberCount + ' 人</td>';
+                html += '<td class="wc-col-amount">' + (avgAmount > 0 ? '<span class="wc-amount-highlight">' + avgAmount.toFixed(2) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '</tr>';
+            }
+            html += '</tbody></table>';
+            $container.html(html);
         }
 
-        for (var i = 0; i < groupList.length; i++) {
-            var group = groupList[i] || {};
-            var gName = group.group_name || '';
-            var gTotal = parseFloat(group.total_amount || 0);
-            var gAvg = parseFloat(group.avg_amount || 0);
-            var members = group.members || [];
-
-            html += '<div class="wc-group-block">';
-            html += '  <div class="wc-group-block-head">';
-            html += '    <div class="wc-group-block-title">' + $('<div/>').text(gName).html() + '</div>';
-            html += '    <div class="wc-group-block-meta">';
-            html += '      <span class="wc-meta-amount">小组总业绩：' + gTotal.toFixed(2) + ' 元</span>';
-            html += '      <span>人均：' + gAvg.toFixed(2) + ' 元</span>';
-            html += '    </div>';
-            html += '  </div>';
-
-            if (members && members.length) {
-                html += '  <table class="wc-member-table">';
-                html += '    <thead>';
-                html += '      <tr>';
-                html += '        <th class="wc-mcol-rank">排名</th>';
-                html += '        <th class="wc-mcol-name">成员姓名</th>';
-                html += '        <th class="wc-mcol-amount">总业绩</th>';
-                html += '      </tr>';
-                html += '    </thead>';
-                html += '    <tbody>';
-
-                for (var j = 0; j < members.length; j++) {
-                    var m = members[j] || {};
-                    var mRank = parseInt(m.rank || (j + 1), 10);
-                    var mAmount = parseFloat(m.amount || 0);
-                    var mName = m.name || '';
-
-                    var rowClass = '';
-                    if (mRank === 1) rowClass = 'wc-member-row-first';
-                    else if (mAmount <= 0) rowClass = 'wc-member-row-zero';
-
-                    var badgeClass = 'wc-rank-badge-n';
-                    if (mRank === 1) badgeClass = 'wc-rank-badge-1';
-                    else if (mRank === 2) badgeClass = 'wc-rank-badge-2';
-                    else if (mRank === 3) badgeClass = 'wc-rank-badge-3';
-
-                    html += '      <tr class="' + rowClass + '">';
-                    html += '        <td class="wc-mcol-rank"><span class="wc-rank-badge ' + badgeClass + '">' + mRank + '</span></td>';
-                    html += '        <td class="wc-mcol-name"><span class="wc-member-name">' + $('<div/>').text(mName).html() + '</span></td>';
-                    html += '        <td class="wc-mcol-amount">';
-                    if (mAmount > 0) {
-                        html += '          <span class="wc-amount-highlight">' + mAmount.toFixed(2) + '</span>';
-                    } else {
-                        html += '          <span class="wc-amount-zero">0.00</span>';
+        // ---------- 四、渲染：右侧成员总业绩排行 ----------
+        function renderMemberRankGroupList(groupList) {
+            var $container = $('#wc-right-group-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!groupList || !groupList.length) {
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📋</div><div>暂无成员业绩数据</div></div>';
+                $container.html(html);
+                return;
+            }
+            for (var i = 0; i < groupList.length; i++) {
+                var group = groupList[i] || {};
+                var gName = (group.group_name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                var gTotal = parseFloat(group.total_amount || 0);
+                var gAvg = parseFloat(group.avg_amount || 0);
+                var members = group.members || [];
+                html += '<div class="wc-group-block"><div class="wc-group-block-head">';
+                html += '<div class="wc-group-block-title">' + gName + '</div>';
+                html += '<div class="wc-group-block-meta"><span class="wc-meta-amount">小组总业绩：' + gTotal.toFixed(2) + ' 元</span><span>人均：' + gAvg.toFixed(2) + ' 元</span></div></div>';
+                if (members.length) {
+                    html += '<table class="wc-member-table"><thead><tr><th class="wc-mcol-rank">排名</th><th class="wc-mcol-name">成员姓名</th><th class="wc-mcol-amount">总业绩</th></tr></thead><tbody>';
+                    for (var j = 0; j < members.length; j++) {
+                        var m = members[j] || {};
+                        var mRank = parseInt(m.rank || (j + 1), 10);
+                        var mAmount = parseFloat(m.amount || 0);
+                        var mName = (m.name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                        var rowClass = mRank === 1 ? 'wc-member-row-first' : (mAmount <= 0 ? 'wc-member-row-zero' : '');
+                        var badgeClass = mRank === 1 ? 'wc-rank-badge-1' : (mRank === 2 ? 'wc-rank-badge-2' : (mRank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
+                        html += '<tr class="' + rowClass + '"><td class="wc-mcol-rank"><span class="wc-rank-badge ' + badgeClass + '">' + mRank + '</span></td>';
+                        html += '<td class="wc-mcol-name"><span class="wc-member-name">' + mName + '</span></td>';
+                        html += '<td class="wc-mcol-amount">' + (mAmount > 0 ? '<span class="wc-amount-highlight">' + mAmount.toFixed(2) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td></tr>';
                     }
-                    html += '          <span class="wc-amount-unit">元</span>';
-                    html += '        </td>';
-                    html += '      </tr>';
+                    html += '</tbody></table>';
+                } else {
+                    html += '<div class="wc-empty-state" style="padding: 24px;"><div class="wc-empty-state-icon">👥</div><div>暂无成员业绩数据</div></div>';
                 }
-
-                html += '    </tbody>';
-                html += '  </table>';
-            } else {
-                html += '  <div class="wc-empty-state" style="padding: 24px;">';
-                html += '    <div class="wc-empty-state-icon">👥</div>';
-                html += '    <div>暂无成员业绩数据</div>';
-                html += '  </div>';
+                html += '</div>';
             }
-
-            html += '</div>';
+            $container.html(html);
         }
 
-        $('#wc-right-group-container').html(html);
-    }
-
-    // 拉取完整数据并局部刷新
-    function wcFetchTemporaryAchievementData() {
-        if (wcDataLoading) {
-            return;
-        }
-        wcDataLoading = true;
-
-        // 控制台简单记录一次完整数据拉取，便于排查“只靠手动刷新”的问题
-        if (window.console && console.log) {
-            console.log('旺春看板：开始拉完整数据');
-        }
-
-        $.ajax({
-            url: wcDataUrl,
-            type: 'GET',
-            dataType: 'json',
-            timeout: 15000,
-            success: function (res) {
-                if (!res || res.code !== 1 || !res.data) {
-                    console && console.error && console.error('temporaryAchievementData 接口返回异常', res);
-                    return;
-                }
-
-                var data = res.data;
-
-                // 更新顶部标题和统计周期（如果有变化）
-                if (data.dashboardTitle) {
-                    $('.wc-dashboard-main-title').text(data.dashboardTitle);
-                }
-                if (data.periodText) {
-                    $('.wc-period-value').text(data.periodText);
-                }
-
-                // 局部刷新左右列表
-                wcRenderLeftRankTable(data.groupAvgRankList || []);
-                wcRenderRightGroupBlocks(data.memberRankGroupList || []);
-
-                // 更新当前 stamp
-                if (data.stamp) {
-                    wcCurrentStamp = data.stamp;
-                }
-
-                if (window.console && console.log) {
-                    console.log('旺春看板：完整数据刷新成功，stamp =', data.stamp || '');
-                }
-            },
-            error: function (xhr, status, error) {
-                // 不弹窗，避免打扰，只在控制台记录
-                console && console.error && console.error('temporaryAchievementData 请求失败', status, error);
-            },
-            complete: function () {
-                wcDataLoading = false;
-            }
-        });
-    }
-
-    // 单次心跳检查：只返回 stamp，变化时再拉完整数据
-    function wcDoHeartbeatCheck() {
-        // 避免并发心跳请求
-        if (wcHeartbeatLoading) {
-            if (window.console && console.log) {
-                console.log('旺春看板：上一次心跳未完成，本轮跳过');
-            }
-            return;
-        }
-
-        wcHeartbeatLoading = true;
-
-        if (window.console && console.log) {
-            console.log('旺春看板：心跳开始');
-        }
-
-        $.ajax({
-            url: wcHeartbeatUrl,
-            type: 'GET',
-            dataType: 'json',
-            timeout: 8000,
-            success: function (res) {
-                if (!res || res.code !== 1 || !res.data) {
-                    // 静默失败，不打断轮询
-                    return;
-                }
-                var newStamp = res.data.stamp || '';
-                if (!newStamp) {
-                    return;
-                }
-
-                if (window.console && console.log) {
-                    console.log('旺春看板：心跳返回 stamp =', newStamp, '，当前 stamp =', wcCurrentStamp || '(空)');
-                }
-
-                // 首次进入页面时，只记录后端返回的 stamp，不触发完整数据拉取（首屏已由服务端渲染）
-                if (!wcCurrentStamp) {
-                    wcCurrentStamp = newStamp;
-                    return;
-                }
-
-                if (newStamp !== wcCurrentStamp) {
-                    // 若完整数据接口正在加载，则本轮只更新本地 stamp，不重复发起完整数据请求
-                    if (wcDataLoading) {
-                        if (window.console && console.log) {
-                            console.log('旺春看板：检测到 stamp 变化，但完整数据正在加载，本轮不重复拉取');
-                        }
-                        wcCurrentStamp = newStamp;
+        // ---------- 五、拉取完整数据并重绘 DOM ----------
+        function loadAchievementDataAndRender() {
+            $.ajax({
+                url: wcDataUrl + (wcDataUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now(),
+                type: 'GET',
+                dataType: 'json',
+                cache: false,
+                timeout: 15000,
+                success: function (res) {
+                    if (!res || res.code != 1 || !res.data) {
+                        if (console && console.warn) console.warn('旺春看板：temporaryAchievementData 返回异常', res ? res.msg : '');
                         return;
                     }
-
-                    // 先更新本地 stamp，防止在完整数据接口返回前多轮心跳重复触发
-                    wcCurrentStamp = newStamp;
-
-                    if (window.console && console.log) {
-                        console.log('旺春看板：检测到 stamp 变化，准备拉取完整数据');
-                    }
-
-                    wcFetchTemporaryAchievementData();
+                    var data = res.data;
+                    if (data.dashboardTitle) $('.wc-dashboard-main-title').text(data.dashboardTitle);
+                    if (data.periodText) $('.wc-period-value').text(data.periodText);
+                    achievementLastStamp = data.stamp || achievementLastStamp;
+                    renderGroupAvgRankList(data.groupAvgRankList || []);
+                    renderMemberRankGroupList(data.memberRankGroupList || []);
+                    if (console && console.log) console.log('旺春看板：完整数据拉取成功，DOM 已刷新');
+                },
+                error: function (xhr, status, error) {
+                    if (console && console.warn) console.warn('旺春看板：temporaryAchievementData 请求失败', status, error);
                 }
-            },
-            error: function () {
-                // 心跳错误也静默处理，下一轮继续
-            },
-            complete: function () {
-                wcHeartbeatLoading = false;
-            }
-        });
-    }
-
-    // 心跳轮询：只返回 stamp，变化时再拉完整数据
-    function wcStartHeartbeatPolling() {
-        // 避免脚本多次执行导致重复定时器
-        if (window.wcAchievementHeartbeatTimer) {
-            clearInterval(window.wcAchievementHeartbeatTimer);
-            window.wcAchievementHeartbeatTimer = null;
+            });
         }
 
-        window.wcAchievementHeartbeatTimer = setInterval(function () {
-            wcDoHeartbeatCheck();
-        }, window.wcAchievementPollingInterval);
-    }
+        // ---------- 六、执行一次心跳 ----------
+        function pollAchievementOnce() {
+            if (document.visibilityState !== 'visible') return;
+            if (achievementIsPolling) return;
+            achievementIsPolling = true;
+            if (console && console.log) console.log('旺春看板：心跳已发出');
+            $.ajax({
+                url: wcHeartbeatUrl + (wcHeartbeatUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now(),
+                type: 'GET',
+                dataType: 'json',
+                cache: false,
+                timeout: 8000,
+                success: function (res) {
+                    achievementIsPolling = false;
+                    if (!res || res.code != 1) {
+                        achievementFailCount++;
+                        scheduleNextAchievementPoll();
+                        return;
+                    }
+                    var stamp = (res.data && res.data.stamp) ? res.data.stamp : '';
+                    if (console && console.log) console.log('旺春看板：stamp 是否变化', stamp !== achievementLastStamp ? '是' : '否', '当前 stamp=', stamp);
+                    if (stamp === achievementLastStamp) {
+                        achievementFailCount = 0;
+                        scheduleNextAchievementPoll();
+                        return;
+                    }
+                    achievementLastStamp = stamp;
+                    achievementFailCount = 0;
+                    loadAchievementDataAndRender();
+                    scheduleNextAchievementPoll();
+                },
+                error: function (xhr, status, error) {
+                    achievementIsPolling = false;
+                    achievementFailCount++;
+                    if (console && console.warn) console.warn('旺春看板：心跳请求失败', error);
+                    scheduleNextAchievementPoll();
+                }
+            });
+        }
 
-    layui.use(['element'], function () {
-        var element = layui.element;
+        // ---------- 七、安排下一次轮询 ----------
+        function scheduleNextAchievementPoll() {
+            if (document.visibilityState !== 'visible') return;
+            if (achievementTimer != null) {
+                clearTimeout(achievementTimer);
+                achievementTimer = null;
+            }
+            var delay = getAchievementNextDelay();
+            achievementTimer = setTimeout(function() { pollAchievementOnce(); }, delay);
+        }
 
-        // 页面加载完成后，先执行一次心跳检查，再启动定时轮询
-        wcDoHeartbeatCheck();
-        wcStartHeartbeatPolling();
-    });
+        function startAchievementPolling() {
+            stopAchievementPolling();
+            pollAchievementOnce();
+        }
+
+        function stopAchievementPolling() {
+            if (achievementTimer != null) {
+                clearTimeout(achievementTimer);
+                achievementTimer = null;
+            }
+            achievementIsPolling = false;
+        }
+
+        // ---------- 八、页面生命周期 ----------
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'hidden') stopAchievementPolling();
+            else if (document.visibilityState === 'visible') startAchievementPolling();
+        });
+        window.addEventListener('beforeunload', function() { stopAchievementPolling(); });
+
+        // ---------- 九、页面初始化后启动轮询 ----------
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() { startAchievementPolling(); });
+        } else {
+            startAchievementPolling();
+        }
+    })();
 </script>
