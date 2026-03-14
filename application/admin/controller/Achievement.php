@@ -319,17 +319,20 @@ class Achievement extends Common
     }
 
     /**
-     * 生成旺春PK小组临时业绩看板的轻量级变化标识
-     * 仅做聚合统计，不构建完整排行榜，供心跳接口与数据接口复用。
+     * 构建旺春PK小组临时业绩看板的签名摘要数据
      *
-     * 统计条件需与 buildTemporaryAchievementData 保持一致：
-     * - 订单表：crm_client_order
-     * - check_status = 2
-     * - 使用相同的时间字段与统计周期
+     * 说明：
+     * 1）第一层摘要 strictly 按当前统计周期 + check_status = 2 汇总，与最终看板口径保持一致；
+     * 2）第二层摘要只做“近期变更捕捉”，用于触发前端刷新，允许包含未审核或统计周期边界附近的订单，
+     *    即使最终排行榜数据没有变化，最多只是多拉一次完整接口，服务器可以接受。
      *
-     * @return string
+     * 这样可以避免仅依赖 order_time 导致：
+     * - 新建订单但尚未审核、或审核后未改动 order_time 时，stamp 不变化；
+     * - 订单利润 profit / 审核状态 check_status / 负责人等更新仅改 ut_time / audit_time 时，stamp 不变化。
+     *
+     * @return array
      */
-    private function getTemporaryAchievementStamp()
+    private function buildTemporaryAchievementSignatureData()
     {
         $startTime = $this->wcStatStartTime;
         $endTime   = $this->wcStatEndTime;
@@ -341,30 +344,86 @@ class Achievement extends Common
             $timeField = 'order_time';
         }
 
-        // 轻量级聚合：当前周期内审核通过订单
-        // 使用 COUNT(*)、SUM(profit)、MAX(id)、MAX(时间字段) 共同生成变化标识
-        $row = Db::table('crm_client_order')
+        // 第一层：当前统计周期内、审核通过订单的聚合摘要（完全与看板统计口径一致）
+        $periodRow = Db::table('crm_client_order')
             ->alias('o')
             ->field([
                 'COUNT(1) AS cnt',
                 'SUM(COALESCE(o.profit,0)) AS sum_profit',
                 'MAX(o.id) AS max_id',
-                'MAX(o.' . $timeField . ') AS max_time',
+                'MAX(o.' . $timeField . ') AS max_order_time',
+                'MAX(o.create_time) AS max_create_time',
+                'MAX(o.ut_time) AS max_ut_time',
+                'MAX(o.audit_time) AS max_audit_time',
             ])
             ->where('o.check_status', 2)
             ->where('o.' . $timeField, '>=', $startTime)
             ->where('o.' . $timeField, '<=', $endTime)
             ->find();
 
-        $count     = isset($row['cnt']) ? (int)$row['cnt'] : 0;
-        $sumProfit = isset($row['sum_profit']) ? (float)$row['sum_profit'] : 0.0;
-        $maxId     = isset($row['max_id']) ? (int)$row['max_id'] : 0;
-        $maxTime   = isset($row['max_time']) ? (string)$row['max_time'] : '';
+        $periodSummary = [
+            // 以下字段直接反映“榜单最终结果”是否发生变化（数量 / 业绩 / 最大ID / 时间戳）
+            'cnt'             => isset($periodRow['cnt']) ? (int)$periodRow['cnt'] : 0,
+            'sum_profit'      => isset($periodRow['sum_profit']) ? (float)$periodRow['sum_profit'] : 0.0,
+            'max_id'          => isset($periodRow['max_id']) ? (int)$periodRow['max_id'] : 0,
+            'max_order_time'  => isset($periodRow['max_order_time']) ? (string)$periodRow['max_order_time'] : '',
+            'max_create_time' => isset($periodRow['max_create_time']) ? (string)$periodRow['max_create_time'] : '',
+            'max_ut_time'     => isset($periodRow['max_ut_time']) ? (string)$periodRow['max_ut_time'] : '',
+            'max_audit_time'  => isset($periodRow['max_audit_time']) ? (string)$periodRow['max_audit_time'] : '',
+        ];
 
-        // 使用字符串拼接 + md5 生成稳定的轻量标识
-        $stampSource = $count . '|' . number_format($sumProfit, 2, '.', '') . '|' . $maxId . '|' . $maxTime;
+        // 第二层：最近一段时间内的订单变更摘要（主要用于捕捉“新增 / 审核 / 修改”动作）
+        // 说明：
+        // - 这里不限制 check_status = 2，是为了在订单从未审核 -> 已审核（check_status 变为 2）时也能及时触发刷新；
+        // - 仍然只关心与看板相关的订单表 crm_client_order，避免对其他业务表做全表扫描。
+        $recentStart = date('Y-m-d H:i:s', strtotime('-3 days')); // 近 3 天变更即可触发刷新，窗口可根据需要调整
 
-        return md5($stampSource);
+        $recentRow = Db::table('crm_client_order')
+            ->alias('o')
+            ->field([
+                'COUNT(1) AS recent_cnt',
+                'MAX(o.id) AS recent_max_id',
+                'MAX(o.create_time) AS recent_max_create_time',
+                'MAX(o.ut_time) AS recent_max_ut_time',
+                'MAX(o.audit_time) AS recent_max_audit_time',
+            ])
+            ->where(function ($query) use ($recentStart) {
+                // 使用 create_time / ut_time / audit_time 任一字段的近期变动来捕捉订单“新增 / 修改 / 审核”行为
+                $query->where('o.create_time', '>=', $recentStart)
+                      ->whereOr('o.ut_time', '>=', $recentStart)
+                      ->whereOr('o.audit_time', '>=', $recentStart);
+            })
+            ->find();
+
+        $recentSummary = [
+            'recent_cnt'             => isset($recentRow['recent_cnt']) ? (int)$recentRow['recent_cnt'] : 0,
+            'recent_max_id'          => isset($recentRow['recent_max_id']) ? (int)$recentRow['recent_max_id'] : 0,
+            'recent_max_create_time' => isset($recentRow['recent_max_create_time']) ? (string)$recentRow['recent_max_create_time'] : '',
+            'recent_max_ut_time'     => isset($recentRow['recent_max_ut_time']) ? (string)$recentRow['recent_max_ut_time'] : '',
+            'recent_max_audit_time'  => isset($recentRow['recent_max_audit_time']) ? (string)$recentRow['recent_max_audit_time'] : '',
+        ];
+
+        return [
+            'period_summary' => $periodSummary,
+            'recent_changes' => $recentSummary,
+        ];
+    }
+
+    /**
+     * 生成旺春PK小组临时业绩看板的轻量级变化标识
+     *
+     * 这里不再只依赖 order_time，而是综合：
+     * - 当前统计周期内、审核通过订单的数量 / 纯利润汇总 / 最大 ID / 各类时间戳；
+     * - 近几天内订单的新增 / 修改 / 审核时间变化摘要。
+     *
+     * @return string
+     */
+    private function getTemporaryAchievementStamp()
+    {
+        $signatureData = $this->buildTemporaryAchievementSignatureData();
+
+        // 统一使用 json_encode 后 md5，确保字段扩展时前端无需改动
+        return md5(json_encode($signatureData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
     /**

@@ -714,6 +714,11 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         }
         wcDataLoading = true;
 
+        // 控制台简单记录一次完整数据拉取，便于排查“只靠手动刷新”的问题
+        if (window.console && console.log) {
+            console.log('旺春看板：开始拉完整数据');
+        }
+
         $.ajax({
             url: wcDataUrl,
             type: 'GET',
@@ -743,6 +748,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 if (data.stamp) {
                     wcCurrentStamp = data.stamp;
                 }
+
+                if (window.console && console.log) {
+                    console.log('旺春看板：完整数据刷新成功，stamp =', data.stamp || '');
+                }
             },
             error: function (xhr, status, error) {
                 // 不弹窗，避免打扰，只在控制台记录
@@ -750,6 +759,76 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             },
             complete: function () {
                 wcDataLoading = false;
+            }
+        });
+    }
+
+    // 单次心跳检查：只返回 stamp，变化时再拉完整数据
+    function wcDoHeartbeatCheck() {
+        // 避免并发心跳请求
+        if (wcHeartbeatLoading) {
+            if (window.console && console.log) {
+                console.log('旺春看板：上一次心跳未完成，本轮跳过');
+            }
+            return;
+        }
+
+        wcHeartbeatLoading = true;
+
+        if (window.console && console.log) {
+            console.log('旺春看板：心跳开始');
+        }
+
+        $.ajax({
+            url: wcHeartbeatUrl,
+            type: 'GET',
+            dataType: 'json',
+            timeout: 8000,
+            success: function (res) {
+                if (!res || res.code !== 1 || !res.data) {
+                    // 静默失败，不打断轮询
+                    return;
+                }
+                var newStamp = res.data.stamp || '';
+                if (!newStamp) {
+                    return;
+                }
+
+                if (window.console && console.log) {
+                    console.log('旺春看板：心跳返回 stamp =', newStamp, '，当前 stamp =', wcCurrentStamp || '(空)');
+                }
+
+                // 首次进入页面时，只记录后端返回的 stamp，不触发完整数据拉取（首屏已由服务端渲染）
+                if (!wcCurrentStamp) {
+                    wcCurrentStamp = newStamp;
+                    return;
+                }
+
+                if (newStamp !== wcCurrentStamp) {
+                    // 若完整数据接口正在加载，则本轮只更新本地 stamp，不重复发起完整数据请求
+                    if (wcDataLoading) {
+                        if (window.console && console.log) {
+                            console.log('旺春看板：检测到 stamp 变化，但完整数据正在加载，本轮不重复拉取');
+                        }
+                        wcCurrentStamp = newStamp;
+                        return;
+                    }
+
+                    // 先更新本地 stamp，防止在完整数据接口返回前多轮心跳重复触发
+                    wcCurrentStamp = newStamp;
+
+                    if (window.console && console.log) {
+                        console.log('旺春看板：检测到 stamp 变化，准备拉取完整数据');
+                    }
+
+                    wcFetchTemporaryAchievementData();
+                }
+            },
+            error: function () {
+                // 心跳错误也静默处理，下一轮继续
+            },
+            complete: function () {
+                wcHeartbeatLoading = false;
             }
         });
     }
@@ -763,50 +842,15 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         }
 
         window.wcAchievementHeartbeatTimer = setInterval(function () {
-            if (wcHeartbeatLoading) {
-                return;
-            }
-            wcHeartbeatLoading = true;
-
-            $.ajax({
-                url: wcHeartbeatUrl,
-                type: 'GET',
-                dataType: 'json',
-                timeout: 8000,
-                success: function (res) {
-                    if (!res || res.code !== 1 || !res.data) {
-                        // 静默失败，不打断轮询
-                        return;
-                    }
-                    var newStamp = res.data.stamp || '';
-                    if (!newStamp) {
-                        return;
-                    }
-
-                    if (!wcCurrentStamp) {
-                        wcCurrentStamp = newStamp;
-                        return;
-                    }
-
-                    if (newStamp !== wcCurrentStamp) {
-                        // 只有发现变化时才拉完整数据
-                        wcFetchTemporaryAchievementData();
-                    }
-                },
-                error: function () {
-                    // 心跳错误也静默处理，下一轮继续
-                },
-                complete: function () {
-                    wcHeartbeatLoading = false;
-                }
-            });
+            wcDoHeartbeatCheck();
         }, window.wcAchievementPollingInterval);
     }
 
     layui.use(['element'], function () {
         var element = layui.element;
 
-        // 页面加载完成后，启动心跳轮询
+        // 页面加载完成后，先执行一次心跳检查，再启动定时轮询
+        wcDoHeartbeatCheck();
         wcStartHeartbeatPolling();
     });
 </script>
