@@ -7,6 +7,9 @@ $groupAvgRankList   = isset($groupAvgRankList) && is_array($groupAvgRankList) ? 
 $memberRankGroupList= isset($memberRankGroupList) && is_array($memberRankGroupList) ? $memberRankGroupList : [];
 $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 ?>
+<!-- 旺春看板 iframe 内独立依赖：保证本页在 iframe 中也有 jQuery / layui，轮询才能启动 -->
+<script src="/js/jquery.min.js"></script>
+<script src="/static/plugins/layui/layui.js"></script>
 <style>
     /* ========== 看板容器 ========== */
     .wc-dashboard-container {
@@ -540,28 +543,22 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 </div>
 
 <script>
+    console.log('[WC] 页面脚本已加载');
     (function() {
-        // ========== 旺春PK小组业绩看板 · 前端轮询（参考 main 控制面板 notifyHeartbeat 实现） ==========
-        var $ = window.jQuery || window.$;
-        if (!$) {
-            console.warn('旺春看板：未找到 jQuery，轮询将不启动');
-            return;
-        }
-
-        // 接口地址（由后端模板注入）
+        // ========== 旺春PK小组业绩看板 · 前端轮询（依赖 layui jquery，确保 iframe 内 $ 可用） ==========
         var wcHeartbeatUrl = "<?php echo url('Achievement/temporaryAchievementHeartbeat'); ?>";
         var wcDataUrl = "<?php echo url('Achievement/temporaryAchievementData'); ?>";
+        console.log('[WC] heartbeat url:', wcHeartbeatUrl);
+        console.log('[WC] data url:', wcDataUrl);
 
-        // ---------- 一、轮询状态变量 ----------
         var achievementTimer = null;
         var achievementLastStamp = '<?php echo isset($wcStamp) ? addslashes($wcStamp) : ''; ?>';
         var achievementFailCount = 0;
         var achievementIsPolling = false;
 
-        // ---------- 二、获取下一次轮询延迟（带退避） ----------
         function getAchievementNextDelay() {
             if (achievementFailCount === 0) {
-                return 8000 + Math.floor(Math.random() * 2000) - 1000; // 7~9 秒
+                return 8000 + Math.floor(Math.random() * 2000) - 1000;
             } else if (achievementFailCount === 1) {
                 return 15000;
             } else if (achievementFailCount === 2) {
@@ -571,8 +568,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             }
         }
 
-        // ---------- 三、渲染：左侧小组人均业绩排行 ----------
-        function renderGroupAvgRankList(list) {
+        function renderGroupAvgRankList($, list) {
             var $container = $('#wc-left-rank-container');
             if (!$container.length) return;
             var html = '';
@@ -605,8 +601,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             $container.html(html);
         }
 
-        // ---------- 四、渲染：右侧成员总业绩排行 ----------
-        function renderMemberRankGroupList(groupList) {
+        function renderMemberRankGroupList($, groupList) {
             var $container = $('#wc-right-group-container');
             if (!$container.length) return;
             var html = '';
@@ -646,8 +641,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             $container.html(html);
         }
 
-        // ---------- 五、拉取完整数据并重绘 DOM ----------
-        function loadAchievementDataAndRender() {
+        function loadAchievementDataAndRender($) {
             $.ajax({
                 url: wcDataUrl + (wcDataUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now(),
                 type: 'GET',
@@ -656,77 +650,78 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 timeout: 15000,
                 success: function (res) {
                     if (!res || res.code != 1 || !res.data) {
-                        if (console && console.warn) console.warn('旺春看板：temporaryAchievementData 返回异常', res ? res.msg : '');
+                        console.warn('[WC] temporaryAchievementData 返回异常', res ? res.msg : '');
                         return;
                     }
                     var data = res.data;
                     if (data.dashboardTitle) $('.wc-dashboard-main-title').text(data.dashboardTitle);
                     if (data.periodText) $('.wc-period-value').text(data.periodText);
                     achievementLastStamp = data.stamp || achievementLastStamp;
-                    renderGroupAvgRankList(data.groupAvgRankList || []);
-                    renderMemberRankGroupList(data.memberRankGroupList || []);
-                    if (console && console.log) console.log('旺春看板：完整数据拉取成功，DOM 已刷新');
+                    renderGroupAvgRankList($, data.groupAvgRankList || []);
+                    renderMemberRankGroupList($, data.memberRankGroupList || []);
+                    console.log('[WC] 完整数据拉取成功，DOM 已刷新');
                 },
                 error: function (xhr, status, error) {
-                    if (console && console.warn) console.warn('旺春看板：temporaryAchievementData 请求失败', status, error);
+                    console.warn('[WC] temporaryAchievementData 请求失败', status, error);
                 }
             });
         }
 
-        // ---------- 六、执行一次心跳 ----------
-        function pollAchievementOnce() {
+        function pollAchievementOnce($) {
             if (document.visibilityState !== 'visible') return;
             if (achievementIsPolling) return;
             achievementIsPolling = true;
-            if (console && console.log) console.log('旺春看板：心跳已发出');
+            var heartbeatUrl = wcHeartbeatUrl + (wcHeartbeatUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now();
+            console.log('[WC] heartbeat request send', heartbeatUrl);
             $.ajax({
-                url: wcHeartbeatUrl + (wcHeartbeatUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now(),
+                url: heartbeatUrl,
                 type: 'GET',
                 dataType: 'json',
                 cache: false,
                 timeout: 8000,
                 success: function (res) {
                     achievementIsPolling = false;
+                    console.log('[WC] heartbeat success:', res);
                     if (!res || res.code != 1) {
                         achievementFailCount++;
-                        scheduleNextAchievementPoll();
+                        scheduleNextAchievementPoll($);
                         return;
                     }
                     var stamp = (res.data && res.data.stamp) ? res.data.stamp : '';
-                    if (console && console.log) console.log('旺春看板：stamp 是否变化', stamp !== achievementLastStamp ? '是' : '否', '当前 stamp=', stamp);
-                    if (stamp === achievementLastStamp) {
+                    var changed = stamp !== achievementLastStamp;
+                    console.log('[WC] stamp 是否变化:', changed ? '是' : '否', '当前 stamp=', stamp);
+                    if (!changed) {
                         achievementFailCount = 0;
-                        scheduleNextAchievementPoll();
+                        scheduleNextAchievementPoll($);
                         return;
                     }
                     achievementLastStamp = stamp;
                     achievementFailCount = 0;
-                    loadAchievementDataAndRender();
-                    scheduleNextAchievementPoll();
+                    loadAchievementDataAndRender($);
+                    scheduleNextAchievementPoll($);
                 },
                 error: function (xhr, status, error) {
                     achievementIsPolling = false;
                     achievementFailCount++;
-                    if (console && console.warn) console.warn('旺春看板：心跳请求失败', error);
-                    scheduleNextAchievementPoll();
+                    console.warn('[WC] heartbeat error:', status, error);
+                    scheduleNextAchievementPoll($);
                 }
             });
         }
 
-        // ---------- 七、安排下一次轮询 ----------
-        function scheduleNextAchievementPoll() {
+        function scheduleNextAchievementPoll($) {
             if (document.visibilityState !== 'visible') return;
             if (achievementTimer != null) {
                 clearTimeout(achievementTimer);
                 achievementTimer = null;
             }
             var delay = getAchievementNextDelay();
-            achievementTimer = setTimeout(function() { pollAchievementOnce(); }, delay);
+            achievementTimer = setTimeout(function() { pollAchievementOnce($); }, delay);
         }
 
-        function startAchievementPolling() {
+        function startAchievementPolling($) {
             stopAchievementPolling();
-            pollAchievementOnce();
+            pollAchievementOnce($);
         }
 
         function stopAchievementPolling() {
@@ -737,18 +732,30 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             achievementIsPolling = false;
         }
 
-        // ---------- 八、页面生命周期 ----------
         document.addEventListener('visibilitychange', function() {
             if (document.visibilityState === 'hidden') stopAchievementPolling();
-            else if (document.visibilityState === 'visible') startAchievementPolling();
+            else if (document.visibilityState === 'visible' && typeof layui !== 'undefined') {
+                layui.use(['jquery'], function() {
+                    var $ = layui.jquery;
+                    startAchievementPolling($);
+                });
+            }
         });
         window.addEventListener('beforeunload', function() { stopAchievementPolling(); });
 
-        // ---------- 九、页面初始化后启动轮询 ----------
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function() { startAchievementPolling(); });
-        } else {
-            startAchievementPolling();
+        if (typeof layui === 'undefined') {
+            console.error('[WC] 未找到 layui，轮询将不启动。请确保本页已引入 /static/plugins/layui/layui.js');
+            return;
         }
+        layui.use(['jquery'], function() {
+            var $ = layui.jquery;
+            if (!$ || !$.ajax) {
+                console.error('[WC] jQuery 不可用，轮询将不启动');
+                return;
+            }
+            console.log('[WC] jQuery ready');
+            console.log('[WC] start polling');
+            startAchievementPolling($);
+        });
     })();
 </script>
