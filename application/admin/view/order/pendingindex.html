@@ -1193,7 +1193,7 @@
                     return res.customer_type_flag == 1 ? '个人' : '公司';
                 }},
                 { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
-                { field: 'profit', title: '利润', totalRow: true, width: 180 },
+                { field: 'profit', title: '利润', totalRow: true, width: 180, sort: true },
                 { field: 'margin_rate', title: '利润率(%)', totalRow: true, width: 180 },
                 { field: 'order_time', title: '成交时间', width: 180 },
                 { field: 'source', title: '运营渠道', width: 180 },
@@ -1359,6 +1359,20 @@
               tableIn.reload(opt);
             }
             // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+            // 表头排序：点击利润等列时传 field/order 给后台，并回到第一页
+            table.on('sort(table-list)', function (obj) {
+                var baseWhere = (tableIn.config && tableIn.config.where) ? tableIn.config.where : {};
+                var where = {};
+                for (var k in baseWhere) if (baseWhere.hasOwnProperty(k)) where[k] = baseWhere[k];
+                if (obj.type) {
+                    where.field = obj.field;
+                    where.order = obj.type;
+                } else {
+                    delete where.field;
+                    delete where.order;
+                }
+                reloadTableWithDbCols({ where: where, page: { curr: 1 } });
+            });
             table.on('tool(table-list)', function (obj) {
                 var data = obj.data;
 

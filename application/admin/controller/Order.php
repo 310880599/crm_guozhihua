@@ -4705,6 +4705,17 @@ class Order extends Common
         // 过滤掉 null 元素
         if ($keyword) $keyword = array_filter($keyword);
 
+        // 表头排序：只允许白名单字段和 asc/desc，否则默认 create_time desc, id desc
+        $sortField = input('field/s', '');
+        $sortOrder = input('order/s', '');
+        $sortFieldWhitelist = ['order_no', 'cname', 'contact', 'money', 'profit', 'margin_rate', 'order_time', 'create_time'];
+        $sortOrderWhitelist = ['asc', 'desc'];
+        if ($sortField !== '' && $sortOrder !== '' && in_array($sortField, $sortFieldWhitelist) && in_array(strtolower($sortOrder), $sortOrderWhitelist)) {
+            $orderClause = $sortField . ' ' . strtolower($sortOrder) . ', id desc';
+        } else {
+            $orderClause = 'create_time desc, id desc';
+        }
+
         $where[] = ['check_status', '=', 1];
         if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
         if (isset($keyword['timebucket'])) {
@@ -4744,7 +4755,7 @@ class Order extends Common
         }
         $list = Db::table('crm_client_order')
             ->where($where)
-            ->order('order_time desc')
+            ->order($orderClause)
             ->paginate([
                 'list_rows' => $limit,
                 'page' => $page
