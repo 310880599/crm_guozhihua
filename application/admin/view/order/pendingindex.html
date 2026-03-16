@@ -1017,6 +1017,8 @@
                     defaultToolbar: defaultToolbar,
                     cols: pendingCols,
                     limit: 10,
+                    // 关闭 layui 本地排序，统一走后端排序
+                    autoSort: false,
                     page: { limits: [10, 20, 30, 40, 50, 100, 200, 500, 9999999] },
                     totalRow: true,
                     done: function (res, curr, count) {
@@ -1317,6 +1319,8 @@
                 defaultToolbar: defaultToolbar,
                 cols: pendingCols,
                 limit: 10, //每页默认显示的数量
+                // 关闭 layui 本地排序，统一走后端排序
+                autoSort: false,
 
                 page: { limits: [10, 20, 30, 40, 50, 100, 200, 500,9999999] },
                 totalRow: true,// 开启统计行

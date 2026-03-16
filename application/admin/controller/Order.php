@@ -4710,11 +4710,12 @@ class Order extends Common
         $sortOrder = input('order/s', '');
         $sortFieldWhitelist = ['order_no', 'cname', 'contact', 'money', 'profit', 'margin_rate', 'order_time', 'create_time'];
         $sortOrderWhitelist = ['asc', 'desc'];
-        if ($sortField !== '' && $sortOrder !== '' && in_array($sortField, $sortFieldWhitelist) && in_array(strtolower($sortOrder), $sortOrderWhitelist)) {
-            $orderClause = $sortField . ' ' . strtolower($sortOrder) . ', id desc';
-        } else {
-            $orderClause = 'create_time desc, id desc';
-        }
+        $numericSortFields = ['money', 'profit', 'margin_rate'];
+
+        $sortOrderLower = strtolower($sortOrder);
+        $isFieldAllowed = $sortField !== '' && in_array($sortField, $sortFieldWhitelist, true);
+        $isOrderAllowed = $sortOrderLower !== '' && in_array($sortOrderLower, $sortOrderWhitelist, true);
+        $isNumericField = $isFieldAllowed && in_array($sortField, $numericSortFields, true);
 
         $where[] = ['check_status', '=', 1];
         if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
@@ -4753,14 +4754,28 @@ class Order extends Common
             $kh_source = strtolower($keyword['source']);
             $client_where[] = ['kh_status', 'like', "%$kh_source%"];
         }
-        $list = Db::table('crm_client_order')
-            ->where($where)
-            ->order($orderClause)
-            ->paginate([
+        // 构造基础查询
+        $query = Db::table('crm_client_order')->where($where);
+
+        // 应用排序：数值字段使用 CAST + orderRaw，普通字段使用链式 order
+        if ($isFieldAllowed && $isOrderAllowed) {
+            $sortOrderUpper = strtoupper($sortOrderLower); // ASC / DESC
+            if ($isNumericField) {
+                // 数值字段：按数值排序，避免字符串比较；字段名来自白名单，避免注入
+                $query->orderRaw("CAST(`{$sortField}` AS DECIMAL(18,2)) {$sortOrderUpper}, id DESC");
+            } else {
+                // 普通字段：正常字段排序，再按 id 降序保证稳定性
+                $query->order($sortField, $sortOrderLower)->order('id', 'desc');
+            }
+        } else {
+            // 非法字段或方向：使用默认排序
+            $query->order('create_time', 'desc')->order('id', 'desc');
+        }
+
+        $list = $query->paginate([
                 'list_rows' => $limit,
                 'page' => $page
-            ])
-            ->toArray();
+            ])->toArray();
 
         // 本页订单ID，批量查 crm_order_item 聚合成 item_* 多行字符串（避免 N+1）
         $orderIds = array_column($list['data'], 'id');
