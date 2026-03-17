@@ -1505,7 +1505,7 @@
                 $.each(data, function(index, item) {
                     html += '<tr style="border-bottom: 1px solid #dee2e6;">' +
                         '<td style="padding: 12px;">' + (item.order_time || item.deal_date || '') + '</td>' +
-                        '<td style="padding: 12px;">' + (item.client_name || item.customer_name || '') + '</td>' +
+                        '<td style="padding: 12px;">' + (item.cname || item.client_name || item.customer_name || '') + '</td>' +
                         '<td style="padding: 12px; text-align: right;">' + (item.money || item.order_amount || '0.00') + '</td>' +
                         '<td style="padding: 12px; text-align: right; color: #28a745;">' + (item.profit || '0.00') + '</td>' +
                         '</tr>';
