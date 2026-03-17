@@ -432,11 +432,11 @@
 <body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
 
     <div class="admin-main layui-anim layui-anim-upbit">
-        <fieldset class="layui-elem-field" id="advancedSearchFieldset">
+        <fieldset class="layui-elem-field advanced-search-collapsed" id="advancedSearchFieldset">
             <form class="layui-form" id="searchForm">
                 <div class="advanced-search-header">
                     <div class="advanced-search-title">高级查询</div>
-                    <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="toggleAdvancedSearch">收起</button>
+                    <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="toggleAdvancedSearch">展开</button>
                 </div>
                 <div id="advancedSearchBody">
                 <div class="layui-card" style="box-shadow: none; margin-top: 10px">
@@ -1631,8 +1631,8 @@
 
             });
 
-            // 高级查询区域折叠/展开
-            var advancedSearchExpanded = true;
+            // 高级查询区域折叠/展开（初始为折叠状态）
+            var advancedSearchExpanded = false;
             var $advancedSearchFieldset = $('#advancedSearchFieldset');
             $('#toggleAdvancedSearch').on('click', function () {
                 if (advancedSearchExpanded) {
