@@ -646,6 +646,11 @@
             var COLORDER_TABLE_KEY = 'main_table';
 
             var ORDER_COL_FIELD_WHITELIST = [];
+            // 待审核列表当前排序状态（仅前端内存保存）
+            var pendingSortState = {
+                field: '',
+                order: ''
+            };
             function buildOrderColWhitelist(tableCols) {
                 var arr = [];
                 (tableCols || []).forEach(function (c) {
@@ -1397,15 +1402,47 @@
               tableIn.reload(opt);
             }
             // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+            // 根据当前 tableIn.config.where 与前端记住的排序状态，生成带排序的 where
+            function getReloadWhereWithSort() {
+                var baseWhere = (tableIn.config && tableIn.config.where) ? tableIn.config.where : {};
+                var where = {};
+
+                for (var k in baseWhere) {
+                    if (baseWhere.hasOwnProperty(k) && k !== 'field' && k !== 'order') {
+                        where[k] = baseWhere[k];
+                    }
+                }
+
+                if (pendingSortState.field && pendingSortState.order) {
+                    where.field = pendingSortState.field;
+                    where.order = pendingSortState.order;
+                }
+
+                return where;
+            }
+
+            // 在保留当前排序状态的前提下刷新表格（仍然复用 reloadTableWithDbCols）
+            function reloadTableKeepSort(extraOpt) {
+                var opt = extraOpt || {};
+                opt.where = getReloadWhereWithSort();
+                reloadTableWithDbCols(opt);
+            }
+
             // 表头排序：点击利润等列时传 field/order 给后台，并回到第一页
             table.on('sort(table-list)', function (obj) {
                 var baseWhere = (tableIn.config && tableIn.config.where) ? tableIn.config.where : {};
                 var where = {};
                 for (var k in baseWhere) if (baseWhere.hasOwnProperty(k)) where[k] = baseWhere[k];
                 if (obj.type) {
+                    // 有有效排序时，记录到前端排序状态
+                    pendingSortState.field = obj.field;
+                    pendingSortState.order = obj.type;
                     where.field = obj.field;
                     where.order = obj.type;
                 } else {
+                    // 取消排序时，清空前端排序状态
+                    pendingSortState.field = '';
+                    pendingSortState.order = '';
                     delete where.field;
                     delete where.order;
                 }
@@ -1482,9 +1519,9 @@
                             layer.close(loading);
                             if (res.code === 0) {
                                 layer.msg(res.msg, { time: 1000, icon: 1 });
-                                // ====== BEGIN 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
-                                reloadTableWithDbCols();
-                                // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+                                // ====== BEGIN 修改：reload 在保留当前排序状态的前提下，从数据库恢复列宽/列配置/列顺序 ======
+                                reloadTableKeepSort();
+                                // ====== END 修改：reload 在保留当前排序状态的前提下，从数据库恢复列宽/列配置/列顺序 ======
                             } else {
                                 layer.msg(res.msg, { time: 2000, icon: 2 });
                             }
@@ -1523,9 +1560,9 @@
                                 if (res.code === 0 || res.code === 1) {
                                     layer.msg(res.msg || '已拒绝该订单', { time: 1000, icon: 1 });
                                     layer.close(index);
-                                    // ====== BEGIN 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
-                                    reloadTableWithDbCols();
-                                    // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
+                                    // ====== BEGIN 修改：reject 后在保留当前排序状态的前提下，从数据库恢复列宽/列配置/列顺序 ======
+                                    reloadTableKeepSort();
+                                    // ====== END 修改：reject 后在保留当前排序状态的前提下，从数据库恢复列宽/列配置/列顺序 ======
                                 } else {
                                     layer.msg(res.msg || '操作失败', { time: 2000, icon: 2 });
                                 }
