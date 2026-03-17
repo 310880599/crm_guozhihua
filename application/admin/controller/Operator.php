@@ -1299,13 +1299,6 @@ private function exportToExcel($data)
                     $query->where([$time_where_at])->whereOr([$time_where_kh]);
                 })
                 ->count();
-            
-            // 超级管理员：统计全部业绩
-            $timeWhere = $this->buildTimeWhere('month', 'o.order_time');
-            $profit = Db::table('crm_client_order')
-                ->alias('o')
-                ->where([$timeWhere])
-                ->sum('o.profit');
         } elseif (!empty($current_admin_info['inquiry_id']) && !empty($current_admin_info['port_id'])) {
             // 匹配当前运营人员的 inquiry_id 和 port_id
             // port_id 是逗号分隔的多选值，需要检查交集
@@ -1333,58 +1326,12 @@ private function exportToExcel($data)
                     ->whereRaw($port_where)
                     ->count();
             }
-            
-            // 业绩统计 - 根据订单中的 source 和 source_port 匹配运营人员
-            // 订单表的 source 是渠道名称，source_port 是端口名称（文字）
-            $timeWhere = $this->buildTimeWhere('month', 'o.order_time');
-            
-            // 获取该渠道下所有端口的名称列表 - 批量查询优化
-            $port_names = [];
-            $inquiry_name = '';
-            $inquiry_info = Db::table('crm_inquiry')
-                ->where('id', $current_admin_info['inquiry_id'])
-                ->field('inquiry_name')
-                ->find();
-            if ($inquiry_info) {
-                $inquiry_name = $inquiry_info['inquiry_name'];
-            }
-            
-            $admin_port_ids = !empty($current_admin_info['port_id']) ? array_filter(array_map('trim', explode(',', $current_admin_info['port_id']))) : [];
-            if (!empty($admin_port_ids)) {
-                $port_list = Db::table('crm_inquiry_port')
-                    ->where('id', 'in', $admin_port_ids)
-                    ->where('inquiry_id', $current_admin_info['inquiry_id'])
-                    ->field('port_name')
-                    ->select();
-                foreach ($port_list as $port) {
-                    if (!empty($port['port_name'])) {
-                        $port_names[] = addslashes($port['port_name']);
-                    }
-                }
-            }
-            
-            $profit = 0;
-            if (!empty($inquiry_name) && !empty($port_names)) {
-                $port_conditions = [];
-                foreach ($port_names as $port_name) {
-                    $port_conditions[] = "o.source_port = '{$port_name}'";
-                }
-                $port_where = '(' . implode(' OR ', $port_conditions) . ')';
-                $profit = Db::table('crm_client_order')
-                    ->alias('o')
-                    ->where([$timeWhere])
-                    ->where('o.source', $inquiry_name)
-                    ->whereRaw($port_where)
-                    ->sum('o.profit');
-            } elseif (!empty($inquiry_name)) {
-                // 如果没有端口，只按渠道匹配
-                $profit = Db::table('crm_client_order')
-                    ->alias('o')
-                    ->where([$timeWhere])
-                    ->where('o.source', $inquiry_name)
-                    ->sum('o.profit');
-            }
         }
+
+        // ====== 我的业绩（严格对齐「业绩订单 -> 订单列表」本月利润合计口径）======
+        // 口径：crm_client_order，check_status=2，时间=本月（order_time），普通用户：pr_user=本人 OR at_user=本人
+        $profit = $this->getPanelMonthProfitByOrderListRule($current_admin_info);
+
         $data['xp_count'] = $xp_count;
         $data['profit'] = $profit;
 
@@ -1402,6 +1349,36 @@ private function exportToExcel($data)
         $data['org'] = trim($current_admin['org'], $this->org_fgx);
 
         return $data;
+    }
+
+    /**
+     * 控制面板「我的业绩」- 复用订单列表统计口径
+     * 口径对齐 Order.php -> clientSearch():
+     * - 表：crm_client_order
+     * - 审核通过：check_status = 2
+     * - 时间范围：本月（order_time）
+     * - 普通用户：pr_user=本人 OR at_user=本人
+     * - 返回：两位小数（字符串）
+     */
+    private function getPanelMonthProfitByOrderListRule($currentAdmin): string
+    {
+        $username = $currentAdmin['username'] ?? '';
+        $isSuper = (session('aid') == 1) || (($currentAdmin['group_id'] ?? null) == 1) || ($username === 'admin');
+
+        $where = [];
+        $where[] = ['check_status', '=', 2];
+        $where[] = $this->buildTimeWhere('month', 'order_time');
+
+        $query = Db::table('crm_client_order')->where($where);
+        if (!$isSuper && $username !== '') {
+            $query->where(function ($q) use ($username) {
+                $q->where('pr_user', '=', $username)
+                    ->whereOr('at_user', '=', $username);
+            });
+        }
+
+        $profit = (float)$query->sum('profit');
+        return number_format($profit, 2, '.', '');
     }
 
     private function getPerPanelData($params)
