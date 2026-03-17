@@ -266,6 +266,12 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     .wc-row-top3.wc-row-2 { background: linear-gradient(90deg, rgba(255,184,0,0.06) 0%, transparent 100%); }
     .wc-row-top3.wc-row-3 { background: linear-gradient(90deg, rgba(95,184,120,0.06) 0%, transparent 100%); }
 
+    .wc-row-total{
+        background:#f6f6f6;
+        font-weight:bold;
+        border-top:2px solid #ddd;
+    }
+
     /* ========== 右侧：小组块 + 成员列表 ========== */
     .wc-group-block {
         margin: 0;
@@ -401,6 +407,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                                     </tr>
                                 </thead>
                                 <tbody>
+                                    <?php
+                                    $totalGroupAmount = 0;
+                                    $totalMemberCount = 0;
+                                    ?>
                                     <?php foreach ($groupAvgRankList as $item): ?>
                                         <?php
                                         $rank = isset($item['rank']) ? (int)$item['rank'] : 0;
@@ -416,6 +426,8 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                                         elseif ($rank === 3) $rowClass = 'wc-row-top3 wc-row-3';
                                         $groupName = isset($item['group_name']) ? $item['group_name'] : '';
                                         $memberCount = isset($item['member_count']) ? (int)$item['member_count'] : 0;
+                                        $totalGroupAmount += $totalAmount;
+                                        $totalMemberCount += $memberCount;
                                         ?>
                                         <tr class="<?php echo $rowClass; ?>">
                                             <td class="wc-col-rank">
@@ -443,6 +455,28 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
+                                    <tr class="wc-row-total">
+                                        <td class="wc-col-rank"></td>
+                                        <td class="wc-col-name"><strong>合计</strong></td>
+                                        <td class="wc-col-total">
+                                            <strong><?php echo number_format($totalGroupAmount,2); ?></strong>
+                                            <span class="wc-amount-unit">元</span>
+                                        </td>
+                                        <td class="wc-col-num">
+                                            <strong><?php echo $totalMemberCount; ?></strong>
+                                            人
+                                        </td>
+                                        <td class="wc-col-amount">
+                                            <strong>
+                                            <?php
+                                            echo $totalMemberCount > 0
+                                                ? number_format($totalGroupAmount / $totalMemberCount,2)
+                                                : '0.00';
+                                            ?>
+                                            </strong>
+                                            <span class="wc-amount-unit">元</span>
+                                        </td>
+                                    </tr>
                                 </tbody>
                             </table>
                         <?php else: ?>
