@@ -80,6 +80,35 @@
             padding: 10px 15px;
         }
 
+        /* 高级查询折叠标题栏 */
+        .advanced-search-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 15px;
+            background: #6695ea;
+            border-radius: 8px 8px 0 0;
+            color: #fff;
+        }
+        .advanced-search-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        #toggleAdvancedSearch {
+            border-color: rgba(255,255,255,.35);
+            color: #fff;
+            background: rgba(255,255,255,.12);
+        }
+        #toggleAdvancedSearch:hover {
+            background: rgba(255,255,255,.2);
+        }
+        .advanced-search-collapsed #advancedSearchBody {
+            display: none;
+        }
+        .advanced-search-collapsed .advanced-search-header {
+            border-radius: 8px;
+        }
+
         .layui-card {
             background: #fafafa;
             border-radius: 6px;
@@ -403,9 +432,13 @@
 <body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
 
     <div class="admin-main layui-anim layui-anim-upbit">
-        <fieldset class="layui-elem-field ">
+        <fieldset class="layui-elem-field" id="advancedSearchFieldset">
             <form class="layui-form" id="searchForm">
-                <legend>高级查询</legend>
+                <div class="advanced-search-header">
+                    <div class="advanced-search-title">高级查询</div>
+                    <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="toggleAdvancedSearch">收起</button>
+                </div>
+                <div id="advancedSearchBody">
                 <div class="layui-card" style="box-shadow: none; margin-top: 10px">
                     <div class="layui-form layui-card-header layuiadmin-card-header-auto"
                         style="border-bottom: transparent; height: auto">
@@ -542,6 +575,7 @@
                             </button>
                         </div>
                     </div>
+                </div>
                 </div>
             </form>
 
@@ -1595,6 +1629,24 @@
                 });
                 return false;
 
+            });
+
+            // 高级查询区域折叠/展开
+            var advancedSearchExpanded = true;
+            var $advancedSearchFieldset = $('#advancedSearchFieldset');
+            $('#toggleAdvancedSearch').on('click', function () {
+                if (advancedSearchExpanded) {
+                    $('#advancedSearchBody').stop(true, true).slideUp(200, function () {
+                        $advancedSearchFieldset.addClass('advanced-search-collapsed');
+                    });
+                    $(this).text('展开');
+                    advancedSearchExpanded = false;
+                } else {
+                    $advancedSearchFieldset.removeClass('advanced-search-collapsed');
+                    $('#advancedSearchBody').stop(true, true).slideDown(200);
+                    $(this).text('收起');
+                    advancedSearchExpanded = true;
+                }
             });
 
             // 初始化折叠面板
