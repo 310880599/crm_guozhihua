@@ -2499,6 +2499,7 @@ private function exportToExcel($data)
         
         // 批量查询所有业务员的订单数据（通过 pr_user）
         $order_base_query = Db::table('crm_client_order')
+            ->where('check_status', '=', 2)
             ->where('pr_user', 'in', $usernames);
         
         // 应用时间条件
@@ -2536,108 +2537,7 @@ private function exportToExcel($data)
             ];
         }
         
-        // 3. 对于没有订单的业务员，尝试通过客户名称关联（备用方案）- 优化为批量查询
-        $users_without_orders = [];
-        foreach ($usernames as $username) {
-            if (!isset($order_map[$username]) || $order_map[$username]['order_count'] == 0) {
-                $users_without_orders[] = $username;
-            }
-        }
-        
-        if (!empty($users_without_orders)) {
-            // 批量获取这些业务员的客户名称（不再需要时间条件，因为订单表已经有时间条件）
-            $customer_query = Db::table('crm_leads')
-                ->where('status', '=', 1)  // 只查询有效询盘
-                ->where('pr_user', 'in', $users_without_orders)
-                ->where('kh_name', '<>', '')
-                ->where('kh_name', '<>', null)
-                ->field('pr_user, kh_name')
-                ->select();
-            
-            $customer_map = [];
-            $all_customer_names = [];
-            foreach ($customer_query as $row) {
-                if (!isset($customer_map[$row['pr_user']])) {
-                    $customer_map[$row['pr_user']] = [];
-                }
-                $customer_map[$row['pr_user']][] = $row['kh_name'];
-                $all_customer_names[] = $row['kh_name'];
-            }
-            
-            // 批量查询所有相关订单（一次性查询，避免 N+1 问题）
-            if (!empty($all_customer_names)) {
-                $all_customer_names = array_unique($all_customer_names);
-                
-                // 如果客户名称太多，限制查询数量以避免超时（最多1000个）
-                if (count($all_customer_names) > 1000) {
-                    $all_customer_names = array_slice($all_customer_names, 0, 1000);
-                }
-                
-                $backup_order_query = Db::table('crm_client_order')
-                    ->where('cname', 'in', $all_customer_names);
-                
-                // 应用时间条件
-                if (!empty($o_where)) {
-                    foreach ($o_where as $condition) {
-                        if (is_array($condition)) {
-                            if (isset($condition[0]) && is_array($condition[0])) {
-                                foreach ($condition as $sub_condition) {
-                                    if (is_array($sub_condition) && isset($sub_condition[0])) {
-                                        $backup_order_query->where($sub_condition[0], $sub_condition[1] ?? '=', $sub_condition[2] ?? null);
-                                    }
-                                }
-                            } else {
-                                $backup_order_query->where($condition[0], $condition[1] ?? '=', $condition[2] ?? null);
-                            }
-                        } elseif (is_callable($condition)) {
-                            $backup_order_query->where($condition);
-                        }
-                    }
-                }
-                
-                // 批量获取所有订单数据，按客户名称分组
-                $backup_orders = $backup_order_query
-                    ->field('cname, count(id) as order_count, sum(profit) as total_profit, sum(money) as total_money')
-                    ->group('cname')
-                    ->select();
-                
-                // 构建客户名称到订单统计的映射
-                $order_by_cname = [];
-                foreach ($backup_orders as $order_stat) {
-                    $order_by_cname[$order_stat['cname']] = [
-                        'order_count' => (int)$order_stat['order_count'],
-                        'total_profit' => (float)($order_stat['total_profit'] ?: 0),
-                        'total_money' => (float)($order_stat['total_money'] ?: 0)
-                    ];
-                }
-                
-                // 将订单统计分配回对应的业务员
-                foreach ($users_without_orders as $username) {
-                    if (isset($customer_map[$username]) && !empty($customer_map[$username])) {
-                        $customer_names = $customer_map[$username];
-                        $user_order_count = 0;
-                        $user_total_profit = 0;
-                        $user_total_money = 0;
-                        
-                        foreach ($customer_names as $cname) {
-                            if (isset($order_by_cname[$cname])) {
-                                $user_order_count += $order_by_cname[$cname]['order_count'];
-                                $user_total_profit += $order_by_cname[$cname]['total_profit'];
-                                $user_total_money += $order_by_cname[$cname]['total_money'];
-                            }
-                        }
-                        
-                        if ($user_order_count > 0) {
-                            $order_map[$username] = [
-                                'order_count' => $user_order_count,
-                                'total_profit' => $user_total_profit,
-                                'total_money' => $user_total_money
-                            ];
-                        }
-                    }
-                }
-            }
-        }
+        // 3) 无订单成员只显示 0（禁止通过客户表/客户名反推订单金额或利润）
         
         // 4. 组装结果数据 - 确保所有业务员都被包含，即使没有数据也显示
         $result = [];
@@ -2698,7 +2598,7 @@ private function exportToExcel($data)
      * - 金额字段：money
      * - 利润字段：profit
      */
-    private function buildPerformanceOrderWhere(string $timebucket = '', string $at_time = '', string $fieldPrefix = ''): array
+    private function buildPerformanceOrderWhere(string $timebucket = '', string $at_time = '', array $extra = [], string $fieldPrefix = ''): array
     {
         $prefix = $fieldPrefix ? rtrim($fieldPrefix, '.') . '.' : '';
         $where = [];
@@ -2713,6 +2613,13 @@ private function exportToExcel($data)
                 if ($start_date !== '' && $end_date !== '') {
                     $where[] = [$prefix . 'order_time', '>=', $start_date . ' 00:00:00'];
                     $where[] = [$prefix . 'order_time', '<=', $end_date . ' 23:59:59'];
+                    foreach ($extra as $k => $v) {
+                        if (is_int($k) && is_array($v)) {
+                            $where[] = $v;
+                        } else {
+                            $where[] = [$prefix . $k, '=', $v];
+                        }
+                    }
                     return $where;
                 }
             }
@@ -2723,6 +2630,14 @@ private function exportToExcel($data)
             $where[] = $this->buildTimeWhere($timebucket, $prefix . 'order_time');
         } else {
             $where[] = $this->buildTimeWhere('month', $prefix . 'order_time');
+        }
+
+        foreach ($extra as $k => $v) {
+            if (is_int($k) && is_array($v)) {
+                $where[] = $v;
+            } else {
+                $where[] = [$prefix . $k, '=', $v];
+            }
         }
 
         return $where;
@@ -2758,24 +2673,17 @@ private function exportToExcel($data)
         return $query;
     }
 
-    private function getPerformanceOrderBaseQuery(string $timebucket = '', string $at_time = '', string $alias = 'o')
+    private function buildPerformanceOrderQuery(string $timebucket = '', string $at_time = '', array $extra = [], string $alias = '')
     {
-        // 允许无别名调用（用于明细/成员聚合等简单查询）
-        if ($alias === '') {
-            $query = Db::table('crm_client_order');
-            $where = $this->buildPerformanceOrderWhere($timebucket, $at_time, '');
-            return $this->applyPerformanceWhereToQuery($query, $where);
-        }
-
-        $query = Db::table('crm_client_order')->alias($alias);
-        $where = $this->buildPerformanceOrderWhere($timebucket, $at_time, $alias);
+        $query = $alias === '' ? Db::table('crm_client_order') : Db::table('crm_client_order')->alias($alias);
+        $where = $this->buildPerformanceOrderWhere($timebucket, $at_time, $extra, $alias);
         return $this->applyPerformanceWhereToQuery($query, $where);
     }
 
     /**
      * 获取【团队】业绩数据
      * 统计口径：统一订单口径（crm_client_order，check_status=2，order_time）
-     * 团队名称：优先使用订单表 team_name，缺失时辅助使用 admin.team_name
+     * 团队名称：只使用订单表 crm_client_order.team_name（订单快照团队）
      */
     public function getTeamPerformanceData()
     {
@@ -2804,19 +2712,10 @@ private function exportToExcel($data)
             ]);
         }
 
-        $query = $this->getPerformanceOrderBaseQuery($timebucket, $at_time, 'o')
-            ->leftJoin('admin a', 'o.pr_user = a.username')
-            ->where('o.pr_user', 'in', $usernames);
-
-        $teamExpr = "IFNULL(NULLIF(o.team_name,''), IFNULL(NULLIF(a.team_name,''), '未分组'))";
-
-        $rows = $query
-            ->field([
-                $teamExpr . " as team_name",
-                "SUM(o.profit) as total_profit",
-                "SUM(o.money) as total_money"
-            ])
-            ->group($teamExpr)
+        $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '')
+            ->where('pr_user', 'in', $usernames)
+            ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
+            ->group('team_name')
             ->order('total_profit desc')
             ->select();
 
@@ -2831,7 +2730,7 @@ private function exportToExcel($data)
 
             $rate = $money > 0 ? round($profit / $money * 100, 2) : 0;
             $result[] = [
-                'team_name'   => $r['team_name'] ?: '未分组',
+                'team_name'   => ($r['team_name'] ?? '') !== '' ? $r['team_name'] : '未分组',
                 'profit'      => number_format($profit, 2),
                 'total_money' => number_format($money, 2),
                 'profit_rate' => number_format($rate, 2),
@@ -2887,25 +2786,18 @@ private function exportToExcel($data)
 
         $current_admin = Admin::getMyInfo();
 
-        // 1) 获取指定团队下的业务员列表
-        $business_users_query = Db::table('admin')
+        // 1) 组织权限内的业务员名单（用于权限过滤；不用于团队归组）
+        $org_users = Db::table('admin')
             ->where($this->getOrgWhere($current_admin['org']))
-            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14]) // 业务员、业务主管、产品总监、产品经理
+            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
             ->where('username', '<>', '')
-            ->whereNotNull('username');
-
-        // 如果指定了团队名称，筛选该团队
-        if (!empty($team_name)) {
-            $business_users_query->where('team_name', '=', $team_name);
-        }
-
-        $business_users = $business_users_query
-            ->field('admin_id,username,team_name')
-            ->order('username')
-            ->limit(500)
+            ->whereNotNull('username')
+            ->field('username')
+            ->limit(2000)
             ->select();
+        $org_usernames = $org_users ? array_filter(array_column($org_users, 'username')) : [];
 
-        if (empty($business_users)) {
+        if (empty($team_name) || empty($org_usernames)) {
             return json([
                 'code' => 200,
                 'msg' => 'ok',
@@ -2914,68 +2806,58 @@ private function exportToExcel($data)
             ]);
         }
 
-        // 提取所有业务员用户名
-        $usernames = array_filter(array_column($business_users, 'username'));
-        if (empty($usernames)) {
-            return json([
-                'code' => 200,
-                'msg' => 'ok',
-                'data' => [],
-                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
-            ]);
-        }
-
-        $user_map = [];
-        foreach ($business_users as $user) {
-            if (!empty($user['username'])) {
-                $user_map[$user['username']] = $user;
-            }
-        }
-
-        // 2) 批量查询该团队成员的订单统计（统一订单口径：crm_client_order，check_status=2，order_time）
-        $order_stats = $this->getPerformanceOrderBaseQuery($timebucket, $at_time, '')
-            ->where('pr_user', 'in', $usernames)
-            ->field('pr_user, count(id) as order_count, sum(profit) as total_profit, sum(money) as total_money')
+        // 2) 订单统计主表：crm_client_order（check_status=2 + order_time + team_name）
+        $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, ['team_name' => $team_name], '')
+            ->where('pr_user', 'in', $org_usernames)
+            ->field('pr_user, SUM(profit) as total_profit, SUM(money) as total_money')
             ->group('pr_user')
+            ->order('total_profit desc')
             ->select();
 
-        $order_map = [];
+        $result = [];
+        $sum_profit = 0.0;
+        $sum_money  = 0.0;
+        $hasUser = [];
         foreach ($order_stats as $stat) {
-            $order_map[$stat['pr_user']] = [
-                'order_count' => (int)$stat['order_count'],
-                'total_profit' => (float)($stat['total_profit'] ?: 0),
-                'total_money' => (float)($stat['total_money'] ?: 0)
+            $u = (string)($stat['pr_user'] ?? '');
+            if ($u === '') {
+                continue;
+            }
+            $profit = (float)($stat['total_profit'] ?: 0);
+            $money  = (float)($stat['total_money'] ?: 0);
+            $sum_profit += $profit;
+            $sum_money  += $money;
+            $hasUser[$u] = true;
+            $rate = $money > 0 ? round($profit / $money * 100, 2) : 0;
+            $result[] = [
+                'username' => $u,
+                'profit' => number_format($profit, 2),
+                'total_money' => number_format($money, 2),
+                'profit_rate' => number_format($rate, 2),
             ];
         }
 
-        // 3) 组装结果数据（仅展示该团队成员；无订单成员显示 0，不做任何客户/名称反推）
-        $result = [];
-        $sum_profit = 0;
-        $sum_money  = 0;
-        foreach ($business_users as $user) {
-            $username = $user['username'];
-
-            // 跳过用户名为空的记录
-            if (empty($username)) {
+        // 3) 可选补零：显示 admin.team_name=该团队的成员，但本期无订单则补 0（只补 0）
+        $team_members = Db::table('admin')
+            ->where($this->getOrgWhere($current_admin['org']))
+            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
+            ->where('team_name', '=', $team_name)
+            ->where('username', '<>', '')
+            ->whereNotNull('username')
+            ->field('username')
+            ->order('username')
+            ->limit(2000)
+            ->select();
+        foreach ($team_members as $m) {
+            $u = (string)($m['username'] ?? '');
+            if ($u === '' || isset($hasUser[$u])) {
                 continue;
             }
-
-            // 获取订单数据（如果没有数据则为0）
-            $order_data = isset($order_map[$username]) ? $order_map[$username] : ['order_count' => 0, 'total_profit' => 0, 'total_money' => 0];
-
-            $total_profit = $order_data['total_profit'];
-            $total_money = $order_data['total_money'];
-            $sum_profit += $total_profit;
-            $sum_money  += $total_money;
-
-            // 计算利润率
-            $profit_rate = $total_money > 0 ? round(($total_profit / $total_money) * 100, 2) : 0;
-
             $result[] = [
-                'username' => $username,
-                'profit' => number_format($total_profit, 2),
-                'total_money' => number_format($total_money, 2),
-                'profit_rate' => number_format($profit_rate, 2)
+                'username' => $u,
+                'profit' => number_format(0, 2),
+                'total_money' => number_format(0, 2),
+                'profit_rate' => number_format(0, 2),
             ];
         }
 
@@ -3013,6 +2895,7 @@ private function exportToExcel($data)
     public function getMemberPerformanceDetail()
     {
         $username = Request::param('username', '');
+        $team_name = Request::param('team_name', '');
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
 
@@ -3027,8 +2910,11 @@ private function exportToExcel($data)
         $current_admin = Admin::getMyInfo();
 
         // 1) 查询该业务员订单明细（统一订单口径：crm_client_order，check_status=2，order_time）
-        $orders = $this->getPerformanceOrderBaseQuery($timebucket, $at_time, '')
-            ->where('pr_user', '=', $username)
+        $extra = ['pr_user' => $username];
+        if (!empty($team_name)) {
+            $extra['team_name'] = $team_name;
+        }
+        $orders = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '')
             ->field('id,order_time,cname,money,profit')
             ->order('order_time desc,id desc')
             ->limit(1000)
