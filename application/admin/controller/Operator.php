@@ -2790,7 +2790,8 @@ private function exportToExcel($data)
      */
     public function getTeamMemberPerformanceData()
     {
-        $team_name = Request::param('team_name', '');
+        $team_name_raw = Request::param('team_name', '');
+        $team_name = trim((string)$team_name_raw);
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
 
@@ -2799,7 +2800,10 @@ private function exportToExcel($data)
         // 1) 组织权限内的全部 username（与订单列表一致，不限制 group_id）
         $org_usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
 
-        if (empty($team_name) || empty($org_usernames)) {
+        // 标准化：空/null/空格/"未分组" 都视为未分组
+        $is_ungrouped = ($team_name === '' || $team_name === '未分组');
+
+        if (empty($org_usernames)) {
             return json([
                 'code' => 200,
                 'msg' => 'ok',
@@ -2808,19 +2812,32 @@ private function exportToExcel($data)
             ]);
         }
 
-        // 2) 订单统计主表：crm_client_order（check_status=2 + order_time + team_name）
-        // 兼容团队为空：团队榜会把空 team_name 展示为“未分组”，下钻时需要按 team_name 为空来筛选
-        $is_ungrouped = ($team_name === '未分组');
-        $order_stats_query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '')
-            ->where('pr_user', 'in', $org_usernames);
+        // 2) 先从 admin 表取该团队的业务员用户名集合（组织权限内）
+        $team_usernames_query = Db::name('admin')
+            ->whereIn('username', $org_usernames);
         if ($is_ungrouped) {
-            $order_stats_query->where(function ($q) {
-                $q->where('team_name', '=', '')->whereOrNull('team_name');
+            $team_usernames_query->where(function ($q) {
+                $q->whereNull('team_name')->whereOr('team_name', '=', '');
             });
         } else {
-            $order_stats_query->where('team_name', '=', $team_name);
+            $team_usernames_query->where('team_name', '=', $team_name);
         }
-        $order_stats = $order_stats_query
+        $team_usernames = $team_usernames_query->column('username');
+        $team_usernames = $team_usernames ? array_values(array_filter($team_usernames)) : [];
+
+        // 该团队没有成员：优雅返回空数据
+        if (empty($team_usernames)) {
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => [],
+                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
+            ]);
+        }
+
+        // 3) 按成员用户名集合统计订单（不要依赖订单表 team_name，避免历史脏数据/不同步）
+        $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '')
+            ->whereIn('pr_user', $team_usernames)
             ->field('pr_user, SUM(profit) as total_profit, SUM(money) as total_money')
             ->group('pr_user')
             ->order('total_profit desc')
@@ -2849,27 +2866,9 @@ private function exportToExcel($data)
             ];
         }
 
-        // 3) 可选补零：显示 admin.team_name=该团队的成员，但本期无订单则补 0（只补 0）
-        // 不限制 group_id，与订单列表口径一致
-        $team_members_query = Db::table('admin')
-            ->where('username', '<>', '')
-            ->whereNotNull('username')
-            ->field('username')
-            ->order('username')
-            ->limit(2000);
-        if ($is_ungrouped) {
-            $team_members_query->where(function ($q) {
-                $q->where('team_name', '=', '')->whereOrNull('team_name');
-            });
-        } else {
-            $team_members_query->where('team_name', '=', $team_name);
-        }
-        if (!empty($current_admin['org'])) {
-            $team_members_query->where($this->getOrgWhere($current_admin['org']));
-        }
-        $team_members = $team_members_query->select();
-        foreach ($team_members as $m) {
-            $u = (string)($m['username'] ?? '');
+        // 4) 补零：团队成员本期无订单也要显示（保证成员列表完整且可点右侧）
+        foreach ($team_usernames as $u) {
+            $u = (string)$u;
             if ($u === '' || isset($hasUser[$u])) {
                 continue;
             }
@@ -2922,9 +2921,10 @@ private function exportToExcel($data)
 
         if (empty($username)) {
             return json([
-                'code' => 400,
-                'msg' => '业务员名称不能为空',
-                'data' => []
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => [],
+                'summary' => ['total_money' => '0.00', 'total_profit' => '0.00']
             ]);
         }
 
@@ -2943,13 +2943,6 @@ private function exportToExcel($data)
         // 1) 查询该业务员订单明细（统一订单口径：crm_client_order，check_status=2，order_time）
         $extra = ['pr_user' => $username];
         $orders_query = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '');
-        if ($team_name === '未分组') {
-            $orders_query->where(function ($q) {
-                $q->where('team_name', '=', '')->whereOrNull('team_name');
-            });
-        } elseif (!empty($team_name)) {
-            $orders_query->where('team_name', '=', $team_name);
-        }
         $orders = $orders_query
             ->field('id,order_time,cname,money,profit')
             ->order('order_time desc,id desc')

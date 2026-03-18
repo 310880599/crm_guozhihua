@@ -589,6 +589,12 @@
 
 
 <script>
+    // 团队名称标准化：空/NULL/空格 => "未分组"
+    function normalizeTeamName(teamName) {
+        teamName = $.trim(teamName || '');
+        return teamName ? teamName : '未分组';
+    }
+
     function initFoldCard() {
         $('.fold-card').each(function () {
             var $card = $(this);
@@ -987,7 +993,9 @@
                         var currentTeamExists = false;
                         if (window.TeamSplit.lastTeamId && window.teamPerformanceAllData) {
                             for (var i = 0; i < window.teamPerformanceAllData.length; i++) {
-                                if (window.teamPerformanceAllData[i].team_name === window.TeamSplit.lastTeamName) {
+                                var t1 = normalizeTeamName(window.teamPerformanceAllData[i].team_name);
+                                var t2 = normalizeTeamName(window.TeamSplit.lastTeamName);
+                                if (t1 === t2) {
                                     currentTeamExists = true;
                                     break;
                                 }
@@ -1082,7 +1090,7 @@
 
         if (data && data.length) {
             $.each(data, function (idx, item) {
-                var teamName = item.team_name || '';
+                var teamName = normalizeTeamName(item.team_name);
                 var row = '<tr class="team-row" data-team="' + (teamName.replace(/"/g, '&quot;')) + '">' +
                     '<td>' + (item.rank || (idx + 1)) + '</td>' +
                     '<td><strong style="color:#4f7cff;">' + teamName + '</strong></td>' +
@@ -1219,6 +1227,10 @@
         renderMemberRank: function(teamId, teamName, timebucket, at_time) {
             var self = this;
             
+            // 统一标准化团队名，确保显示/点击/保存/比较一致
+            teamName = normalizeTeamName(teamName);
+            teamId = normalizeTeamName(teamId);
+
             // 保存当前选择的团队信息和时间参数
             self.lastTeamId = teamId;
             self.lastTeamName = teamName;
@@ -1456,7 +1468,8 @@
                 type: 'POST',
                 data: {
                     username: username,
-                    team_name: self.lastTeamName || '',
+                    // 后端不应再依赖 team_name 过滤（未分组场景会再次踩坑），这里仅作为兼容字段保留
+                    team_name: normalizeTeamName(self.lastTeamName || ''),
                     timebucket: timebucket || '',
                     at_time: at_time || ''
                 },
