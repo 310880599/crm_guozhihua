@@ -1463,6 +1463,12 @@
                 dataType: 'json',
                 timeout: 30000,
                 success: function(res) {
+                    if (res.code === 403) {
+                        updateMemberDetailPaneSummary(null);
+                        $memberDetailPane.html('<div class="text-center" style="padding: 60px 20px; color: #dc3545;"><i class="bi bi-shield-exclamation" style="font-size: 48px; display: block; margin-bottom: 15px;"></i><p>' + (res.msg || '无权限查看该成员数据') + '</p></div>');
+                        layer.msg(res.msg || '无权限查看该成员数据', {icon: 2});
+                        return;
+                    }
                     if (res.code === 200 && res.data && res.data.length > 0) {
                         // 渲染表格
                         self._renderMemberDetailTable($memberDetailPane, res.data, username, timeDisplay);

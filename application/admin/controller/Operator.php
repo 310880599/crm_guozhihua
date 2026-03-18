@@ -2681,9 +2681,28 @@ private function exportToExcel($data)
     }
 
     /**
+     * 获取当前组织内所有业务人员 username 列表（不含 group_id 白名单限制）
+     * 与订单列表口径一致：只按 org 过滤，不排除 group_id=17/18 等真实团队成员
+     */
+    private function getOrgUsernames($org)
+    {
+        $query = Db::table('admin')
+            ->where('username', '<>', '')
+            ->whereNotNull('username')
+            ->field('username')
+            ->limit(2000);
+        if (!empty($org)) {
+            $query->where($this->getOrgWhere($org));
+        }
+        $rows = $query->select();
+        return $rows ? array_filter(array_column($rows, 'username')) : [];
+    }
+
+    /**
      * 获取【团队】业绩数据
      * 统计口径：统一订单口径（crm_client_order，check_status=2，order_time）
      * 团队名称：只使用订单表 crm_client_order.team_name（订单快照团队）
+     * 人员范围：组织内全部 username（与订单列表一致，不限制 group_id）
      */
     public function getTeamPerformanceData()
     {
@@ -2692,17 +2711,8 @@ private function exportToExcel($data)
 
         $current_admin = Admin::getMyInfo();
 
-        // 用 admin 限定“本组织业务人员”，但统计来源仍然以订单表为准
-        $business_users = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
-            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
-            ->where('username', '<>', '')
-            ->whereNotNull('username')
-            ->field('username')
-            ->limit(2000)
-            ->select();
-
-        $usernames = $business_users ? array_filter(array_column($business_users, 'username')) : [];
+        // 组织内全部 username，与订单列表口径一致（不限制 group_id，避免漏掉 17/18 等真实成员）
+        $usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
         if (empty($usernames)) {
             return json([
                 'code' => 0,
@@ -2786,16 +2796,8 @@ private function exportToExcel($data)
 
         $current_admin = Admin::getMyInfo();
 
-        // 1) 组织权限内的业务员名单（用于权限过滤；不用于团队归组）
-        $org_users = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
-            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
-            ->where('username', '<>', '')
-            ->whereNotNull('username')
-            ->field('username')
-            ->limit(2000)
-            ->select();
-        $org_usernames = $org_users ? array_filter(array_column($org_users, 'username')) : [];
+        // 1) 组织权限内的全部 username（与订单列表一致，不限制 group_id）
+        $org_usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
 
         if (empty($team_name) || empty($org_usernames)) {
             return json([
@@ -2838,16 +2840,18 @@ private function exportToExcel($data)
         }
 
         // 3) 可选补零：显示 admin.team_name=该团队的成员，但本期无订单则补 0（只补 0）
-        $team_members = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
-            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
+        // 不限制 group_id，与订单列表口径一致
+        $team_members_query = Db::table('admin')
             ->where('team_name', '=', $team_name)
             ->where('username', '<>', '')
             ->whereNotNull('username')
             ->field('username')
             ->order('username')
-            ->limit(2000)
-            ->select();
+            ->limit(2000);
+        if (!empty($current_admin['org'])) {
+            $team_members_query->where($this->getOrgWhere($current_admin['org']));
+        }
+        $team_members = $team_members_query->select();
         foreach ($team_members as $m) {
             $u = (string)($m['username'] ?? '');
             if ($u === '' || isset($hasUser[$u])) {
@@ -2891,6 +2895,7 @@ private function exportToExcel($data)
     /**
      * 获取个人业绩清单
      * 返回指定业务员的订单明细数据，按成交日期倒序排列
+     * 口径与订单列表一致：check_status=2，order_time，pr_user，team_name（订单快照）
      */
     public function getMemberPerformanceDetail()
     {
@@ -2908,6 +2913,16 @@ private function exportToExcel($data)
         }
 
         $current_admin = Admin::getMyInfo();
+
+        // 组织权限校验：仅允许查询组织内成员
+        $org_usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+        if (!empty($org_usernames) && !in_array($username, $org_usernames)) {
+            return json([
+                'code' => 403,
+                'msg' => '无权限查看该成员数据',
+                'data' => []
+            ]);
+        }
 
         // 1) 查询该业务员订单明细（统一订单口径：crm_client_order，check_status=2，order_time）
         $extra = ['pr_user' => $username];
