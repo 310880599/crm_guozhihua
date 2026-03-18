@@ -2809,8 +2809,18 @@ private function exportToExcel($data)
         }
 
         // 2) 订单统计主表：crm_client_order（check_status=2 + order_time + team_name）
-        $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, ['team_name' => $team_name], '')
-            ->where('pr_user', 'in', $org_usernames)
+        // 兼容团队为空：团队榜会把空 team_name 展示为“未分组”，下钻时需要按 team_name 为空来筛选
+        $is_ungrouped = ($team_name === '未分组');
+        $order_stats_query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '')
+            ->where('pr_user', 'in', $org_usernames);
+        if ($is_ungrouped) {
+            $order_stats_query->where(function ($q) {
+                $q->where('team_name', '=', '')->whereOrNull('team_name');
+            });
+        } else {
+            $order_stats_query->where('team_name', '=', $team_name);
+        }
+        $order_stats = $order_stats_query
             ->field('pr_user, SUM(profit) as total_profit, SUM(money) as total_money')
             ->group('pr_user')
             ->order('total_profit desc')
@@ -2842,12 +2852,18 @@ private function exportToExcel($data)
         // 3) 可选补零：显示 admin.team_name=该团队的成员，但本期无订单则补 0（只补 0）
         // 不限制 group_id，与订单列表口径一致
         $team_members_query = Db::table('admin')
-            ->where('team_name', '=', $team_name)
             ->where('username', '<>', '')
             ->whereNotNull('username')
             ->field('username')
             ->order('username')
             ->limit(2000);
+        if ($is_ungrouped) {
+            $team_members_query->where(function ($q) {
+                $q->where('team_name', '=', '')->whereOrNull('team_name');
+            });
+        } else {
+            $team_members_query->where('team_name', '=', $team_name);
+        }
         if (!empty($current_admin['org'])) {
             $team_members_query->where($this->getOrgWhere($current_admin['org']));
         }
@@ -2926,10 +2942,15 @@ private function exportToExcel($data)
 
         // 1) 查询该业务员订单明细（统一订单口径：crm_client_order，check_status=2，order_time）
         $extra = ['pr_user' => $username];
-        if (!empty($team_name)) {
-            $extra['team_name'] = $team_name;
+        $orders_query = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '');
+        if ($team_name === '未分组') {
+            $orders_query->where(function ($q) {
+                $q->where('team_name', '=', '')->whereOrNull('team_name');
+            });
+        } elseif (!empty($team_name)) {
+            $orders_query->where('team_name', '=', $team_name);
         }
-        $orders = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '')
+        $orders = $orders_query
             ->field('id,order_time,cname,money,profit')
             ->order('order_time desc,id desc')
             ->limit(1000)
