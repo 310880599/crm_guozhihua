@@ -11,358 +11,655 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 <script src="/js/jquery.min.js"></script>
 <script src="/static/plugins/layui/layui.js"></script>
 <style>
-    /* ========== 看板容器 ========== */
-    .wc-dashboard-container {
-        padding: 20px;
-        background: linear-gradient(180deg, #e8eef5 0%, #f0f4f8 100%);
+    /* ============================================================
+     * 旺春PK小组 · 业绩看板（科技蓝大屏风格）
+     * 说明：仅前端样式 + DOM 重构，不改接口/轮询/变量名
+     * ============================================================ */
+
+    :root{
+        --wc-bg0:#050a1a;
+        --wc-bg1:#071b3a;
+        --wc-panel:#061a33cc;
+        --wc-panel2:#071b3ad9;
+        --wc-border:rgba(46,194,255,.24);
+        --wc-border2:rgba(100,231,255,.16);
+        --wc-glow:rgba(46,194,255,.22);
+        --wc-cyan:#2ec2ff;
+        --wc-cyan2:#64e7ff;
+        --wc-blue:#1e9fff;
+        --wc-gold:#ffcc5a;
+        --wc-orange:#ff7a45;
+        --wc-green:#3be27f;
+        --wc-text:#e7f2ff;
+        --wc-text-dim:rgba(231,242,255,.68);
+        --wc-text-dimmer:rgba(231,242,255,.48);
+    }
+
+    /* ========== 页面背景层 ========== */
+    .wc-dashboard-container{
+        position: relative;
+        padding: 18px 18px 22px;
+        background:
+            radial-gradient(1200px 420px at 50% -120px, rgba(46,194,255,.18), transparent 60%),
+            radial-gradient(800px 360px at 14% 10%, rgba(100,231,255,.10), transparent 55%),
+            radial-gradient(760px 360px at 86% 18%, rgba(30,159,255,.10), transparent 60%),
+            linear-gradient(180deg, var(--wc-bg1) 0%, var(--wc-bg0) 62%, #040816 100%);
         min-height: calc(100vh - 80px);
         box-sizing: border-box;
-    }
-
-    /* ========== 顶部标题区 ========== */
-    .wc-dashboard-top {
-        margin-bottom: 20px;
-        border-radius: 8px;
         overflow: hidden;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        color: var(--wc-text);
     }
 
-    .wc-dashboard-title-bar {
-        background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 50%, #1e3a5f 100%);
-        color: #fff;
-        padding: 20px 24px;
+    .wc-dashboard-container::before{
+        content:'';
+        position:absolute;
+        inset:-1px;
+        background:
+            linear-gradient(rgba(46,194,255,.07) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(46,194,255,.06) 1px, transparent 1px);
+        background-size: 48px 48px;
+        opacity: .35;
+        pointer-events:none;
+        filter: blur(.15px);
+        mask-image: radial-gradient(650px 420px at 50% 22%, rgba(0,0,0,1), rgba(0,0,0,.25) 70%, transparent 100%);
+    }
+
+    .wc-dashboard-container::after{
+        content:'';
+        position:absolute;
+        inset:-120px -80px;
+        background:
+            radial-gradient(420px 260px at 18% 22%, rgba(46,194,255,.10), transparent 65%),
+            radial-gradient(520px 320px at 82% 26%, rgba(30,159,255,.10), transparent 70%),
+            radial-gradient(520px 320px at 50% 88%, rgba(100,231,255,.06), transparent 72%);
+        pointer-events:none;
+        opacity: .85;
+        filter: blur(8px);
+    }
+
+    /* ========== 大屏头部 ========== */
+    .wc-dashboard-top{
         position: relative;
+        margin-bottom: 14px;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid var(--wc-border);
+        background: linear-gradient(180deg, rgba(6,26,51,.92) 0%, rgba(5,14,28,.78) 100%);
+        box-shadow: 0 12px 40px rgba(0,0,0,.35), 0 0 0 1px rgba(46,194,255,.08) inset;
     }
 
-    .wc-dashboard-title-bar::after {
-        content: '';
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: linear-gradient(90deg, transparent, rgba(255,193,7,0.8), transparent);
+    .wc-dashboard-title-bar{
+        position: relative;
+        padding: 18px 18px 10px;
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.00) 0%, rgba(46,194,255,.10) 18%, rgba(46,194,255,.00) 50%, rgba(30,159,255,.08) 82%, rgba(30,159,255,.00) 100%),
+            radial-gradient(700px 220px at 50% 0%, rgba(46,194,255,.16), transparent 72%);
     }
 
-    .wc-dashboard-main-title {
-        font-size: 26px;
-        font-weight: 700;
-        letter-spacing: 1px;
-        margin: 0 0 6px 0;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    .wc-dashboard-title-deco{
+        position:absolute;
+        left:0; right:0; top:0;
+        height: 44px;
+        pointer-events:none;
+        background:
+            linear-gradient(90deg, transparent 0%, rgba(46,194,255,.35) 12%, rgba(100,231,255,.10) 40%, rgba(46,194,255,.35) 88%, transparent 100%);
+        opacity: .45;
+        filter: blur(.25px);
+        mask-image: linear-gradient(180deg, rgba(0,0,0,1), transparent);
     }
 
-    .wc-dashboard-sub-title {
-        font-size: 14px;
-        opacity: 0.92;
+    .wc-dashboard-main-title{
         margin: 0;
+        text-align: center;
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: 1.5px;
+        color: #eaf6ff;
+        text-shadow:
+            0 0 16px rgba(46,194,255,.22),
+            0 0 36px rgba(30,159,255,.12),
+            0 2px 0 rgba(0,0,0,.35);
     }
 
-    .wc-dashboard-meta-bar {
-        background: #fff;
-        padding: 14px 24px;
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        border-left: 4px solid #2d5a87;
-    }
-
-    .wc-period-label {
+    .wc-dashboard-sub-title{
+        margin: 8px 0 0;
+        text-align: center;
         font-size: 13px;
-        color: #666;
+        color: var(--wc-text-dim);
+        letter-spacing: .6px;
     }
 
-    .wc-period-value {
-        font-size: 15px;
-        font-weight: 600;
-        color: #1e3a5f;
+    .wc-dashboard-meta-bar{
+        display:flex;
+        align-items:center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px 16px;
+        padding: 10px 16px 14px;
+        border-top: 1px solid rgba(46,194,255,.14);
+        background: linear-gradient(180deg, rgba(5,14,28,.35), rgba(5,14,28,.18));
+    }
+
+    .wc-meta-left, .wc-meta-right{
+        display:flex;
+        align-items:center;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        min-width: 0;
+    }
+
+    .wc-period-label{
+        font-size: 12px;
+        color: var(--wc-text-dimmer);
+    }
+    .wc-period-value{
+        font-size: 13px;
+        font-weight: 700;
+        color: rgba(231,242,255,.92);
         margin-left: 6px;
     }
 
-    .wc-realtime-tip {
+    .wc-realtime-tip{
+        display:inline-flex;
+        align-items:center;
+        gap: 8px;
         font-size: 12px;
-        color: #5FB878;
-        display: inline-flex;
-        align-items: center;
+        color: rgba(231,242,255,.90);
+        padding: 4px 10px;
+        border: 1px solid rgba(59,226,127,.28);
+        border-radius: 999px;
+        background: rgba(10,40,22,.35);
+        box-shadow: 0 0 0 1px rgba(59,226,127,.06) inset;
     }
 
-    .wc-realtime-tip::before {
-        content: '';
-        display: inline-block;
-        width: 6px;
-        height: 6px;
-        background: #5FB878;
+    .wc-realtime-dot{
+        width: 7px;
+        height: 7px;
         border-radius: 50%;
-        margin-right: 6px;
-        animation: wc-pulse 1.5s ease-in-out infinite;
+        background: var(--wc-green);
+        box-shadow: 0 0 10px rgba(59,226,127,.55);
+        animation: wc-pulse 1.3s ease-in-out infinite;
     }
 
-    @keyframes wc-pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.4; }
+    @keyframes wc-pulse{
+        0%, 100%{ transform: scale(1); opacity: 1; }
+        50%{ transform: scale(.82); opacity: .55; }
     }
 
-    .wc-audit-tip {
+    .wc-audit-tip{
         font-size: 12px;
-        color: #999;
+        color: var(--wc-text-dimmer);
+        padding-left: 10px;
+        border-left: 1px dashed rgba(46,194,255,.25);
     }
 
-    /* ========== 左右卡片区分 ========== */
-    .wc-cards-row {
-        display: flex;
-        gap: 20px;
-        flex-wrap: wrap;
+    /* ========== KPI 概览区 ========== */
+    .wc-kpi-row{
+        margin: 12px 0 14px;
+        display:grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        position: relative;
+        z-index: 1;
     }
 
-    .wc-card-col {
-        flex: 1;
-        min-width: 0;
-        min-height: 400px;
+    .wc-kpi{
+        position: relative;
+        border-radius: 14px;
+        padding: 14px 14px 12px;
+        background:
+            radial-gradient(420px 120px at 18% 12%, rgba(46,194,255,.14), transparent 68%),
+            linear-gradient(180deg, rgba(6,26,51,.86), rgba(5,14,28,.62));
+        border: 1px solid rgba(46,194,255,.26);
+        box-shadow: 0 10px 28px rgba(0,0,0,.28), 0 0 0 1px rgba(46,194,255,.10) inset;
+        overflow:hidden;
+        transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
     }
 
-    @media screen and (min-width: 1200px) {
-        .wc-card-col {
-            flex: 0 0 calc(50% - 10px);
-            max-width: calc(50% - 10px);
-        }
+    .wc-kpi::before{
+        content:'';
+        position:absolute;
+        inset:-2px;
+        background: linear-gradient(135deg, rgba(100,231,255,.20), transparent 40%, rgba(30,159,255,.18));
+        opacity: .22;
+        pointer-events:none;
+        filter: blur(6px);
     }
 
-    @media screen and (min-width: 1920px) {
-        .wc-dashboard-container { padding: 24px; }
-        .wc-card-col {
-            flex: 0 0 calc(50% - 12px);
-            max-width: calc(50% - 12px);
-        }
+    .wc-kpi:hover{
+        transform: translateY(-2px);
+        border-color: rgba(100,231,255,.34);
+        box-shadow: 0 14px 34px rgba(0,0,0,.34), 0 0 22px rgba(46,194,255,.10);
     }
 
-    .wc-card {
-        background: #fff;
-        border-radius: 10px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        overflow: hidden;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .wc-card-left .wc-card-head {
-        background: linear-gradient(135deg, #fff5f0 0%, #ffe8e0 100%);
-        border-left: 4px solid #FF5722;
-    }
-
-    .wc-card-right .wc-card-head {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        border-left: 4px solid #1E9FFF;
-    }
-
-    .wc-card-head {
-        padding: 14px 20px;
-        border-bottom: 1px solid #eee;
-    }
-
-    .wc-card-head-title {
-        font-size: 17px;
-        font-weight: 700;
-        color: #333;
-        margin: 0 0 4px 0;
-    }
-
-    .wc-card-head-desc {
+    .wc-kpi-title{
         font-size: 12px;
-        color: #888;
+        color: var(--wc-text-dimmer);
+        letter-spacing: .6px;
+        margin: 0 0 10px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .wc-kpi-value{
+        font-size: 26px;
+        font-weight: 900;
+        letter-spacing: .6px;
+        line-height: 1.1;
         margin: 0;
+        position: relative;
+        z-index: 1;
+        color: #eaf6ff;
+        text-shadow: 0 0 18px rgba(46,194,255,.20);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
-    .wc-card-body {
-        flex: 1;
-        overflow-y: auto;
-        max-height: 560px;
-        padding: 0;
-    }
-
-    /* ========== 左侧：小组人均排行表格 ========== */
-    .wc-rank-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 13px;
-    }
-
-    .wc-rank-table thead th {
-        background: #fafafa;
-        color: #666;
-        font-weight: 600;
-        text-align: left;
-        padding: 12px 16px;
-        border-bottom: 2px solid #eee;
-    }
-
-    .wc-rank-table tbody tr {
-        border-bottom: 1px solid #f0f0f0;
-        transition: background 0.2s;
-    }
-
-    .wc-rank-table tbody tr:hover {
-        background: #fafafa;
-    }
-
-    .wc-rank-table tbody td {
-        padding: 12px 16px;
-        vertical-align: middle;
-    }
-
-    .wc-rank-table .wc-col-rank { width: 56px; text-align: center; }
-    .wc-rank-table .wc-col-name { min-width: 100px; }
-    .wc-rank-table .wc-col-num { width: 80px; text-align: center; }
-    .wc-rank-table .wc-col-amount { width: 120px; text-align: right; white-space: nowrap; }
-    .wc-rank-table .wc-col-total { width: 120px; text-align: right; white-space: nowrap; }
-
-    .wc-rank-badge {
-        display: inline-block;
-        min-width: 28px;
-        height: 28px;
-        line-height: 28px;
-        text-align: center;
-        border-radius: 50%;
-        font-size: 13px;
-        font-weight: 700;
-        color: #fff;
-    }
-
-    .wc-rank-badge-1 { background: linear-gradient(145deg, #FF6B35, #E85A2A); box-shadow: 0 2px 8px rgba(255,87,34,0.4); }
-    .wc-rank-badge-2 { background: linear-gradient(145deg, #FFB800, #E5A600); box-shadow: 0 2px 8px rgba(255,184,0,0.4); }
-    .wc-rank-badge-3 { background: linear-gradient(145deg, #5FB878, #4CAF50); box-shadow: 0 2px 8px rgba(95,184,120,0.4); }
-    .wc-rank-badge-n { background: #c0c0c0; color: #666; }
-
-    .wc-amount-highlight {
-        font-size: 16px;
-        font-weight: 700;
-        color: #FF5722;
-    }
-
-    .wc-amount-zero {
-        font-size: 14px;
-        font-weight: 500;
-        color: #999;
-    }
-
-    .wc-amount-unit {
+    .wc-kpi-sub{
+        margin-top: 8px;
         font-size: 12px;
-        color: #999;
-        margin-left: 2px;
-        font-weight: 400;
+        color: rgba(231,242,255,.55);
+        position: relative;
+        z-index: 1;
     }
 
-    .wc-group-name {
-        font-weight: 600;
-        color: #333;
+    .wc-kpi .wc-kpi-accent{
+        color: var(--wc-cyan2);
+    }
+    .wc-kpi .wc-kpi-accent2{
+        color: var(--wc-gold);
+        text-shadow: 0 0 12px rgba(255,204,90,.22);
     }
 
-    .wc-row-top3 {
-        background: linear-gradient(90deg, rgba(255,87,34,0.06) 0%, transparent 100%);
+    /* ========== 主体左右布局 ========== */
+    .wc-cards-row{
+        display:flex;
+        gap: 12px;
+        align-items: stretch;
+        flex-wrap: wrap;
+        position: relative;
+        z-index: 1;
     }
 
-    .wc-row-top3.wc-row-2 { background: linear-gradient(90deg, rgba(255,184,0,0.06) 0%, transparent 100%); }
-    .wc-row-top3.wc-row-3 { background: linear-gradient(90deg, rgba(95,184,120,0.06) 0%, transparent 100%); }
+    .wc-card-col{
+        min-width: 0;
+        flex: 1 1 520px;
+    }
+
+    @media screen and (min-width: 1200px){
+        .wc-card-col.wc-col-left{ flex: 0 0 42%; max-width: 42%; }
+        .wc-card-col.wc-col-right{ flex: 0 0 58%; max-width: 58%; }
+    }
+
+    @media screen and (min-width: 1920px){
+        .wc-dashboard-container{ padding: 22px 22px 28px; }
+        .wc-dashboard-main-title{ font-size: 34px; }
+        .wc-kpi-value{ font-size: 30px; }
+    }
+
+    @media screen and (max-width: 1199px){
+        .wc-kpi-row{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media screen and (max-width: 680px){
+        .wc-kpi-row{ grid-template-columns: 1fr; }
+        .wc-dashboard-main-title{ font-size: 24px; }
+        .wc-kpi-value{ font-size: 24px; }
+    }
+
+    /* ========== 大屏面板（替代普通卡片） ========== */
+    .wc-card{
+        height: 100%;
+        display:flex;
+        flex-direction: column;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid rgba(46,194,255,.22);
+        background:
+            radial-gradient(600px 240px at 18% 0%, rgba(46,194,255,.10), transparent 70%),
+            linear-gradient(180deg, rgba(6,26,51,.86), rgba(5,14,28,.62));
+        box-shadow: 0 16px 42px rgba(0,0,0,.42), 0 0 0 1px rgba(46,194,255,.10) inset;
+        position: relative;
+    }
+
+    .wc-card::before{
+        content:'';
+        position:absolute;
+        inset:-2px;
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.14), transparent 22%, transparent 78%, rgba(30,159,255,.12)),
+            radial-gradient(500px 260px at 50% 0%, rgba(100,231,255,.08), transparent 70%);
+        opacity: .35;
+        pointer-events:none;
+        filter: blur(8px);
+    }
+
+    .wc-card-head{
+        position: relative;
+        z-index: 1;
+        padding: 14px 14px 12px;
+        border-bottom: 1px solid rgba(46,194,255,.16);
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.14), rgba(46,194,255,0) 42%, rgba(30,159,255,.10));
+    }
+
+    .wc-card-head-title{
+        margin: 0;
+        display:flex;
+        align-items:center;
+        gap: 10px;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: .8px;
+        color: rgba(231,242,255,.95);
+        text-shadow: 0 0 16px rgba(46,194,255,.12);
+    }
+
+    .wc-card-head-title::before{
+        content:'';
+        width: 4px;
+        height: 16px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, var(--wc-cyan2), var(--wc-blue));
+        box-shadow: 0 0 14px rgba(46,194,255,.32);
+        flex: 0 0 auto;
+    }
+
+    .wc-card-head-desc{
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--wc-text-dimmer);
+        letter-spacing: .4px;
+    }
+
+    .wc-card-body{
+        position: relative;
+        z-index: 1;
+        flex: 1;
+        overflow: auto;
+        padding: 0;
+        max-height: 640px;
+    }
+
+    /* ========== 滚动条美化 ========== */
+    .wc-card-body::-webkit-scrollbar{ width: 10px; height: 10px; }
+    .wc-card-body::-webkit-scrollbar-track{ background: rgba(255,255,255,.04); }
+    .wc-card-body::-webkit-scrollbar-thumb{
+        background: linear-gradient(180deg, rgba(46,194,255,.38), rgba(30,159,255,.22));
+        border: 2px solid rgba(5,14,28,.55);
+        border-radius: 999px;
+        box-shadow: 0 0 10px rgba(46,194,255,.10);
+    }
+    .wc-card-body::-webkit-scrollbar-thumb:hover{
+        background: linear-gradient(180deg, rgba(100,231,255,.48), rgba(46,194,255,.26));
+    }
+
+    /* ========== 统一金额/单位 ========== */
+    .wc-amount-highlight{
+        font-weight: 900;
+        color: var(--wc-cyan2);
+        text-shadow: 0 0 14px rgba(100,231,255,.16);
+    }
+    .wc-amount-highlight.wc-amount-primary{
+        color: var(--wc-gold);
+        text-shadow: 0 0 14px rgba(255,204,90,.18);
+    }
+    .wc-amount-zero{ color: rgba(231,242,255,.40); font-weight: 600; }
+    .wc-amount-unit{ color: rgba(231,242,255,.45); font-size: 12px; margin-left: 4px; }
+
+    /* ========== 排名徽章（更炫酷） ========== */
+    .wc-rank-badge{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width: 30px;
+        height: 30px;
+        padding: 0 9px;
+        border-radius: 999px;
+        font-weight: 900;
+        font-size: 13px;
+        color: rgba(231,242,255,.92);
+        letter-spacing: .4px;
+        border: 1px solid rgba(231,242,255,.10);
+        background: rgba(231,242,255,.06);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.08) inset;
+    }
+    .wc-rank-badge-1{
+        background: linear-gradient(135deg, rgba(255,204,90,.95), rgba(255,122,69,.86));
+        border-color: rgba(255,204,90,.55);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 18px rgba(255,204,90,.22), 0 0 0 1px rgba(255,204,90,.18) inset;
+    }
+    .wc-rank-badge-2{
+        background: linear-gradient(135deg, rgba(100,231,255,.92), rgba(46,194,255,.78));
+        border-color: rgba(100,231,255,.55);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 18px rgba(100,231,255,.20), 0 0 0 1px rgba(100,231,255,.18) inset;
+    }
+    .wc-rank-badge-3{
+        background: linear-gradient(135deg, rgba(59,226,127,.90), rgba(30,159,255,.60));
+        border-color: rgba(59,226,127,.45);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 18px rgba(59,226,127,.16), 0 0 0 1px rgba(59,226,127,.14) inset;
+    }
+    .wc-rank-badge-n{
+        background: rgba(231,242,255,.05);
+        border-color: rgba(46,194,255,.14);
+        color: rgba(231,242,255,.70);
+    }
+
+    /* ========== 左侧榜单（大屏榜单风） ========== */
+    .wc-left-board{
+        padding: 10px 12px 12px;
+    }
+
+    .wc-board-table{
+        width:100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+        font-size: 13px;
+        table-layout: fixed;
+    }
+
+    .wc-board-table thead th{
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: rgba(5,14,28,.78);
+        backdrop-filter: blur(6px);
+        color: rgba(231,242,255,.70);
+        font-weight: 700;
+        padding: 10px 10px;
+        border-bottom: 1px solid rgba(46,194,255,.16);
+        letter-spacing: .5px;
+        text-align: left;
+    }
+
+    .wc-board-table tbody tr{
+        background: rgba(231,242,255,.04);
+        border: 1px solid rgba(46,194,255,.12);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.06) inset;
+        transition: background .12s ease, transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+    }
+
+    .wc-board-table tbody tr:hover{
+        background: rgba(46,194,255,.08);
+        border-color: rgba(100,231,255,.22);
+        box-shadow: 0 0 22px rgba(46,194,255,.10), 0 0 0 1px rgba(46,194,255,.10) inset;
+        transform: translateY(-1px);
+    }
+
+    .wc-board-table tbody td{
+        padding: 12px 10px;
+        vertical-align: middle;
+        color: rgba(231,242,255,.88);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .wc-board-table .wc-col-rank{ width: 66px; text-align:center; }
+    .wc-board-table .wc-col-name{ width: 28%; }
+    .wc-board-table .wc-col-total{ width: 24%; text-align:right; }
+    .wc-board-table .wc-col-num{ width: 18%; text-align:center; }
+    .wc-board-table .wc-col-avg{ width: 24%; text-align:right; }
+
+    .wc-group-name{
+        font-weight: 800;
+        color: rgba(231,242,255,.92);
+        letter-spacing: .4px;
+    }
+
+    .wc-row-top3{
+        background: linear-gradient(90deg, rgba(255,204,90,.10), rgba(231,242,255,.03) 30%, rgba(231,242,255,.03));
+        border-color: rgba(255,204,90,.24);
+    }
+    .wc-row-top3.wc-row-2{
+        background: linear-gradient(90deg, rgba(100,231,255,.10), rgba(231,242,255,.03) 30%, rgba(231,242,255,.03));
+        border-color: rgba(100,231,255,.24);
+    }
+    .wc-row-top3.wc-row-3{
+        background: linear-gradient(90deg, rgba(59,226,127,.08), rgba(231,242,255,.03) 30%, rgba(231,242,255,.03));
+        border-color: rgba(59,226,127,.22);
+    }
+
+    .wc-row-zero{
+        opacity: .62;
+        filter: saturate(.92);
+    }
 
     .wc-row-total{
-        background:#f6f6f6;
-        font-weight:bold;
-        border-top:2px solid #ddd;
+        background: rgba(255,204,90,.10);
+        border-color: rgba(255,204,90,.26);
+        box-shadow: 0 0 0 1px rgba(255,204,90,.08) inset;
     }
 
-    /* ========== 右侧：小组块 + 成员列表 ========== */
-    .wc-group-block {
-        margin: 0;
-        padding: 0 16px 16px;
-        border-bottom: 1px solid #f0f0f0;
+    /* ========== 右侧分组面板 ========== */
+    .wc-right-board{
+        padding: 10px 12px 12px;
     }
 
-    .wc-group-block:last-child {
-        border-bottom: none;
+    .wc-group-block{
+        margin: 0 0 12px 0;
+        border-radius: 14px;
+        border: 1px solid rgba(46,194,255,.18);
+        background: rgba(231,242,255,.03);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.06) inset, 0 10px 26px rgba(0,0,0,.28);
+        overflow:hidden;
     }
 
-    .wc-group-block-head {
-        background: linear-gradient(135deg, #f8fafc 0%, #f0f4f8 100%);
-        margin: 0 -16px 12px;
-        padding: 12px 16px;
-        border-radius: 0 0 8px 8px;
-        border-left: 3px solid #1E9FFF;
+    .wc-group-block:last-child{ margin-bottom: 0; }
+
+    .wc-group-block-head{
+        padding: 12px 12px 10px;
+        border-bottom: 1px solid rgba(46,194,255,.14);
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.16), rgba(46,194,255,0) 46%, rgba(30,159,255,.10));
+        position: relative;
     }
 
-    .wc-group-block-title {
+    .wc-group-block-head::before{
+        content:'';
+        position:absolute;
+        left:0; top:0; bottom:0;
+        width: 4px;
+        background: linear-gradient(180deg, var(--wc-cyan2), var(--wc-blue));
+        box-shadow: 0 0 16px rgba(46,194,255,.30);
+        opacity: .95;
+    }
+
+    .wc-group-block-title{
+        margin: 0 0 6px;
+        padding-left: 10px;
         font-size: 15px;
-        font-weight: 700;
-        color: #333;
-        margin: 0 0 6px 0;
+        font-weight: 900;
+        letter-spacing: .6px;
+        color: rgba(231,242,255,.95);
+        text-shadow: 0 0 14px rgba(46,194,255,.12);
     }
 
-    .wc-group-block-meta {
+    .wc-group-block-meta{
+        padding-left: 10px;
+        display:flex;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        align-items: center;
         font-size: 12px;
-        color: #666;
+        color: rgba(231,242,255,.64);
     }
 
-    .wc-group-block-meta .wc-meta-amount {
-        font-weight: 600;
-        color: #FF5722;
-        margin-right: 12px;
+    .wc-meta-amount{
+        color: rgba(231,242,255,.88);
+    }
+    .wc-meta-amount strong{
+        color: var(--wc-gold);
+        text-shadow: 0 0 12px rgba(255,204,90,.18);
+    }
+    .wc-meta-avg strong{
+        color: var(--wc-cyan2);
+        text-shadow: 0 0 12px rgba(100,231,255,.16);
     }
 
-    .wc-member-table {
-        width: 100%;
+    .wc-member-table{
+        width:100%;
         border-collapse: collapse;
+        table-layout: fixed;
         font-size: 13px;
     }
 
-    .wc-member-table th {
-        background: #fafafa;
-        color: #666;
-        font-weight: 500;
-        text-align: left;
-        padding: 8px 12px;
-        border-bottom: 1px solid #eee;
-        font-size: 12px;
+    .wc-member-table thead th{
+        background: rgba(5,14,28,.55);
+        color: rgba(231,242,255,.62);
+        font-weight: 700;
+        padding: 9px 12px;
+        border-bottom: 1px solid rgba(46,194,255,.10);
+        letter-spacing: .4px;
+        text-align:left;
     }
 
-    .wc-member-table td {
+    .wc-member-table td{
         padding: 10px 12px;
-        border-bottom: 1px solid #f5f5f5;
+        border-bottom: 1px solid rgba(46,194,255,.08);
+        color: rgba(231,242,255,.86);
+        overflow:hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 
-    .wc-member-table .wc-mcol-rank { width: 48px; text-align: center; }
-    .wc-member-table .wc-mcol-name { min-width: 80px; }
-    .wc-member-table .wc-mcol-amount { width: 110px; text-align: right; white-space: nowrap; }
+    .wc-member-table .wc-mcol-rank{ width: 70px; text-align:center; }
+    .wc-member-table .wc-mcol-name{ width: auto; }
+    .wc-member-table .wc-mcol-amount{ width: 160px; text-align:right; }
 
-    .wc-member-row-first td {
-        background: linear-gradient(90deg, rgba(30,159,255,0.08) 0%, transparent 100%);
-        font-weight: 600;
+    .wc-member-row-first td{
+        background: linear-gradient(90deg, rgba(255,204,90,.12), rgba(231,242,255,.02) 40%, rgba(231,242,255,.02));
+        font-weight: 800;
     }
 
-    .wc-member-row-first .wc-amount-highlight {
-        color: #1E9FFF;
+    .wc-member-row-first .wc-amount-highlight{
+        color: var(--wc-gold);
     }
 
-    .wc-member-row-zero td {
-        color: #999;
+    .wc-member-row-zero td{
+        color: rgba(231,242,255,.44);
     }
 
-    .wc-member-row-zero .wc-member-name {
-        font-weight: 400;
-        color: #999;
+    /* ========== 空状态 ========== */
+    .wc-empty-state{
+        text-align:center;
+        padding: 38px 14px;
+        color: rgba(231,242,255,.58);
+        font-size: 13px;
     }
-
-    .wc-empty-state {
-        text-align: center;
-        padding: 48px 20px;
-        color: #999;
-        font-size: 14px;
-    }
-
-    .wc-empty-state-icon {
+    .wc-empty-state-icon{
         font-size: 40px;
-        margin-bottom: 12px;
-        opacity: 0.5;
+        margin-bottom: 10px;
+        opacity: .7;
+    }
+    .wc-empty-state small{
+        display:block;
+        margin-top: 6px;
+        color: rgba(231,242,255,.42);
     }
 </style>
 
@@ -370,205 +667,74 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     <!-- 顶部：主标题 + 副标题 + 统计周期 + 提示 -->
     <div class="wc-dashboard-top">
         <div class="wc-dashboard-title-bar">
+            <div class="wc-dashboard-title-deco"></div>
             <h1 class="wc-dashboard-main-title"><?php echo htmlspecialchars($dashboardTitle); ?></h1>
-            <p class="wc-dashboard-sub-title">小组人均业绩 &amp; 成员总业绩双视角排行 · 一目了然</p>
+            <p class="wc-dashboard-sub-title">PK团队实时业绩排名 / 审核通过订单统计</p>
         </div>
         <div class="wc-dashboard-meta-bar">
-            <div>
-                <span class="wc-period-label">统计周期：</span>
-                <span class="wc-period-value"><?php echo htmlspecialchars($periodText); ?></span>
+            <div class="wc-meta-left">
+                <div>
+                    <span class="wc-period-label">统计周期</span>
+                    <span class="wc-period-value"><?php echo htmlspecialchars($periodText); ?></span>
+                </div>
             </div>
-            <div>
-                <span class="wc-realtime-tip">实时统计</span>
+            <div class="wc-meta-right">
+                <span class="wc-realtime-tip"><span class="wc-realtime-dot"></span>实时统计</span>
                 <span class="wc-audit-tip">仅统计审核通过订单</span>
             </div>
         </div>
     </div>
 
+    <!-- KPI 概览（前端基于现有数据计算） -->
+    <div class="wc-kpi-row" id="wc-kpi-container">
+        <div class="wc-kpi">
+            <div class="wc-kpi-title">小组总数</div>
+            <div class="wc-kpi-value wc-kpi-accent" id="wc-kpi-group-count">0</div>
+            <div class="wc-kpi-sub">参赛团队数量</div>
+        </div>
+        <div class="wc-kpi">
+            <div class="wc-kpi-title">参赛总人数</div>
+            <div class="wc-kpi-value wc-kpi-accent" id="wc-kpi-member-count">0</div>
+            <div class="wc-kpi-sub">按配置成员人数汇总</div>
+        </div>
+        <div class="wc-kpi">
+            <div class="wc-kpi-title">总业绩合计</div>
+            <div class="wc-kpi-value wc-kpi-accent2" id="wc-kpi-total-amount">0.00</div>
+            <div class="wc-kpi-sub">单位：元</div>
+        </div>
+        <div class="wc-kpi">
+            <div class="wc-kpi-title">人均业绩总览</div>
+            <div class="wc-kpi-value" id="wc-kpi-avg-amount">0.00</div>
+            <div class="wc-kpi-sub">总业绩 / 总人数（单位：元）</div>
+        </div>
+    </div>
+
     <div class="wc-cards-row">
         <!-- 左栏：小组人均业绩排行 -->
-        <div class="wc-card-col">
+        <div class="wc-card-col wc-col-left">
             <div class="layui-card wc-card wc-card-left">
                 <div class="layui-card-header wc-card-head">
-                    <div class="wc-card-head-title">小组人均业绩排行</div>
-                    <div class="wc-card-head-desc">按人均业绩从高到低排序</div>
+                    <div class="wc-card-head-title">小组人均业绩排行榜</div>
+                    <div class="wc-card-head-desc">展示：排名 / 小组名称 / 小组总业绩 / 成员人数 / 人均业绩（合计行保留）</div>
                 </div>
                 <div class="layui-card-body wc-card-body">
                     <div id="wc-left-rank-container">
-                        <?php if (!empty($groupAvgRankList)): ?>
-                            <table class="wc-rank-table">
-                                <thead>
-                                    <tr>
-                                        <th class="wc-col-rank">排名</th>
-                                        <th class="wc-col-name">小组名称</th>
-                                        <th class="wc-col-total">小组总业绩</th>
-                                        <th class="wc-col-num">成员人数</th>
-                                        <th class="wc-col-amount">人均业绩</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php
-                                    $totalGroupAmount = 0;
-                                    $totalMemberCount = 0;
-                                    ?>
-                                    <?php foreach ($groupAvgRankList as $item): ?>
-                                        <?php
-                                        $rank = isset($item['rank']) ? (int)$item['rank'] : 0;
-                                        $badgeClass = 'wc-rank-badge-n';
-                                        if ($rank === 1) $badgeClass = 'wc-rank-badge-1';
-                                        elseif ($rank === 2) $badgeClass = 'wc-rank-badge-2';
-                                        elseif ($rank === 3) $badgeClass = 'wc-rank-badge-3';
-                                        $totalAmount = isset($item['total_amount']) ? (float)$item['total_amount'] : 0.0;
-                                        $avgAmount = isset($item['avg_amount']) ? (float)$item['avg_amount'] : 0.0;
-                                        $rowClass = '';
-                                        if ($rank === 1) $rowClass = 'wc-row-top3';
-                                        elseif ($rank === 2) $rowClass = 'wc-row-top3 wc-row-2';
-                                        elseif ($rank === 3) $rowClass = 'wc-row-top3 wc-row-3';
-                                        $groupName = isset($item['group_name']) ? $item['group_name'] : '';
-                                        $memberCount = isset($item['member_count']) ? (int)$item['member_count'] : 0;
-                                        $totalGroupAmount += $totalAmount;
-                                        $totalMemberCount += $memberCount;
-                                        ?>
-                                        <tr class="<?php echo $rowClass; ?>">
-                                            <td class="wc-col-rank">
-                                                <span class="wc-rank-badge <?php echo $badgeClass; ?>"><?php echo $rank; ?></span>
-                                            </td>
-                                            <td class="wc-col-name">
-                                                <span class="wc-group-name"><?php echo htmlspecialchars($groupName); ?></span>
-                                            </td>
-                                            <td class="wc-col-total">
-                                                <?php if ($totalAmount > 0): ?>
-                                                    <span class="wc-amount-highlight"><?php echo number_format($totalAmount, 2); ?></span>
-                                                <?php else: ?>
-                                                    <span class="wc-amount-zero">0.00</span>
-                                                <?php endif; ?>
-                                                <span class="wc-amount-unit">元</span>
-                                            </td>
-                                            <td class="wc-col-num"><?php echo $memberCount; ?> 人</td>
-                                            <td class="wc-col-amount">
-                                                <?php if ($avgAmount > 0): ?>
-                                                    <span class="wc-amount-highlight"><?php echo number_format($avgAmount, 2); ?></span>
-                                                <?php else: ?>
-                                                    <span class="wc-amount-zero">0.00</span>
-                                                <?php endif; ?>
-                                                <span class="wc-amount-unit">元</span>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                    <tr class="wc-row-total">
-                                        <td class="wc-col-rank"></td>
-                                        <td class="wc-col-name"><strong>合计</strong></td>
-                                        <td class="wc-col-total">
-                                            <strong><?php echo number_format($totalGroupAmount,2); ?></strong>
-                                            <span class="wc-amount-unit">元</span>
-                                        </td>
-                                        <td class="wc-col-num">
-                                            <strong><?php echo $totalMemberCount; ?></strong>
-                                            人
-                                        </td>
-                                        <td class="wc-col-amount">
-                                            <strong>
-                                            <?php
-                                            echo $totalMemberCount > 0
-                                                ? number_format($totalGroupAmount / $totalMemberCount,2)
-                                                : '0.00';
-                                            ?>
-                                            </strong>
-                                            <span class="wc-amount-unit">元</span>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        <?php else: ?>
-                            <div class="wc-empty-state">
-                                <div class="wc-empty-state-icon">📊</div>
-                                <div>暂无排名数据</div>
-                            </div>
-                        <?php endif; ?>
+                        <!-- 首屏也走与 Ajax 一致的渲染函数，避免结构不一致 -->
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- 右栏：每组成员总业绩排行 -->
-        <div class="wc-card-col">
+        <div class="wc-card-col wc-col-right">
             <div class="layui-card wc-card wc-card-right">
                 <div class="layui-card-header wc-card-head">
-                    <div class="wc-card-head-title">成员总业绩排行</div>
-                        <div class="wc-card-head-desc">小组按总业绩从高到低，组内成员按业绩从高到低</div>
+                    <div class="wc-card-head-title">成员总业绩排行（按小组分块）</div>
+                    <div class="wc-card-head-desc">组头：小组名称 / 小组总业绩 / 人均业绩；组内：排名 / 成员姓名 / 总业绩</div>
                 </div>
                 <div class="layui-card-body wc-card-body">
                     <div id="wc-right-group-container">
-                        <?php if (!empty($memberRankGroupList)): ?>
-                            <?php foreach ($memberRankGroupList as $group): ?>
-                                <?php
-                                $gName = isset($group['group_name']) ? $group['group_name'] : '';
-                                $gTotal = isset($group['total_amount']) ? (float)$group['total_amount'] : 0.0;
-                                $gAvg = isset($group['avg_amount']) ? (float)$group['avg_amount'] : 0.0;
-                                $gMembers = isset($group['members']) && is_array($group['members']) ? $group['members'] : [];
-                                ?>
-                                <div class="wc-group-block">
-                                    <div class="wc-group-block-head">
-                                        <div class="wc-group-block-title"><?php echo htmlspecialchars($gName); ?></div>
-                                        <div class="wc-group-block-meta">
-                                            <span class="wc-meta-amount">小组总业绩：<?php echo number_format($gTotal, 2); ?> 元</span>
-                                            <span>人均：<?php echo number_format($gAvg, 2); ?> 元</span>
-                                        </div>
-                                    </div>
-                                    <?php if (!empty($gMembers)): ?>
-                                        <table class="wc-member-table">
-                                            <thead>
-                                                <tr>
-                                                    <th class="wc-mcol-rank">排名</th>
-                                                    <th class="wc-mcol-name">成员姓名</th>
-                                                    <th class="wc-mcol-amount">总业绩</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <?php foreach ($gMembers as $member): ?>
-                                                    <?php
-                                                    $mRank = isset($member['rank']) ? (int)$member['rank'] : 0;
-                                                    $mAmount = isset($member['amount']) ? (float)$member['amount'] : 0.0;
-                                                    $mName = isset($member['name']) ? $member['name'] : '';
-                                                    $rowClass = $mRank === 1 ? 'wc-member-row-first' : ($mAmount <= 0 ? 'wc-member-row-zero' : '');
-                                                    $badgeClass = 'wc-rank-badge-n';
-                                                    if ($mRank === 1) $badgeClass = 'wc-rank-badge-1';
-                                                    elseif ($mRank === 2) $badgeClass = 'wc-rank-badge-2';
-                                                    elseif ($mRank === 3) $badgeClass = 'wc-rank-badge-3';
-                                                    ?>
-                                                    <tr class="<?php echo $rowClass; ?>">
-                                                        <td class="wc-mcol-rank">
-                                                            <span class="wc-rank-badge <?php echo $badgeClass; ?>"><?php echo $mRank; ?></span>
-                                                        </td>
-                                                        <td class="wc-mcol-name">
-                                                            <span class="wc-member-name"><?php echo htmlspecialchars($mName); ?></span>
-                                                        </td>
-                                                        <td class="wc-mcol-amount">
-                                                            <?php if ($mAmount > 0): ?>
-                                                                <span class="wc-amount-highlight"><?php echo number_format($mAmount, 2); ?></span>
-                                                            <?php else: ?>
-                                                                <span class="wc-amount-zero">0.00</span>
-                                                            <?php endif; ?>
-                                                            <span class="wc-amount-unit">元</span>
-                                                        </td>
-                                                    </tr>
-                                                <?php endforeach; ?>
-                                            </tbody>
-                                        </table>
-                                    <?php else: ?>
-                                        <div class="wc-empty-state" style="padding: 24px;">
-                                            <div class="wc-empty-state-icon">👥</div>
-                                            <div>暂无成员业绩数据</div>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                            <?php endforeach; ?>
-                        <?php else: ?>
-                            <div class="wc-empty-state">
-                                <div class="wc-empty-state-icon">📋</div>
-                                <div>暂无成员业绩数据</div>
-                            </div>
-                        <?php endif; ?>
+                        <!-- 首屏也走与 Ajax 一致的渲染函数，避免结构不一致 -->
                     </div>
                 </div>
             </div>
@@ -602,17 +768,60 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             }
         }
 
+        function wcEscapeHtml(str) {
+            return (str == null ? '' : String(str))
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function wcFormatAmount(n) {
+            var num = parseFloat(n || 0);
+            if (!isFinite(num)) num = 0;
+            var fixed = num.toFixed(2);
+            // 千分位
+            return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        function updateKpiFromData($, groupAvgRankList, memberRankGroupList) {
+            var groups = Array.isArray(groupAvgRankList) ? groupAvgRankList : [];
+            var groupCount = groups.length;
+            var memberCount = 0;
+            var totalAmount = 0;
+            for (var i = 0; i < groups.length; i++) {
+                var it = groups[i] || {};
+                memberCount += parseInt(it.member_count || 0, 10) || 0;
+                totalAmount += parseFloat(it.total_amount || 0) || 0;
+            }
+            var avgAll = memberCount > 0 ? (totalAmount / memberCount) : 0;
+
+            $('#wc-kpi-group-count').text(groupCount);
+            $('#wc-kpi-member-count').text(memberCount);
+            $('#wc-kpi-total-amount').text(wcFormatAmount(totalAmount));
+            $('#wc-kpi-avg-amount').text(wcFormatAmount(avgAll));
+        }
+
         function renderGroupAvgRankList($, list) {
             var $container = $('#wc-left-rank-container');
             if (!$container.length) return;
             var html = '';
             if (!list || !list.length) {
-                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📊</div><div>暂无排名数据</div></div>';
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📊</div><div>暂无排名数据</div><small>等待产生业绩数据或检查统计周期配置</small></div>';
                 $container.html(html);
                 return;
             }
-            html += '<table class="wc-rank-table"><thead><tr>';
-            html += '<th class="wc-col-rank">排名</th><th class="wc-col-name">小组名称</th><th class="wc-col-total">小组总业绩</th><th class="wc-col-num">成员人数</th><th class="wc-col-amount">人均业绩</th>';
+            var totalGroupAmount = 0;
+            var totalMemberCount = 0;
+
+            html += '<div class="wc-left-board">';
+            html += '<table class="wc-board-table"><thead><tr>';
+            html += '<th class="wc-col-rank">排名</th>';
+            html += '<th class="wc-col-name">小组</th>';
+            html += '<th class="wc-col-total">小组总业绩</th>';
+            html += '<th class="wc-col-num">人数</th>';
+            html += '<th class="wc-col-avg">人均业绩</th>';
             html += '</tr></thead><tbody>';
             for (var i = 0; i < list.length; i++) {
                 var item = list[i] || {};
@@ -620,18 +829,35 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 var badgeClass = rank === 1 ? 'wc-rank-badge-1' : (rank === 2 ? 'wc-rank-badge-2' : (rank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
                 var totalAmount = parseFloat(item.total_amount || 0);
                 var avgAmount = parseFloat(item.avg_amount || 0);
-                var groupName = (item.group_name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                var groupName = wcEscapeHtml(item.group_name || '');
                 var memberCount = parseInt(item.member_count || 0, 10);
                 var rowClass = rank === 1 ? 'wc-row-top3' : (rank === 2 ? 'wc-row-top3 wc-row-2' : (rank === 3 ? 'wc-row-top3 wc-row-3' : ''));
+                if (!(totalAmount > 0) && !(avgAmount > 0)) {
+                    rowClass += (rowClass ? ' ' : '') + 'wc-row-zero';
+                }
+
+                totalGroupAmount += totalAmount;
+                totalMemberCount += memberCount;
+
                 html += '<tr class="' + rowClass + '">';
                 html += '<td class="wc-col-rank"><span class="wc-rank-badge ' + badgeClass + '">' + rank + '</span></td>';
                 html += '<td class="wc-col-name"><span class="wc-group-name">' + groupName + '</span></td>';
-                html += '<td class="wc-col-total">' + (totalAmount > 0 ? '<span class="wc-amount-highlight">' + totalAmount.toFixed(2) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
-                html += '<td class="wc-col-num">' + memberCount + ' 人</td>';
-                html += '<td class="wc-col-amount">' + (avgAmount > 0 ? '<span class="wc-amount-highlight">' + avgAmount.toFixed(2) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '<td class="wc-col-total">' + (totalAmount > 0 ? '<span class="wc-amount-highlight">' + wcFormatAmount(totalAmount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '<td class="wc-col-num">' + memberCount + '</td>';
+                html += '<td class="wc-col-avg">' + (avgAmount > 0 ? '<span class="wc-amount-highlight wc-amount-primary">' + wcFormatAmount(avgAmount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
                 html += '</tr>';
             }
+            html += '<tr class="wc-row-total">';
+            html += '<td class="wc-col-rank"></td>';
+            html += '<td class="wc-col-name"><span class="wc-group-name">合计</span></td>';
+            html += '<td class="wc-col-total"><span class="wc-amount-highlight wc-amount-primary">' + wcFormatAmount(totalGroupAmount) + '</span><span class="wc-amount-unit">元</span></td>';
+            html += '<td class="wc-col-num"><span class="wc-amount-highlight">' + (totalMemberCount || 0) + '</span></td>';
+            var allAvg = totalMemberCount > 0 ? (totalGroupAmount / totalMemberCount) : 0;
+            html += '<td class="wc-col-avg"><span class="wc-amount-highlight wc-amount-primary">' + wcFormatAmount(allAvg) + '</span><span class="wc-amount-unit">元</span></td>';
+            html += '</tr>';
+
             html += '</tbody></table>';
+            html += '</div>';
             $container.html(html);
         }
 
@@ -640,38 +866,43 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             if (!$container.length) return;
             var html = '';
             if (!groupList || !groupList.length) {
-                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📋</div><div>暂无成员业绩数据</div></div>';
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📋</div><div>暂无成员业绩数据</div><small>等待产生业绩数据或检查成员配置</small></div>';
                 $container.html(html);
                 return;
             }
+            html += '<div class="wc-right-board">';
             for (var i = 0; i < groupList.length; i++) {
                 var group = groupList[i] || {};
-                var gName = (group.group_name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                var gName = wcEscapeHtml(group.group_name || '');
                 var gTotal = parseFloat(group.total_amount || 0);
                 var gAvg = parseFloat(group.avg_amount || 0);
                 var members = group.members || [];
                 html += '<div class="wc-group-block"><div class="wc-group-block-head">';
                 html += '<div class="wc-group-block-title">' + gName + '</div>';
-                html += '<div class="wc-group-block-meta"><span class="wc-meta-amount">小组总业绩：' + gTotal.toFixed(2) + ' 元</span><span>人均：' + gAvg.toFixed(2) + ' 元</span></div></div>';
+                html += '<div class="wc-group-block-meta">';
+                html += '<span class="wc-meta-amount">小组总业绩：<strong>' + wcFormatAmount(gTotal) + '</strong><span class="wc-amount-unit">元</span></span>';
+                html += '<span class="wc-meta-avg">人均：<strong>' + wcFormatAmount(gAvg) + '</strong><span class="wc-amount-unit">元</span></span>';
+                html += '</div></div>';
                 if (members.length) {
                     html += '<table class="wc-member-table"><thead><tr><th class="wc-mcol-rank">排名</th><th class="wc-mcol-name">成员姓名</th><th class="wc-mcol-amount">总业绩</th></tr></thead><tbody>';
                     for (var j = 0; j < members.length; j++) {
                         var m = members[j] || {};
                         var mRank = parseInt(m.rank || (j + 1), 10);
                         var mAmount = parseFloat(m.amount || 0);
-                        var mName = (m.name || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                        var mName = wcEscapeHtml(m.name || '');
                         var rowClass = mRank === 1 ? 'wc-member-row-first' : (mAmount <= 0 ? 'wc-member-row-zero' : '');
                         var badgeClass = mRank === 1 ? 'wc-rank-badge-1' : (mRank === 2 ? 'wc-rank-badge-2' : (mRank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
                         html += '<tr class="' + rowClass + '"><td class="wc-mcol-rank"><span class="wc-rank-badge ' + badgeClass + '">' + mRank + '</span></td>';
                         html += '<td class="wc-mcol-name"><span class="wc-member-name">' + mName + '</span></td>';
-                        html += '<td class="wc-mcol-amount">' + (mAmount > 0 ? '<span class="wc-amount-highlight">' + mAmount.toFixed(2) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td></tr>';
+                        html += '<td class="wc-mcol-amount">' + (mAmount > 0 ? '<span class="wc-amount-highlight">' + wcFormatAmount(mAmount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td></tr>';
                     }
                     html += '</tbody></table>';
                 } else {
-                    html += '<div class="wc-empty-state" style="padding: 24px;"><div class="wc-empty-state-icon">👥</div><div>暂无成员业绩数据</div></div>';
+                    html += '<div class="wc-empty-state" style="padding: 24px;"><div class="wc-empty-state-icon">👥</div><div>暂无成员业绩数据</div><small>该小组暂未产生业绩</small></div>';
                 }
                 html += '</div>';
             }
+            html += '</div>';
             $container.html(html);
         }
 
@@ -691,6 +922,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     if (data.dashboardTitle) $('.wc-dashboard-main-title').text(data.dashboardTitle);
                     if (data.periodText) $('.wc-period-value').text(data.periodText);
                     achievementLastStamp = data.stamp || achievementLastStamp;
+                    updateKpiFromData($, data.groupAvgRankList || [], data.memberRankGroupList || []);
                     renderGroupAvgRankList($, data.groupAvgRankList || []);
                     renderMemberRankGroupList($, data.memberRankGroupList || []);
                     console.log('[WC] 完整数据拉取成功，DOM 已刷新');
@@ -789,6 +1021,18 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             }
             console.log('[WC] jQuery ready');
             console.log('[WC] start polling');
+
+            // 首屏渲染：使用与 Ajax 同一套渲染函数，确保结构一致
+            try {
+                var initialGroupAvgRankList = <?php echo json_encode($groupAvgRankList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                var initialMemberRankGroupList = <?php echo json_encode($memberRankGroupList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                updateKpiFromData($, initialGroupAvgRankList || [], initialMemberRankGroupList || []);
+                renderGroupAvgRankList($, initialGroupAvgRankList || []);
+                renderMemberRankGroupList($, initialMemberRankGroupList || []);
+            } catch (e) {
+                console.warn('[WC] 首屏渲染失败（不影响轮询）', e);
+            }
+
             startAchievementPolling($);
         });
     })();
