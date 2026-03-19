@@ -618,6 +618,7 @@
 
     <script type="text/html" id="topBtn">
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加订单</button>
+    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" lay-event="passAll"><i class="layui-icon">&#xe605;</i>批量通过</button>
 </script>
 
 
@@ -1225,6 +1226,7 @@
             // ===== 列宽记忆：先把 cols 抽成变量，便于渲染前恢复 =====
             // ✅ 待审核订单：列定义（把 crm_client_order 字段全部挂到这里，右侧列控制面板才会“全量可控”）
             var pendingCols = [[
+                { checkbox: true, fixed: true, width: 50 },
                 // ====== 你当前已存在的常用列（保持默认显示）======
                 { field: 'id', title: 'ID', width: 180, fixed: true, hide: true }, // ID 默认仍隐藏，但可在面板里勾出来
                 { field: 'order_no', title: '订单编号', totalRowText: '合计：', width: 180 },
@@ -1594,6 +1596,27 @@
                 var checkStatus = table.checkStatus(obj.config.id)
                     , data = checkStatus.data; //获取选中的数据
                 switch (obj.event) {
+                    case 'passAll':
+                        var checkStatus = table.checkStatus(obj.config.id), data = checkStatus.data;
+                        if (data.length === 0) {
+                            layer.msg('请选择要审核的数据');
+                            return;
+                        }
+                        var ids = data.map(function(it){ return it.id; });
+                        layer.confirm('确定批量通过这 ' + data.length + ' 条待审核订单吗？', function (index) {
+                            var loading = layer.load(1, { shade: [0.1, '#fff'] });
+                            $.post("{:url('Order/passBatchIndex')}", { ids: ids }, function (res) {
+                                layer.close(loading);
+                                if (res.code === 0 || res.code === 1) {
+                                    layer.msg(res.msg, { time: 1000, icon: 1 });
+                                    reloadTableKeepSort();
+                                } else {
+                                    layer.msg(res.msg || '批量审核失败', {time: 2000, icon: 2});
+                                }
+                            });
+                            layer.close(index);
+                        });
+                        break;
                     case 'moveGh':
                         if (data.length === 0) {
                             layer.msg('请选择一行');
