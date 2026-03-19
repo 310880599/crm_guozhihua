@@ -618,7 +618,9 @@
 
     <script type="text/html" id="topBtn">
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加订单</button>
+    {if condition="session('aid') eq 1 OR session('gid') eq 15 OR session('gid') eq 13"}
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" lay-event="passAll"><i class="layui-icon">&#xe605;</i>批量通过</button>
+    {/if}
 </script>
 
 

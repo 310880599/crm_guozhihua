@@ -2903,53 +2903,188 @@ class Order extends Common
     //订单审核通过的处理
     public function passIndex()
     {
-        $id = Request::param('id');
-
-        $orderinfo = Db::table('crm_client_order')->where('id', $id)->find();
-        $custphone = $orderinfo['contact'];
-        $custphone = trim(preg_replace('/[+\-\s]/', '', $custphone));
-        $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $custphone)->find();
-        if (!$coninfo) {
-            $msg['code'] = -200;
-            $msg['msg'] = "该客户信息没有找到";
-            return json($msg);
-        }
-        $custinfo =  Db::name('crm_leads')->where('id', $coninfo['leads_id'])->find();
-
-        $updatearr = [];
-        $updatearr['issuccess'] = 1;
-
-        $result = Db::table('crm_client_order')->where('id', $id)->update([
-            'check_status' => 2,
-            'audit_user_id' => Session::get('aid'),
-            'audit_time' => date('Y-m-d H:i:s'),
-            'audit_remark' => '审核通过'
+        $id = (int)Request::param('id');
+        $auditUserId = (int)Session::get('aid');
+        $res = $this->doPassOrder($id, $auditUserId);
+        return json([
+            'code' => $res['success'] ? 0 : -200,
+            'msg'  => $res['msg'],
+            'data' => $res['data'] ?? [],
         ]);
+    }
 
-        if ($result) {
-            Db::table('crm_leads')->where('id', $custinfo['id'])->update($updatearr);
+    /**
+     * 批量审核通过（待审核订单）
+     * 支持 ids=[1,2,3] 或 ids="1,2,3"
+     */
+    public function passBatchIndex()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 0, 'msg' => '非法请求']);
+        }
 
-            // ★ 新增：插入审核通过通知
+        $ids = input('post.ids');
+        $idsArr = [];
+        if (is_array($ids)) {
+            $idsArr = $ids;
+        } elseif (is_string($ids)) {
+            $idsArr = explode(',', $ids);
+        }
+
+        $idsArr = array_values(array_unique(array_filter(array_map(function ($v) {
+            $v = is_string($v) ? trim($v) : $v;
+            if ($v === '' || $v === null) return null;
+            if (is_numeric($v)) return (int)$v;
+            return null;
+        }, $idsArr), function ($v) {
+            return !empty($v) && (int)$v > 0;
+        })));
+
+        if (empty($idsArr)) {
+            return json(['code' => 0, 'msg' => '请选择要审核的订单']);
+        }
+
+        $auditUserId = (int)session('aid');
+        $succ = 0;
+        $fail = 0;
+        $failReasons = [];
+
+        foreach ($idsArr as $orderId) {
+            $r = $this->doPassOrder((int)$orderId, $auditUserId);
+            if (!empty($r['success'])) {
+                $succ++;
+            } else {
+                $fail++;
+                $reason = $r['msg'] ?? '失败';
+                if (!isset($failReasons[$reason])) $failReasons[$reason] = 0;
+                $failReasons[$reason]++;
+            }
+        }
+
+        if ($succ > 0 && $fail === 0) {
+            return json(['code' => 0, 'msg' => '批量审核成功，共通过 ' . $succ . ' 条订单']);
+        }
+        if ($succ > 0 && $fail > 0) {
+            $reasonText = '';
+            if (!empty($failReasons)) {
+                $parts = [];
+                foreach ($failReasons as $k => $n) $parts[] = $k . ' ' . $n . ' 条';
+                $reasonText = '（失败原因：' . implode('；', $parts) . '）';
+            }
+            return json(['code' => 0, 'msg' => '成功通过 ' . $succ . ' 条，失败 ' . $fail . ' 条' . $reasonText]);
+        }
+
+        $reasonText = '';
+        if (!empty($failReasons)) {
+            $parts = [];
+            foreach ($failReasons as $k => $n) $parts[] = $k . ' ' . $n . ' 条';
+            $reasonText = '（' . implode('；', $parts) . '）';
+        }
+        return json(['code' => 0, 'msg' => '批量审核失败，全部失败' . $reasonText]);
+    }
+
+    /**
+     * 单条订单审核通过的通用逻辑（供 passIndex / passBatchIndex 复用）
+     * @return array ['success'=>bool,'msg'=>string,'data'=>array]
+     */
+    private function doPassOrder($orderId, $auditUserId)
+    {
+        $orderId = (int)$orderId;
+        $auditUserId = (int)$auditUserId;
+
+        if ($orderId <= 0) {
+            return ['success' => false, 'msg' => '参数错误', 'data' => []];
+        }
+
+        $orderinfo = Db::table('crm_client_order')->where('id', $orderId)->find();
+        if (!$orderinfo) {
+            return ['success' => false, 'msg' => '订单不存在', 'data' => []];
+        }
+
+        // 权限校验：与 pendingClientSearch 可见规则保持一致
+        $aid = (int)session('aid');
+        $username = session('username') ?? '';
+        $groupId = (int)Db::name('admin')->where('admin_id', $aid)->value('group_id');
+        $canViewAll = ($aid === 1) || in_array($groupId, [13, 15], true);
+        if (!$canViewAll) {
+            if (empty($username) || (($orderinfo['pr_user'] ?? '') != $username && ($orderinfo['at_user'] ?? '') != $username)) {
+                return ['success' => false, 'msg' => '无权限审核该订单', 'data' => []];
+            }
+        }
+
+        // 只允许处理待审核订单
+        if ((int)($orderinfo['check_status'] ?? 0) !== 1) {
+            return ['success' => false, 'msg' => '订单状态不是待审核', 'data' => []];
+        }
+
+        // 根据联系方式找到线索并更新成交状态
+        $custphone = trim(preg_replace('/[+\-\s]/', '', (string)($orderinfo['contact'] ?? '')));
+        if ($custphone === '') {
+            return ['success' => false, 'msg' => '联系方式为空', 'data' => []];
+        }
+
+        $coninfo = Db::name('crm_contacts')
+            ->where('is_delete', 0)
+            ->where('contact_value', $custphone)
+            ->find();
+
+        if (!$coninfo) {
+            return ['success' => false, 'msg' => '该客户信息没有找到', 'data' => []];
+        }
+
+        $custinfo = Db::name('crm_leads')->where('id', $coninfo['leads_id'])->find();
+        if (!$custinfo) {
+            return ['success' => false, 'msg' => '客户线索不存在', 'data' => []];
+        }
+
+        $now = date('Y-m-d H:i:s');
+
+        Db::startTrans();
+        try {
+            // 防并发：带上 check_status=1，避免重复审核
+            $result = Db::table('crm_client_order')
+                ->where('id', $orderId)
+                ->where('check_status', 1)
+                ->update([
+                    'check_status'  => 2,
+                    'audit_user_id' => $auditUserId,
+                    'audit_time'    => $now,
+                    'audit_remark'  => '审核通过',
+                ]);
+
+            if (!$result) {
+                Db::rollback();
+                return ['success' => false, 'msg' => '订单通过失败', 'data' => []];
+            }
+
+            Db::table('crm_leads')->where('id', $custinfo['id'])->update(['issuccess' => 1]);
+
+            // 插入审核通过通知（保持与现有 passIndex 风格一致）
             Db::name('crm_order_notifications')->insert([
-                'order_id' => $id,
-                'order_no' => $orderinfo['order_no'], 
-                'contact' => $orderinfo['contact'],
-                'type' => 1, // 1=审核通过
-                'message' => '订单编号为' . $orderinfo['order_no'] . '的订单已经通过审核',
-                'target_user' => $orderinfo['pr_user'], // 订单负责人
-                'is_read' => 0,
-                'create_time' => date('Y-m-d H:i:s')
+                'order_id'     => $orderId,
+                'order_no'     => $orderinfo['order_no'],
+                'contact'      => $orderinfo['contact'],
+                'type'         => 1, // 1=审核通过
+                'message'      => '订单编号为' . $orderinfo['order_no'] . '的订单已经通过审核',
+                'target_user'  => $orderinfo['pr_user'], // 订单负责人
+                'is_read'      => 0,
+                'create_time'  => $now,
             ]);
 
-            // ★ 插入通知后，立即执行自动归档/软删除处理
-            $this->autoTrimNotifications($orderinfo['pr_user']);
-
-            $msg = ['code' => 0, 'msg' => '订单通过成功', 'data' => []];
-            return json($msg);
-        } else {
-            $msg = ['code' => -200, 'msg' => '订单通过失败', 'data' => []];
-            return json($msg);
+            Db::commit();
+        } catch (\Throwable $e) {
+            Db::rollback();
+            return ['success' => false, 'msg' => '批量审核异常：' . $e->getMessage(), 'data' => []];
         }
+
+        // 插入通知后，执行自动归档/软删除（避免影响主事务）
+        try {
+            $this->autoTrimNotifications($orderinfo['pr_user']);
+        } catch (\Throwable $e) {
+            // 静默
+        }
+
+        return ['success' => true, 'msg' => '订单通过成功', 'data' => []];
     }
 
     //订单审核拒绝的处理
