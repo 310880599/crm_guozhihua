@@ -285,11 +285,24 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     .wc-card-col{
         min-width: 0;
         flex: 1 1 520px;
+        width: 100%;
+        box-sizing: border-box;
     }
 
+    /* 大屏：Grid 分配列宽，gap 在轨道之间计算，避免 42%+58%+gap 挤换行 */
     @media screen and (min-width: 1200px){
-        .wc-card-col.wc-col-left{ flex: 0 0 42%; max-width: 42%; }
-        .wc-card-col.wc-col-right{ flex: 0 0 58%; max-width: 58%; }
+        .wc-cards-row{
+            display: grid;
+            grid-template-columns: minmax(0, 42fr) minmax(0, 58fr);
+            gap: 12px;
+        }
+        .wc-card-col.wc-col-left,
+        .wc-card-col.wc-col-right{
+            flex: none;
+            max-width: none;
+            min-width: 0;
+            width: 100%;
+        }
     }
 
     @media screen and (min-width: 1920px){
@@ -311,6 +324,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     /* ========== 大屏面板（替代普通卡片） ========== */
     .wc-card{
         height: 100%;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
         display:flex;
         flex-direction: column;
         border-radius: 16px;
@@ -377,6 +393,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         position: relative;
         z-index: 1;
         flex: 1;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
         overflow: auto;
         padding: 0;
         max-height: 640px;
@@ -452,10 +471,15 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     /* ========== 左侧榜单（大屏榜单风） ========== */
     .wc-left-board{
         padding: 10px 12px 12px;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
     }
 
     .wc-board-table{
         width:100%;
+        max-width: 100%;
+        box-sizing: border-box;
         border-collapse: separate;
         border-spacing: 0 8px;
         font-size: 13px;
@@ -538,6 +562,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     /* ========== 右侧分组面板 ========== */
     .wc-right-board{
         padding: 10px 12px 12px;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
     }
 
     .wc-group-block{
@@ -547,6 +574,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         background: rgba(231,242,255,.03);
         box-shadow: 0 0 0 1px rgba(46,194,255,.06) inset, 0 10px 26px rgba(0,0,0,.28);
         overflow:hidden;
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
     .wc-group-block:last-child{ margin-bottom: 0; }
@@ -603,9 +634,11 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
     .wc-member-table{
         width:100%;
+        max-width: 100%;
         border-collapse: collapse;
         table-layout: fixed;
         font-size: 13px;
+        box-sizing: border-box;
     }
 
     .wc-member-table thead th{

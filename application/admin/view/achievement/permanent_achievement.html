@@ -114,27 +114,33 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         display: flex;
         gap: 20px;
         flex-wrap: wrap;
+        align-items: stretch;
     }
 
     .wc-card-col {
-        flex: 1;
+        flex: 1 1 520px;
         min-width: 0;
         min-height: 400px;
+        width: 100%;
+        box-sizing: border-box;
     }
 
     @media screen and (min-width: 1200px) {
+        .wc-cards-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 20px;
+        }
         .wc-card-col {
-            flex: 0 0 calc(50% - 10px);
-            max-width: calc(50% - 10px);
+            flex: none;
+            max-width: none;
+            min-width: 0;
+            width: 100%;
         }
     }
 
     @media screen and (min-width: 1920px) {
         .wc-dashboard-container { padding: 24px; }
-        .wc-card-col {
-            flex: 0 0 calc(50% - 12px);
-            max-width: calc(50% - 12px);
-        }
     }
 
     .wc-card {
@@ -143,6 +149,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         overflow: hidden;
         height: 100%;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
         display: flex;
         flex-direction: column;
     }
@@ -177,6 +186,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
     .wc-card-body {
         flex: 1;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
         overflow-y: auto;
         max-height: 560px;
         padding: 0;
@@ -185,8 +197,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     /* ========== 左侧：小组人均排行表格 ========== */
     .wc-rank-table {
         width: 100%;
+        max-width: 100%;
         border-collapse: collapse;
         font-size: 13px;
+        box-sizing: border-box;
     }
 
     .wc-rank-table thead th {
@@ -277,6 +291,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         margin: 0;
         padding: 0 16px 16px;
         border-bottom: 1px solid #f0f0f0;
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
     }
 
     .wc-group-block:last-child {
@@ -311,8 +329,11 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
     .wc-member-table {
         width: 100%;
+        max-width: 100%;
+        table-layout: fixed;
         border-collapse: collapse;
         font-size: 13px;
+        box-sizing: border-box;
     }
 
     .wc-member-table th {
