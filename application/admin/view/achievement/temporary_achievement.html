@@ -5,6 +5,7 @@ $dashboardTitle     = isset($dashboardTitle) ? $dashboardTitle : '旺春PK小组
 $periodText         = isset($periodText) ? $periodText : '';
 $groupAvgRankList   = isset($groupAvgRankList) && is_array($groupAvgRankList) ? $groupAvgRankList : [];
 $memberRankGroupList= isset($memberRankGroupList) && is_array($memberRankGroupList) ? $memberRankGroupList : [];
+$globalMemberRankList= isset($globalMemberRankList) && is_array($globalMemberRankList) ? $globalMemberRankList : [];
 $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 ?>
 <!-- 旺春看板 iframe 内独立依赖：保证本页在 iframe 中也有 jQuery / layui，轮询才能启动 -->
@@ -475,11 +476,12 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     @media screen and (min-width: 1200px){
         .wc-cards-row{
             display: grid;
-            grid-template-columns: minmax(0, 42fr) minmax(0, 58fr);
+            grid-template-columns: minmax(0, 9fr) minmax(0, 12fr) minmax(0, 10fr);
             gap: 12px;
         }
         .wc-card-col.wc-col-left,
-        .wc-card-col.wc-col-right{
+        .wc-card-col.wc-col-center,
+        .wc-card-col.wc-col-global{
             flex: none;
             max-width: none;
             min-width: 0;
@@ -709,6 +711,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     .wc-board-table .wc-col-total{ width: 24%; text-align:right; }
     .wc-board-table .wc-col-num{ width: 18%; text-align:center; }
     .wc-board-table .wc-col-avg{ width: 24%; text-align:right; }
+    .wc-board-table .wc-col-group{ width: 30%; text-align:left; }
 
     .wc-group-name{
         font-weight: 800;
@@ -954,8 +957,8 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             </div>
         </div>
 
-        <!-- 右栏：每组成员总业绩排行 -->
-        <div class="wc-card-col wc-col-right">
+        <!-- 中栏：每组成员总业绩排行 -->
+        <div class="wc-card-col wc-col-center">
             <div class="layui-card wc-card wc-card-right">
                 <div class="layui-card-header wc-card-head">
                     <div class="wc-card-head-title">成员总业绩排行（按小组分块）</div>
@@ -965,6 +968,20 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     <div id="wc-right-group-container">
                         <!-- 首屏也走与 Ajax 一致的渲染函数，避免结构不一致 -->
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右栏：成员总业绩总榜（不区分小组） -->
+        <div class="wc-card-col wc-col-global">
+            <div class="layui-card wc-card wc-card-global">
+                <div class="layui-card-header wc-card-head">
+                    <div class="wc-card-head-title">成员总业绩总榜</div>
+                    <div class="wc-card-head-desc">全部成员按总业绩降序排列，不区分小组</div>
+                </div>
+                <div class="layui-card-body wc-card-body">
+                    <div id="wc-global-rank-container"></div>
+                    <!-- 首屏也走与 Ajax 一致的渲染函数，避免结构不一致 -->
                 </div>
             </div>
         </div>
@@ -1135,6 +1152,51 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             $container.html(html);
         }
 
+        function renderGlobalMemberRankList($, list) {
+            var $container = $('#wc-global-rank-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!list || !list.length) {
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">🏆</div><div>暂无成员总业绩数据</div><small>等待产生业绩数据或检查成员配置</small></div>';
+                $container.html(html);
+                return;
+            }
+
+            html += '<div class="wc-left-board">';
+            html += '<table class="wc-board-table"><thead><tr>';
+            html += '<th class="wc-col-rank">排名</th>';
+            html += '<th class="wc-col-name">成员姓名</th>';
+            html += '<th class="wc-col-group">所属小组</th>';
+            html += '<th class="wc-col-total">总业绩</th>';
+            html += '</tr></thead><tbody>';
+
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i] || {};
+                var rank = parseInt(item.rank || (i + 1), 10);
+                var badgeClass = rank === 1 ? 'wc-rank-badge-1' : (rank === 2 ? 'wc-rank-badge-2' : (rank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
+
+                var amount = parseFloat(item.amount || 0);
+                var name = wcEscapeHtml(item.name || '');
+                var groupName = wcEscapeHtml(item.group_name || '');
+
+                var rowClass = rank === 1 ? 'wc-row-top3' : (rank === 2 ? 'wc-row-top3 wc-row-2' : (rank === 3 ? 'wc-row-top3 wc-row-3' : ''));
+                if (!(amount > 0)) {
+                    rowClass += (rowClass ? ' ' : '') + 'wc-row-zero';
+                }
+
+                html += '<tr class="' + rowClass + '">';
+                html += '<td class="wc-col-rank"><span class="wc-rank-badge ' + badgeClass + '">' + rank + '</span></td>';
+                html += '<td class="wc-col-name"><span class="wc-group-name">' + name + '</span></td>';
+                html += '<td class="wc-col-group"><span class="wc-group-name">' + groupName + '</span></td>';
+                html += '<td class="wc-col-total">' + (amount > 0 ? '<span class="wc-amount-highlight">' + wcFormatAmount(amount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '</tr>';
+            }
+
+            html += '</tbody></table>';
+            html += '</div>';
+            $container.html(html);
+        }
+
         function loadAchievementDataAndRender($) {
             $.ajax({
                 url: wcDataUrl + (wcDataUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now(),
@@ -1154,6 +1216,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     updateKpiFromData($, data.groupAvgRankList || [], data.memberRankGroupList || []);
                     renderGroupAvgRankList($, data.groupAvgRankList || []);
                     renderMemberRankGroupList($, data.memberRankGroupList || []);
+                    renderGlobalMemberRankList($, data.globalMemberRankList || []);
                     console.log('[WC] 完整数据拉取成功，DOM 已刷新');
                 },
                 error: function (xhr, status, error) {
@@ -1255,9 +1318,11 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             try {
                 var initialGroupAvgRankList = <?php echo json_encode($groupAvgRankList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
                 var initialMemberRankGroupList = <?php echo json_encode($memberRankGroupList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                var initialGlobalMemberRankList = <?php echo json_encode($globalMemberRankList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
                 updateKpiFromData($, initialGroupAvgRankList || [], initialMemberRankGroupList || []);
                 renderGroupAvgRankList($, initialGroupAvgRankList || []);
                 renderMemberRankGroupList($, initialMemberRankGroupList || []);
+                renderGlobalMemberRankList($, initialGlobalMemberRankList || []);
             } catch (e) {
                 console.warn('[WC] 首屏渲染失败（不影响轮询）', e);
             }
