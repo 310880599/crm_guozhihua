@@ -476,7 +476,8 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     @media screen and (min-width: 1200px){
         .wc-cards-row{
             display: grid;
-            grid-template-columns: minmax(0, 9fr) minmax(0, 12fr) minmax(0, 10fr);
+            /* 左右更宽，中间更窄：避免金额在第1/3列被截断省略 */
+            grid-template-columns: minmax(0, 10.5fr) minmax(0, 9fr) minmax(0, 11.5fr);
             gap: 12px;
         }
         .wc-card-col.wc-col-left,
@@ -712,6 +713,32 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     .wc-board-table .wc-col-num{ width: 18%; text-align:center; }
     .wc-board-table .wc-col-avg{ width: 24%; text-align:right; }
     .wc-board-table .wc-col-group{ width: 30%; text-align:left; }
+
+    /* ========== 左侧：小组人均业绩排行榜（金额列更宽，避免省略） ========== */
+    #wc-left-rank-container .wc-board-table .wc-col-rank{ width: 62px; text-align:center; }
+    #wc-left-rank-container .wc-board-table .wc-col-name{ width: 25%; }
+    #wc-left-rank-container .wc-board-table .wc-col-total{ width: 30%; text-align:right; }
+    #wc-left-rank-container .wc-board-table .wc-col-num{ width: 14%; text-align:center; }
+    #wc-left-rank-container .wc-board-table .wc-col-avg{ width: 26%; text-align:right; }
+    /* 仅取消金额列省略号；尽量通过列宽保证数字完整显示 */
+    #wc-left-rank-container .wc-board-table .wc-col-total,
+    #wc-left-rank-container .wc-board-table .wc-col-avg{
+        text-overflow: clip;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+
+    /* ========== 右侧：成员总业绩总榜（总业绩列更宽，压缩所属小组） ========== */
+    #wc-global-rank-container .wc-board-table .wc-col-rank{ width: 62px; text-align:center; }
+    #wc-global-rank-container .wc-board-table .wc-col-name{ width: 30%; }
+    #wc-global-rank-container .wc-board-table .wc-col-group{ width: 16%; text-align:left; }
+    #wc-global-rank-container .wc-board-table .wc-col-total{ width: 36%; text-align:right; }
+    /* 取消右侧总业绩列省略号，优先保证数字完整可见 */
+    #wc-global-rank-container .wc-board-table .wc-col-total{
+        text-overflow: clip;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
 
     .wc-group-name{
         font-weight: 800;
