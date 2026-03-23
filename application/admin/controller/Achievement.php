@@ -106,6 +106,7 @@ class Achievement extends Common
         $this->assign('periodText', $this->wcStatPeriodText);
         $this->assign('groupAvgRankList', $data['groupAvgRankList']);
         $this->assign('memberRankGroupList', $data['memberRankGroupList']);
+        $this->assign('globalMemberRankList', $data['globalMemberRankList']);
         // 首次渲染时把当前版本标识传给前端，便于心跳对比
         $this->assign('wcStamp', $stamp);
 
@@ -386,23 +387,23 @@ class Achievement extends Common
         ];
     }
 
-
-
-        /**
-     * 构建旺春PK小组永久业绩看板数据
-     * 数据来源：crm_client_order，仅 check_status=2，按配置名单与统计周期汇总。
+    /**
+     * 构建旺春现有团队（永久）业绩看板数据
+     * 数据来源：crm_client_order，仅 check_status=2，按 $pkGroupsPermanent 名单与统计周期汇总。
      *
-     * @return array{groupAvgRankList:array, memberRankGroupList:array}
+     * @return array{groupAvgRankList:array, memberRankGroupList:array, globalMemberRankList:array}
      */
     private function buildPermanentAchievementData()
     {
         $groupAvgRankList    = [];
         $memberRankGroupList = [];
+        $globalMemberRows    = [];
 
         if (empty($this->pkGroupsPermanent) || !is_array($this->pkGroupsPermanent)) {
             return [
-                'groupAvgRankList'    => $groupAvgRankList,
-                'memberRankGroupList' => $memberRankGroupList,
+                'groupAvgRankList'     => $groupAvgRankList,
+                'memberRankGroupList'  => $memberRankGroupList,
+                'globalMemberRankList' => [],
             ];
         }
 
@@ -491,6 +492,15 @@ class Achievement extends Common
                     continue;
                 }
                 $resolvedMembers[] = ['name' => $name, 'amount' => $amount];
+            }
+
+            // 同一批成员汇总：不区分小组，只在最终结果展示所属小组（与临时 PK 看板 global 口径一致）
+            foreach ($resolvedMembers as $rm) {
+                $globalMemberRows[] = [
+                    'name'       => $rm['name'],
+                    'group_name' => $groupName,
+                    'amount'     => $rm['amount'],
+                ];
             }
 
             $groupTotalAmount = round($groupTotalAmount, 2);
@@ -606,14 +616,48 @@ class Achievement extends Common
             });
         }
 
+        // 成员总业绩总榜：全部永久团队成员，不按小组分块（与 buildTemporaryAchievementData 规则一致）
+        $globalMemberRankList = [];
+        if (!empty($globalMemberRows)) {
+            usort($globalMemberRows, function ($a, $b) {
+                $aAmt = isset($a['amount']) ? (float)$a['amount'] : 0.0;
+                $bAmt = isset($b['amount']) ? (float)$b['amount'] : 0.0;
+
+                if ($aAmt !== $bAmt) {
+                    return ($aAmt < $bAmt) ? 1 : -1; // amount 降序
+                }
+
+                $aGroup = isset($a['group_name']) ? (string)$a['group_name'] : '';
+                $bGroup = isset($b['group_name']) ? (string)$b['group_name'] : '';
+                if ($aGroup !== $bGroup) {
+                    return strcmp($aGroup, $bGroup); // group_name 升序
+                }
+
+                $aName = isset($a['name']) ? (string)$a['name'] : '';
+                $bName = isset($b['name']) ? (string)$b['name'] : '';
+                return strcmp($aName, $bName); // name 升序
+            });
+
+            $rank = 1;
+            foreach ($globalMemberRows as $item) {
+                $globalMemberRankList[] = [
+                    'rank'       => $rank++,
+                    'name'       => isset($item['name']) ? (string)$item['name'] : '',
+                    'group_name' => isset($item['group_name']) ? (string)$item['group_name'] : '',
+                    'amount'     => isset($item['amount']) ? (float)$item['amount'] : 0.0,
+                ];
+            }
+        }
+
         $leftLimit = (int)$this->wcLeftGroupTopLimit;
         if ($leftLimit > 0) {
             $groupAvgRankList = array_slice($groupAvgRankList, 0, $leftLimit);
         }
 
         return [
-            'groupAvgRankList'    => $groupAvgRankList,
-            'memberRankGroupList' => $memberRankGroupList,
+            'groupAvgRankList'     => $groupAvgRankList,
+            'memberRankGroupList'  => $memberRankGroupList,
+            'globalMemberRankList' => $globalMemberRankList,
         ];
     }
 
@@ -950,11 +994,12 @@ class Achievement extends Common
                 'code' => 1,
                 'msg'  => 'success',
                 'data' => [
-                    'dashboardTitle'      => $this->wcDashboardTitlePermanent,
-                    'periodText'          => $this->wcStatPeriodText,
-                    'groupAvgRankList'    => $data['groupAvgRankList'],
-                    'memberRankGroupList' => $data['memberRankGroupList'],
-                    'stamp'               => $stamp,
+                    'dashboardTitle'       => $this->wcDashboardTitlePermanent,
+                    'periodText'           => $this->wcStatPeriodText,
+                    'groupAvgRankList'     => $data['groupAvgRankList'],
+                    'memberRankGroupList'  => $data['memberRankGroupList'],
+                    'globalMemberRankList' => $data['globalMemberRankList'],
+                    'stamp'                => $stamp,
                 ],
             ]);
         } catch (\Throwable $e) {
