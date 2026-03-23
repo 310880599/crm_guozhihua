@@ -1,0 +1,2229 @@
+<?php
+// 变量容错，避免未定义报错（数据由 Achievement 控制器赋值）
+// 后续改活动名单、统计周期等，请到控制器 application/admin/controller/Achievement.php 顶部配置区修改
+$dashboardTitle     = isset($dashboardTitle) ? $dashboardTitle : '旺春现有团队 · 业绩看板';
+$periodText         = isset($periodText) ? $periodText : '';
+$groupAvgRankList   = isset($groupAvgRankList) && is_array($groupAvgRankList) ? $groupAvgRankList : [];
+$memberRankGroupList= isset($memberRankGroupList) && is_array($memberRankGroupList) ? $memberRankGroupList : [];
+$globalMemberRankList= isset($globalMemberRankList) && is_array($globalMemberRankList) ? $globalMemberRankList : [];
+$wcStamp            = isset($wcStamp) ? $wcStamp : '';
+?>
+<!-- 旺春现有团队看板 iframe 内独立依赖：保证本页在 iframe 中也有 jQuery / layui，轮询才能启动 -->
+<script src="/js/jquery.min.js"></script>
+<script src="/static/plugins/layui/layui.js"></script>
+<style>
+    /* ============================================================
+     * 旺春现有团队 · 业绩看板（科技蓝大屏风格）
+     * 说明：与 PK 小组页布局/交互对齐；数据走 permanent 专属接口与 $pkGroupsPermanent
+     * ============================================================ */
+
+    :root{
+        --wc-bg0:#050a1a;
+        --wc-bg1:#071b3a;
+        --wc-panel:#061a33cc;
+        --wc-panel2:#071b3ad9;
+        --wc-border:rgba(46,194,255,.24);
+        --wc-border2:rgba(100,231,255,.16);
+        --wc-glow:rgba(46,194,255,.22);
+        --wc-cyan:#2ec2ff;
+        --wc-cyan2:#64e7ff;
+        --wc-blue:#1e9fff;
+        --wc-gold:#ffcc5a;
+        --wc-orange:#ff7a45;
+        --wc-green:#3be27f;
+        --wc-text:#e7f2ff;
+        --wc-text-dim:rgba(231,242,255,.68);
+        --wc-text-dimmer:rgba(231,242,255,.48);
+    }
+
+    /* ========== 页面背景层 ========== */
+    /* 普通模式：纵向 flex + 中间行 flex:1，保证第2/3列 card-body 内视口有「可计算的剩余高度」，避免被内容撑满导致 canScroll=false */
+    .wc-dashboard-container{
+        position: relative;
+        padding: 12px 18px 16px;
+        background:
+            radial-gradient(1200px 420px at 50% -120px, rgba(46,194,255,.18), transparent 60%),
+            radial-gradient(800px 360px at 14% 10%, rgba(100,231,255,.10), transparent 55%),
+            radial-gradient(760px 360px at 86% 18%, rgba(30,159,255,.10), transparent 60%),
+            linear-gradient(180deg, var(--wc-bg1) 0%, var(--wc-bg0) 62%, #040816 100%);
+        min-height: calc(100vh - 80px);
+        box-sizing: border-box;
+        overflow: hidden;
+        color: var(--wc-text);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .wc-dashboard-container > .wc-dashboard-hero{
+        flex: 0 0 auto;
+    }
+
+    .wc-dashboard-container::before{
+        content:'';
+        position:absolute;
+        inset:-1px;
+        background:
+            linear-gradient(rgba(46,194,255,.07) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(46,194,255,.06) 1px, transparent 1px);
+        background-size: 48px 48px;
+        opacity: .35;
+        pointer-events:none;
+        filter: blur(.15px);
+        mask-image: radial-gradient(650px 420px at 50% 22%, rgba(0,0,0,1), rgba(0,0,0,.25) 70%, transparent 100%);
+    }
+
+    .wc-dashboard-container::after{
+        content:'';
+        position:absolute;
+        inset:-120px -80px;
+        background:
+            radial-gradient(420px 260px at 18% 22%, rgba(46,194,255,.10), transparent 65%),
+            radial-gradient(520px 320px at 82% 26%, rgba(30,159,255,.10), transparent 70%),
+            radial-gradient(520px 320px at 50% 88%, rgba(100,231,255,.06), transparent 72%);
+        pointer-events:none;
+        opacity: .85;
+        filter: blur(8px);
+    }
+
+    /* ========== 大屏顶部紧凑状态栏（单层信息总条） ========== */
+    .wc-dashboard-hero{
+        position: relative;
+        margin-bottom: 8px;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid var(--wc-border);
+        background: linear-gradient(180deg, rgba(6,26,51,.86) 0%, rgba(5,14,28,.74) 100%);
+        box-shadow: 0 10px 26px rgba(0,0,0,.32), 0 0 0 1px rgba(46,194,255,.08) inset;
+        padding: 10px 12px;
+        box-sizing: border-box;
+    }
+
+    .wc-dashboard-hero::before{
+        content:'';
+        position:absolute;
+        inset:-2px;
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.20) 0%, rgba(46,194,255,.00) 22%, rgba(30,159,255,.12) 55%, rgba(46,194,255,.18) 100%);
+        opacity: .28;
+        pointer-events:none;
+        filter: blur(6px);
+    }
+
+    .wc-dashboard-hero-main{
+        position: relative;
+        z-index: 1;
+        display:flex;
+        align-items:center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        box-sizing: border-box;
+    }
+
+    .wc-dashboard-hero-left{
+        flex: 0 1 auto;
+        min-width: 280px;
+        max-width: 410px;
+    }
+
+    .wc-dashboard-hero-sub{
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--wc-text-dim);
+        letter-spacing: .3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .wc-dashboard-hero-meta{
+        flex: 1 1 auto;
+        min-width: 360px;
+        display:flex;
+        align-items:center;
+        justify-content: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .wc-dashboard-hero-period{
+        display:flex;
+        align-items: baseline;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .wc-dashboard-hero-tags{
+        display:flex;
+        align-items:center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .wc-dashboard-hero-kpis{
+        flex: 0 0 620px;
+        width: 620px;
+        min-width: 620px;
+        display:grid;
+        grid-template-columns: minmax(0, .85fr) minmax(0, .85fr) minmax(0, 1.15fr) minmax(0, 1.15fr);
+        gap: 8px;
+        align-items: stretch;
+    }
+
+    .wc-kpi-chip{
+        border-radius: 12px;
+        border: 1px solid rgba(46,194,255,.22);
+        background:
+            radial-gradient(260px 90px at 18% 0%, rgba(46,194,255,.12), transparent 65%),
+            linear-gradient(180deg, rgba(6,26,51,.52), rgba(5,14,28,.38));
+        box-shadow: 0 10px 22px rgba(0,0,0,.22), 0 0 0 1px rgba(46,194,255,.06) inset;
+        padding: 8px 8px 7px;
+        box-sizing: border-box;
+        min-height: 64px;
+        display:flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+    }
+
+    .wc-kpi-chip-top{
+        display:flex;
+        align-items: baseline;
+        justify-content: flex-start;
+        gap: 4px;
+        white-space: nowrap;
+        overflow: visible;
+        min-width: 0;
+    }
+
+    .wc-kpi-chip-title{
+        font-size: 11px;
+        color: rgba(231,242,255,.62);
+        letter-spacing: .3px;
+        flex: 0 0 auto;
+    }
+
+    .wc-kpi-chip-value{
+        font-size: 17px;
+        font-weight: 900;
+        letter-spacing: .2px;
+        line-height: 1.1;
+        color: rgba(231,242,255,.95);
+        text-shadow: 0 0 18px rgba(46,194,255,.12);
+        flex: 0 0 auto;
+        max-width: none;
+        white-space: nowrap;
+        overflow: visible;
+        text-overflow: clip;
+    }
+
+    .wc-kpi-chip-value.wc-kpi-accent{
+        color: var(--wc-cyan2);
+        text-shadow: 0 0 14px rgba(100,231,255,.18);
+    }
+
+    .wc-kpi-chip-value.wc-kpi-accent2{
+        color: var(--wc-gold);
+        text-shadow: 0 0 14px rgba(255,204,90,.18);
+    }
+
+    .wc-kpi-chip-unit{
+        font-size: 10px;
+        color: rgba(231,242,255,.60);
+        margin-left: 4px;
+        letter-spacing: .2px;
+        flex: 0 0 auto;
+    }
+
+    .wc-kpi-chip-sub{
+        margin-top: 6px;
+        font-size: 10px;
+        color: rgba(231,242,255,.50);
+        letter-spacing: .2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    @media screen and (min-width: 1200px){
+        .wc-dashboard-hero-main{ flex-wrap: nowrap; }
+    }
+
+    @media screen and (max-width: 1199px){
+        .wc-dashboard-hero-left{ min-width: 0; }
+        .wc-dashboard-hero-meta{ min-width: 0; }
+        .wc-dashboard-hero-kpis{ width: 100%; }
+    }
+
+    @media screen and (max-width: 680px){
+        .wc-dashboard-container{ padding: 10px 12px 14px; }
+        .wc-dashboard-hero{ padding: 10px 10px; }
+        .wc-dashboard-hero-left{ flex: 1 1 100%; max-width: none; }
+        .wc-dashboard-hero-meta{ width: 100%; }
+        .wc-dashboard-hero-kpis{
+            width: 100%;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .wc-dashboard-hero-sub{ white-space: normal; }
+    }
+
+    .wc-dashboard-top{
+        position: relative;
+        margin-bottom: 14px;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid var(--wc-border);
+        background: linear-gradient(180deg, rgba(6,26,51,.92) 0%, rgba(5,14,28,.78) 100%);
+        box-shadow: 0 12px 40px rgba(0,0,0,.35), 0 0 0 1px rgba(46,194,255,.08) inset;
+    }
+
+    .wc-dashboard-title-bar{
+        position: relative;
+        padding: 18px 18px 10px;
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.00) 0%, rgba(46,194,255,.10) 18%, rgba(46,194,255,.00) 50%, rgba(30,159,255,.08) 82%, rgba(30,159,255,.00) 100%),
+            radial-gradient(700px 220px at 50% 0%, rgba(46,194,255,.16), transparent 72%);
+    }
+
+    .wc-dashboard-title-deco{
+        position:absolute;
+        left:0; right:0; top:0;
+        height: 44px;
+        pointer-events:none;
+        background:
+            linear-gradient(90deg, transparent 0%, rgba(46,194,255,.35) 12%, rgba(100,231,255,.10) 40%, rgba(46,194,255,.35) 88%, transparent 100%);
+        opacity: .45;
+        filter: blur(.25px);
+        mask-image: linear-gradient(180deg, rgba(0,0,0,1), transparent);
+    }
+
+    .wc-dashboard-main-title{
+        margin: 0;
+        text-align: left;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: 1.2px;
+        color: #eaf6ff;
+        text-shadow:
+            0 0 16px rgba(46,194,255,.22),
+            0 0 36px rgba(30,159,255,.12),
+            0 2px 0 rgba(0,0,0,.35);
+    }
+
+    .wc-dashboard-sub-title{
+        margin: 8px 0 0;
+        text-align: center;
+        font-size: 13px;
+        color: var(--wc-text-dim);
+        letter-spacing: .6px;
+    }
+
+    .wc-dashboard-meta-bar{
+        display:flex;
+        align-items:center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px 16px;
+        padding: 10px 16px 14px;
+        border-top: 1px solid rgba(46,194,255,.14);
+        background: linear-gradient(180deg, rgba(5,14,28,.35), rgba(5,14,28,.18));
+    }
+
+    .wc-meta-left, .wc-meta-right{
+        display:flex;
+        align-items:center;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        min-width: 0;
+    }
+
+    .wc-period-label{
+        font-size: 11px;
+        color: var(--wc-text-dimmer);
+    }
+    .wc-period-value{
+        font-size: 12px;
+        font-weight: 700;
+        color: rgba(231,242,255,.92);
+        margin-left: 0;
+    }
+
+    .wc-realtime-tip{
+        display:inline-flex;
+        align-items:center;
+        gap: 8px;
+        font-size: 11px;
+        color: rgba(231,242,255,.90);
+        padding: 3px 8px;
+        border: 1px solid rgba(59,226,127,.28);
+        border-radius: 999px;
+        background: rgba(10,40,22,.35);
+        box-shadow: 0 0 0 1px rgba(59,226,127,.06) inset;
+    }
+
+    .wc-realtime-dot{
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--wc-green);
+        box-shadow: 0 0 10px rgba(59,226,127,.55);
+        animation: wc-pulse 1.3s ease-in-out infinite;
+    }
+
+    @keyframes wc-pulse{
+        0%, 100%{ transform: scale(1); opacity: 1; }
+        50%{ transform: scale(.82); opacity: .55; }
+    }
+
+    .wc-audit-tip{
+        font-size: 11px;
+        color: var(--wc-text-dimmer);
+        padding-left: 8px;
+        border-left: 1px dashed rgba(46,194,255,.25);
+    }
+
+    /* ========== KPI 概览区 ========== */
+    .wc-kpi-row{
+        margin: 12px 0 14px;
+        display:grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .wc-kpi{
+        position: relative;
+        border-radius: 14px;
+        padding: 14px 14px 12px;
+        background:
+            radial-gradient(420px 120px at 18% 12%, rgba(46,194,255,.14), transparent 68%),
+            linear-gradient(180deg, rgba(6,26,51,.86), rgba(5,14,28,.62));
+        border: 1px solid rgba(46,194,255,.26);
+        box-shadow: 0 10px 28px rgba(0,0,0,.28), 0 0 0 1px rgba(46,194,255,.10) inset;
+        overflow:hidden;
+        transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+    }
+
+    .wc-kpi::before{
+        content:'';
+        position:absolute;
+        inset:-2px;
+        background: linear-gradient(135deg, rgba(100,231,255,.20), transparent 40%, rgba(30,159,255,.18));
+        opacity: .22;
+        pointer-events:none;
+        filter: blur(6px);
+    }
+
+    .wc-kpi:hover{
+        transform: translateY(-2px);
+        border-color: rgba(100,231,255,.34);
+        box-shadow: 0 14px 34px rgba(0,0,0,.34), 0 0 22px rgba(46,194,255,.10);
+    }
+
+    .wc-kpi-title{
+        font-size: 12px;
+        color: var(--wc-text-dimmer);
+        letter-spacing: .6px;
+        margin: 0 0 10px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .wc-kpi-value{
+        font-size: 26px;
+        font-weight: 900;
+        letter-spacing: .6px;
+        line-height: 1.1;
+        margin: 0;
+        position: relative;
+        z-index: 1;
+        color: #eaf6ff;
+        text-shadow: 0 0 18px rgba(46,194,255,.20);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .wc-kpi-sub{
+        margin-top: 8px;
+        font-size: 12px;
+        color: rgba(231,242,255,.55);
+        position: relative;
+        z-index: 1;
+    }
+
+    .wc-kpi .wc-kpi-accent{
+        color: var(--wc-cyan2);
+    }
+    .wc-kpi .wc-kpi-accent2{
+        color: var(--wc-gold);
+        text-shadow: 0 0 12px rgba(255,204,90,.22);
+    }
+
+    /* ========== 主体左右布局 ========== */
+    .wc-cards-row{
+        display:flex;
+        gap: 12px;
+        align-items: stretch;
+        flex-wrap: wrap;
+        position: relative;
+        z-index: 1;
+        margin-top: 0;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    /* Grid 子项默认 min-height:auto 会按内容撑开行高，打断 overflow:hidden 与视口高度链；必须允许列在轨道内收缩 */
+    .wc-card-col{
+        min-width: 0;
+        min-height: 0;
+        flex: 1 1 520px;
+        width: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .wc-card-col > .layui-card.wc-card{
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
+    }
+
+    /* 大屏：Grid 分配列宽，gap 在轨道之间计算，避免 42%+58%+gap 挤换行 */
+    @media screen and (min-width: 1200px){
+        .wc-cards-row{
+            display: grid;
+            /* 左右更宽，中间更窄：避免金额在第1/3列被截断省略 */
+            grid-template-columns: minmax(0, 10.5fr) minmax(0, 9fr) minmax(0, 11.5fr);
+            gap: 12px;
+        }
+        .wc-card-col.wc-col-left,
+        .wc-card-col.wc-col-center,
+        .wc-card-col.wc-col-global{
+            flex: none;
+            max-width: none;
+            min-width: 0;
+            width: 100%;
+        }
+    }
+
+    @media screen and (min-width: 1920px){
+        /* 紧凑状态栏：大屏也保持更矮的顶部高度 */
+        .wc-dashboard-container{ padding: 16px 22px 22px; }
+        .wc-dashboard-main-title{ font-size: 26px; }
+    }
+
+    @media screen and (max-width: 1199px){
+        .wc-kpi-row{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media screen and (max-width: 680px){
+        .wc-kpi-row{ grid-template-columns: 1fr; }
+        .wc-dashboard-main-title{ font-size: 20px; }
+    }
+
+    /* ========== 大屏面板（替代普通卡片） ========== */
+    .wc-card{
+        height: 100%;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+        display:flex;
+        flex-direction: column;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid rgba(46,194,255,.22);
+        background:
+            radial-gradient(600px 240px at 18% 0%, rgba(46,194,255,.10), transparent 70%),
+            linear-gradient(180deg, rgba(6,26,51,.86), rgba(5,14,28,.62));
+        box-shadow: 0 16px 42px rgba(0,0,0,.42), 0 0 0 1px rgba(46,194,255,.10) inset;
+        position: relative;
+    }
+
+    .wc-card::before{
+        content:'';
+        position:absolute;
+        inset:-2px;
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.14), transparent 22%, transparent 78%, rgba(30,159,255,.12)),
+            radial-gradient(500px 260px at 50% 0%, rgba(100,231,255,.08), transparent 70%);
+        opacity: .35;
+        pointer-events:none;
+        filter: blur(8px);
+    }
+
+    .wc-card-head{
+        position: relative;
+        z-index: 1;
+        padding: 14px 14px 12px;
+        border-bottom: 1px solid rgba(46,194,255,.16);
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.14), rgba(46,194,255,0) 42%, rgba(30,159,255,.10));
+    }
+
+    .wc-card-head-title{
+        margin: 0;
+        display:flex;
+        align-items:center;
+        gap: 10px;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: .8px;
+        color: rgba(231,242,255,.95);
+        text-shadow: 0 0 16px rgba(46,194,255,.12);
+    }
+
+    .wc-card-head-title::before{
+        content:'';
+        width: 4px;
+        height: 16px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, var(--wc-cyan2), var(--wc-blue));
+        box-shadow: 0 0 14px rgba(46,194,255,.32);
+        flex: 0 0 auto;
+    }
+
+    .wc-card-head-desc{
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--wc-text-dimmer);
+        letter-spacing: .4px;
+    }
+
+    .wc-card-body{
+        position: relative;
+        z-index: 1;
+        flex: 1;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+        overflow: auto;
+        padding: 0;
+        max-height: 640px;
+    }
+
+    /* 第2/第3列：外层 body 不滚动，由内部轮播视口承担高度与滚动（第1列保持 overflow:auto） */
+    .wc-col-center .wc-card-body,
+    .wc-col-global .wc-card-body{
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-height: 0;
+    }
+
+    .wc-col-center .wc-card-body #wc-right-group-container,
+    .wc-col-global .wc-card-body #wc-global-rank-container{
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    /* ========== 第2/第3列 · 自动轮播视口（transform 轨道平移，非 scrollTop） ========== */
+    .wc-auto-scroll-viewport{
+        position: relative;
+        overflow: hidden;
+        flex: 1 1 auto;
+        min-height: 0;
+        height: 100%;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+
+    .wc-auto-scroll-track{
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        min-width: 0;
+        will-change: transform;
+        transform: translate3d(0, 0, 0);
+    }
+
+    .wc-auto-scroll-chunk{
+        display: block;
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+
+    /* 轮播控制按钮：与全屏按钮同系，独立 id，互不影响 */
+    .wc-autoscroll-btn.is-autoscrolling{
+        border-color: rgba(59,226,127,.42);
+        background:
+            linear-gradient(180deg, rgba(8,52,36,.78) 0%, rgba(5,22,28,.74) 100%);
+        box-shadow:
+            0 0 0 1px rgba(59,226,127,.14) inset,
+            0 0 22px rgba(59,226,127,.18),
+            0 8px 22px rgba(0,0,0,.28);
+    }
+
+    /* ========== 滚动条美化 ========== */
+    .wc-card-body::-webkit-scrollbar{ width: 10px; height: 10px; }
+    .wc-card-body::-webkit-scrollbar-track{ background: rgba(255,255,255,.04); }
+    .wc-card-body::-webkit-scrollbar-thumb{
+        background: linear-gradient(180deg, rgba(46,194,255,.38), rgba(30,159,255,.22));
+        border: 2px solid rgba(5,14,28,.55);
+        border-radius: 999px;
+        box-shadow: 0 0 10px rgba(46,194,255,.10);
+    }
+    .wc-card-body::-webkit-scrollbar-thumb:hover{
+        background: linear-gradient(180deg, rgba(100,231,255,.48), rgba(46,194,255,.26));
+    }
+
+    /* ========== 统一金额/单位 ========== */
+    .wc-amount-highlight{
+        font-weight: 900;
+        color: var(--wc-cyan2);
+        text-shadow: 0 0 14px rgba(100,231,255,.16);
+    }
+    .wc-amount-highlight.wc-amount-primary{
+        color: var(--wc-gold);
+        text-shadow: 0 0 14px rgba(255,204,90,.18);
+    }
+    .wc-amount-zero{ color: rgba(231,242,255,.40); font-weight: 600; }
+    .wc-amount-unit{ color: rgba(231,242,255,.45); font-size: 12px; margin-left: 4px; }
+
+    /* ========== 排名徽章（更炫酷） ========== */
+    .wc-rank-badge{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width: 30px;
+        height: 30px;
+        padding: 0 9px;
+        border-radius: 999px;
+        font-weight: 900;
+        font-size: 13px;
+        color: rgba(231,242,255,.92);
+        letter-spacing: .4px;
+        border: 1px solid rgba(231,242,255,.10);
+        background: rgba(231,242,255,.06);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.08) inset;
+    }
+    .wc-rank-badge-1{
+        background: linear-gradient(135deg, rgba(255,204,90,.95), rgba(255,122,69,.86));
+        border-color: rgba(255,204,90,.55);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 18px rgba(255,204,90,.22), 0 0 0 1px rgba(255,204,90,.18) inset;
+    }
+    .wc-rank-badge-2{
+        background: linear-gradient(135deg, rgba(100,231,255,.92), rgba(46,194,255,.78));
+        border-color: rgba(100,231,255,.55);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 18px rgba(100,231,255,.20), 0 0 0 1px rgba(100,231,255,.18) inset;
+    }
+    .wc-rank-badge-3{
+        background: linear-gradient(135deg, rgba(59,226,127,.90), rgba(30,159,255,.60));
+        border-color: rgba(59,226,127,.45);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 18px rgba(59,226,127,.16), 0 0 0 1px rgba(59,226,127,.14) inset;
+    }
+    .wc-rank-badge-n{
+        background: rgba(231,242,255,.05);
+        border-color: rgba(46,194,255,.14);
+        color: rgba(231,242,255,.70);
+    }
+
+    /* ========== 左侧榜单（大屏榜单风） ========== */
+    .wc-left-board{
+        padding: 10px 12px 12px;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .wc-board-table{
+        width:100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+        font-size: 13px;
+        table-layout: fixed;
+    }
+
+    .wc-board-table thead th{
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: rgba(5,14,28,.78);
+        backdrop-filter: blur(6px);
+        color: rgba(231,242,255,.70);
+        font-weight: 700;
+        padding: 10px 10px;
+        border-bottom: 1px solid rgba(46,194,255,.16);
+        letter-spacing: .5px;
+        text-align: left;
+    }
+
+    .wc-board-table tbody tr{
+        background: rgba(231,242,255,.04);
+        border: 1px solid rgba(46,194,255,.12);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.06) inset;
+        transition: background .12s ease, transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+    }
+
+    .wc-board-table tbody tr:hover{
+        background: rgba(46,194,255,.08);
+        border-color: rgba(100,231,255,.22);
+        box-shadow: 0 0 22px rgba(46,194,255,.10), 0 0 0 1px rgba(46,194,255,.10) inset;
+        transform: translateY(-1px);
+    }
+
+    .wc-board-table tbody td{
+        padding: 12px 10px;
+        vertical-align: middle;
+        color: rgba(231,242,255,.88);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .wc-board-table .wc-col-rank{ width: 66px; text-align:center; }
+    .wc-board-table .wc-col-name{ width: 28%; }
+    .wc-board-table .wc-col-total{ width: 24%; text-align:right; }
+    .wc-board-table .wc-col-num{ width: 18%; text-align:center; }
+    .wc-board-table .wc-col-avg{ width: 24%; text-align:right; }
+    .wc-board-table .wc-col-group{ width: 30%; text-align:left; }
+
+    /* ========== 左侧：小组人均业绩排行榜（金额列更宽，避免省略） ========== */
+    #wc-left-rank-container .wc-board-table .wc-col-rank{ width: 62px; text-align:center; }
+    #wc-left-rank-container .wc-board-table .wc-col-name{ width: 25%; }
+    #wc-left-rank-container .wc-board-table .wc-col-total{ width: 30%; text-align:right; }
+    #wc-left-rank-container .wc-board-table .wc-col-num{ width: 14%; text-align:center; }
+    #wc-left-rank-container .wc-board-table .wc-col-avg{ width: 26%; text-align:right; }
+    /* 仅取消金额列省略号；尽量通过列宽保证数字完整显示 */
+    #wc-left-rank-container .wc-board-table .wc-col-total,
+    #wc-left-rank-container .wc-board-table .wc-col-avg{
+        text-overflow: clip;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+
+    /* ========== 右侧：成员总业绩总榜（总业绩列更宽，压缩所属小组） ========== */
+    #wc-global-rank-container .wc-board-table .wc-col-rank{ width: 62px; text-align:center; }
+    #wc-global-rank-container .wc-board-table .wc-col-name{ width: 30%; }
+    #wc-global-rank-container .wc-board-table .wc-col-group{ width: 16%; text-align:left; }
+    #wc-global-rank-container .wc-board-table .wc-col-total{ width: 36%; text-align:right; }
+    /* 取消右侧总业绩列省略号，优先保证数字完整可见 */
+    #wc-global-rank-container .wc-board-table .wc-col-total{
+        text-overflow: clip;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+
+    .wc-group-name{
+        font-weight: 800;
+        color: rgba(231,242,255,.92);
+        letter-spacing: .4px;
+    }
+
+    .wc-row-top3{
+        background: linear-gradient(90deg, rgba(255,204,90,.10), rgba(231,242,255,.03) 30%, rgba(231,242,255,.03));
+        border-color: rgba(255,204,90,.24);
+    }
+    .wc-row-top3.wc-row-2{
+        background: linear-gradient(90deg, rgba(100,231,255,.10), rgba(231,242,255,.03) 30%, rgba(231,242,255,.03));
+        border-color: rgba(100,231,255,.24);
+    }
+    .wc-row-top3.wc-row-3{
+        background: linear-gradient(90deg, rgba(59,226,127,.08), rgba(231,242,255,.03) 30%, rgba(231,242,255,.03));
+        border-color: rgba(59,226,127,.22);
+    }
+
+    .wc-row-zero{
+        opacity: .62;
+        filter: saturate(.92);
+    }
+
+    .wc-row-total{
+        background: rgba(255,204,90,.10);
+        border-color: rgba(255,204,90,.26);
+        box-shadow: 0 0 0 1px rgba(255,204,90,.08) inset;
+    }
+
+    /* ========== 右侧分组面板 ========== */
+    .wc-right-board{
+        padding: 10px 12px 12px;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .wc-group-block{
+        margin: 0 0 12px 0;
+        border-radius: 14px;
+        border: 1px solid rgba(46,194,255,.18);
+        background: rgba(231,242,255,.03);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.06) inset, 0 10px 26px rgba(0,0,0,.28);
+        overflow:hidden;
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .wc-group-block:last-child{ margin-bottom: 0; }
+
+    .wc-group-block-head{
+        padding: 12px 12px 10px;
+        border-bottom: 1px solid rgba(46,194,255,.14);
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.16), rgba(46,194,255,0) 46%, rgba(30,159,255,.10));
+        position: relative;
+    }
+
+    .wc-group-block-head::before{
+        content:'';
+        position:absolute;
+        left:0; top:0; bottom:0;
+        width: 4px;
+        background: linear-gradient(180deg, var(--wc-cyan2), var(--wc-blue));
+        box-shadow: 0 0 16px rgba(46,194,255,.30);
+        opacity: .95;
+    }
+
+    .wc-group-block-title{
+        margin: 0 0 6px;
+        padding-left: 10px;
+        font-size: 15px;
+        font-weight: 900;
+        letter-spacing: .6px;
+        color: rgba(231,242,255,.95);
+        text-shadow: 0 0 14px rgba(46,194,255,.12);
+    }
+
+    .wc-group-block-meta{
+        padding-left: 10px;
+        display:flex;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        align-items: center;
+        font-size: 12px;
+        color: rgba(231,242,255,.64);
+    }
+
+    .wc-meta-amount{
+        color: rgba(231,242,255,.88);
+    }
+    .wc-meta-amount strong{
+        color: var(--wc-gold);
+        text-shadow: 0 0 12px rgba(255,204,90,.18);
+    }
+    .wc-meta-avg strong{
+        color: var(--wc-cyan2);
+        text-shadow: 0 0 12px rgba(100,231,255,.16);
+    }
+
+    .wc-member-table{
+        width:100%;
+        max-width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 13px;
+        box-sizing: border-box;
+    }
+
+    .wc-member-table thead th{
+        background: rgba(5,14,28,.55);
+        color: rgba(231,242,255,.62);
+        font-weight: 700;
+        padding: 9px 12px;
+        border-bottom: 1px solid rgba(46,194,255,.10);
+        letter-spacing: .4px;
+        text-align:left;
+    }
+
+    .wc-member-table td{
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(46,194,255,.08);
+        color: rgba(231,242,255,.86);
+        overflow:hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .wc-member-table .wc-mcol-rank{ width: 70px; text-align:center; }
+    .wc-member-table .wc-mcol-name{ width: auto; }
+    .wc-member-table .wc-mcol-amount{ width: 160px; text-align:right; }
+
+    .wc-member-row-first td{
+        background: linear-gradient(90deg, rgba(255,204,90,.12), rgba(231,242,255,.02) 40%, rgba(231,242,255,.02));
+        font-weight: 800;
+    }
+
+    .wc-member-row-first .wc-amount-highlight{
+        color: var(--wc-gold);
+    }
+
+    .wc-member-row-zero td{
+        color: rgba(231,242,255,.44);
+    }
+
+    /* ========== 空状态 ========== */
+    .wc-empty-state{
+        text-align:center;
+        padding: 38px 14px;
+        color: rgba(231,242,255,.58);
+        font-size: 13px;
+    }
+    .wc-empty-state-icon{
+        font-size: 40px;
+        margin-bottom: 10px;
+        opacity: .7;
+    }
+    .wc-empty-state small{
+        display:block;
+        margin-top: 6px;
+        color: rgba(231,242,255,.42);
+    }
+
+    /* ========== 全屏展示（电视大屏 / Fullscreen API） ========== */
+    @media screen and (min-width: 680px){
+        /* 为右上角全屏按钮预留空间，避免与右侧 KPI 区抢位 */
+        .wc-dashboard-hero{
+            padding-right: 128px;
+        }
+    }
+
+    .wc-fullscreen-btn-wrap{
+        position: absolute;
+        top: 8px;
+        right: 10px;
+        z-index: 6;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+        pointer-events: none;
+    }
+
+    .wc-fullscreen-btn-wrap > *{
+        pointer-events: auto;
+    }
+
+    .wc-fullscreen-btn{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 7px 14px 7px 11px;
+        border-radius: 10px;
+        border: 1px solid rgba(46,194,255,.42);
+        background:
+            linear-gradient(180deg, rgba(6,26,51,.88) 0%, rgba(5,14,28,.72) 100%);
+        box-shadow:
+            0 0 0 1px rgba(46,194,255,.12) inset,
+            0 0 18px rgba(46,194,255,.14),
+            0 8px 22px rgba(0,0,0,.28);
+        color: rgba(231,242,255,.94);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .4px;
+        cursor: pointer;
+        outline: none;
+        transition: border-color .15s ease, box-shadow .15s ease, transform .12s ease, background .15s ease;
+    }
+
+    .wc-fullscreen-btn:hover{
+        border-color: rgba(100,231,255,.55);
+        box-shadow:
+            0 0 0 1px rgba(100,231,255,.16) inset,
+            0 0 26px rgba(46,194,255,.22),
+            0 10px 26px rgba(0,0,0,.32);
+        transform: translateY(-1px);
+    }
+
+    .wc-fullscreen-btn:active{
+        transform: translateY(0);
+    }
+
+    .wc-fullscreen-btn.is-fullscreen{
+        border-color: rgba(100,231,255,.48);
+        background:
+            linear-gradient(180deg, rgba(8,40,62,.92) 0%, rgba(5,18,36,.78) 100%);
+    }
+
+    .wc-fullscreen-btn-icon{
+        display: inline-flex;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        opacity: .95;
+    }
+
+    .wc-fullscreen-btn-icon svg{
+        width: 100%;
+        height: 100%;
+        display: block;
+        fill: none;
+        stroke: var(--wc-cyan2);
+        stroke-width: 1.75;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        filter: drop-shadow(0 0 6px rgba(100,231,255,.35));
+    }
+
+    .wc-fullscreen-btn.is-fullscreen .wc-fullscreen-btn-icon svg{
+        stroke: var(--wc-gold);
+        filter: drop-shadow(0 0 6px rgba(255,204,90,.28));
+    }
+
+    .wc-fullscreen-hint{
+        font-size: 10px;
+        color: rgba(231,242,255,.45);
+        letter-spacing: .2px;
+        white-space: nowrap;
+        text-shadow: 0 0 10px rgba(46,194,255,.12);
+    }
+
+    /* 全屏伪类 + 状态 class，双保险适配各内核 */
+    .wc-dashboard-container:fullscreen,
+    .wc-dashboard-container:-webkit-full-screen,
+    .wc-dashboard-container:-moz-full-screen,
+    .wc-dashboard-container:-ms-fullscreen{
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        max-height: none;
+        min-height: 100vh;
+        margin: 0;
+        padding: 10px 16px 12px;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+
+    .wc-dashboard-container.wc-is-fullscreen{
+        min-height: 100vh;
+    }
+
+    html.wc-is-fullscreen,
+    body.wc-is-fullscreen{
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    /* 全屏下顶部更紧凑，主体纵向占满，卡片滚动区随视口增高 */
+    .wc-dashboard-container.wc-is-fullscreen .wc-dashboard-hero,
+    .wc-dashboard-container:fullscreen .wc-dashboard-hero,
+    .wc-dashboard-container:-webkit-full-screen .wc-dashboard-hero,
+    .wc-dashboard-container:-moz-full-screen .wc-dashboard-hero,
+    .wc-dashboard-container:-ms-fullscreen .wc-dashboard-hero{
+        margin-bottom: 6px;
+        padding: 7px 10px;
+    }
+
+    .wc-dashboard-container.wc-is-fullscreen .wc-dashboard-main-title,
+    .wc-dashboard-container:fullscreen .wc-dashboard-main-title,
+    .wc-dashboard-container:-webkit-full-screen .wc-dashboard-main-title,
+    .wc-dashboard-container:-moz-full-screen .wc-dashboard-main-title,
+    .wc-dashboard-container:-ms-fullscreen .wc-dashboard-main-title{
+        font-size: clamp(18px, 1.35vw, 24px);
+    }
+
+    .wc-dashboard-container.wc-is-fullscreen,
+    .wc-dashboard-container:fullscreen,
+    .wc-dashboard-container:-webkit-full-screen,
+    .wc-dashboard-container:-moz-full-screen,
+    .wc-dashboard-container:-ms-fullscreen{
+        display: flex;
+        flex-direction: column;
+    }
+
+    .wc-dashboard-container.wc-is-fullscreen .wc-cards-row,
+    .wc-dashboard-container:fullscreen .wc-cards-row,
+    .wc-dashboard-container:-webkit-full-screen .wc-cards-row,
+    .wc-dashboard-container:-moz-full-screen .wc-cards-row,
+    .wc-dashboard-container:-ms-fullscreen .wc-cards-row{
+        flex: 1 1 auto;
+        min-height: 0;
+        align-items: stretch;
+    }
+
+    .wc-dashboard-container.wc-is-fullscreen .wc-card-col,
+    .wc-dashboard-container:fullscreen .wc-card-col,
+    .wc-dashboard-container:-webkit-full-screen .wc-card-col,
+    .wc-dashboard-container:-moz-full-screen .wc-card-col,
+    .wc-dashboard-container:-ms-fullscreen .wc-card-col{
+        display: flex;
+        min-height: 0;
+    }
+
+    .wc-dashboard-container.wc-is-fullscreen .wc-card,
+    .wc-dashboard-container:fullscreen .wc-card,
+    .wc-dashboard-container:-webkit-full-screen .wc-card,
+    .wc-dashboard-container:-moz-full-screen .wc-card,
+    .wc-dashboard-container:-ms-fullscreen .wc-card{
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
+        max-height: none;
+    }
+
+    .wc-dashboard-container.wc-is-fullscreen .wc-card-body,
+    .wc-dashboard-container:fullscreen .wc-card-body,
+    .wc-dashboard-container:-webkit-full-screen .wc-card-body,
+    .wc-dashboard-container:-moz-full-screen .wc-card-body,
+    .wc-dashboard-container:-ms-fullscreen .wc-card-body{
+        max-height: none;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    /* 全屏下第2/第3列仍使用 flex 裁切 + 内部轮播视口 */
+    .wc-dashboard-container.wc-is-fullscreen .wc-col-center .wc-card-body,
+    .wc-dashboard-container.wc-is-fullscreen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:fullscreen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:fullscreen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:-webkit-full-screen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:-webkit-full-screen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:-moz-full-screen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:-moz-full-screen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:-ms-fullscreen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:-ms-fullscreen .wc-col-global .wc-card-body{
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
+    @media screen and (min-width: 1600px){
+        .wc-dashboard-container.wc-is-fullscreen .wc-card-body,
+        .wc-dashboard-container:fullscreen .wc-card-body,
+        .wc-dashboard-container:-webkit-full-screen .wc-card-body,
+        .wc-dashboard-container:-moz-full-screen .wc-card-body,
+        .wc-dashboard-container:-ms-fullscreen .wc-card-body{
+            min-height: 420px;
+        }
+    }
+
+    @media screen and (max-width: 679px){
+        .wc-fullscreen-btn-wrap{
+            position: static;
+            align-items: flex-start;
+            margin: 0 0 8px 0;
+            width: 100%;
+        }
+        .wc-fullscreen-hint{ white-space: normal; }
+    }
+</style>
+
+<div class="layui-fluid wc-dashboard-container">
+    <!-- 顶部：紧凑单层信息总条（替代 wc-dashboard-top + wc-kpi-row） -->
+    <div class="wc-dashboard-hero">
+        <!-- 全屏入口：电视大屏展示（逻辑见页面底部 Fullscreen 工具函数） -->
+        <div class="wc-fullscreen-btn-wrap" id="wc-fullscreen-toggle-wrap">
+            <button type="button" class="wc-fullscreen-btn" id="wc-fullscreen-toggle" aria-pressed="false" title="全屏展示">
+                <span class="wc-fullscreen-btn-icon" aria-hidden="true">
+                    <!-- 进入全屏：四角扩展 -->
+                    <svg class="wc-fs-icon-enter" viewBox="0 0 24 24" focusable="false">
+                        <path d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/>
+                    </svg>
+                    <!-- 退出全屏：四角收缩 -->
+                    <svg class="wc-fs-icon-exit" viewBox="0 0 24 24" focusable="false" style="display:none">
+                        <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+                    </svg>
+                </span>
+                <span class="wc-fullscreen-btn-text">进入全屏</span>
+            </button>
+            <button type="button" class="wc-fullscreen-btn wc-autoscroll-btn" id="wc-autoscroll-toggle" aria-pressed="false" title="开始轮播">开始轮播</button>
+            <span class="wc-fullscreen-hint">ESC 可退出全屏</span>
+        </div>
+        <div class="wc-dashboard-hero-main">
+            <!-- 左侧：主标题 + 副信息 -->
+            <div class="wc-dashboard-hero-left">
+                <h1 class="wc-dashboard-main-title"><?php echo htmlspecialchars($dashboardTitle); ?></h1>
+                <div class="wc-dashboard-hero-sub">现有团队实时业绩排名 / 审核通过订单统计</div>
+            </div>
+
+            <!-- 中间：统计周期 + 实时统计标签 -->
+            <div class="wc-dashboard-hero-meta">
+                <div class="wc-dashboard-hero-period">
+                    <span class="wc-period-label">统计周期：</span>
+                    <span class="wc-period-value"><?php echo htmlspecialchars($periodText); ?></span>
+                </div>
+                <div class="wc-dashboard-hero-tags">
+                    <span class="wc-realtime-tip"><span class="wc-realtime-dot"></span>实时统计</span>
+                    <span class="wc-audit-tip">仅统计审核通过订单</span>
+                </div>
+            </div>
+
+            <!-- 右侧：4 组 KPI 紧凑数字块（保留原有 id 供 JS 更新） -->
+            <div class="wc-dashboard-hero-kpis" id="wc-kpi-container">
+                <div class="wc-kpi-chip">
+                    <div class="wc-kpi-chip-top">
+                        <span class="wc-kpi-chip-title">小组</span>
+                        <span class="wc-kpi-chip-value wc-kpi-accent" id="wc-kpi-group-count">0</span>
+                    </div>
+                    <div class="wc-kpi-chip-sub">参赛团队数量</div>
+                </div>
+
+                <div class="wc-kpi-chip">
+                    <div class="wc-kpi-chip-top">
+                        <span class="wc-kpi-chip-title">人数</span>
+                        <span class="wc-kpi-chip-value wc-kpi-accent" id="wc-kpi-member-count">0</span>
+                    </div>
+                    <div class="wc-kpi-chip-sub">按配置成员人数汇总</div>
+                </div>
+
+                <div class="wc-kpi-chip">
+                    <div class="wc-kpi-chip-top">
+                        <span class="wc-kpi-chip-title">总业绩</span>
+                        <span class="wc-kpi-chip-value wc-kpi-accent2" id="wc-kpi-total-amount">0.00</span>
+                        <span class="wc-kpi-chip-unit">元</span>
+                    </div>
+                    <div class="wc-kpi-chip-sub">单位：元</div>
+                </div>
+
+                <div class="wc-kpi-chip">
+                    <div class="wc-kpi-chip-top">
+                        <span class="wc-kpi-chip-title">人均</span>
+                        <span class="wc-kpi-chip-value" id="wc-kpi-avg-amount">0.00</span>
+                        <span class="wc-kpi-chip-unit">元</span>
+                    </div>
+                    <div class="wc-kpi-chip-sub">总业绩 / 总人数</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="wc-cards-row">
+        <!-- 左栏：小组人均业绩排行 -->
+        <div class="wc-card-col wc-col-left">
+            <div class="layui-card wc-card wc-card-left">
+                <div class="layui-card-header wc-card-head">
+                    <div class="wc-card-head-title">小组人均业绩排行榜</div>
+                    <div class="wc-card-head-desc">展示：排名 / 小组名称 / 小组总业绩 / 成员人数 / 人均业绩（合计行保留）</div>
+                </div>
+                <div class="layui-card-body wc-card-body">
+                    <div id="wc-left-rank-container">
+                        <!-- 首屏也走与 Ajax 一致的渲染函数，避免结构不一致 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中栏：每组成员总业绩排行 -->
+        <div class="wc-card-col wc-col-center">
+            <div class="layui-card wc-card wc-card-right">
+                <div class="layui-card-header wc-card-head">
+                    <div class="wc-card-head-title">成员总业绩排行（按小组分块）</div>
+                    <div class="wc-card-head-desc">组头：小组名称 / 小组总业绩 / 人均业绩；组内：排名 / 成员姓名 / 总业绩</div>
+                </div>
+                <div class="layui-card-body wc-card-body">
+                    <div id="wc-right-group-container">
+                        <!-- 首屏也走与 Ajax 一致的渲染函数，避免结构不一致 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右栏：成员总业绩总榜（不区分小组） -->
+        <div class="wc-card-col wc-col-global">
+            <div class="layui-card wc-card wc-card-global">
+                <div class="layui-card-header wc-card-head">
+                    <div class="wc-card-head-title">成员总业绩总榜</div>
+                    <div class="wc-card-head-desc">全部成员按总业绩降序排列，不区分小组</div>
+                </div>
+                <div class="layui-card-body wc-card-body">
+                    <div id="wc-global-rank-container"></div>
+                    <!-- 首屏也走与 Ajax 一致的渲染函数，避免结构不一致 -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    console.log('[WC-Permanent] 页面脚本已加载');
+    (function() {
+        // ========== 旺春现有团队业绩看板 · 前端轮询（永久团队专属接口，依赖 layui jquery） ==========
+        var wcHeartbeatUrl = "<?php echo url('Achievement/permanentAchievementHeartbeat'); ?>";
+        var wcDataUrl = "<?php echo url('Achievement/permanentAchievementData'); ?>";
+        console.log('[WC-Permanent] heartbeat url:', wcHeartbeatUrl);
+        console.log('[WC-Permanent] data url:', wcDataUrl);
+
+        var achievementTimer = null;
+        var achievementLastStamp = '<?php echo isset($wcStamp) ? addslashes($wcStamp) : ''; ?>';
+        var achievementFailCount = 0;
+        var achievementIsPolling = false;
+
+        /* ---------- Fullscreen API：电视大屏展示（与轮询逻辑隔离，仅操作 DOM / document） ---------- */
+        var wcFullscreenRootSelector = '.wc-dashboard-container';
+        var wcFullscreenEventsBound = false;
+
+        /** 获取当前处于全屏的元素（兼容各内核） */
+        function wcGetFullscreenElement() {
+            return document.fullscreenElement
+                || document.webkitFullscreenElement
+                || document.mozFullScreenElement
+                || document.msFullscreenElement
+                || null;
+        }
+
+        /** 对指定元素请求全屏 */
+        function wcRequestFullscreen(el) {
+            if (!el) {
+                return Promise.reject(new Error('[WC-Permanent-Fullscreen] 目标元素不存在'));
+            }
+            try {
+                var req = el.requestFullscreen
+                    || el.webkitRequestFullscreen
+                    || el.mozRequestFullScreen
+                    || el.msRequestFullscreen;
+                if (!req) {
+                    return Promise.reject(new Error('[WC-Permanent-Fullscreen] 浏览器不支持全屏 API'));
+                }
+                var ret = req.call(el);
+                if (ret && typeof ret.then === 'function') {
+                    return ret;
+                }
+                return Promise.resolve();
+            } catch (e) {
+                console.warn('[WC-Permanent-Fullscreen] requestFullscreen 异常', e);
+                return Promise.reject(e);
+            }
+        }
+
+        /** 退出全屏（ESC 会触发原生退出，此处供按钮调用） */
+        function wcExitFullscreen() {
+            try {
+                var d = document;
+                if (d.exitFullscreen) {
+                    return d.exitFullscreen();
+                }
+                if (d.webkitExitFullscreen) {
+                    return d.webkitExitFullscreen();
+                }
+                if (d.mozCancelFullScreen) {
+                    return d.mozCancelFullScreen();
+                }
+                if (d.msExitFullscreen) {
+                    return d.msExitFullscreen();
+                }
+                return Promise.reject(new Error('[WC-Permanent-Fullscreen] 无可用退出接口'));
+            } catch (e) {
+                console.warn('[WC-Permanent-Fullscreen] exitFullscreen 异常', e);
+                return Promise.reject(e);
+            }
+        }
+
+        /** 根据真实全屏状态同步按钮文案、图标、body/html/根容器 class */
+        function wcUpdateFullscreenButtonState() {
+            var elActive = wcGetFullscreenElement();
+            var inFs = !!elActive;
+            var root = document.querySelector(wcFullscreenRootSelector);
+            var btn = document.getElementById('wc-fullscreen-toggle');
+            var htmlEl = document.documentElement;
+
+            try {
+                if (document.body) {
+                    if (inFs) {
+                        document.body.classList.add('wc-is-fullscreen');
+                    } else {
+                        document.body.classList.remove('wc-is-fullscreen');
+                    }
+                }
+                if (htmlEl) {
+                    if (inFs) {
+                        htmlEl.classList.add('wc-is-fullscreen');
+                    } else {
+                        htmlEl.classList.remove('wc-is-fullscreen');
+                    }
+                }
+                if (root) {
+                    if (inFs) {
+                        root.classList.add('wc-is-fullscreen');
+                    } else {
+                        root.classList.remove('wc-is-fullscreen');
+                    }
+                }
+            } catch (e) {
+                console.warn('[WC-Permanent-Fullscreen] 同步 class 失败', e);
+            }
+
+            if (!btn) {
+                return;
+            }
+            var textSpan = btn.querySelector('.wc-fullscreen-btn-text');
+            var iconEnter = btn.querySelector('.wc-fs-icon-enter');
+            var iconExit = btn.querySelector('.wc-fs-icon-exit');
+            if (inFs) {
+                btn.classList.add('is-fullscreen');
+                btn.setAttribute('aria-pressed', 'true');
+                btn.setAttribute('title', '退出全屏');
+                if (textSpan) {
+                    textSpan.textContent = '退出全屏';
+                }
+                if (iconEnter) {
+                    iconEnter.style.display = 'none';
+                }
+                if (iconExit) {
+                    iconExit.style.display = 'block';
+                }
+            } else {
+                btn.classList.remove('is-fullscreen');
+                btn.setAttribute('aria-pressed', 'false');
+                btn.setAttribute('title', '进入全屏');
+                if (textSpan) {
+                    textSpan.textContent = '进入全屏';
+                }
+                if (iconEnter) {
+                    iconEnter.style.display = 'block';
+                }
+                if (iconExit) {
+                    iconExit.style.display = 'none';
+                }
+            }
+        }
+
+        /** 绑定全屏状态事件与按钮点击（只绑定一次，避免重复监听） */
+        function wcBindFullscreenEvents() {
+            if (wcFullscreenEventsBound) {
+                return;
+            }
+            wcFullscreenEventsBound = true;
+            var fsTypes = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+            for (var fi = 0; fi < fsTypes.length; fi++) {
+                document.addEventListener(fsTypes[fi], function() {
+                    wcUpdateFullscreenButtonState();
+                });
+            }
+            document.addEventListener('click', function(ev) {
+                var t = ev.target;
+                if (!t || typeof t.closest !== 'function') {
+                    return;
+                }
+                if (!t.closest('#wc-fullscreen-toggle')) {
+                    return;
+                }
+                ev.preventDefault();
+                try {
+                    if (wcGetFullscreenElement()) {
+                        var pExit = wcExitFullscreen();
+                        if (pExit && typeof pExit.then === 'function') {
+                            pExit.catch(function(err) {
+                                console.warn('[WC-Permanent-Fullscreen] 退出全屏失败', err);
+                            });
+                        }
+                        return;
+                    }
+                    var rootEl = document.querySelector(wcFullscreenRootSelector);
+                    if (!rootEl) {
+                        console.warn('[WC-Permanent-Fullscreen] 未找到根容器', wcFullscreenRootSelector);
+                        return;
+                    }
+                    wcRequestFullscreen(rootEl).catch(function(err1) {
+                        console.warn('[WC-Permanent-Fullscreen] 根容器全屏失败，尝试 documentElement 降级', err1);
+                        return wcRequestFullscreen(document.documentElement);
+                    }).catch(function(err2) {
+                        console.warn('[WC-Permanent-Fullscreen] 全屏不可用（可能被 iframe 或策略限制）', err2);
+                    });
+                } catch (e) {
+                    console.warn('[WC-Permanent-Fullscreen] 点击处理异常', e);
+                }
+            }, false);
+        }
+
+        function getAchievementNextDelay() {
+            if (achievementFailCount === 0) {
+                return 8000 + Math.floor(Math.random() * 2000) - 1000;
+            } else if (achievementFailCount === 1) {
+                return 15000;
+            } else if (achievementFailCount === 2) {
+                return 30000;
+            } else {
+                return 60000;
+            }
+        }
+
+        function wcEscapeHtml(str) {
+            return (str == null ? '' : String(str))
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function wcFormatAmount(n) {
+            var num = parseFloat(n || 0);
+            if (!isFinite(num)) num = 0;
+            var fixed = num.toFixed(2);
+            // 千分位
+            return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        /* ========================================================================
+         * 旺春现有团队看板 · 第2/第3列纵向慢速循环轮播（与全屏、心跳轮询逻辑独立）
+         * - wcAutoScrollUserOn：全局总开关；为 false 时悬停移出也不会误启动动画
+         * - wcColumnScrollStates：分列状态（viewport + track + translate3d 偏移，单段 chunk 高度）
+         * - Ajax render 后必须 rebuild：避免复制节点累积；并保持总开关对应的滚动/停止语义
+         * ======================================================================== */
+
+        /**
+         * 纵向轮播速度配置：按「每帧基准像素 × 60 × dt」折算为像素/秒，便于电视端微调。
+         * 约 0.33~0.58 对应约 20~35 像素/秒（假设 rAF 接近 60Hz）。
+         */
+        var WC_AUTO_SCROLL_SPEED = 0.47;
+
+        /** 全局总开关：默认 false，首屏不自动滚动；仅用户点击「开始轮播」后为 true */
+        var wcAutoScrollUserOn = false;
+
+        /** 全局唯一 requestAnimationFrame id，防止多次「开始」叠加多实例 */
+        var wcAutoScrollRafId = null;
+        var wcAutoScrollLastTs = 0;
+
+        /** RAF 前几帧按列打日志，避免刷屏 */
+        var wcAutoScrollTickLogLeft = { group: 5, global: 5 };
+
+        /** layui jQuery 缓存，供 resize / 全屏后重建轮播 DOM */
+        var wcAchievementRef$ = null;
+
+        /** 第2列 group、第3列 global 分列状态 */
+        var wcColumnScrollStates = {
+            group: { canScroll: false, paused: false, viewport: null, track: null, chunkHeight: 0, offset: 0 },
+            global: { canScroll: false, paused: false, viewport: null, track: null, chunkHeight: 0, offset: 0 }
+        };
+
+        var wcAutoscrollUiBound = false;
+        var wcAutoScrollRebuildTimer = null;
+
+        /** 开发期调试：设为 false 可关闭控制台轮播日志 */
+        var WC_AUTO_SCROLL_DEBUG = true;
+
+        function wcAscLog() {
+            if (!WC_AUTO_SCROLL_DEBUG || typeof console === 'undefined' || !console.log) {
+                return;
+            }
+            var a = ['[WC-Permanent]', 'AutoScroll'];
+            for (var i = 0; i < arguments.length; i++) {
+                a.push(arguments[i]);
+            }
+            console.log.apply(console, a);
+        }
+
+        /**
+         * 首屏 / 全屏 / resize / Ajax 后：立即 rebuild + 下一帧 + 短延迟再 rebuild，避免 flex 高度未稳定时 viewH=0 或 chunkH/viewH 误判。
+         */
+        function scheduleAchievementAutoScrollRebuild($, source) {
+            if (!$) {
+                return;
+            }
+            source = source || 'unknown';
+            wcAscLog('scheduleAchievementAutoScrollRebuild', 'source=', source);
+            rebuildAchievementAutoScroll($, source + ':immediate');
+            window.requestAnimationFrame(function() {
+                rebuildAchievementAutoScroll($, source + ':raf');
+            });
+            window.setTimeout(function() {
+                rebuildAchievementAutoScroll($, source + ':delayed150');
+            }, 150);
+        }
+
+        function wcUpdateAutoscrollButtonDom() {
+            var btn = document.getElementById('wc-autoscroll-toggle');
+            if (!btn) {
+                return;
+            }
+            if (wcAutoScrollUserOn) {
+                btn.classList.add('is-autoscrolling');
+                btn.setAttribute('aria-pressed', 'true');
+                btn.setAttribute('title', '停止轮播');
+                btn.textContent = '停止轮播';
+            } else {
+                btn.classList.remove('is-autoscrolling');
+                btn.setAttribute('aria-pressed', 'false');
+                btn.setAttribute('title', '开始轮播');
+                btn.textContent = '开始轮播';
+            }
+        }
+
+        function wcStopAutoScrollAnimation() {
+            if (wcAutoScrollRafId != null) {
+                cancelAnimationFrame(wcAutoScrollRafId);
+                wcAutoScrollRafId = null;
+            }
+            wcAutoScrollLastTs = 0;
+        }
+
+        /**
+         * 单列轮播壳：viewport + track + chunk（content 超高时克隆第二块，用 translate3d 平移轨道）。
+         * @param retryDepth flex 首帧常见 clientHeight=0，有限次 rAF 重入测量
+         */
+        function setupSingleColumnAutoScroll($, hostSelector, stateKey, retryDepth) {
+            if (retryDepth == null) {
+                retryDepth = 0;
+            }
+            var MAX_RETRY = 24;
+            var MIN_VIEW_PX = 8;
+
+            var state = wcColumnScrollStates[stateKey];
+            if (!state) {
+                return;
+            }
+            state.canScroll = false;
+            state.paused = false;
+            state.viewport = null;
+            state.track = null;
+            state.chunkHeight = 0;
+            state.offset = 0;
+
+            var $host = $(hostSelector);
+            if (!$host.length) {
+                wcAscLog('setupSingleColumnAutoScroll', 'host missing, return', 'hostSelector=', hostSelector, 'retryDepth=', retryDepth);
+                return;
+            }
+
+            // 重建时宿主内可能已有视口：先拆回第一份 chunk 的原始子节点，禁止视口套视口
+            var $existingVp = $host.children('.wc-auto-scroll-viewport');
+            if ($existingVp.length) {
+                var $inner = $existingVp.find('.wc-auto-scroll-chunk').first().children().detach();
+                $existingVp.remove();
+                $host.append($inner);
+            }
+
+            var $children = $host.children().detach();
+            if (!$children.length) {
+                wcAscLog('setupSingleColumnAutoScroll', 'empty content, return', 'hostSelector=', hostSelector, 'retryDepth=', retryDepth);
+                return;
+            }
+
+            var $viewport = $('<div class="wc-auto-scroll-viewport">').attr('data-wc-scroll', stateKey);
+            var $track = $('<div class="wc-auto-scroll-track">');
+            var $chunk1 = $('<div class="wc-auto-scroll-chunk">').append($children);
+            $track.append($chunk1);
+            $viewport.append($track);
+            $host.append($viewport);
+
+            var trackEl = $track[0];
+            var chunkEl = $chunk1[0];
+            var viewportEl = $viewport[0];
+            var hostEl = $host[0];
+
+            if (hostEl) {
+                hostEl.offsetHeight;
+            }
+            viewportEl.offsetHeight;
+
+            var viewH = viewportEl.clientHeight;
+            try {
+                var br = viewportEl.getBoundingClientRect();
+                if (br && br.height > viewH) {
+                    viewH = Math.floor(br.height);
+                }
+            } catch (eBr) { /* ignore */ }
+
+            var chunkH = Math.max(chunkEl.offsetHeight || 0, chunkEl.scrollHeight || 0);
+
+            if (viewH < MIN_VIEW_PX && retryDepth < MAX_RETRY) {
+                wcAscLog(
+                    'setupSingleColumnAutoScroll retry (layout not ready)',
+                    'hostSelector=', hostSelector,
+                    'stateKey=', stateKey,
+                    'viewH=', viewH,
+                    'chunkH=', chunkH,
+                    'retryDepth=', retryDepth
+                );
+                window.requestAnimationFrame(function() {
+                    setupSingleColumnAutoScroll($, hostSelector, stateKey, retryDepth + 1);
+                });
+                return;
+            }
+
+            if (viewH < MIN_VIEW_PX) {
+                wcAscLog(
+                    'setupSingleColumnAutoScroll viewH still small after retries',
+                    'hostSelector=', hostSelector,
+                    'viewH=', viewH,
+                    'chunkH=', chunkH,
+                    'retryDepth=', retryDepth
+                );
+            }
+
+            state.viewport = viewportEl;
+            state.track = trackEl;
+            state.chunkHeight = chunkH;
+            state.canScroll = (viewH >= MIN_VIEW_PX && chunkH > viewH + 1);
+            state.offset = 0;
+
+            trackEl.style.transform = 'translate3d(0, 0, 0)';
+
+            if (state.canScroll) {
+                var $chunk2 = $chunk1.clone(true, true);
+                $track.append($chunk2);
+            }
+
+            wcAscLog(
+                'setupSingleColumnAutoScroll done',
+                'hostSelector=' + hostSelector,
+                'stateKey=' + stateKey,
+                'viewH=' + viewH,
+                'chunkH=' + chunkH,
+                'canScroll=' + state.canScroll,
+                'retryDepth=' + retryDepth
+            );
+
+            $viewport
+                .off('mouseenter.wcAsc mouseleave.wcAsc')
+                .on('mouseenter.wcAsc', function() {
+                    state.paused = true;
+                })
+                .on('mouseleave.wcAsc', function() {
+                    state.paused = false;
+                });
+        }
+
+        /**
+         * 两列一起重建：Ajax 或首屏 render 后调用；全屏/窗口尺寸变化时也会调用。
+         * 会取消 RAF、重新测量高度；若当前总开关为开，则自动恢复滚动。
+         */
+        function rebuildAchievementAutoScroll($, rebuildSource) {
+            if (!$) {
+                return;
+            }
+            rebuildSource = rebuildSource || 'unknown';
+            wcAscLog('rebuildAchievementAutoScroll', 'source=' + rebuildSource);
+            var wasOn = wcAutoScrollUserOn;
+            wcStopAutoScrollAnimation();
+            setupSingleColumnAutoScroll($, '#wc-right-group-container', 'group');
+            setupSingleColumnAutoScroll($, '#wc-global-rank-container', 'global');
+            if (wasOn) {
+                startAchievementAutoScroll();
+            }
+        }
+
+        /** 开始轮播：打开总开关并启动唯一 RAF（无溢出列在 tick 中会被跳过） */
+        function startAchievementAutoScroll() {
+            wcAscLog('startAchievementAutoScroll');
+            wcAutoScrollUserOn = true;
+            wcUpdateAutoscrollButtonDom();
+            wcAutoScrollTickLogLeft = { group: 5, global: 5 };
+            if (wcAutoScrollRafId != null) {
+                return;
+            }
+            wcAutoScrollLastTs = 0;
+            wcAutoScrollRafId = requestAnimationFrame(wcAutoScrollRafTick);
+        }
+
+        /** 停止轮播：关闭总开关并取消 RAF */
+        function stopAchievementAutoScroll() {
+            wcAscLog('stopAchievementAutoScroll');
+            wcAutoScrollUserOn = false;
+            wcUpdateAutoscrollButtonDom();
+            wcStopAutoScrollAnimation();
+        }
+
+        function wcAutoScrollRafTick(ts) {
+            wcAutoScrollRafId = null;
+            if (!wcAutoScrollUserOn) {
+                wcAutoScrollLastTs = 0;
+                return;
+            }
+            if (wcAutoScrollLastTs <= 0) {
+                wcAutoScrollLastTs = ts;
+            }
+            var dt = (ts - wcAutoScrollLastTs) / 1000;
+            if (dt > 0.2) {
+                dt = 0.2;
+            }
+            wcAutoScrollLastTs = ts;
+            var delta = WC_AUTO_SCROLL_SPEED * 60 * dt;
+
+            var keys = ['group', 'global'];
+            for (var ki = 0; ki < keys.length; ki++) {
+                var key = keys[ki];
+                var st = wcColumnScrollStates[key];
+                if (!st || !st.canScroll || st.paused || !st.track) {
+                    continue;
+                }
+                var ch = st.chunkHeight;
+                if (ch <= 0) {
+                    continue;
+                }
+                st.offset += delta;
+                while (st.offset >= ch) {
+                    st.offset -= ch;
+                }
+                st.track.style.transform = 'translate3d(0, -' + st.offset + 'px, 0)';
+                if (wcAutoScrollTickLogLeft[key] > 0) {
+                    wcAutoScrollTickLogLeft[key]--;
+                    wcAscLog('tick', 'stateKey=' + key, 'offset=' + st.offset.toFixed(2));
+                }
+            }
+
+            if (wcAutoScrollUserOn) {
+                wcAutoScrollRafId = requestAnimationFrame(wcAutoScrollRafTick);
+            }
+        }
+
+        /**
+         * 初始化轮播 UI：轮播按钮只绑定一次；resize/全屏 debounce 重建，避免重复监听泄漏。
+         */
+        function initAchievementAutoScroll($) {
+            wcAchievementRef$ = $;
+            wcUpdateAutoscrollButtonDom();
+
+            if (wcAutoscrollUiBound) {
+                return;
+            }
+            wcAutoscrollUiBound = true;
+
+            document.addEventListener('click', function(ev) {
+                var t = ev.target;
+                if (!t || typeof t.closest !== 'function') {
+                    return;
+                }
+                if (!t.closest('#wc-autoscroll-toggle')) {
+                    return;
+                }
+                ev.preventDefault();
+                wcAscLog('autoscroll button click', 'wcAutoScrollUserOn(before)=', wcAutoScrollUserOn);
+                if (wcAutoScrollUserOn) {
+                    stopAchievementAutoScroll();
+                } else {
+                    if (wcAchievementRef$) {
+                        scheduleAchievementAutoScrollRebuild(wcAchievementRef$, 'button');
+                    }
+                    startAchievementAutoScroll();
+                }
+            }, false);
+
+            var fsTypesAsc = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+            for (var ai = 0; ai < fsTypesAsc.length; ai++) {
+                document.addEventListener(fsTypesAsc[ai], function() {
+                    window.clearTimeout(wcAutoScrollRebuildTimer);
+                    wcAutoScrollRebuildTimer = window.setTimeout(function() {
+                        if (!wcAchievementRef$) {
+                            return;
+                        }
+                        scheduleAchievementAutoScrollRebuild(wcAchievementRef$, 'fullscreenchange');
+                    }, 150);
+                });
+            }
+
+            window.addEventListener('resize', function() {
+                window.clearTimeout(wcAutoScrollRebuildTimer);
+                wcAutoScrollRebuildTimer = window.setTimeout(function() {
+                    if (!wcAchievementRef$) {
+                        return;
+                    }
+                    scheduleAchievementAutoScrollRebuild(wcAchievementRef$, 'resize');
+                }, 200);
+            });
+        }
+
+        function updateKpiFromData($, groupAvgRankList, memberRankGroupList) {
+            var groups = Array.isArray(groupAvgRankList) ? groupAvgRankList : [];
+            var groupCount = groups.length;
+            var memberCount = 0;
+            var totalAmount = 0;
+            for (var i = 0; i < groups.length; i++) {
+                var it = groups[i] || {};
+                memberCount += parseInt(it.member_count || 0, 10) || 0;
+                totalAmount += parseFloat(it.total_amount || 0) || 0;
+            }
+            var avgAll = memberCount > 0 ? (totalAmount / memberCount) : 0;
+
+            $('#wc-kpi-group-count').text(groupCount);
+            $('#wc-kpi-member-count').text(memberCount);
+            $('#wc-kpi-total-amount').text(wcFormatAmount(totalAmount));
+            $('#wc-kpi-avg-amount').text(wcFormatAmount(avgAll));
+        }
+
+        function renderGroupAvgRankList($, list) {
+            var $container = $('#wc-left-rank-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!list || !list.length) {
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📊</div><div>暂无排名数据</div><small>等待产生业绩数据或检查统计周期配置</small></div>';
+                $container.html(html);
+                return;
+            }
+            var totalGroupAmount = 0;
+            var totalMemberCount = 0;
+
+            html += '<div class="wc-left-board">';
+            html += '<table class="wc-board-table"><thead><tr>';
+            html += '<th class="wc-col-rank">排名</th>';
+            html += '<th class="wc-col-name">小组</th>';
+            html += '<th class="wc-col-total">小组总业绩</th>';
+            html += '<th class="wc-col-num">人数</th>';
+            html += '<th class="wc-col-avg">人均业绩</th>';
+            html += '</tr></thead><tbody>';
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i] || {};
+                var rank = parseInt(item.rank || (i + 1), 10);
+                var badgeClass = rank === 1 ? 'wc-rank-badge-1' : (rank === 2 ? 'wc-rank-badge-2' : (rank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
+                var totalAmount = parseFloat(item.total_amount || 0);
+                var avgAmount = parseFloat(item.avg_amount || 0);
+                var groupName = wcEscapeHtml(item.group_name || '');
+                var memberCount = parseInt(item.member_count || 0, 10);
+                var rowClass = rank === 1 ? 'wc-row-top3' : (rank === 2 ? 'wc-row-top3 wc-row-2' : (rank === 3 ? 'wc-row-top3 wc-row-3' : ''));
+                if (!(totalAmount > 0) && !(avgAmount > 0)) {
+                    rowClass += (rowClass ? ' ' : '') + 'wc-row-zero';
+                }
+
+                totalGroupAmount += totalAmount;
+                totalMemberCount += memberCount;
+
+                html += '<tr class="' + rowClass + '">';
+                html += '<td class="wc-col-rank"><span class="wc-rank-badge ' + badgeClass + '">' + rank + '</span></td>';
+                html += '<td class="wc-col-name"><span class="wc-group-name">' + groupName + '</span></td>';
+                html += '<td class="wc-col-total">' + (totalAmount > 0 ? '<span class="wc-amount-highlight">' + wcFormatAmount(totalAmount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '<td class="wc-col-num">' + memberCount + '</td>';
+                html += '<td class="wc-col-avg">' + (avgAmount > 0 ? '<span class="wc-amount-highlight wc-amount-primary">' + wcFormatAmount(avgAmount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '</tr>';
+            }
+            html += '<tr class="wc-row-total">';
+            html += '<td class="wc-col-rank"></td>';
+            html += '<td class="wc-col-name"><span class="wc-group-name">合计</span></td>';
+            html += '<td class="wc-col-total"><span class="wc-amount-highlight wc-amount-primary">' + wcFormatAmount(totalGroupAmount) + '</span><span class="wc-amount-unit">元</span></td>';
+            html += '<td class="wc-col-num"><span class="wc-amount-highlight">' + (totalMemberCount || 0) + '</span></td>';
+            var allAvg = totalMemberCount > 0 ? (totalGroupAmount / totalMemberCount) : 0;
+            html += '<td class="wc-col-avg"><span class="wc-amount-highlight wc-amount-primary">' + wcFormatAmount(allAvg) + '</span><span class="wc-amount-unit">元</span></td>';
+            html += '</tr>';
+
+            html += '</tbody></table>';
+            html += '</div>';
+            $container.html(html);
+        }
+
+        function renderMemberRankGroupList($, groupList) {
+            var $container = $('#wc-right-group-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!groupList || !groupList.length) {
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">📋</div><div>暂无成员业绩数据</div><small>等待产生业绩数据或检查成员配置</small></div>';
+                $container.html(html);
+                return;
+            }
+            html += '<div class="wc-right-board">';
+            for (var i = 0; i < groupList.length; i++) {
+                var group = groupList[i] || {};
+                var gName = wcEscapeHtml(group.group_name || '');
+                var gTotal = parseFloat(group.total_amount || 0);
+                var gAvg = parseFloat(group.avg_amount || 0);
+                var members = group.members || [];
+                html += '<div class="wc-group-block"><div class="wc-group-block-head">';
+                html += '<div class="wc-group-block-title">' + gName + '</div>';
+                html += '<div class="wc-group-block-meta">';
+                html += '<span class="wc-meta-amount">小组总业绩：<strong>' + wcFormatAmount(gTotal) + '</strong><span class="wc-amount-unit">元</span></span>';
+                html += '<span class="wc-meta-avg">人均：<strong>' + wcFormatAmount(gAvg) + '</strong><span class="wc-amount-unit">元</span></span>';
+                html += '</div></div>';
+                if (members.length) {
+                    html += '<table class="wc-member-table"><thead><tr><th class="wc-mcol-rank">排名</th><th class="wc-mcol-name">成员姓名</th><th class="wc-mcol-amount">总业绩</th></tr></thead><tbody>';
+                    for (var j = 0; j < members.length; j++) {
+                        var m = members[j] || {};
+                        var mRank = parseInt(m.rank || (j + 1), 10);
+                        var mAmount = parseFloat(m.amount || 0);
+                        var mName = wcEscapeHtml(m.name || '');
+                        var rowClass = mRank === 1 ? 'wc-member-row-first' : (mAmount <= 0 ? 'wc-member-row-zero' : '');
+                        var badgeClass = mRank === 1 ? 'wc-rank-badge-1' : (mRank === 2 ? 'wc-rank-badge-2' : (mRank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
+                        html += '<tr class="' + rowClass + '"><td class="wc-mcol-rank"><span class="wc-rank-badge ' + badgeClass + '">' + mRank + '</span></td>';
+                        html += '<td class="wc-mcol-name"><span class="wc-member-name">' + mName + '</span></td>';
+                        html += '<td class="wc-mcol-amount">' + (mAmount > 0 ? '<span class="wc-amount-highlight">' + wcFormatAmount(mAmount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td></tr>';
+                    }
+                    html += '</tbody></table>';
+                } else {
+                    html += '<div class="wc-empty-state" style="padding: 24px;"><div class="wc-empty-state-icon">👥</div><div>暂无成员业绩数据</div><small>该小组暂未产生业绩</small></div>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+            $container.html(html);
+        }
+
+        function renderGlobalMemberRankList($, list) {
+            var $container = $('#wc-global-rank-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!list || !list.length) {
+                html = '<div class="wc-empty-state"><div class="wc-empty-state-icon">🏆</div><div>暂无成员总业绩数据</div><small>等待产生业绩数据或检查成员配置</small></div>';
+                $container.html(html);
+                return;
+            }
+
+            html += '<div class="wc-left-board">';
+            html += '<table class="wc-board-table"><thead><tr>';
+            html += '<th class="wc-col-rank">排名</th>';
+            html += '<th class="wc-col-name">成员姓名</th>';
+            html += '<th class="wc-col-group">所属小组</th>';
+            html += '<th class="wc-col-total">总业绩</th>';
+            html += '</tr></thead><tbody>';
+
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i] || {};
+                var rank = parseInt(item.rank || (i + 1), 10);
+                var badgeClass = rank === 1 ? 'wc-rank-badge-1' : (rank === 2 ? 'wc-rank-badge-2' : (rank === 3 ? 'wc-rank-badge-3' : 'wc-rank-badge-n'));
+
+                var amount = parseFloat(item.amount || 0);
+                var name = wcEscapeHtml(item.name || '');
+                var groupName = wcEscapeHtml(item.group_name || '');
+
+                var rowClass = rank === 1 ? 'wc-row-top3' : (rank === 2 ? 'wc-row-top3 wc-row-2' : (rank === 3 ? 'wc-row-top3 wc-row-3' : ''));
+                if (!(amount > 0)) {
+                    rowClass += (rowClass ? ' ' : '') + 'wc-row-zero';
+                }
+
+                html += '<tr class="' + rowClass + '">';
+                html += '<td class="wc-col-rank"><span class="wc-rank-badge ' + badgeClass + '">' + rank + '</span></td>';
+                html += '<td class="wc-col-name"><span class="wc-group-name">' + name + '</span></td>';
+                html += '<td class="wc-col-group"><span class="wc-group-name">' + groupName + '</span></td>';
+                html += '<td class="wc-col-total">' + (amount > 0 ? '<span class="wc-amount-highlight">' + wcFormatAmount(amount) + '</span>' : '<span class="wc-amount-zero">0.00</span>') + '<span class="wc-amount-unit">元</span></td>';
+                html += '</tr>';
+            }
+
+            html += '</tbody></table>';
+            html += '</div>';
+            $container.html(html);
+        }
+
+        function loadAchievementDataAndRender($) {
+            $.ajax({
+                url: wcDataUrl + (wcDataUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now(),
+                type: 'GET',
+                dataType: 'json',
+                cache: false,
+                timeout: 15000,
+                success: function (res) {
+                    if (!res || res.code != 1 || !res.data) {
+                        console.warn('[WC-Permanent] permanentAchievementData 返回异常', res ? res.msg : '');
+                        return;
+                    }
+                    var data = res.data;
+                    if (data.dashboardTitle) $('.wc-dashboard-main-title').text(data.dashboardTitle);
+                    if (data.periodText) $('.wc-period-value').text(data.periodText);
+                    achievementLastStamp = data.stamp || achievementLastStamp;
+                    updateKpiFromData($, data.groupAvgRankList || [], data.memberRankGroupList || []);
+                    renderGroupAvgRankList($, data.groupAvgRankList || []);
+                    renderMemberRankGroupList($, data.memberRankGroupList || []);
+                    renderGlobalMemberRankList($, data.globalMemberRankList || []);
+                    scheduleAchievementAutoScrollRebuild($, 'ajax-render');
+                    console.log('[WC-Permanent] 完整数据拉取成功，DOM 已刷新');
+                },
+                error: function (xhr, status, error) {
+                    console.warn('[WC-Permanent] permanentAchievementData 请求失败', status, error);
+                }
+            });
+        }
+
+        function pollAchievementOnce($) {
+            if (document.visibilityState !== 'visible') return;
+            if (achievementIsPolling) return;
+            achievementIsPolling = true;
+            var heartbeatUrl = wcHeartbeatUrl + (wcHeartbeatUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now();
+            console.log('[WC-Permanent] heartbeat request send', heartbeatUrl);
+            $.ajax({
+                url: heartbeatUrl,
+                type: 'GET',
+                dataType: 'json',
+                cache: false,
+                timeout: 8000,
+                success: function (res) {
+                    achievementIsPolling = false;
+                    console.log('[WC-Permanent] heartbeat success:', res);
+                    if (!res || res.code != 1) {
+                        achievementFailCount++;
+                        scheduleNextAchievementPoll($);
+                        return;
+                    }
+                    var stamp = (res.data && res.data.stamp) ? res.data.stamp : '';
+                    var changed = stamp !== achievementLastStamp;
+                    console.log('[WC-Permanent] stamp 是否变化:', changed ? '是' : '否', '当前 stamp=', stamp);
+                    if (!changed) {
+                        achievementFailCount = 0;
+                        scheduleNextAchievementPoll($);
+                        return;
+                    }
+                    achievementLastStamp = stamp;
+                    achievementFailCount = 0;
+                    loadAchievementDataAndRender($);
+                    scheduleNextAchievementPoll($);
+                },
+                error: function (xhr, status, error) {
+                    achievementIsPolling = false;
+                    achievementFailCount++;
+                    console.warn('[WC-Permanent] heartbeat error:', status, error);
+                    scheduleNextAchievementPoll($);
+                }
+            });
+        }
+
+        function scheduleNextAchievementPoll($) {
+            if (document.visibilityState !== 'visible') return;
+            if (achievementTimer != null) {
+                clearTimeout(achievementTimer);
+                achievementTimer = null;
+            }
+            var delay = getAchievementNextDelay();
+            achievementTimer = setTimeout(function() { pollAchievementOnce($); }, delay);
+        }
+
+        function startAchievementPolling($) {
+            stopAchievementPolling();
+            pollAchievementOnce($);
+        }
+
+        function stopAchievementPolling() {
+            if (achievementTimer != null) {
+                clearTimeout(achievementTimer);
+                achievementTimer = null;
+            }
+            achievementIsPolling = false;
+        }
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'hidden') stopAchievementPolling();
+            else if (document.visibilityState === 'visible' && typeof layui !== 'undefined') {
+                layui.use(['jquery'], function() {
+                    var $ = layui.jquery;
+                    startAchievementPolling($);
+                });
+            }
+        });
+        window.addEventListener('beforeunload', function() { stopAchievementPolling(); });
+
+        /* 全屏：不依赖 layui，脚本底部执行时 DOM 已就绪 */
+        wcBindFullscreenEvents();
+        wcUpdateFullscreenButtonState();
+
+        if (typeof layui === 'undefined') {
+            console.error('[WC-Permanent] 未找到 layui，轮询将不启动。请确保本页已引入 /static/plugins/layui/layui.js');
+            return;
+        }
+        layui.use(['jquery'], function() {
+            var $ = layui.jquery;
+            if (!$ || !$.ajax) {
+                console.error('[WC-Permanent] jQuery 不可用，轮询将不启动');
+                return;
+            }
+            console.log('[WC-Permanent] jQuery ready');
+            console.log('[WC-Permanent] start polling');
+
+            /* 与 layui 同帧再同步一次全屏按钮（防止极端情况下时序问题） */
+            wcUpdateFullscreenButtonState();
+
+            // 首屏渲染：使用与 Ajax 同一套渲染函数，确保结构一致
+            try {
+                var initialGroupAvgRankList = <?php echo json_encode($groupAvgRankList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                var initialMemberRankGroupList = <?php echo json_encode($memberRankGroupList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                var initialGlobalMemberRankList = <?php echo json_encode($globalMemberRankList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                updateKpiFromData($, initialGroupAvgRankList || [], initialMemberRankGroupList || []);
+                renderGroupAvgRankList($, initialGroupAvgRankList || []);
+                renderMemberRankGroupList($, initialMemberRankGroupList || []);
+                renderGlobalMemberRankList($, initialGlobalMemberRankList || []);
+                scheduleAchievementAutoScrollRebuild($, 'first-screen');
+            } catch (e) {
+                console.warn('[WC-Permanent] 首屏渲染失败（不影响轮询）', e);
+            }
+
+            initAchievementAutoScroll($);
+            startAchievementPolling($);
+        });
+    })();
+</script>

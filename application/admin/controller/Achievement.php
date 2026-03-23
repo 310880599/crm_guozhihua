@@ -14,8 +14,12 @@ class Achievement extends Common
      */
     // 活动标题
     private $wcDashboardTitle = '旺春PK小组 · 业绩看板';
+    // 活动标题（个人页入口）
+    private $wcDashboardTitlePerson = '旺春PK小组个人 · 业绩看板';
     // 活动标题
     private $wcDashboardTitlePermanent = '旺春现有团队 · 业绩看板';
+    // 活动标题（个人页入口）
+    private $wcDashboardTitlePermanentPerson = '旺春现有团队个人 · 业绩看板';
 
     // 统计周期文本（展示用）
     private $wcStatPeriodText = '2026.03.01 - 2026.04.15';
@@ -79,6 +83,8 @@ class Achievement extends Common
         '无畏蜜蜂' => ['彭玉', '刘小方', '胡沙沙', '田瑞云', '张二凤', '贾聪乐', '张景春', '毛卫娟'],
     ];
 
+
+    //旺春px小组
     public function temporaryAchievement()
     {
         // 首次进入页面仍然采用服务端渲染完整数据
@@ -96,6 +102,27 @@ class Achievement extends Common
         return $this->fetch('achievement/temporary_achievement');
     }
 
+
+
+    //旺春px小组个人
+    public function temporaryAchievementPerson()
+    {
+        // 首次进入页面仍然采用服务端渲染完整数据
+        $data  = $this->buildTemporaryAchievementData();
+        $stamp = $this->getTemporaryAchievementStamp();
+
+        $this->assign('dashboardTitle', $this->wcDashboardTitlePerson);
+        $this->assign('periodText', $this->wcStatPeriodText);
+        $this->assign('groupAvgRankList', $data['groupAvgRankList']);
+        $this->assign('memberRankGroupList', $data['memberRankGroupList']);
+        $this->assign('globalMemberRankList', $data['globalMemberRankList']);
+        // 首次渲染时把当前版本标识传给前端，便于心跳对比
+        $this->assign('wcStamp', $stamp);
+
+        return $this->fetch('achievement/temporary_achievement_person');
+    }
+
+    //旺春现有团队    
     public function permanentAchievement()
     {
         // 首次进入页面仍然采用服务端渲染完整数据；使用永久团队专属 stamp，解决复制 PK 小组后错误复用 temporary 轮询链路的问题
@@ -112,6 +139,29 @@ class Achievement extends Common
 
         return $this->fetch('achievement/permanent_achievement');
     }
+
+
+    //旺春现有团队个人    
+    public function permanentAchievementPerson()
+    {
+        // 首次进入页面仍然采用服务端渲染完整数据；使用永久团队专属 stamp，解决复制 PK 小组后错误复用 temporary 轮询链路的问题
+        $data  = $this->buildPermanentAchievementData();
+        $stamp = $this->getPermanentAchievementStamp();
+
+        $this->assign('dashboardTitle', $this->wcDashboardTitlePermanentPerson);
+        $this->assign('periodText', $this->wcStatPeriodText);
+        $this->assign('groupAvgRankList', $data['groupAvgRankList']);
+        $this->assign('memberRankGroupList', $data['memberRankGroupList']);
+        $this->assign('globalMemberRankList', $data['globalMemberRankList']);
+        // 首次渲染时把当前版本标识传给前端，便于心跳对比
+        $this->assign('wcStamp', $stamp);
+
+        return $this->fetch('achievement/permanent_achievement_person');
+    }
+
+
+
+
 
     /**
      * 构建旺春PK小组临时业绩看板数据
