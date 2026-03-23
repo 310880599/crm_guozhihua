@@ -37,6 +37,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     }
 
     /* ========== 页面背景层 ========== */
+    /* 普通模式：纵向 flex + 中间行 flex:1，保证第2/3列 card-body 内视口有「可计算的剩余高度」，避免被内容撑满导致 canScroll=false */
     .wc-dashboard-container{
         position: relative;
         padding: 12px 18px 16px;
@@ -49,6 +50,12 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         box-sizing: border-box;
         overflow: hidden;
         color: var(--wc-text);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .wc-dashboard-container > .wc-dashboard-hero{
+        flex: 0 0 auto;
     }
 
     .wc-dashboard-container::before{
@@ -463,13 +470,25 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         position: relative;
         z-index: 1;
         margin-top: 0;
+        flex: 1 1 auto;
+        min-height: 0;
     }
 
+    /* Grid 子项默认 min-height:auto 会按内容撑开行高，打断 overflow:hidden 与视口高度链；必须允许列在轨道内收缩 */
     .wc-card-col{
         min-width: 0;
+        min-height: 0;
         flex: 1 1 520px;
         width: 100%;
         box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .wc-card-col > .layui-card.wc-card{
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
     }
 
     /* 大屏：Grid 分配列宽，gap 在轨道之间计算，避免 42%+58%+gap 挤换行 */
@@ -1583,6 +1602,38 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         var wcAutoscrollUiBound = false;
         var wcAutoScrollRebuildTimer = null;
 
+        /** 开发期调试：设为 false 可关闭控制台轮播日志 */
+        var WC_AUTO_SCROLL_DEBUG = true;
+
+        function wcAscLog() {
+            if (!WC_AUTO_SCROLL_DEBUG || typeof console === 'undefined' || !console.log) {
+                return;
+            }
+            var a = ['[WC-AutoScroll]'];
+            for (var i = 0; i < arguments.length; i++) {
+                a.push(arguments[i]);
+            }
+            console.log.apply(console, a);
+        }
+
+        /**
+         * 首屏 / 全屏 / resize / Ajax 后：立即 rebuild + 下一帧 + 短延迟再 rebuild，避免 flex 高度未稳定时 viewH=0 或 chunkH/viewH 误判。
+         */
+        function scheduleAchievementAutoScrollRebuild($, source) {
+            if (!$) {
+                return;
+            }
+            source = source || 'unknown';
+            wcAscLog('scheduleAchievementAutoScrollRebuild', 'source=', source);
+            rebuildAchievementAutoScroll($, source + ':immediate');
+            window.requestAnimationFrame(function() {
+                rebuildAchievementAutoScroll($, source + ':raf');
+            });
+            window.setTimeout(function() {
+                rebuildAchievementAutoScroll($, source + ':delayed150');
+            }, 150);
+        }
+
         function wcUpdateAutoscrollButtonDom() {
             var btn = document.getElementById('wc-autoscroll-toggle');
             if (!btn) {
@@ -1617,6 +1668,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             if (retryDepth == null) {
                 retryDepth = 0;
             }
+            var MAX_RETRY = 24;
+            var MIN_VIEW_PX = 8;
+
             var state = wcColumnScrollStates[stateKey];
             if (!state) {
                 return;
@@ -1628,6 +1682,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
             var $host = $(hostSelector);
             if (!$host.length) {
+                wcAscLog('setupSingleColumnAutoScroll', 'host missing, return', 'hostSelector=', hostSelector, 'retryDepth=', retryDepth);
                 return;
             }
 
@@ -1641,6 +1696,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
             var $children = $host.children().detach();
             if (!$children.length) {
+                wcAscLog('setupSingleColumnAutoScroll', 'empty content, return', 'hostSelector=', hostSelector, 'retryDepth=', retryDepth);
                 return;
             }
 
@@ -1656,21 +1712,53 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             var scrollerEl = $scroller[0];
             var chunkEl = $chunk1[0];
             var viewportEl = $viewport[0];
+            var hostEl = $host[0];
+
+            // 强制同步布局，减少「首帧 viewH=0」误判
+            if (hostEl) {
+                hostEl.offsetHeight;
+            }
+            viewportEl.offsetHeight;
 
             var viewH = viewportEl.clientHeight;
+            try {
+                var br = viewportEl.getBoundingClientRect();
+                if (br && br.height > viewH) {
+                    viewH = Math.floor(br.height);
+                }
+            } catch (eBr) { /* ignore */ }
+
             var chunkH = chunkEl.scrollHeight;
 
-            // 父级 flex 未结算高度时 viewH 可能为 0：此时禁止判定为可滚，避免错误克隆第二块
-            if (viewH < 4 && retryDepth < 12) {
+            // 父级 flex/grid 未结算高度时 viewH 可能为 0 或极小：延迟重测，避免过早 canScroll=false 或误克隆第二块
+            if (viewH < MIN_VIEW_PX && retryDepth < MAX_RETRY) {
+                wcAscLog(
+                    'setupSingleColumnAutoScroll retry (layout not ready)',
+                    'hostSelector=', hostSelector,
+                    'stateKey=', stateKey,
+                    'viewH=', viewH,
+                    'chunkH=', chunkH,
+                    'retryDepth=', retryDepth
+                );
                 window.requestAnimationFrame(function() {
                     setupSingleColumnAutoScroll($, hostSelector, stateKey, retryDepth + 1);
                 });
                 return;
             }
 
+            if (viewH < MIN_VIEW_PX) {
+                wcAscLog(
+                    'setupSingleColumnAutoScroll viewH still small after retries',
+                    'hostSelector=', hostSelector,
+                    'viewH=', viewH,
+                    'chunkH=', chunkH,
+                    'retryDepth=', retryDepth
+                );
+            }
+
             state.scroller = scrollerEl;
             state.chunkHeight = chunkH;
-            state.canScroll = (viewH > 2 && chunkH > viewH + 1);
+            state.canScroll = (viewH >= MIN_VIEW_PX && chunkH > viewH + 1);
 
             scrollerEl.scrollTop = 0;
 
@@ -1678,6 +1766,16 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 var $chunk2 = $chunk1.clone(true, true);
                 $track.append($chunk2);
             }
+
+            wcAscLog(
+                'setupSingleColumnAutoScroll done',
+                'hostSelector=', hostSelector,
+                'stateKey=', stateKey,
+                'viewH=', viewH,
+                'chunkH=', chunkH,
+                'canScroll=', state.canScroll,
+                'retryDepth=', retryDepth
+            );
 
             // 命名空间绑定，重建前先 off，避免 Ajax 多次刷新导致监听器叠加
             $viewport
@@ -1695,10 +1793,12 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
          * 两列一起重建：Ajax 或首屏 render 后调用；全屏/窗口尺寸变化时也会调用。
          * 会取消 RAF、重新测量高度；若当前总开关为开，则自动恢复滚动。
          */
-        function rebuildAchievementAutoScroll($) {
+        function rebuildAchievementAutoScroll($, rebuildSource) {
             if (!$) {
                 return;
             }
+            rebuildSource = rebuildSource || 'unknown';
+            wcAscLog('rebuildAchievementAutoScroll', 'source=', rebuildSource);
             var wasOn = wcAutoScrollUserOn;
             wcStopAutoScrollAnimation();
             setupSingleColumnAutoScroll($, '#wc-right-group-container', 'group');
@@ -1710,6 +1810,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
         /** 开始轮播：打开总开关并启动唯一 RAF（无溢出列在 tick 中会被跳过） */
         function startAchievementAutoScroll() {
+            wcAscLog('startAchievementAutoScroll');
             wcAutoScrollUserOn = true;
             wcUpdateAutoscrollButtonDom();
             if (wcAutoScrollRafId != null) {
@@ -1721,6 +1822,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
         /** 停止轮播：关闭总开关并取消 RAF */
         function stopAchievementAutoScroll() {
+            wcAscLog('stopAchievementAutoScroll');
             wcAutoScrollUserOn = false;
             wcUpdateAutoscrollButtonDom();
             wcStopAutoScrollAnimation();
@@ -1786,11 +1888,12 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     return;
                 }
                 ev.preventDefault();
+                wcAscLog('autoscroll button click', 'wcAutoScrollUserOn(before)=', wcAutoScrollUserOn);
                 if (wcAutoScrollUserOn) {
                     stopAchievementAutoScroll();
                 } else {
                     if (wcAchievementRef$) {
-                        rebuildAchievementAutoScroll(wcAchievementRef$);
+                        scheduleAchievementAutoScrollRebuild(wcAchievementRef$, 'button');
                     }
                     startAchievementAutoScroll();
                 }
@@ -1804,7 +1907,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                         if (!wcAchievementRef$) {
                             return;
                         }
-                        rebuildAchievementAutoScroll(wcAchievementRef$);
+                        scheduleAchievementAutoScrollRebuild(wcAchievementRef$, 'fullscreenchange');
                     }, 150);
                 });
             }
@@ -1815,7 +1918,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     if (!wcAchievementRef$) {
                         return;
                     }
-                    rebuildAchievementAutoScroll(wcAchievementRef$);
+                    scheduleAchievementAutoScrollRebuild(wcAchievementRef$, 'resize');
                 }, 200);
             });
         }
@@ -2006,7 +2109,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     renderGroupAvgRankList($, data.groupAvgRankList || []);
                     renderMemberRankGroupList($, data.memberRankGroupList || []);
                     renderGlobalMemberRankList($, data.globalMemberRankList || []);
-                    rebuildAchievementAutoScroll($);
+                    scheduleAchievementAutoScrollRebuild($, 'ajax-render');
                     console.log('[WC] 完整数据拉取成功，DOM 已刷新');
                 },
                 error: function (xhr, status, error) {
@@ -2120,7 +2223,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 renderGroupAvgRankList($, initialGroupAvgRankList || []);
                 renderMemberRankGroupList($, initialMemberRankGroupList || []);
                 renderGlobalMemberRankList($, initialGlobalMemberRankList || []);
-                rebuildAchievementAutoScroll($);
+                scheduleAchievementAutoScrollRebuild($, 'first-screen');
             } catch (e) {
                 console.warn('[WC] 首屏渲染失败（不影响轮询）', e);
             }
