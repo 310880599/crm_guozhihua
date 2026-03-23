@@ -585,6 +585,73 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         max-height: 640px;
     }
 
+    /* 第2/第3列：外层 body 不滚动，由内部轮播视口承担高度与滚动（第1列保持 overflow:auto） */
+    .wc-col-center .wc-card-body,
+    .wc-col-global .wc-card-body{
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-height: 0;
+    }
+
+    .wc-col-center .wc-card-body #wc-right-group-container,
+    .wc-col-global .wc-card-body #wc-global-rank-container{
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    /* ========== 第2/第3列 · 自动轮播视口 ========== */
+    .wc-auto-scroll-viewport{
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+        position: relative;
+        user-select: none;
+        -webkit-user-select: none;
+    }
+
+    .wc-auto-scroll-scroller{
+        height: 100%;
+        max-height: 100%;
+        overflow-y: auto;
+        overflow-x: hidden;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+
+    .wc-auto-scroll-scroller::-webkit-scrollbar{
+        width: 0;
+        height: 0;
+        display: none;
+    }
+
+    /* 轮播 track：纵向堆叠两段相同内容，实现无缝循环 */
+    .wc-auto-scroll-track{
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        min-width: 0;
+    }
+
+    .wc-auto-scroll-chunk{
+        display: block;
+        min-width: 0;
+    }
+
+    /* 轮播控制按钮：与全屏按钮同系，独立 id，互不影响 */
+    .wc-autoscroll-btn.is-autoscrolling{
+        border-color: rgba(59,226,127,.42);
+        background:
+            linear-gradient(180deg, rgba(8,52,36,.78) 0%, rgba(5,22,28,.74) 100%);
+        box-shadow:
+            0 0 0 1px rgba(59,226,127,.14) inset,
+            0 0 22px rgba(59,226,127,.18),
+            0 8px 22px rgba(0,0,0,.28);
+    }
+
     /* ========== 滚动条美化 ========== */
     .wc-card-body::-webkit-scrollbar{ width: 10px; height: 10px; }
     .wc-card-body::-webkit-scrollbar-track{ background: rgba(255,255,255,.04); }
@@ -1101,6 +1168,22 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         min-height: 0;
     }
 
+    /* 全屏下第2/第3列仍使用 flex 裁切 + 内部轮播视口 */
+    .wc-dashboard-container.wc-is-fullscreen .wc-col-center .wc-card-body,
+    .wc-dashboard-container.wc-is-fullscreen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:fullscreen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:fullscreen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:-webkit-full-screen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:-webkit-full-screen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:-moz-full-screen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:-moz-full-screen .wc-col-global .wc-card-body,
+    .wc-dashboard-container:-ms-fullscreen .wc-col-center .wc-card-body,
+    .wc-dashboard-container:-ms-fullscreen .wc-col-global .wc-card-body{
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
     @media screen and (min-width: 1600px){
         .wc-dashboard-container.wc-is-fullscreen .wc-card-body,
         .wc-dashboard-container:fullscreen .wc-card-body,
@@ -1140,6 +1223,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 </span>
                 <span class="wc-fullscreen-btn-text">进入全屏</span>
             </button>
+            <button type="button" class="wc-fullscreen-btn wc-autoscroll-btn" id="wc-autoscroll-toggle" aria-pressed="false" title="开始轮播">开始轮播</button>
             <span class="wc-fullscreen-hint">ESC 可退出全屏</span>
         </div>
         <div class="wc-dashboard-hero-main">
@@ -1467,6 +1551,275 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         }
 
+        /* ========================================================================
+         * 旺春看板 · 第2/第3列纵向慢速循环轮播（与全屏、心跳轮询逻辑独立）
+         * - wcAutoScrollUserOn：全局总开关（语义同「wcAutoScrollEnabled」；为 false 时悬停移出也不会误启动动画）
+         * - wcColumnScrollStates：分列状态（可否滚、悬停暂停、scroller、单段内容高度）
+         * - Ajax render 后必须 rebuild：避免复制节点累积；并保持总开关对应的滚动/停止语义
+         * ======================================================================== */
+
+        /**
+         * 纵向轮播速度配置：按「每帧基准像素 × 60 × dt」折算为像素/秒，便于电视端微调。
+         * 约 0.33~0.58 对应约 20~35 像素/秒（假设 rAF 接近 60Hz）。
+         */
+        var WC_AUTO_SCROLL_SPEED = 0.47;
+
+        /** 全局总开关：默认 false，首屏不自动滚动；仅用户点击「开始轮播」后为 true */
+        var wcAutoScrollUserOn = false;
+
+        /** 全局唯一 requestAnimationFrame id，防止多次「开始」叠加多实例 */
+        var wcAutoScrollRafId = null;
+        var wcAutoScrollLastTs = 0;
+
+        /** layui jQuery 缓存，供 resize / 全屏后重建轮播 DOM */
+        var wcAchievementRef$ = null;
+
+        /** 第2列 group、第3列 global 分列状态 */
+        var wcColumnScrollStates = {
+            group: { canScroll: false, paused: false, scroller: null, chunkHeight: 0 },
+            global: { canScroll: false, paused: false, scroller: null, chunkHeight: 0 }
+        };
+
+        var wcAutoscrollUiBound = false;
+        var wcAutoScrollRebuildTimer = null;
+
+        function wcUpdateAutoscrollButtonDom() {
+            var btn = document.getElementById('wc-autoscroll-toggle');
+            if (!btn) {
+                return;
+            }
+            if (wcAutoScrollUserOn) {
+                btn.classList.add('is-autoscrolling');
+                btn.setAttribute('aria-pressed', 'true');
+                btn.setAttribute('title', '停止轮播');
+                btn.textContent = '停止轮播';
+            } else {
+                btn.classList.remove('is-autoscrolling');
+                btn.setAttribute('aria-pressed', 'false');
+                btn.setAttribute('title', '开始轮播');
+                btn.textContent = '开始轮播';
+            }
+        }
+
+        function wcStopAutoScrollAnimation() {
+            if (wcAutoScrollRafId != null) {
+                cancelAnimationFrame(wcAutoScrollRafId);
+                wcAutoScrollRafId = null;
+            }
+            wcAutoScrollLastTs = 0;
+        }
+
+        /**
+         * 单列轮播壳：视口 + 可编程 scrollTop 的 scroller + track + 内容块（必要时复制第二块无缝衔接）。
+         * @param retryDepth flex 首帧常见 clientHeight=0，有限次 rAF 重入测量，避免「内容未超高却复制 DOM」
+         */
+        function setupSingleColumnAutoScroll($, hostSelector, stateKey, retryDepth) {
+            if (retryDepth == null) {
+                retryDepth = 0;
+            }
+            var state = wcColumnScrollStates[stateKey];
+            if (!state) {
+                return;
+            }
+            state.canScroll = false;
+            state.paused = false;
+            state.scroller = null;
+            state.chunkHeight = 0;
+
+            var $host = $(hostSelector);
+            if (!$host.length) {
+                return;
+            }
+
+            // resize / 全屏重建时宿主内可能已有视口；必须先拆回原始内容，禁止视口套视口
+            var $existingVp = $host.children('.wc-auto-scroll-viewport');
+            if ($existingVp.length) {
+                var $inner = $existingVp.find('.wc-auto-scroll-chunk').first().children().detach();
+                $existingVp.remove();
+                $host.append($inner);
+            }
+
+            var $children = $host.children().detach();
+            if (!$children.length) {
+                return;
+            }
+
+            var $viewport = $('<div class="wc-auto-scroll-viewport">').attr('data-wc-scroll', stateKey);
+            var $scroller = $('<div class="wc-auto-scroll-scroller">');
+            var $track = $('<div class="wc-auto-scroll-track">');
+            var $chunk1 = $('<div class="wc-auto-scroll-chunk">').append($children);
+            $track.append($chunk1);
+            $scroller.append($track);
+            $viewport.append($scroller);
+            $host.append($viewport);
+
+            var scrollerEl = $scroller[0];
+            var chunkEl = $chunk1[0];
+            var viewportEl = $viewport[0];
+
+            var viewH = viewportEl.clientHeight;
+            var chunkH = chunkEl.scrollHeight;
+
+            // 父级 flex 未结算高度时 viewH 可能为 0：此时禁止判定为可滚，避免错误克隆第二块
+            if (viewH < 4 && retryDepth < 12) {
+                window.requestAnimationFrame(function() {
+                    setupSingleColumnAutoScroll($, hostSelector, stateKey, retryDepth + 1);
+                });
+                return;
+            }
+
+            state.scroller = scrollerEl;
+            state.chunkHeight = chunkH;
+            state.canScroll = (viewH > 2 && chunkH > viewH + 1);
+
+            scrollerEl.scrollTop = 0;
+
+            if (state.canScroll) {
+                var $chunk2 = $chunk1.clone(true, true);
+                $track.append($chunk2);
+            }
+
+            // 命名空间绑定，重建前先 off，避免 Ajax 多次刷新导致监听器叠加
+            $viewport
+                .off('mouseenter.wcAsc mouseleave.wcAsc')
+                .on('mouseenter.wcAsc', function() {
+                    state.paused = true;
+                })
+                .on('mouseleave.wcAsc', function() {
+                    // 仅清除本列暂停；总开关关闭时 rAF 不跑，移出也不会「误启动」全局轮播
+                    state.paused = false;
+                });
+        }
+
+        /**
+         * 两列一起重建：Ajax 或首屏 render 后调用；全屏/窗口尺寸变化时也会调用。
+         * 会取消 RAF、重新测量高度；若当前总开关为开，则自动恢复滚动。
+         */
+        function rebuildAchievementAutoScroll($) {
+            if (!$) {
+                return;
+            }
+            var wasOn = wcAutoScrollUserOn;
+            wcStopAutoScrollAnimation();
+            setupSingleColumnAutoScroll($, '#wc-right-group-container', 'group');
+            setupSingleColumnAutoScroll($, '#wc-global-rank-container', 'global');
+            if (wasOn) {
+                startAchievementAutoScroll();
+            }
+        }
+
+        /** 开始轮播：打开总开关并启动唯一 RAF（无溢出列在 tick 中会被跳过） */
+        function startAchievementAutoScroll() {
+            wcAutoScrollUserOn = true;
+            wcUpdateAutoscrollButtonDom();
+            if (wcAutoScrollRafId != null) {
+                return;
+            }
+            wcAutoScrollLastTs = 0;
+            wcAutoScrollRafId = requestAnimationFrame(wcAutoScrollRafTick);
+        }
+
+        /** 停止轮播：关闭总开关并取消 RAF */
+        function stopAchievementAutoScroll() {
+            wcAutoScrollUserOn = false;
+            wcUpdateAutoscrollButtonDom();
+            wcStopAutoScrollAnimation();
+        }
+
+        function wcAutoScrollRafTick(ts) {
+            wcAutoScrollRafId = null;
+            if (!wcAutoScrollUserOn) {
+                wcAutoScrollLastTs = 0;
+                return;
+            }
+            if (wcAutoScrollLastTs <= 0) {
+                wcAutoScrollLastTs = ts;
+            }
+            var dt = (ts - wcAutoScrollLastTs) / 1000;
+            if (dt > 0.2) {
+                dt = 0.2;
+            }
+            wcAutoScrollLastTs = ts;
+            // 与 60fps 对齐的经验换算：SPEED * 60 * dt ≈ 每秒像素速度
+            var delta = WC_AUTO_SCROLL_SPEED * 60 * dt;
+
+            var keys = ['group', 'global'];
+            for (var ki = 0; ki < keys.length; ki++) {
+                var st = wcColumnScrollStates[keys[ki]];
+                if (!st || !st.canScroll || st.paused || !st.scroller) {
+                    continue;
+                }
+                var el = st.scroller;
+                var ch = st.chunkHeight;
+                if (ch <= 0) {
+                    continue;
+                }
+                el.scrollTop += delta;
+                if (el.scrollTop >= ch) {
+                    el.scrollTop -= ch;
+                }
+            }
+
+            if (wcAutoScrollUserOn) {
+                wcAutoScrollRafId = requestAnimationFrame(wcAutoScrollRafTick);
+            }
+        }
+
+        /**
+         * 初始化轮播 UI：轮播按钮只绑定一次；resize/全屏 debounce 重建，避免重复监听泄漏。
+         */
+        function initAchievementAutoScroll($) {
+            wcAchievementRef$ = $;
+            wcUpdateAutoscrollButtonDom();
+
+            if (wcAutoscrollUiBound) {
+                return;
+            }
+            wcAutoscrollUiBound = true;
+
+            document.addEventListener('click', function(ev) {
+                var t = ev.target;
+                if (!t || typeof t.closest !== 'function') {
+                    return;
+                }
+                if (!t.closest('#wc-autoscroll-toggle')) {
+                    return;
+                }
+                ev.preventDefault();
+                if (wcAutoScrollUserOn) {
+                    stopAchievementAutoScroll();
+                } else {
+                    if (wcAchievementRef$) {
+                        rebuildAchievementAutoScroll(wcAchievementRef$);
+                    }
+                    startAchievementAutoScroll();
+                }
+            }, false);
+
+            var fsTypesAsc = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+            for (var ai = 0; ai < fsTypesAsc.length; ai++) {
+                document.addEventListener(fsTypesAsc[ai], function() {
+                    window.clearTimeout(wcAutoScrollRebuildTimer);
+                    wcAutoScrollRebuildTimer = window.setTimeout(function() {
+                        if (!wcAchievementRef$) {
+                            return;
+                        }
+                        rebuildAchievementAutoScroll(wcAchievementRef$);
+                    }, 150);
+                });
+            }
+
+            window.addEventListener('resize', function() {
+                window.clearTimeout(wcAutoScrollRebuildTimer);
+                wcAutoScrollRebuildTimer = window.setTimeout(function() {
+                    if (!wcAchievementRef$) {
+                        return;
+                    }
+                    rebuildAchievementAutoScroll(wcAchievementRef$);
+                }, 200);
+            });
+        }
+
         function updateKpiFromData($, groupAvgRankList, memberRankGroupList) {
             var groups = Array.isArray(groupAvgRankList) ? groupAvgRankList : [];
             var groupCount = groups.length;
@@ -1653,6 +2006,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     renderGroupAvgRankList($, data.groupAvgRankList || []);
                     renderMemberRankGroupList($, data.memberRankGroupList || []);
                     renderGlobalMemberRankList($, data.globalMemberRankList || []);
+                    rebuildAchievementAutoScroll($);
                     console.log('[WC] 完整数据拉取成功，DOM 已刷新');
                 },
                 error: function (xhr, status, error) {
@@ -1766,10 +2120,12 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 renderGroupAvgRankList($, initialGroupAvgRankList || []);
                 renderMemberRankGroupList($, initialMemberRankGroupList || []);
                 renderGlobalMemberRankList($, initialGlobalMemberRankList || []);
+                rebuildAchievementAutoScroll($);
             } catch (e) {
                 console.warn('[WC] 首屏渲染失败（不影响轮询）', e);
             }
 
+            initAchievementAutoScroll($);
             startAchievementPolling($);
         });
     })();
