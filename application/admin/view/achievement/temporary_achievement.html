@@ -622,41 +622,29 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         min-width: 0;
     }
 
-    /* ========== 第2/第3列 · 自动轮播视口 ========== */
+    /* ========== 第2/第3列 · 自动轮播视口（transform 轨道平移，非 scrollTop） ========== */
     .wc-auto-scroll-viewport{
+        position: relative;
+        overflow: hidden;
         flex: 1 1 auto;
         min-height: 0;
-        overflow: hidden;
-        position: relative;
+        height: 100%;
         user-select: none;
         -webkit-user-select: none;
     }
 
-    .wc-auto-scroll-scroller{
-        height: 100%;
-        max-height: 100%;
-        overflow-y: auto;
-        overflow-x: hidden;
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-    }
-
-    .wc-auto-scroll-scroller::-webkit-scrollbar{
-        width: 0;
-        height: 0;
-        display: none;
-    }
-
-    /* 轮播 track：纵向堆叠两段相同内容，实现无缝循环 */
     .wc-auto-scroll-track{
         display: flex;
         flex-direction: column;
         align-items: stretch;
         min-width: 0;
+        will-change: transform;
+        transform: translate3d(0, 0, 0);
     }
 
     .wc-auto-scroll-chunk{
         display: block;
+        flex: 0 0 auto;
         min-width: 0;
     }
 
@@ -1572,8 +1560,8 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
         /* ========================================================================
          * 旺春看板 · 第2/第3列纵向慢速循环轮播（与全屏、心跳轮询逻辑独立）
-         * - wcAutoScrollUserOn：全局总开关（语义同「wcAutoScrollEnabled」；为 false 时悬停移出也不会误启动动画）
-         * - wcColumnScrollStates：分列状态（可否滚、悬停暂停、scroller、单段内容高度）
+         * - wcAutoScrollUserOn：全局总开关；为 false 时悬停移出也不会误启动动画
+         * - wcColumnScrollStates：分列状态（viewport + track + translate3d 偏移，单段 chunk 高度）
          * - Ajax render 后必须 rebuild：避免复制节点累积；并保持总开关对应的滚动/停止语义
          * ======================================================================== */
 
@@ -1590,13 +1578,16 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         var wcAutoScrollRafId = null;
         var wcAutoScrollLastTs = 0;
 
+        /** RAF 前几帧按列打日志，避免刷屏 */
+        var wcAutoScrollTickLogLeft = { group: 5, global: 5 };
+
         /** layui jQuery 缓存，供 resize / 全屏后重建轮播 DOM */
         var wcAchievementRef$ = null;
 
         /** 第2列 group、第3列 global 分列状态 */
         var wcColumnScrollStates = {
-            group: { canScroll: false, paused: false, scroller: null, chunkHeight: 0 },
-            global: { canScroll: false, paused: false, scroller: null, chunkHeight: 0 }
+            group: { canScroll: false, paused: false, viewport: null, track: null, chunkHeight: 0, offset: 0 },
+            global: { canScroll: false, paused: false, viewport: null, track: null, chunkHeight: 0, offset: 0 }
         };
 
         var wcAutoscrollUiBound = false;
@@ -1661,8 +1652,8 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         }
 
         /**
-         * 单列轮播壳：视口 + 可编程 scrollTop 的 scroller + track + 内容块（必要时复制第二块无缝衔接）。
-         * @param retryDepth flex 首帧常见 clientHeight=0，有限次 rAF 重入测量，避免「内容未超高却复制 DOM」
+         * 单列轮播壳：viewport + track + chunk（content 超高时克隆第二块，用 translate3d 平移轨道）。
+         * @param retryDepth flex 首帧常见 clientHeight=0，有限次 rAF 重入测量
          */
         function setupSingleColumnAutoScroll($, hostSelector, stateKey, retryDepth) {
             if (retryDepth == null) {
@@ -1677,8 +1668,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             }
             state.canScroll = false;
             state.paused = false;
-            state.scroller = null;
+            state.viewport = null;
+            state.track = null;
             state.chunkHeight = 0;
+            state.offset = 0;
 
             var $host = $(hostSelector);
             if (!$host.length) {
@@ -1686,7 +1679,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 return;
             }
 
-            // resize / 全屏重建时宿主内可能已有视口；必须先拆回原始内容，禁止视口套视口
+            // 重建时宿主内可能已有视口：先拆回第一份 chunk 的原始子节点，禁止视口套视口
             var $existingVp = $host.children('.wc-auto-scroll-viewport');
             if ($existingVp.length) {
                 var $inner = $existingVp.find('.wc-auto-scroll-chunk').first().children().detach();
@@ -1701,20 +1694,17 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             }
 
             var $viewport = $('<div class="wc-auto-scroll-viewport">').attr('data-wc-scroll', stateKey);
-            var $scroller = $('<div class="wc-auto-scroll-scroller">');
             var $track = $('<div class="wc-auto-scroll-track">');
             var $chunk1 = $('<div class="wc-auto-scroll-chunk">').append($children);
             $track.append($chunk1);
-            $scroller.append($track);
-            $viewport.append($scroller);
+            $viewport.append($track);
             $host.append($viewport);
 
-            var scrollerEl = $scroller[0];
+            var trackEl = $track[0];
             var chunkEl = $chunk1[0];
             var viewportEl = $viewport[0];
             var hostEl = $host[0];
 
-            // 强制同步布局，减少「首帧 viewH=0」误判
             if (hostEl) {
                 hostEl.offsetHeight;
             }
@@ -1728,9 +1718,8 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 }
             } catch (eBr) { /* ignore */ }
 
-            var chunkH = chunkEl.scrollHeight;
+            var chunkH = Math.max(chunkEl.offsetHeight || 0, chunkEl.scrollHeight || 0);
 
-            // 父级 flex/grid 未结算高度时 viewH 可能为 0 或极小：延迟重测，避免过早 canScroll=false 或误克隆第二块
             if (viewH < MIN_VIEW_PX && retryDepth < MAX_RETRY) {
                 wcAscLog(
                     'setupSingleColumnAutoScroll retry (layout not ready)',
@@ -1756,11 +1745,13 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 );
             }
 
-            state.scroller = scrollerEl;
+            state.viewport = viewportEl;
+            state.track = trackEl;
             state.chunkHeight = chunkH;
             state.canScroll = (viewH >= MIN_VIEW_PX && chunkH > viewH + 1);
+            state.offset = 0;
 
-            scrollerEl.scrollTop = 0;
+            trackEl.style.transform = 'translate3d(0, 0, 0)';
 
             if (state.canScroll) {
                 var $chunk2 = $chunk1.clone(true, true);
@@ -1769,22 +1760,20 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
             wcAscLog(
                 'setupSingleColumnAutoScroll done',
-                'hostSelector=', hostSelector,
-                'stateKey=', stateKey,
-                'viewH=', viewH,
-                'chunkH=', chunkH,
-                'canScroll=', state.canScroll,
-                'retryDepth=', retryDepth
+                'hostSelector=' + hostSelector,
+                'stateKey=' + stateKey,
+                'viewH=' + viewH,
+                'chunkH=' + chunkH,
+                'canScroll=' + state.canScroll,
+                'retryDepth=' + retryDepth
             );
 
-            // 命名空间绑定，重建前先 off，避免 Ajax 多次刷新导致监听器叠加
             $viewport
                 .off('mouseenter.wcAsc mouseleave.wcAsc')
                 .on('mouseenter.wcAsc', function() {
                     state.paused = true;
                 })
                 .on('mouseleave.wcAsc', function() {
-                    // 仅清除本列暂停；总开关关闭时 rAF 不跑，移出也不会「误启动」全局轮播
                     state.paused = false;
                 });
         }
@@ -1798,7 +1787,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 return;
             }
             rebuildSource = rebuildSource || 'unknown';
-            wcAscLog('rebuildAchievementAutoScroll', 'source=', rebuildSource);
+            wcAscLog('rebuildAchievementAutoScroll', 'source=' + rebuildSource);
             var wasOn = wcAutoScrollUserOn;
             wcStopAutoScrollAnimation();
             setupSingleColumnAutoScroll($, '#wc-right-group-container', 'group');
@@ -1813,6 +1802,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             wcAscLog('startAchievementAutoScroll');
             wcAutoScrollUserOn = true;
             wcUpdateAutoscrollButtonDom();
+            wcAutoScrollTickLogLeft = { group: 5, global: 5 };
             if (wcAutoScrollRafId != null) {
                 return;
             }
@@ -1842,23 +1832,27 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 dt = 0.2;
             }
             wcAutoScrollLastTs = ts;
-            // 与 60fps 对齐的经验换算：SPEED * 60 * dt ≈ 每秒像素速度
             var delta = WC_AUTO_SCROLL_SPEED * 60 * dt;
 
             var keys = ['group', 'global'];
             for (var ki = 0; ki < keys.length; ki++) {
-                var st = wcColumnScrollStates[keys[ki]];
-                if (!st || !st.canScroll || st.paused || !st.scroller) {
+                var key = keys[ki];
+                var st = wcColumnScrollStates[key];
+                if (!st || !st.canScroll || st.paused || !st.track) {
                     continue;
                 }
-                var el = st.scroller;
                 var ch = st.chunkHeight;
                 if (ch <= 0) {
                     continue;
                 }
-                el.scrollTop += delta;
-                if (el.scrollTop >= ch) {
-                    el.scrollTop -= ch;
+                st.offset += delta;
+                while (st.offset >= ch) {
+                    st.offset -= ch;
+                }
+                st.track.style.transform = 'translate3d(0, -' + st.offset + 'px, 0)';
+                if (wcAutoScrollTickLogLeft[key] > 0) {
+                    wcAutoScrollTickLogLeft[key]--;
+                    wcAscLog('tick', 'stateKey=' + key, 'offset=' + st.offset.toFixed(2));
                 }
             }
 
