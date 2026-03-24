@@ -3114,5 +3114,203 @@ private function exportToExcel($data)
         ]);
     }
 
+    /**
+     * 业务询盘汇总三连屏：构建与控制面板「业务询盘汇总」一致的 leads 时间条件。
+     */
+    private function buildInquirySummaryLeadsWhere(string $timebucket = '', string $at_time = ''): array
+    {
+        $l_where_sub = [['status', '=', 1]];
+        if ($timebucket !== '') {
+            $time_where_at = $this->buildTimeWhere($timebucket, 'at_time');
+            $time_where_kh = $this->buildTimeWhere($timebucket, 'to_kh_time');
+            $l_where_sub[] = function($query) use ($time_where_at, $time_where_kh) {
+                $query->where([$time_where_at])->whereOr([$time_where_kh]);
+            };
+        }
+        if ($at_time !== '') {
+            $time_where_at = $this->buildTimeWhere($at_time, 'at_time');
+            $time_where_kh = $this->buildTimeWhere($at_time, 'to_kh_time');
+            $l_where_sub[] = function($query) use ($time_where_at, $time_where_kh) {
+                $query->where([$time_where_at])->whereOr([$time_where_kh]);
+            };
+        }
+        return $l_where_sub;
+    }
+
+    /**
+     * 第一屏：团队询盘汇总（复用业务询盘口径）。
+     */
+    public function getInquiryTeamSummaryData()
+    {
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+
+        $current_admin = Admin::getMyInfo();
+        $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
+        $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]]];
+
+        $rows = $this->getLeadsSubQuery($l_where_sub)
+            ->where('a.team_name', '<>', '')
+            ->where($yw_where)
+            ->group('a.team_name')
+            ->field('a.team_name,count(l.id) as yw_num')
+            ->order('yw_num desc')
+            ->order('a.team_name')
+            ->select();
+
+        $result = [];
+        $total = 0;
+        foreach ($rows as $idx => $row) {
+            $count = (int)($row['yw_num'] ?? 0);
+            $total += $count;
+            $result[] = [
+                'rank' => $idx + 1,
+                'team_name' => trim((string)($row['team_name'] ?? '')) !== '' ? $row['team_name'] : '未分组',
+                'yw_num' => $count,
+            ];
+        }
+
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => $result,
+            'summary' => ['total_count' => $total],
+        ]);
+    }
+
+    /**
+     * 第二屏：团队下个人询盘汇总（复用业务询盘口径）。
+     */
+    public function getInquiryMemberSummaryData()
+    {
+        $team_name = trim((string)Request::param('team_name', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+
+        if ($team_name === '') {
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+
+        $current_admin = Admin::getMyInfo();
+        $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
+        $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]]];
+
+        $rows = $this->getLeadsSubQuery($l_where_sub)
+            ->where($yw_where)
+            ->where('a.team_name', '=', $team_name)
+            ->group('a.username,a.team_name')
+            ->field('a.username,a.team_name,count(l.id) as yw_num')
+            ->order('yw_num desc')
+            ->order('a.username')
+            ->select();
+
+        $result = [];
+        $total = 0;
+        foreach ($rows as $idx => $row) {
+            $count = (int)($row['yw_num'] ?? 0);
+            $total += $count;
+            $result[] = [
+                'rank' => $idx + 1,
+                'username' => (string)($row['username'] ?? ''),
+                'team_name' => $team_name,
+                'yw_num' => $count,
+            ];
+        }
+
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => $result,
+            'summary' => ['total_count' => $total],
+        ]);
+    }
+
+    /**
+     * 第三屏：个人询盘渠道分类汇总（优先 inquiry_id 关联渠道名）。
+     */
+    public function getInquiryChannelSummaryData()
+    {
+        $username = trim((string)Request::param('username', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+
+        if ($username === '') {
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+
+        $current_admin = Admin::getMyInfo();
+        $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
+        $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]], ['username', '=', $username]];
+
+        $user_exists = Db::table('admin')->where($yw_where)->count();
+        if ((int)$user_exists <= 0) {
+            return json([
+                'code' => 403,
+                'msg' => '无权限查看该成员数据',
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+
+        $rows = $this->getLeadsSubQuery($l_where_sub)
+            ->where($yw_where)
+            ->where('a.username', '=', $username)
+            ->group('l.inquiry_id')
+            ->field('l.inquiry_id,count(l.id) as yw_num')
+            ->order('yw_num desc')
+            ->select();
+
+        $inquiry_ids = [];
+        foreach ($rows as $row) {
+            $iid = (int)($row['inquiry_id'] ?? 0);
+            if ($iid > 0) {
+                $inquiry_ids[] = $iid;
+            }
+        }
+        $inquiry_ids = array_values(array_unique($inquiry_ids));
+        $inquiry_map = [];
+        if (!empty($inquiry_ids)) {
+            $inquiry_map = Db::table('crm_inquiry')->where('id', 'in', $inquiry_ids)->column('inquiry_name', 'id');
+        }
+
+        $result = [];
+        $total = 0;
+        foreach ($rows as $idx => $row) {
+            $count = (int)($row['yw_num'] ?? 0);
+            $total += $count;
+            $iid = (int)($row['inquiry_id'] ?? 0);
+            $channel_name = '未分类';
+            if ($iid > 0 && !empty($inquiry_map[$iid])) {
+                $channel_name = $inquiry_map[$iid];
+            } elseif ($iid <= 0) {
+                $channel_name = '未分类';
+            } else {
+                $channel_name = '其他';
+            }
+            $result[] = [
+                'rank' => $idx + 1,
+                'channel_name' => $channel_name,
+                'yw_num' => $count,
+            ];
+        }
+
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => $result,
+            'summary' => ['total_count' => $total],
+        ]);
+    }
+
 }
 
