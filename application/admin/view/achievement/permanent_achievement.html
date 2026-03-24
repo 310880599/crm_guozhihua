@@ -111,13 +111,11 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
     .wc-dashboard-hero-main{
         position: relative;
-        z-index: 1;
         display:flex;
         align-items:center;
-        justify-content: space-between;
+        justify-content: flex-start;
         gap: 12px;
-        flex-wrap: nowrap;
-        box-sizing: border-box;
+        padding-right: 140px; /* 关键：给右侧按钮预留空间 */
     }
 
     .wc-dashboard-hero-left{
@@ -163,7 +161,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     .wc-dashboard-hero-kpis{
         flex: 1;
         min-width: 0;
-        max-width: 60%;
+        max-width: 48%;
+        flex-shrink: 1;
+        overflow: hidden;
         display:grid;
         grid-template-columns: 70px 70px 1fr 1fr;
         gap: 8px;
@@ -171,11 +171,14 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     }
 
     .wc-hero-actions{
-        flex: 0 0 auto;
-        flex-shrink: 0;
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
         display: flex;
         gap: 8px;
         align-items: center;
+        z-index: 10;
     }
 
     .wc-kpi-chip{
@@ -1251,8 +1254,12 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 
     /* 顶部布局修正：统计周期纵向 + KPI两行 + 按钮始终完整显示 */
     .wc-dashboard-hero-main{
-        align-items: stretch;
-        gap: 10px;
+        position: relative;
+        display:flex;
+        align-items:center;
+        justify-content: flex-start;
+        gap: 12px;
+        padding-right: 140px; /* 关键：给右侧按钮预留空间 */
     }
     .wc-dashboard-hero-left{
         flex: 0 0 300px;
@@ -1295,8 +1302,10 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     }
     .wc-dashboard-hero-kpis{
         flex: 1 1 0;
-        max-width: 58%;
+        max-width: 48%;
+        flex-shrink: 1;
         min-width: 560px;
+        overflow: hidden;
         grid-template-columns: 70px 70px 1fr 1fr;
         gap: 6px;
     }
@@ -1338,13 +1347,14 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         overflow: hidden;
     }
     .wc-hero-actions{
-        flex: 0 0 112px;
-        flex-shrink: 0;
-        min-width: 112px;
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
         display: flex;
-        justify-content: center;
-        align-items: stretch;
-        white-space: nowrap;
+        gap: 8px;
+        align-items: center;
+        z-index: 10;
     }
     .wc-fullscreen-btn-wrap{
         width: 100%;
