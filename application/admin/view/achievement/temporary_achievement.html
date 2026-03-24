@@ -1241,11 +1241,108 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     @media screen and (max-width: 679px){
         .wc-fullscreen-btn-wrap{
             position: static;
-            align-items: flex-start;
-            flex-wrap: wrap;
+            align-items: stretch;
+            flex-wrap: nowrap;
         }
         .wc-hero-actions{ width: 100%; justify-content: flex-start; }
         .wc-fullscreen-hint{ white-space: normal; }
+    }
+
+    /* 顶部布局修正：统计周期两行 + 按钮竖排 + 释放 KPI 横向空间 */
+    .wc-dashboard-hero-main{
+        align-items: stretch;
+        gap: 10px;
+    }
+    .wc-dashboard-hero-left{
+        flex: 0 0 300px;
+        min-width: 260px;
+        max-width: 340px;
+    }
+    .wc-dashboard-hero-meta{
+        flex: 0 1 360px;
+        min-width: 280px;
+        max-width: 380px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    .wc-dashboard-hero-period{
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: nowrap;
+        min-width: 0;
+        white-space: nowrap;
+    }
+    .wc-dashboard-hero-period .wc-period-value{
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .wc-dashboard-hero-tags{
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: nowrap;
+    }
+    .wc-dashboard-hero-kpis{
+        flex: 1 1 0;
+        max-width: none;
+        min-width: 640px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+    }
+    .wc-kpi-chip{
+        padding: 7px 7px 6px;
+        min-height: 60px;
+    }
+    .wc-kpi-chip-top{
+        gap: 3px;
+    }
+    .wc-kpi-chip-value{
+        font-size: clamp(15px, .95vw, 18px);
+        letter-spacing: 0;
+    }
+    .wc-hero-actions{
+        flex: 0 0 104px;
+        display: flex;
+        justify-content: center;
+        align-items: stretch;
+    }
+    .wc-fullscreen-btn-wrap{
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+    .wc-fullscreen-btn{
+        width: 100%;
+        min-height: 32px;
+        padding: 6px 10px;
+        justify-content: center;
+    }
+    .wc-fullscreen-hint{
+        display: none !important;
+    }
+    @media screen and (max-width: 1199px){
+        .wc-dashboard-hero-meta{
+            min-width: 0;
+            max-width: none;
+            flex: 1 1 100%;
+        }
+        .wc-dashboard-hero-kpis{
+            min-width: 0;
+            max-width: 100%;
+        }
+        .wc-hero-actions{
+            flex: 0 0 auto;
+            width: auto;
+        }
     }
 </style>
 
@@ -1324,7 +1421,6 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                         <span class="wc-fullscreen-btn-text">进入全屏</span>
                     </button>
                     <button type="button" class="wc-fullscreen-btn wc-autoscroll-btn" id="wc-autoscroll-toggle" aria-pressed="false" title="开始轮播">开始轮播</button>
-                    <span class="wc-fullscreen-hint">ESC 可退出全屏</span>
                 </div>
             </div>
         </div>
