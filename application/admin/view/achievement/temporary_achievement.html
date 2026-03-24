@@ -1248,7 +1248,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         .wc-fullscreen-hint{ white-space: normal; }
     }
 
-    /* 顶部布局修正：统计周期两行 + 按钮竖排 + 释放 KPI 横向空间 */
+    /* 顶部布局修正：统计周期纵向 + KPI两行 + 按钮始终完整显示 */
     .wc-dashboard-hero-main{
         align-items: stretch;
         gap: 10px;
@@ -1261,38 +1261,41 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     .wc-dashboard-hero-meta{
         flex: 0 1 360px;
         min-width: 280px;
-        max-width: 380px;
+        max-width: 320px;
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: flex-start;
-        gap: 5px;
+        gap: 0;
     }
     .wc-dashboard-hero-period{
         width: 100%;
         display: flex;
-        align-items: center;
-        gap: 6px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
         flex-wrap: nowrap;
         min-width: 0;
-        white-space: nowrap;
     }
+    .wc-dashboard-hero-period .wc-period-label{ line-height: 1.1; }
     .wc-dashboard-hero-period .wc-period-value{
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        line-height: 1.1;
     }
     .wc-dashboard-hero-tags{
-        width: 100%;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: nowrap;
+        display: none !important;
+        width: 0;
+        height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
     }
     .wc-dashboard-hero-kpis{
         flex: 1 1 0;
-        max-width: none;
-        min-width: 640px;
+        max-width: 58%;
+        min-width: 560px;
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 6px;
     }
@@ -1301,17 +1304,43 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         min-height: 60px;
     }
     .wc-kpi-chip-top{
-        gap: 3px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        gap: 2px;
+        white-space: normal;
     }
+    .wc-kpi-chip-value-line{
+        display: inline-flex;
+        align-items: baseline;
+        gap: 3px;
+        min-width: 0;
+    }
+    .wc-kpi-chip-title{ line-height: 1.1; }
     .wc-kpi-chip-value{
         font-size: clamp(15px, .95vw, 18px);
         letter-spacing: 0;
     }
+    .wc-kpi-chip-unit{
+        margin-left: 0;
+        font-size: 10px;
+        line-height: 1;
+    }
+    .wc-kpi-chip-sub{
+        display: none !important;
+        height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }
     .wc-hero-actions{
-        flex: 0 0 104px;
+        flex: 0 0 112px;
+        min-width: 112px;
         display: flex;
         justify-content: center;
         align-items: stretch;
+        white-space: nowrap;
     }
     .wc-fullscreen-btn-wrap{
         width: 100%;
@@ -1356,15 +1385,11 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 <div class="wc-dashboard-hero-sub">PK团队实时业绩排名 / 审核通过订单统计</div>
             </div>
 
-            <!-- 中间：统计周期 + 实时统计标签 -->
+            <!-- 中间：统计周期 -->
             <div class="wc-dashboard-hero-meta">
                 <div class="wc-dashboard-hero-period">
                     <span class="wc-period-label">统计周期：</span>
                     <span class="wc-period-value"><?php echo htmlspecialchars($periodText); ?></span>
-                </div>
-                <div class="wc-dashboard-hero-tags">
-                    <span class="wc-realtime-tip"><span class="wc-realtime-dot"></span>实时统计</span>
-                    <span class="wc-audit-tip">仅统计审核通过订单</span>
                 </div>
             </div>
 
@@ -1373,35 +1398,39 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 <div class="wc-kpi-chip">
                     <div class="wc-kpi-chip-top">
                         <span class="wc-kpi-chip-title">小组</span>
-                        <span class="wc-kpi-chip-value wc-kpi-accent" id="wc-kpi-group-count">0</span>
+                        <span class="wc-kpi-chip-value-line">
+                            <span class="wc-kpi-chip-value wc-kpi-accent" id="wc-kpi-group-count">0</span>
+                        </span>
                     </div>
-                    <div class="wc-kpi-chip-sub">参赛团队数量</div>
                 </div>
 
                 <div class="wc-kpi-chip">
                     <div class="wc-kpi-chip-top">
                         <span class="wc-kpi-chip-title">人数</span>
-                        <span class="wc-kpi-chip-value wc-kpi-accent" id="wc-kpi-member-count">0</span>
+                        <span class="wc-kpi-chip-value-line">
+                            <span class="wc-kpi-chip-value wc-kpi-accent" id="wc-kpi-member-count">0</span>
+                        </span>
                     </div>
-                    <div class="wc-kpi-chip-sub">按配置成员人数汇总</div>
                 </div>
 
                 <div class="wc-kpi-chip">
                     <div class="wc-kpi-chip-top">
                         <span class="wc-kpi-chip-title">总业绩</span>
-                        <span class="wc-kpi-chip-value wc-kpi-accent2" id="wc-kpi-total-amount">0.00</span>
-                        <span class="wc-kpi-chip-unit">元</span>
+                        <span class="wc-kpi-chip-value-line">
+                            <span class="wc-kpi-chip-value wc-kpi-accent2" id="wc-kpi-total-amount">0.00</span>
+                            <span class="wc-kpi-chip-unit">元</span>
+                        </span>
                     </div>
-                    <div class="wc-kpi-chip-sub">单位：元</div>
                 </div>
 
                 <div class="wc-kpi-chip">
                     <div class="wc-kpi-chip-top">
                         <span class="wc-kpi-chip-title">人均</span>
-                        <span class="wc-kpi-chip-value" id="wc-kpi-avg-amount">0.00</span>
-                        <span class="wc-kpi-chip-unit">元</span>
+                        <span class="wc-kpi-chip-value-line">
+                            <span class="wc-kpi-chip-value" id="wc-kpi-avg-amount">0.00</span>
+                            <span class="wc-kpi-chip-unit">元</span>
+                        </span>
                     </div>
-                    <div class="wc-kpi-chip-sub">总业绩 / 总人数</div>
                 </div>
             </div>
             <div class="wc-hero-actions">
