@@ -137,6 +137,35 @@
         vertical-align: middle;
     }
 
+    /* 业务人员业绩表弹窗头部（Windows 风格关闭按钮） */
+    .performance-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .performance-modal-title {
+        display: inline-block;
+    }
+    .performance-modal-close {
+        border: none;
+        background: transparent;
+        width: 36px;
+        height: 36px;
+        line-height: 1;
+        font-size: 26px;
+        color: #3d4956;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    .performance-modal-close:hover {
+        background-color: #e81123;
+        color: #fff;
+    }
+    .performance-modal-close:focus {
+        outline: none;
+    }
+
  </style>
 <div class="col-md-8">
     <!-- 业绩按钮：左业务员，右团队 -->
@@ -455,8 +484,9 @@
 <!-- 业务人员业绩表弹窗 -->
 <div id="performanceModal" style="display: none; padding: 20px;">
     <div class="wukong-table-card">
-        <div class="wukong-table-card-header">
-            <span>业务人员业绩表</span>
+        <div class="wukong-table-card-header performance-modal-header">
+            <span class="performance-modal-title">业务人员业绩表</span>
+            <button type="button" class="performance-modal-close" id="performanceModalCloseBtn" aria-label="关闭">×</button>
         </div>
         <div class="filter-bar" style="padding: 15px; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
             <div style="display: flex; align-items: center; gap: 8px;">
@@ -712,6 +742,9 @@
         }
     }
 
+    // 当前业务人员业绩表 layer 索引（用于右上角关闭按钮精准关闭）
+    window.performanceLayerIndex = null;
+
     // 显示业务人员业绩表
     $('#showPerformanceBtn').on('click', function() {
         var $btn = $(this);
@@ -762,7 +795,7 @@
                     renderPerformanceTable(window.performanceTableData);
                     
                     // 显示弹窗，设置最高层级
-                    var layerIndex = layer.open({
+                    window.performanceLayerIndex = layer.open({
                         type: 1,
                         title: '业务人员业绩表',
                         area: ['90%', '80%'],
@@ -775,6 +808,16 @@
                             // 确保遮罩层也在最上层
                             $('.layui-layer-shade').css('z-index', 19999999);
                             $('#performanceModal').show();
+
+                            // 绑定内部右上角关闭按钮，确保关闭当前 layer 弹层
+                            $('#performanceModalCloseBtn').off('click.performanceModal').on('click.performanceModal', function() {
+                                if (window.performanceLayerIndex !== null && typeof window.performanceLayerIndex !== 'undefined') {
+                                    layer.close(window.performanceLayerIndex);
+                                    window.performanceLayerIndex = null;
+                                } else {
+                                    layer.close(index);
+                                }
+                            });
                             
                             // 绑定表头排序事件
                             bindTableSort();
@@ -783,6 +826,7 @@
                             bindPerformanceFilter();
                         },
                         end: function() {
+                            window.performanceLayerIndex = null;
                             $('#performanceModal').hide();
                         }
                     });
