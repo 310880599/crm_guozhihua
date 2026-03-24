@@ -2418,22 +2418,21 @@ private function exportToExcel($data)
     {
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
-        $username = Request::param('username', ''); // 业务员筛选
+        $filter_username = Request::param('username', ''); // 业务员筛选
         
         $current_admin = Admin::getMyInfo();
-        // 获取所有业务员（包括没有数据的业务员也要显示）
-        // 注意：这里只使用组织权限过滤，不限制 is_open，确保所有业务员都被包含
-        // 显式设置无限制查询，确保获取所有数据
+        // 默认仅显示启用中的业务员，避免停用账号占据大量 0 数据行
         // 业务员包括：业务员(10)、业务主管(11)、产品总监(13)、产品经理(14)
         $business_users_query = Db::table('admin')
             ->where($this->getOrgWhere($current_admin['org']))
             ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14]) // 10:业务员, 11:业务主管, 13:产品总监, 14:产品经理
+            ->where('is_open', '=', 1)
             ->where('username', '<>', '')
             ->whereNotNull('username');
         
         // 如果指定了业务员筛选，只查询该业务员
-        if (!empty($username)) {
-            $business_users_query->where('username', '=', $username);
+        if (!empty($filter_username)) {
+            $business_users_query->where('username', '=', $filter_username);
         }
         
         // 限制最大查询数量，避免查询过多数据导致超时（最多500个业务员）
@@ -2468,62 +2467,17 @@ private function exportToExcel($data)
             }
         }
         
-        // 构建订单时间条件（不再查询询盘数量，只查询订单数据）
-        $o_where = [];
-        
-        // 处理自定义时间范围（格式：start_date,end_date）
-        $has_custom_time = false;
-        if (!empty($at_time) && strpos($at_time, ',') !== false) {
-            $date_parts = explode(',', $at_time);
-            if (count($date_parts) == 2) {
-                $start_date = trim($date_parts[0]);
-                $end_date = trim($date_parts[1]);
-                if ($start_date && $end_date) {
-                    $has_custom_time = true;
-                    // 自定义时间范围
-                    $o_where[] = ['order_time', '>=', $start_date . ' 00:00:00'];
-                    $o_where[] = ['order_time', '<=', $end_date . ' 23:59:59'];
-                }
-            }
-        }
-        
-        // 使用 buildTimeWhere 方法构建订单时间条件
-        if (!$has_custom_time && !empty($timebucket)) {
-            $o_where[] = $this->buildTimeWhere($timebucket, 'order_time');
-        } elseif (!$has_custom_time && !empty($at_time)) {
-            $o_where[] = $this->buildTimeWhere($at_time, 'order_time');
-        } elseif (!$has_custom_time && empty($timebucket) && empty($at_time)) {
-            // 如果没有指定时间，默认使用本月
-            $o_where[] = $this->buildTimeWhere('month', 'order_time');
-        }
-        
-        // 批量查询所有业务员的订单数据（通过 pr_user）
-        $order_base_query = Db::table('crm_client_order')
-            ->where('check_status', '=', 2)
-            ->where('pr_user', 'in', $usernames);
-        
-        // 应用时间条件
-        if (!empty($o_where)) {
-            foreach ($o_where as $condition) {
-                if (is_array($condition)) {
-                    if (isset($condition[0]) && is_array($condition[0])) {
-                        foreach ($condition as $sub_condition) {
-                            if (is_array($sub_condition) && isset($sub_condition[0])) {
-                                $order_base_query->where($sub_condition[0], $sub_condition[1] ?? '=', $sub_condition[2] ?? null);
-                            }
-                        }
-                    } else {
-                        $order_base_query->where($condition[0], $condition[1] ?? '=', $condition[2] ?? null);
-                    }
-                } elseif (is_callable($condition)) {
-                    $order_base_query->where($condition);
-                }
-            }
+        // 统一订单口径：crm_client_order + check_status=2 + order_time 时间筛选
+        // 优先 at_time 自定义范围，其次 timebucket，均为空时默认本月
+        $effective_timebucket = $timebucket;
+        if ($at_time === '' && $effective_timebucket === '') {
+            $effective_timebucket = 'month';
         }
         
         // 批量获取订单统计：订单数、利润、金额
         // 使用聚合查询，一次性获取所有统计数据，避免 N+1 问题
-        $order_stats = $order_base_query
+        $order_stats = $this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '')
+            ->where('pr_user', 'in', $usernames)
             ->field('pr_user, count(id) as order_count, sum(profit) as total_profit, sum(money) as total_money')
             ->group('pr_user')
             ->select();
@@ -2542,35 +2496,37 @@ private function exportToExcel($data)
         // 4. 组装结果数据 - 确保所有业务员都被包含，即使没有数据也显示
         $result = [];
         foreach ($business_users as $user) {
-            $username = $user['username'];
+            $current_username = $user['username'];
             
             // 跳过用户名为空的记录
-            if (empty($username)) {
+            if (empty($current_username)) {
                 continue;
             }
             
             // 获取订单数据（如果没有数据则为0）
-            $order_data = isset($order_map[$username]) ? $order_map[$username] : ['order_count' => 0, 'total_profit' => 0, 'total_money' => 0];
+            $order_data = isset($order_map[$current_username]) ? $order_map[$current_username] : ['order_count' => 0, 'total_profit' => 0, 'total_money' => 0];
             
-            $total_profit = $order_data['total_profit'];
-            $total_money = $order_data['total_money'];
+            $total_profit = round((float)$order_data['total_profit'], 2);
+            $total_money = round((float)$order_data['total_money'], 2);
             
             // 计算利润率
             $profit_rate = $total_money > 0 ? round(($total_profit / $total_money) * 100, 2) : 0;
             
             $result[] = [
-                'username' => $username,
+                'username' => $current_username,
                 'team_name' => $user['team_name'] ?: '',
+                'profit_raw' => $total_profit,
                 'profit' => number_format($total_profit, 2),
+                'total_money_raw' => $total_money,
+                'total_money' => number_format($total_money, 2),
+                'profit_rate_raw' => $profit_rate,
                 'profit_rate' => number_format($profit_rate, 2)
             ];
         }
         
-        // 按利润降序排序（默认排序）
+        // 默认按利润降序，生成真实业绩排名 rank
         usort($result, function($a, $b) {
-            $profit_a = floatval(str_replace(',', '', $a['profit']));
-            $profit_b = floatval(str_replace(',', '', $b['profit']));
-            return $profit_b <=> $profit_a;
+            return ((float)$b['profit_raw']) <=> ((float)$a['profit_raw']);
         });
         
         // 添加排名（初始按利润排序）

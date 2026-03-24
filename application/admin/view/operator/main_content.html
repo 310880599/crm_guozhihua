@@ -472,7 +472,7 @@
                     <thead>
                         <tr>
                             <th data-sort="rank" style="cursor: pointer; user-select: none;">
-                                排名 <i class="bi bi-arrow-down-up sort-icon"></i>
+                                业绩排名 <i class="bi bi-arrow-down-up sort-icon"></i>
                             </th>
                             <th data-sort="username" style="cursor: pointer; user-select: none;">
                                 业务员姓名 <i class="bi bi-arrow-down-up sort-icon"></i>
@@ -649,25 +649,14 @@
             
         });
         
-        // 获取当前时间筛选参数（从父页面的表单中获取）
-        var timebucket = '';
+        // 首次打开默认口径：本月 + 全部业务员 + 利润倒序
+        var timebucket = 'month';
         var at_time = '';
-        
-        // 从父页面的表单中获取时间参数
-        var $timebucketSelect = $('#searchForm select[name="timebucket"], #dateRange, select[name="timebucket"]');
-        var $atTimeInput = $('#searchForm input[name="at_time"], #at_time');
-        
-        if ($timebucketSelect.length) {
-            timebucket = $timebucketSelect.val() || '';
-        }
-        if ($atTimeInput.length) {
-            at_time = $atTimeInput.val() || '';
-        }
-        
-        // 如果都没有获取到时间参数，默认使用本月
-        if (!timebucket && !at_time) {
-            timebucket = 'month';
-        }
+        $('#performanceUserFilter').val('');
+        $('#performanceTimeFilter').val('month');
+        $('#performanceCustomTimeRange').css('display', 'none');
+        $('#performanceStartDate').val('');
+        $('#performanceEndDate').val('');
         
         // 调用后端接口获取业绩数据
         $.ajax({
@@ -728,9 +717,10 @@
                 $btn.prop('disabled', false).html(originalText);
                 
                 if (status === 'timeout') {
-                    layer.msg('请求超时，请稍后重试', {icon: 2});
+                    layer.msg('请求超时（30秒），请缩小时间范围后重试', {icon: 2});
                 } else {
-                    layer.msg('网络错误，获取数据失败', {icon: 2});
+                    var respText = (xhr && xhr.responseText) ? ('，服务返回：' + xhr.responseText.substr(0, 120)) : '';
+                    layer.msg('网络或服务异常，获取业务人员业绩数据失败' + respText, {icon: 2, time: 4000});
                 }
             }
         });
@@ -1550,7 +1540,7 @@
         if (data && data.length > 0) {
             $.each(data, function(index, item) {
                 var row = '<tr>' +
-                    '<td>' + (item.rank || (index + 1)) + '</td>' +
+                    '<td>' + (typeof item.rank !== 'undefined' ? item.rank : '-') + '</td>' +
                     '<td>' + (item.username || '') + '</td>' +
                     '<td>' + (item.team_name || '') + '</td>' +
                     '<td>' + (item.profit || '0.00') + '</td>' +
@@ -1599,6 +1589,17 @@
             }
             
             var data = window.performanceTableData.slice(); // 复制数组
+            function toNumber(val) {
+                if (typeof val === 'number') {
+                    return val;
+                }
+                if (val === null || typeof val === 'undefined') {
+                    return 0;
+                }
+                var normalized = String(val).replace(/,/g, '');
+                var num = Number(normalized);
+                return isNaN(num) ? 0 : num;
+            }
             
             data.sort(function(a, b) {
                 var aVal, bVal;
@@ -1618,12 +1619,12 @@
                         bVal = (b.team_name || '').toLowerCase();
                         break;
                     case 'profit':
-                        aVal = parseFloat(a.profit || 0);
-                        bVal = parseFloat(b.profit || 0);
+                        aVal = toNumber(typeof a.profit_raw !== 'undefined' ? a.profit_raw : a.profit);
+                        bVal = toNumber(typeof b.profit_raw !== 'undefined' ? b.profit_raw : b.profit);
                         break;
                     case 'profit_rate':
-                        aVal = parseFloat(a.profit_rate || 0);
-                        bVal = parseFloat(b.profit_rate || 0);
+                        aVal = toNumber(typeof a.profit_rate_raw !== 'undefined' ? a.profit_rate_raw : a.profit_rate);
+                        bVal = toNumber(typeof b.profit_rate_raw !== 'undefined' ? b.profit_rate_raw : b.profit_rate);
                         break;
                     default:
                         return 0;
@@ -1644,16 +1645,6 @@
                     }
                 }
             });
-            
-            // 重新计算排名
-            if (field === 'rank') {
-                // 如果按排名排序，不需要重新计算
-            } else {
-                // 其他排序需要重新计算排名
-                $.each(data, function(index, item) {
-                    item.rank = index + 1;
-                });
-            }
             
             // 重新渲染表格
             renderPerformanceTable(data);
@@ -1757,7 +1748,11 @@
         var endDate = $('#performanceEndDate').val();
         
         // 如果选择了自定义时间或时间筛选改变，需要重新请求数据
-        if (timeFilter === 'custom' && startDate && endDate) {
+        if (timeFilter === 'custom') {
+            if (!startDate || !endDate) {
+                layer.msg('请选择完整的开始日期和结束日期', {icon: 2});
+                return;
+            }
             // 使用自定义时间范围重新请求数据
             loadPerformanceData(selectedUser, '', startDate + ',' + endDate);
         } else if (timeFilter && timeFilter !== 'custom') {
@@ -1782,11 +1777,6 @@
                 
                 window.performanceTableData = filteredData;
                 renderPerformanceTable(filteredData);
-                
-                // 重新计算排名
-                $.each(window.performanceTableData, function(index, item) {
-                    item.rank = index + 1;
-                });
                 
                 // 更新排序图标
                 if (window.performanceTableData.length > 0) {
@@ -1868,9 +1858,10 @@
                 $resetBtn.prop('disabled', false).html(originalResetText);
                 
                 if (status === 'timeout') {
-                    layer.msg('请求超时，请稍后重试', {icon: 2});
+                    layer.msg('请求超时（30秒），请缩小时间范围后重试', {icon: 2});
                 } else {
-                    layer.msg('网络错误，获取数据失败', {icon: 2});
+                    var respText = (xhr && xhr.responseText) ? ('，服务返回：' + xhr.responseText.substr(0, 120)) : '';
+                    layer.msg('网络或服务异常，获取业务人员业绩数据失败' + respText, {icon: 2, time: 4000});
                 }
             }
         });
