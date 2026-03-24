@@ -17,7 +17,7 @@ class Achievement extends Common
     // 活动标题（个人页入口）
     private $wcDashboardTitlePerson = '旺春PK小组个人 · 业绩看板';
     // 活动标题
-    private $wcDashboardTitlePermanent = '旺春现有团队 · 业绩看板';
+    private $wcDashboardTitlePermanent = '旺春团队 · 业绩看板';
     // 活动标题（个人页入口）
     private $wcDashboardTitlePermanentPerson = '旺春现有团队个人 · 业绩看板';
 

@@ -40,7 +40,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     /* 普通模式：纵向 flex + 中间行 flex:1，保证第2/3列 card-body 内视口有「可计算的剩余高度」，避免被内容撑满导致 canScroll=false */
     .wc-dashboard-container{
         position: relative;
-        padding: 12px 18px 16px;
+        padding: 8px 12px 12px;
         background:
             radial-gradient(1200px 420px at 50% -120px, rgba(46,194,255,.18), transparent 60%),
             radial-gradient(800px 360px at 14% 10%, rgba(100,231,255,.10), transparent 55%),
@@ -116,7 +116,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         align-items:center;
         justify-content: space-between;
         gap: 12px;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         box-sizing: border-box;
     }
 
@@ -161,13 +161,20 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     }
 
     .wc-dashboard-hero-kpis{
-        flex: 0 0 620px;
-        width: 620px;
-        min-width: 620px;
+        flex: 1;
+        min-width: 0;
+        max-width: 60%;
         display:grid;
         grid-template-columns: minmax(0, .85fr) minmax(0, .85fr) minmax(0, 1.15fr) minmax(0, 1.15fr);
         gap: 8px;
         align-items: stretch;
+    }
+
+    .wc-hero-actions{
+        flex: 0 0 auto;
+        display: flex;
+        gap: 8px;
+        align-items: center;
     }
 
     .wc-kpi-chip{
@@ -252,7 +259,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     @media screen and (max-width: 1199px){
         .wc-dashboard-hero-left{ min-width: 0; }
         .wc-dashboard-hero-meta{ min-width: 0; }
-        .wc-dashboard-hero-kpis{ width: 100%; }
+        .wc-dashboard-hero-main{ flex-wrap: wrap; }
+        .wc-dashboard-hero-kpis{ max-width: 100%; }
+        .wc-hero-actions{ width: 100%; justify-content: flex-end; }
     }
 
     @media screen and (max-width: 680px){
@@ -495,8 +504,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     @media screen and (min-width: 1200px){
         .wc-cards-row{
             display: grid;
-            /* 左右更宽，中间更窄：避免金额在第1/3列被截断省略 */
-            grid-template-columns: minmax(0, 10.5fr) minmax(0, 9fr) minmax(0, 11.5fr);
+            grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr) minmax(0, 0.9fr);
             gap: 12px;
         }
         .wc-card-col.wc-col-left,
@@ -949,6 +957,49 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     .wc-member-table .wc-mcol-name{ width: auto; }
     .wc-member-table .wc-mcol-amount{ width: 160px; text-align:right; }
 
+    .wc-member-table .wc-mcol-rank{ width: 60px; }
+    .wc-member-table .wc-mcol-amount{ width: 120px; }
+    .wc-member-name{
+        display: inline-block;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        vertical-align: bottom;
+    }
+
+    .wc-col-left .wc-card-body{
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .wc-col-left .wc-card-body #wc-left-rank-container{
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    #wc-left-rank-container .wc-left-board{
+        flex: 1;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    #wc-left-rank-container .wc-board-table{
+        flex: 1;
+        border-spacing: 0 4px;
+    }
+    #wc-left-rank-container .wc-board-table thead th{
+        padding: 8px 8px;
+        font-size: 12px;
+    }
+    #wc-left-rank-container .wc-board-table tbody td{
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+
     .wc-member-row-first td{
         background: linear-gradient(90deg, rgba(255,204,90,.12), rgba(231,242,255,.02) 40%, rgba(231,242,255,.02));
         font-weight: 800;
@@ -981,27 +1032,13 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     }
 
     /* ========== 全屏展示（电视大屏 / Fullscreen API） ========== */
-    @media screen and (min-width: 680px){
-        /* 为右上角全屏按钮预留空间，避免与右侧 KPI 区抢位 */
-        .wc-dashboard-hero{
-            padding-right: 128px;
-        }
-    }
-
     .wc-fullscreen-btn-wrap{
-        position: absolute;
-        top: 8px;
-        right: 10px;
-        z-index: 6;
+        position: static;
         display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 4px;
-        pointer-events: none;
-    }
-
-    .wc-fullscreen-btn-wrap > *{
-        pointer-events: auto;
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        z-index: 6;
     }
 
     .wc-fullscreen-btn{
@@ -1205,9 +1242,9 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         .wc-fullscreen-btn-wrap{
             position: static;
             align-items: flex-start;
-            margin: 0 0 8px 0;
-            width: 100%;
+            flex-wrap: wrap;
         }
+        .wc-hero-actions{ width: 100%; justify-content: flex-start; }
         .wc-fullscreen-hint{ white-space: normal; }
     }
 </style>
@@ -1215,24 +1252,6 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
 <div class="layui-fluid wc-dashboard-container">
     <!-- 顶部：紧凑单层信息总条（替代 wc-dashboard-top + wc-kpi-row） -->
     <div class="wc-dashboard-hero">
-        <!-- 全屏入口：电视大屏展示（逻辑见页面底部 Fullscreen 工具函数） -->
-        <div class="wc-fullscreen-btn-wrap" id="wc-fullscreen-toggle-wrap">
-            <button type="button" class="wc-fullscreen-btn" id="wc-fullscreen-toggle" aria-pressed="false" title="全屏展示">
-                <span class="wc-fullscreen-btn-icon" aria-hidden="true">
-                    <!-- 进入全屏：四角扩展 -->
-                    <svg class="wc-fs-icon-enter" viewBox="0 0 24 24" focusable="false">
-                        <path d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/>
-                    </svg>
-                    <!-- 退出全屏：四角收缩 -->
-                    <svg class="wc-fs-icon-exit" viewBox="0 0 24 24" focusable="false" style="display:none">
-                        <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
-                    </svg>
-                </span>
-                <span class="wc-fullscreen-btn-text">进入全屏</span>
-            </button>
-            <button type="button" class="wc-fullscreen-btn wc-autoscroll-btn" id="wc-autoscroll-toggle" aria-pressed="false" title="开始轮播">开始轮播</button>
-            <span class="wc-fullscreen-hint">ESC 可退出全屏</span>
-        </div>
         <div class="wc-dashboard-hero-main">
             <!-- 左侧：主标题 + 副信息 -->
             <div class="wc-dashboard-hero-left">
@@ -1288,6 +1307,26 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                     <div class="wc-kpi-chip-sub">总业绩 / 总人数</div>
                 </div>
             </div>
+            <div class="wc-hero-actions">
+                <!-- 全屏入口：电视大屏展示（逻辑见页面底部 Fullscreen 工具函数） -->
+                <div class="wc-fullscreen-btn-wrap" id="wc-fullscreen-toggle-wrap">
+                    <button type="button" class="wc-fullscreen-btn" id="wc-fullscreen-toggle" aria-pressed="false" title="全屏展示">
+                        <span class="wc-fullscreen-btn-icon" aria-hidden="true">
+                            <!-- 进入全屏：四角扩展 -->
+                            <svg class="wc-fs-icon-enter" viewBox="0 0 24 24" focusable="false">
+                                <path d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/>
+                            </svg>
+                            <!-- 退出全屏：四角收缩 -->
+                            <svg class="wc-fs-icon-exit" viewBox="0 0 24 24" focusable="false" style="display:none">
+                                <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+                            </svg>
+                        </span>
+                        <span class="wc-fullscreen-btn-text">进入全屏</span>
+                    </button>
+                    <button type="button" class="wc-fullscreen-btn wc-autoscroll-btn" id="wc-autoscroll-toggle" aria-pressed="false" title="开始轮播">开始轮播</button>
+                    <span class="wc-fullscreen-hint">ESC 可退出全屏</span>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1296,7 +1335,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         <div class="wc-card-col wc-col-left">
             <div class="layui-card wc-card wc-card-left">
                 <div class="layui-card-header wc-card-head">
-                    <div class="wc-card-head-title">小组人均业绩排行榜</div>
+                    <div class="wc-card-head-title">团队人均业绩排行榜</div>
                     <div class="wc-card-head-desc">展示：排名 / 小组名称 / 小组总业绩 / 成员人数 / 人均业绩（合计行保留）</div>
                 </div>
                 <div class="layui-card-body wc-card-body">
@@ -1311,7 +1350,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         <div class="wc-card-col wc-col-center">
             <div class="layui-card wc-card wc-card-right">
                 <div class="layui-card-header wc-card-head">
-                    <div class="wc-card-head-title">成员总业绩排行（按小组分块）</div>
+                    <div class="wc-card-head-title">团队内部总业绩排名</div>
                     <div class="wc-card-head-desc">组头：小组名称 / 小组总业绩 / 人均业绩；组内：排名 / 成员姓名 / 总业绩</div>
                 </div>
                 <div class="layui-card-body wc-card-body">
@@ -1326,7 +1365,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
         <div class="wc-card-col wc-col-global">
             <div class="layui-card wc-card wc-card-global">
                 <div class="layui-card-header wc-card-head">
-                    <div class="wc-card-head-title">成员总业绩总榜</div>
+                    <div class="wc-card-head-title">国内事业部个人总业绩排名</div>
                     <div class="wc-card-head-desc">全部成员按总业绩降序排列，不区分小组</div>
                 </div>
                 <div class="layui-card-body wc-card-body">
@@ -2016,7 +2055,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
                 html += '<span class="wc-meta-avg">人均：<strong>' + wcFormatAmount(gAvg) + '</strong><span class="wc-amount-unit">元</span></span>';
                 html += '</div></div>';
                 if (members.length) {
-                    html += '<table class="wc-member-table"><thead><tr><th class="wc-mcol-rank">排名</th><th class="wc-mcol-name">成员姓名</th><th class="wc-mcol-amount">总业绩</th></tr></thead><tbody>';
+                    html += '<table class="wc-member-table"><thead><tr><th class="wc-mcol-rank">排名</th><th class="wc-mcol-name">名字</th><th class="wc-mcol-amount">总业绩</th></tr></thead><tbody>';
                     for (var j = 0; j < members.length; j++) {
                         var m = members[j] || {};
                         var mRank = parseInt(m.rank || (j + 1), 10);
@@ -2051,7 +2090,7 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
             html += '<div class="wc-left-board">';
             html += '<table class="wc-board-table"><thead><tr>';
             html += '<th class="wc-col-rank">排名</th>';
-            html += '<th class="wc-col-name">成员姓名</th>';
+            html += '<th class="wc-col-name">名字</th>';
             html += '<th class="wc-col-group">所属小组</th>';
             html += '<th class="wc-col-total">总业绩</th>';
             html += '</tr></thead><tbody>';
