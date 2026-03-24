@@ -2500,11 +2500,16 @@ private function exportToExcel($data)
         $sum_rate_all = $sum_money_all > 0 ? round(($sum_profit_all / $sum_money_all) * 100, 2) : 0;
 
         // 2) 按 pr_user 聚合（空 pr_user 单独成桶，避免丢单）
+        // MySQL 5.7: GROUP_CONCAT 的 SEPARATOR 需使用字符串字面量，不能用 CHAR(30)
+        $teamNameSeparator = '||#||';
         $order_stats = Db::table('crm_client_order')->where($where)
             ->fieldRaw(
                 "IFNULL(NULLIF(TRIM(pr_user),''), '__PR_EMPTY__') AS pr_bucket, "
                 . 'COUNT(id) AS order_count, SUM(profit) AS total_profit, SUM(money) AS total_money, '
-                . 'SUBSTRING_INDEX(GROUP_CONCAT(NULLIF(TRIM(team_name), \'\') ORDER BY order_time DESC, id DESC SEPARATOR CHAR(30)), CHAR(30), 1) AS snap_team_name'
+                . "SUBSTRING_INDEX("
+                . "GROUP_CONCAT(NULLIF(TRIM(team_name), '') ORDER BY order_time DESC, id DESC SEPARATOR '{$teamNameSeparator}')"
+                . ", '{$teamNameSeparator}', 1"
+                . ") AS snap_team_name"
             )
             ->group('pr_bucket')
             ->select();
