@@ -2410,136 +2410,311 @@ private function exportToExcel($data)
     }
 
     /**
+     * 构建与 Order::clientSearch() 订单列表一致的 crm_client_order 条件（仅时间 + 权限口径，不含关键词）。
+     * 说明：历史上业绩表先用「启用 + 业务组」admin 名单再 whereIn(pr_user)，会漏掉列表里仍统计到的订单；
+     * 此处对齐列表：profile team_name、org→admin 拉 pr_user 范围、与列表相同的 check_status/order_time。
+     */
+    private function buildOrderListAlignedOrderWhere(string $timebucket, string $at_time, string $filterPrUser = ''): array
+    {
+        $where = [];
+        $user = Admin::getMyInfo();
+        $profileTeamName = trim((string)($user['team_name'] ?? ''));
+        if ($profileTeamName !== '') {
+            $where[] = ['team_name', '=', $profileTeamName];
+        }
+        $where[] = ['check_status', '=', 2];
+
+        // 时间：与 buildPerformanceOrderWhere 一致（自定义逗号区间优先，否则 timebucket；弹窗默认本月）
+        $effective_timebucket = $timebucket;
+        if ($at_time === '' && $effective_timebucket === '') {
+            $effective_timebucket = 'month';
+        }
+        if ($at_time !== '' && strpos($at_time, ',') !== false) {
+            $date_parts = explode(',', $at_time);
+            if (count($date_parts) === 2) {
+                $start_date = trim($date_parts[0]);
+                $end_date = trim($date_parts[1]);
+                if ($start_date !== '' && $end_date !== '') {
+                    $where[] = ['order_time', '>=', $start_date . ' 00:00:00'];
+                    $where[] = ['order_time', '<=', $end_date . ' 23:59:59'];
+                }
+            }
+        } elseif ($effective_timebucket !== '') {
+            $where[] = $this->buildTimeWhere($effective_timebucket, 'order_time');
+        } else {
+            $where[] = $this->buildTimeWhere('month', 'order_time');
+        }
+
+        // pr_user 范围：复制 Order::clientSearch() 中 admin + org 逻辑（不限制 is_open / group_id）
+        $org_where = [];
+        if (!empty($user['org'])) {
+            $org_where[] = $this->getOrgWhere($user['org']);
+        }
+        $team_name = $profileTeamName;
+        if ($team_name) {
+            $usernames = Db::table('admin')->where('team_name', $team_name)->where($org_where)->column('username');
+        } else {
+            if (!empty($org_where)) {
+                $usernames = Db::table('admin')->where($org_where)->column('username');
+            }
+        }
+        if (isset($usernames)) {
+            if (!$usernames) {
+                $where[] = ['pr_user', '=', time()];
+            } else {
+                $where[] = ['pr_user', 'in', $usernames];
+            }
+        }
+
+        if ($filterPrUser !== '') {
+            $where[] = ['pr_user', '=', $filterPrUser];
+        }
+
+        return $where;
+    }
+
+    /**
      * 获取业务人员业绩数据
-     * 返回各业务员的询盘量、成单率、利润、利润率
-     * 优化：使用批量查询替代循环查询，大幅提升性能
+     * 合计与分组均以「订单列表」同一套 where 为口径；补零成员仅增加展示行，不改变 summary。
      */
     public function getPerformanceData()
     {
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
-        $filter_username = Request::param('username', ''); // 业务员筛选
-        
+        $filter_username = Request::param('username', '');
+
+        $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username);
+
+        $empty_summary = [
+            'total_profit' => number_format(0, 2),
+            'total_money'  => number_format(0, 2),
+            'profit_rate'  => number_format(0, 2),
+        ];
+
+        // 1) summary：与订单列表 totalProfit/totalMoney 同源（对整批 where 求和，不受补零行影响）
+        $totals_row = Db::table('crm_client_order')->where($where)
+            ->field('SUM(profit) AS total_profit, SUM(money) AS total_money')
+            ->find();
+        $sum_profit_all = round((float)($totals_row['total_profit'] ?? 0), 2);
+        $sum_money_all = round((float)($totals_row['total_money'] ?? 0), 2);
+        $sum_rate_all = $sum_money_all > 0 ? round(($sum_profit_all / $sum_money_all) * 100, 2) : 0;
+
+        // 2) 按 pr_user 聚合（空 pr_user 单独成桶，避免丢单）
+        $order_stats = Db::table('crm_client_order')->where($where)
+            ->fieldRaw(
+                "IFNULL(NULLIF(TRIM(pr_user),''), '__PR_EMPTY__') AS pr_bucket, "
+                . 'COUNT(id) AS order_count, SUM(profit) AS total_profit, SUM(money) AS total_money, '
+                . 'SUBSTRING_INDEX(GROUP_CONCAT(NULLIF(TRIM(team_name), \'\') ORDER BY order_time DESC, id DESC SEPARATOR CHAR(30)), CHAR(30), 1) AS snap_team_name'
+            )
+            ->group('pr_bucket')
+            ->select();
+
         $current_admin = Admin::getMyInfo();
-        // 默认仅显示启用中的业务员，避免停用账号占据大量 0 数据行
-        // 业务员包括：业务员(10)、业务主管(11)、产品总监(13)、产品经理(14)
+        $admin_map = [];
+        $adminQuery = Db::table('admin')->field('username,team_name');
+        if (!empty($current_admin['org'])) {
+            $adminQuery->where($this->getOrgWhere($current_admin['org']));
+        }
+        foreach ($adminQuery->select() as $ar) {
+            if (!empty($ar['username'])) {
+                $admin_map[$ar['username']] = $ar;
+            }
+        }
+
+        // 3) 补零：仅展示用（启用 + 业务组），不参与上面的 SUM
         $business_users_query = Db::table('admin')
             ->where($this->getOrgWhere($current_admin['org']))
-            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14]) // 10:业务员, 11:业务主管, 13:产品总监, 14:产品经理
+            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
             ->where('is_open', '=', 1)
             ->where('username', '<>', '')
             ->whereNotNull('username');
-        
-        // 如果指定了业务员筛选，只查询该业务员
-        if (!empty($filter_username)) {
+        if ($filter_username !== '') {
             $business_users_query->where('username', '=', $filter_username);
         }
-        
-        // 限制最大查询数量，避免查询过多数据导致超时（最多500个业务员）
         $business_users = $business_users_query
             ->field('admin_id,username,team_name')
             ->order('team_name,username')
-            ->limit(500) // 限制最大数量，避免超时
+            ->limit(500)
             ->select();
-        
-        if (empty($business_users)) {
-            return json([
-                'code' => 0,
-                'msg' => '获取成功',
-                'data' => []
-            ]);
-        }
-        
-        // 提取所有业务员用户名，过滤空值
-        $usernames = array_filter(array_column($business_users, 'username'));
-        if (empty($usernames)) {
-            return json([
-                'code' => 0,
-                'msg' => '获取成功',
-                'data' => []
-            ]);
-        }
-        
-        $user_map = [];
-        foreach ($business_users as $user) {
-            if (!empty($user['username'])) {
-                $user_map[$user['username']] = $user;
-            }
-        }
-        
-        // 统一订单口径：crm_client_order + check_status=2 + order_time 时间筛选
-        // 优先 at_time 自定义范围，其次 timebucket，均为空时默认本月
-        $effective_timebucket = $timebucket;
-        if ($at_time === '' && $effective_timebucket === '') {
-            $effective_timebucket = 'month';
-        }
-        
-        // 批量获取订单统计：订单数、利润、金额
-        // 使用聚合查询，一次性获取所有统计数据，避免 N+1 问题
-        $order_stats = $this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '')
-            ->where('pr_user', 'in', $usernames)
-            ->field('pr_user, count(id) as order_count, sum(profit) as total_profit, sum(money) as total_money')
-            ->group('pr_user')
-            ->select();
-        
-        $order_map = [];
+
+        $agg_map = [];
         foreach ($order_stats as $stat) {
-            $order_map[$stat['pr_user']] = [
-                'order_count' => (int)$stat['order_count'],
-                'total_profit' => (float)($stat['total_profit'] ?: 0),
-                'total_money' => (float)($stat['total_money'] ?: 0)
+            $bucket = (string)$stat['pr_bucket'];
+            $is_empty_pr = ($bucket === '__PR_EMPTY__');
+            $display_username = $is_empty_pr ? '未知业务员' : $bucket;
+            $agg_map[$bucket] = [
+                'username' => $display_username,
+                'pr_bucket' => $bucket,
+                'order_count' => (int)($stat['order_count'] ?? 0),
+                'total_profit' => round((float)($stat['total_profit'] ?? 0), 2),
+                'total_money' => round((float)($stat['total_money'] ?? 0), 2),
+                'snap_team_name' => trim((string)($stat['snap_team_name'] ?? '')),
             ];
         }
-        
-        // 3) 无订单成员只显示 0（禁止通过客户表/客户名反推订单金额或利润）
-        
-        // 4. 组装结果数据 - 确保所有业务员都被包含，即使没有数据也显示
-        $result = [];
-        foreach ($business_users as $user) {
-            $current_username = $user['username'];
-            
-            // 跳过用户名为空的记录
-            if (empty($current_username)) {
+
+        foreach ($business_users as $u) {
+            $un = trim((string)($u['username'] ?? ''));
+            if ($un === '') {
                 continue;
             }
-            
-            // 获取订单数据（如果没有数据则为0）
-            $order_data = isset($order_map[$current_username]) ? $order_map[$current_username] : ['order_count' => 0, 'total_profit' => 0, 'total_money' => 0];
-            
-            $total_profit = round((float)$order_data['total_profit'], 2);
-            $total_money = round((float)$order_data['total_money'], 2);
-            
-            // 计算利润率
+            if (!isset($agg_map[$un])) {
+                $agg_map[$un] = [
+                    'username' => $un,
+                    'pr_bucket' => $un,
+                    'order_count' => 0,
+                    'total_profit' => 0.0,
+                    'total_money' => 0.0,
+                    'snap_team_name' => '',
+                ];
+            }
+        }
+
+        $result = [];
+        foreach ($agg_map as $row) {
+            $bucket = $row['pr_bucket'];
+            $total_profit = (float)$row['total_profit'];
+            $total_money = (float)$row['total_money'];
             $profit_rate = $total_money > 0 ? round(($total_profit / $total_money) * 100, 2) : 0;
-            
+
+            $snap = trim((string)$row['snap_team_name']);
+            $admin_team = '';
+            if ($bucket !== '__PR_EMPTY__' && isset($admin_map[$bucket])) {
+                $admin_team = trim((string)($admin_map[$bucket]['team_name'] ?? ''));
+            }
+            if ($snap !== '') {
+                $team_display = $snap;
+            } elseif ($admin_team !== '') {
+                $team_display = $admin_team;
+            } else {
+                $team_display = '未分组';
+            }
+
             $result[] = [
-                'username' => $current_username,
-                'team_name' => $user['team_name'] ?: '',
+                'username' => $row['username'],
+                'team_name' => $team_display,
+                'order_count' => (int)$row['order_count'],
                 'profit_raw' => $total_profit,
                 'profit' => number_format($total_profit, 2),
                 'total_money_raw' => $total_money,
                 'total_money' => number_format($total_money, 2),
                 'profit_rate_raw' => $profit_rate,
-                'profit_rate' => number_format($profit_rate, 2)
+                'profit_rate' => number_format($profit_rate, 2),
             ];
         }
-        
-        // 默认按利润降序，生成真实业绩排名 rank
-        usort($result, function($a, $b) {
+
+        usort($result, function ($a, $b) {
             return ((float)$b['profit_raw']) <=> ((float)$a['profit_raw']);
         });
-        
-        // 添加排名（初始按利润排序）
+
         $rank = 1;
         foreach ($result as &$item) {
             $item['rank'] = $rank++;
         }
         unset($item);
-        
+
         return json([
             'code' => 0,
             'msg' => '获取成功',
-            'data' => $result
+            'data' => $result,
+            'summary' => [
+                'total_profit' => number_format($sum_profit_all, 2),
+                'total_money' => number_format($sum_money_all, 2),
+                'profit_rate' => number_format($sum_rate_all, 2),
+            ],
+        ]);
+    }
+
+    /**
+     * 临时调试：对比「订单列表口径」与「旧业绩表口径」命中订单差集，用于核对利润差额来源。
+     * 调用示例：POST admin/operator/debugPerformanceDiff 参数 timebucket、at_time 与业绩表一致。
+     */
+    public function debugPerformanceDiff()
+    {
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+
+        $where_new = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, '');
+
+        $effective_timebucket = $timebucket;
+        if ($at_time === '' && $effective_timebucket === '') {
+            $effective_timebucket = 'month';
+        }
+
+        $current_admin = Admin::getMyInfo();
+        $old_usernames = Db::table('admin')
+            ->where($this->getOrgWhere($current_admin['org']))
+            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
+            ->where('is_open', '=', 1)
+            ->where('username', '<>', '')
+            ->whereNotNull('username')
+            ->limit(500)
+            ->column('username');
+        $old_usernames = $old_usernames ? array_values(array_filter($old_usernames)) : [];
+
+        $cols = 'id,order_no,pr_user,team_name,order_time,money,profit,check_status';
+
+        $orders_new = Db::table('crm_client_order')->where($where_new)->field($cols)->select();
+        $ids_new = array_column($orders_new ?: [], 'id');
+
+        if ($old_usernames === []) {
+            $orders_old = [];
+            $ids_old = [];
+        } else {
+            $orders_old = $this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '')
+                ->where('pr_user', 'in', $old_usernames)
+                ->field($cols)
+                ->select();
+            $ids_old = array_column($orders_old ?: [], 'id');
+        }
+
+        $set_new = array_fill_keys($ids_new, true);
+        $set_old = array_fill_keys($ids_old, true);
+
+        $only_new = array_values(array_diff($ids_new, $ids_old));
+        $only_old = array_values(array_diff($ids_old, $ids_new));
+
+        $only_new_rows = [];
+        $diff_profit = 0.0;
+        foreach ($orders_new ?: [] as $o) {
+            if (isset($set_old[$o['id']])) {
+                continue;
+            }
+            $only_new_rows[] = $o;
+            $diff_profit += (float)($o['profit'] ?? 0);
+        }
+        $diff_profit = round($diff_profit, 2);
+
+        $sum_new = round((float)Db::table('crm_client_order')->where($where_new)->sum('profit'), 2);
+        $sum_old = $old_usernames === []
+            ? 0.0
+            : round((float)$this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '')
+                ->where('pr_user', 'in', $old_usernames)
+                ->sum('profit'), 2);
+
+        return json([
+            'code' => 0,
+            'msg' => '调试数据：only_new 为旧业绩表漏掉的订单（其利润合计应接近列表与旧表差额）',
+            'criteria' => [
+                'new_where_note' => '对齐 Order::clientSearch 权限 + check_status=2 + order_time',
+                'old_where_note' => '历史口径：同时间 + pr_user in (启用且业务组 admin)',
+            ],
+            'counts' => [
+                'new_orders' => count($ids_new),
+                'old_orders' => count($ids_old),
+                'only_in_new' => count($only_new),
+                'only_in_old' => count($only_old),
+            ],
+            'sums' => [
+                'profit_new_aligned' => $sum_new,
+                'profit_old_legacy' => $sum_old,
+                'delta_legacy_minus_new' => round($sum_old - $sum_new, 2),
+            ],
+            'diff_only_in_new_profit_sum' => $diff_profit,
+            'orders_in_new_criteria' => $orders_new,
+            'orders_in_old_criteria' => $orders_old,
+            'order_ids_only_in_new' => $only_new,
+            'order_ids_only_in_old' => $only_old,
+            'orders_only_in_new_detail' => $only_new_rows,
         ]);
     }
     

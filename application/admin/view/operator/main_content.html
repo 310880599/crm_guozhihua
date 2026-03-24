@@ -122,6 +122,14 @@
     }
     /* === split-layout end === */
 
+    /* 业务人员业绩表：合计行 */
+    #performanceTable tfoot.performance-table-summary-footer td {
+        background-color: #eef1f4;
+        font-weight: 600;
+        border-top: 2px solid #ced4da;
+        vertical-align: middle;
+    }
+
  </style>
 <div class="col-md-8">
     <!-- 业绩按钮：左业务员，右团队 -->
@@ -493,6 +501,7 @@
                             <td colspan="5" class="text-center text-muted">加载中...</td>
                         </tr>
                     </tbody>
+                    <tfoot id="performanceTableFoot" class="performance-table-summary-footer"></tfoot>
                 </table>
             </div>
         </div>
@@ -676,11 +685,12 @@
                     // 存储原始数据用于排序和筛选
                     window.performanceTableData = res.data || [];
                     window.performanceAllData = res.data || []; // 保存全部数据用于重置
-                    
+                    applyPerformanceResponseSummary(res);
+
                     // 填充业务员下拉框
                     fillPerformanceUserFilter(window.performanceAllData);
-                    
-                    // 渲染表格数据
+
+                    // 渲染表格数据（含合计行）
                     renderPerformanceTable(window.performanceTableData);
                     
                     // 显示弹窗，设置最高层级
@@ -1531,26 +1541,114 @@
     };
     // === split-layout end ===
 
-    
-    // 渲染业绩表格
-    function renderPerformanceTable(data) {
+    // 金额类数字格式化为两位小数（与 PHP number_format 千分位风格一致，便于核对）
+    function formatPerformanceAmount2(num) {
+        var n = Number(num);
+        if (!isFinite(n)) {
+            n = 0;
+        }
+        n = Math.round(n * 100) / 100;
+        var parts = n.toFixed(2).split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return parts.join('.');
+    }
+
+    function parsePerformanceNumber(val) {
+        if (typeof val === 'number' && isFinite(val)) {
+            return val;
+        }
+        if (val === null || typeof val === 'undefined') {
+            return 0;
+        }
+        var normalized = String(val).replace(/,/g, '');
+        var num = parseFloat(normalized);
+        return isNaN(num) ? 0 : num;
+    }
+
+    // 由行数据汇总（仅在前端子集筛选等无 summary 时使用，口径：各行 profit_raw / total_money_raw 之和）
+    function computePerformanceSummaryFromRows(rows) {
+        var tp = 0;
+        var tm = 0;
+        $.each(rows || [], function(_, item) {
+            tp += parsePerformanceNumber(typeof item.profit_raw !== 'undefined' ? item.profit_raw : item.profit);
+            tm += parsePerformanceNumber(typeof item.total_money_raw !== 'undefined' ? item.total_money_raw : item.total_money);
+        });
+        tp = Math.round(tp * 100) / 100;
+        tm = Math.round(tm * 100) / 100;
+        var pr = tm > 0 ? Math.round((tp / tm) * 100 * 100) / 100 : 0;
+        return {
+            total_profit: formatPerformanceAmount2(tp),
+            total_money: formatPerformanceAmount2(tm),
+            profit_rate: pr.toFixed(2)
+        };
+    }
+
+    function normalizePerformanceSummary(summary) {
+        if (summary && typeof summary === 'object'
+            && summary.total_profit != null && summary.total_money != null && summary.profit_rate != null) {
+            return {
+                total_profit: String(summary.total_profit),
+                total_money: String(summary.total_money),
+                profit_rate: String(summary.profit_rate)
+            };
+        }
+        return {
+            total_profit: '0.00',
+            total_money: '0.00',
+            profit_rate: '0.00'
+        };
+    }
+
+    function applyPerformanceResponseSummary(res) {
+        if (res && res.summary && res.summary.total_profit != null && res.summary.total_money != null && res.summary.profit_rate != null) {
+            window.performanceSummary = normalizePerformanceSummary(res.summary);
+        } else {
+            window.performanceSummary = computePerformanceSummaryFromRows(res && res.data ? res.data : []);
+        }
+    }
+
+    function renderPerformanceSummaryFoot(summary) {
+        var s = normalizePerformanceSummary(summary);
+        var $foot = $('#performanceTableFoot');
+        $foot.empty();
+        var row = '<tr class="performance-table-summary-row">' +
+            '<td><strong>合计</strong></td>' +
+            '<td><span class="text-muted" style="font-weight: normal; font-size: 12px;">当前结果汇总</span></td>' +
+            '<td>-</td>' +
+            '<td style="text-align: right;"><strong>' + s.total_profit + '</strong></td>' +
+            '<td style="text-align: right;"><strong>' + s.profit_rate + '%</strong><br>' +
+            '<span class="text-muted" style="font-weight: normal; font-size: 12px;">金额合计 ' + s.total_money + '</span></td>' +
+            '</tr>';
+        $foot.append(row);
+    }
+
+    // 渲染业绩表格（data 为当前结果集；summary 缺省则用 window.performanceSummary）
+    function renderPerformanceTable(data, summary) {
         var tbody = $('#performanceTableBody');
         tbody.empty();
-        
+
+        var effSummary = summary !== undefined && summary !== null ? summary : window.performanceSummary;
+
         if (data && data.length > 0) {
             $.each(data, function(index, item) {
+                var teamLabel = item.team_name;
+                if (teamLabel === null || teamLabel === undefined || String(teamLabel).trim() === '') {
+                    teamLabel = '未分组';
+                }
                 var row = '<tr>' +
                     '<td>' + (typeof item.rank !== 'undefined' ? item.rank : '-') + '</td>' +
                     '<td>' + (item.username || '') + '</td>' +
-                    '<td>' + (item.team_name || '') + '</td>' +
-                    '<td>' + (item.profit || '0.00') + '</td>' +
-                    '<td>' + (item.profit_rate || '0.00') + '%</td>' +
+                    '<td>' + teamLabel + '</td>' +
+                    '<td style="text-align: right;">' + (item.profit || '0.00') + '</td>' +
+                    '<td style="text-align: right;">' + (item.profit_rate || '0.00') + '%</td>' +
                     '</tr>';
                 tbody.append(row);
             });
         } else {
             tbody.append('<tr><td colspan="5" class="text-center text-muted">暂无数据</td></tr>');
         }
+
+        renderPerformanceSummaryFoot(effSummary);
     }
     
     // 绑定表头排序功能
@@ -1645,8 +1743,14 @@
                     }
                 }
             });
-            
-            // 重新渲染表格
+
+            // 排序后从 1 起连续重排业绩排名（合计行在 tfoot，不参与排序）
+            for (var ri = 0; ri < data.length; ri++) {
+                data[ri].rank = ri + 1;
+            }
+            window.performanceTableData = data;
+
+            // 重新渲染表格（合计仍用当前 window.performanceSummary）
             renderPerformanceTable(data);
             updateSortIcons(field, order);
         }
@@ -1774,10 +1878,15 @@
                         return item.username === selectedUser;
                     });
                 }
-                
+
+                for (var fi = 0; fi < filteredData.length; fi++) {
+                    filteredData[fi].rank = fi + 1;
+                }
+
                 window.performanceTableData = filteredData;
+                window.performanceSummary = computePerformanceSummaryFromRows(filteredData);
                 renderPerformanceTable(filteredData);
-                
+
                 // 更新排序图标
                 if (window.performanceTableData.length > 0) {
                     bindTableSort();
@@ -1834,16 +1943,17 @@
                 if (res.code === 0 || res.code === 200) {
                     window.performanceTableData = res.data || [];
                     window.performanceAllData = res.data || [];
-                    
+                    applyPerformanceResponseSummary(res);
+
                     // 更新业务员下拉框
                     fillPerformanceUserFilter(window.performanceAllData);
-                    
+
                     // 如果筛选了业务员，设置下拉框值
                     if (username) {
                         $('#performanceUserFilter').val(username);
                     }
-                    
-                    // 渲染表格
+
+                    // 渲染表格（含合计行）
                     renderPerformanceTable(window.performanceTableData);
                     
                     // 重新绑定排序
