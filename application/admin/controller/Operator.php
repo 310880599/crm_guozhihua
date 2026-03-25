@@ -3159,6 +3159,66 @@ private function exportToExcel($data)
         return $l_where_sub;
     }
 
+    // ===========================
+    // 新增：团队询盘汇总排除配置（仅影响三连屏）
+    // ===========================
+
+    /**
+     * 需要从「团队询盘汇总」排除的团队名称（第一屏/联动查询均生效）。
+     * 说明：这里只做数组配置，不读库、不改表结构。
+     */
+    private function getExcludedInquiryTeamNames(): array
+    {
+        $items = [
+            // '测试团队',
+            '自己的团队11',
+        ];
+
+        $items = array_map(function ($v) {
+            return trim((string)$v);
+        }, $items);
+        $items = array_filter($items, function ($v) {
+            return $v !== '';
+        });
+        return array_values(array_unique($items));
+    }
+
+    /**
+     * 需要从「团队询盘汇总」排除的业务员名称（第二屏/第三屏均生效，并且从第一屏统计口径扣除）。
+     */
+    private function getExcludedInquiryUsernames(): array
+    {
+        $items = [
+            // '测试账号',
+            '郭志华',
+            '郭志华2',
+        ];
+
+        $items = array_map(function ($v) {
+            return trim((string)$v);
+        }, $items);
+        $items = array_filter($items, function ($v) {
+            return $v !== '';
+        });
+        return array_values(array_unique($items));
+    }
+
+    /**
+     * 新增：统一应用团队/业务员排除条件（优先 SQL 层过滤）。
+     * 注意：这里默认按 a.team_name / a.username 过滤，保持现有 getLeadsSubQuery() 链式别名写法不变。
+     */
+    private function applyInquirySummaryExcludes($query, array $excludedTeams = [], array $excludedUsers = [])
+    {
+        if (!empty($excludedTeams)) {
+            // ThinkPHP 5.1 兼容写法：where field not in (...)
+            $query->where('a.team_name', 'not in', $excludedTeams);
+        }
+        if (!empty($excludedUsers)) {
+            $query->where('a.username', 'not in', $excludedUsers);
+        }
+        return $query;
+    }
+
     /**
      * 第一屏：团队询盘汇总（复用业务询盘口径）。
      */
@@ -3171,9 +3231,16 @@ private function exportToExcel($data)
         $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
         $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]]];
 
-        $rows = $this->getLeadsSubQuery($l_where_sub)
+        // 新增：排除团队/排除业务员（影响统计口径，不只是展示隐藏）
+        $excludedTeams = $this->getExcludedInquiryTeamNames();
+        $excludedUsers = $this->getExcludedInquiryUsernames();
+
+        $query = $this->getLeadsSubQuery($l_where_sub)
             ->where('a.team_name', '<>', '')
-            ->where($yw_where)
+            ->where($yw_where);
+        $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers);
+
+        $rows = $query
             ->group('a.team_name')
             ->field('a.team_name,count(l.id) as yw_num')
             ->order('yw_num desc')
@@ -3218,13 +3285,30 @@ private function exportToExcel($data)
             ]);
         }
 
+        // 新增：如果团队在排除名单里，禁止联动查出
+        $excludedTeams = $this->getExcludedInquiryTeamNames();
+        if (!empty($excludedTeams) && in_array($team_name, $excludedTeams, true)) {
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+
         $current_admin = Admin::getMyInfo();
         $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
         $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]]];
 
-        $rows = $this->getLeadsSubQuery($l_where_sub)
+        // 新增：排除业务员（第二屏不显示，且不计入统计）
+        $excludedUsers = $this->getExcludedInquiryUsernames();
+
+        $query = $this->getLeadsSubQuery($l_where_sub)
             ->where($yw_where)
-            ->where('a.team_name', '=', $team_name)
+            ->where('a.team_name', '=', $team_name);
+        $this->applyInquirySummaryExcludes($query, [], $excludedUsers);
+
+        $rows = $query
             ->group('a.username,a.team_name')
             ->field('a.username,a.team_name,count(l.id) as yw_num')
             ->order('yw_num desc')
@@ -3265,6 +3349,17 @@ private function exportToExcel($data)
             return json([
                 'code' => 0,
                 'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+
+        // 新增：如果业务员在排除名单里，禁止通过接口参数绕过前端隐藏继续查看
+        $excludedUsers = $this->getExcludedInquiryUsernames();
+        if (!empty($excludedUsers) && in_array($username, $excludedUsers, true)) {
+            return json([
+                'code' => 403,
+                'msg' => '无权限查看该成员数据',
                 'data' => [],
                 'summary' => ['total_count' => 0],
             ]);
