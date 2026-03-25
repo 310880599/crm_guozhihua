@@ -139,16 +139,28 @@
 
     /*
      * 业务人员业绩表：利润 / 利润率列
-     * 全局 .wukong-table thead th 为左对齐，tbody 数字列为右对齐会导致表头与数据错位；
-     * 此处用专用 class 让表头与单元格、合计行统一右对齐，排序图标随表头文字一起在右侧。
+     * 全局 .wukong-table thead th 为左对齐；数字列数据需与表头同一竖线。
+     * col-profit / col-profit-rate：th/td/tfoot 统一右对齐；表头内 performance-th-sort 用 flex 将标题与排序图标整体贴右，与下方数字对齐。
      */
     #performanceTable thead th.col-profit,
-    #performanceTable thead th.col-profit-rate,
+    #performanceTable thead th.col-profit-rate {
+        text-align: right !important;
+        vertical-align: middle;
+    }
+    #performanceTable thead th.col-profit .performance-th-sort,
+    #performanceTable thead th.col-profit-rate .performance-th-sort {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.35em;
+        width: 100%;
+        box-sizing: border-box;
+    }
     #performanceTable tbody td.col-profit,
     #performanceTable tbody td.col-profit-rate,
     #performanceTable tfoot td.col-profit,
     #performanceTable tfoot td.col-profit-rate {
-        text-align: right;
+        text-align: right !important;
     }
 
     /* 业务人员业绩表弹窗头部（Windows 风格关闭按钮） */
@@ -547,10 +559,10 @@
                                 所属团队 <i class="bi bi-arrow-down-up sort-icon"></i>
                             </th>
                             <th class="col-profit" data-sort="profit" style="cursor: pointer; user-select: none;">
-                                利润 <i class="bi bi-arrow-down-up sort-icon"></i>
+                                <span class="performance-th-sort">利润<i class="bi bi-arrow-down-up sort-icon"></i></span>
                             </th>
                             <th class="col-profit-rate" data-sort="profit_rate" style="cursor: pointer; user-select: none;">
-                                利润率 <i class="bi bi-arrow-down-up sort-icon"></i>
+                                <span class="performance-th-sort">利润率<i class="bi bi-arrow-down-up sort-icon"></i></span>
                             </th>
                         </tr>
                     </thead>
