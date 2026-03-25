@@ -2483,6 +2483,22 @@ private function exportToExcel($data)
         $at_time = Request::param('at_time', '');
         $filter_username = Request::param('username', '');
 
+        // 需要从业绩表中排除的业务员（按姓名匹配）
+        // 后续只需要在这里增删名字即可控制显示范围
+        $excludeUsernames = [
+            // '张三',
+            // '李四',
+            '范文清',
+            '郭志华',
+            '郭志华2',
+            '付淑雅'
+        ];
+        // 清洗排除名单：去空格、去空值、去重
+        $excludeUsernames = array_values(array_unique(array_filter(array_map(function ($name) {
+            return trim((string)$name);
+        }, $excludeUsernames))));
+        $excludeMap = array_fill_keys($excludeUsernames, true);
+
         $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username);
 
         $empty_summary = [
@@ -2576,6 +2592,12 @@ private function exportToExcel($data)
 
         $result = [];
         foreach ($agg_map as $row) {
+            $username = trim((string)($row['username'] ?? ''));
+            // 统一在输出前过滤，确保有订单/补零人员都能正确排除
+            if ($username !== '' && isset($excludeMap[$username])) {
+                continue;
+            }
+
             $bucket = $row['pr_bucket'];
             $total_profit = (float)$row['total_profit'];
             $total_money = (float)$row['total_money'];
