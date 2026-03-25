@@ -1013,7 +1013,15 @@ private function exportToExcel($data)
         //业务询盘数据
         $yw_where = array_merge($where, [['group_id', 'in', [$this->ywgid, $this->ywzgid]]]);
         $ywData = $this->getLeadsSubQuery($l_where_sub)->where($yw_where)->group('a.username,a.team_name')->field('a.username,a.team_name,count(l.id) as yw_num')->order('yw_num desc')->order('a.team_name')->order('a.username')->select();
-        $ywData_total = $this->getLeadsSubQuery($l_where_sub)->where('a.team_name', '<>', '')->where($yw_where)->group('a.team_name')->field('a.team_name,count(l.id) as yw_num')->order('yw_num desc')->order('a.team_name')->select();
+        // 团队汇总：空团队统一归并到“未分组”（不改变统计口径：仍 count(l.id)）
+        $ywTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+        $ywData_total = $this->getLeadsSubQuery($l_where_sub)
+            ->where($yw_where)
+            ->group($ywTeamExpr)
+            ->field($ywTeamExpr . ' as team_name,count(l.id) as yw_num')
+            ->order('yw_num desc')
+            ->order('team_name')
+            ->select();
 
         //运营数据 - 根据 inquiry_id 和 port_id 匹配运营人员
         // getYyLeadsSubQuery 已经处理了所有必要的条件（组织、is_open、inquiry_id、port_id）
@@ -1457,7 +1465,15 @@ private function exportToExcel($data)
         //业务询盘数据 - 只显示业务员的数据
         $yw_where = array_merge($where, [['group_id', 'in', [$this->ywgid, $this->ywzgid]]]);
         $ywData = $this->getLeadsSubQuery($l_where_sub, 'pr_user')->where($yw_where)->group('a.username,a.team_name')->field('a.username,a.team_name,count(l.id) as yw_num')->order('yw_num desc')->order('a.team_name')->order('a.username')->select();
-        $ywData_total = $this->getLeadsSubQuery($l_where_sub, 'pr_user')->where('a.team_name', '<>', '')->where($yw_where)->group('a.team_name')->field('a.team_name,count(l.id) as yw_num')->order('yw_num desc')->order('a.team_name')->select();
+        // 团队汇总：空团队统一归并到“未分组”（不改变统计口径：仍 count(l.id)）
+        $ywTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+        $ywData_total = $this->getLeadsSubQuery($l_where_sub, 'pr_user')
+            ->where($yw_where)
+            ->group($ywTeamExpr)
+            ->field($ywTeamExpr . ' as team_name,count(l.id) as yw_num')
+            ->order('yw_num desc')
+            ->order('team_name')
+            ->select();
 
         //询盘产品数据 - 根据当前用户的类型匹配
         $oper_prod = [];
@@ -3235,16 +3251,18 @@ private function exportToExcel($data)
         $excludedTeams = $this->getExcludedInquiryTeamNames();
         $excludedUsers = $this->getExcludedInquiryUsernames();
 
+        // 团队名称归一化：NULL/空字符串/纯空白 => "未分组"，其余 TRIM 后作为团队名
+        $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+
         $query = $this->getLeadsSubQuery($l_where_sub)
-            ->where('a.team_name', '<>', '')
             ->where($yw_where);
         $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers);
 
         $rows = $query
-            ->group('a.team_name')
-            ->field('a.team_name,count(l.id) as yw_num')
+            ->group($normalizedTeamExpr)
+            ->field($normalizedTeamExpr . ' as team_name,count(l.id) as yw_num')
             ->order('yw_num desc')
-            ->order('a.team_name')
+            ->order('team_name')
             ->select();
 
         $result = [];
@@ -3304,8 +3322,17 @@ private function exportToExcel($data)
         $excludedUsers = $this->getExcludedInquiryUsernames();
 
         $query = $this->getLeadsSubQuery($l_where_sub)
-            ->where($yw_where)
-            ->where('a.team_name', '=', $team_name);
+            ->where($yw_where);
+        if ($team_name === '未分组') {
+            // 点击“未分组”时：查出 team_name 为空/NULL/纯空白 的成员
+            $query->where(function ($q) {
+                $q->whereNull('a.team_name')->whereOrRaw("TRIM(a.team_name) = ''");
+            });
+        } else {
+            // 正常团队：仍按团队名精确匹配（同时 TRIM，避免数据里前后空格导致查不到）
+            $team_name_safe = addslashes($team_name);
+            $query->whereRaw("TRIM(a.team_name) = '{$team_name_safe}'");
+        }
         $this->applyInquirySummaryExcludes($query, [], $excludedUsers);
 
         $rows = $query

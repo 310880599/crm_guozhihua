@@ -242,7 +242,7 @@
                         <tbody>
                             {volist name="$data['yw_data']['list']" id='vo'}
                             <tr>
-                                <td><strong>{$vo['username']}</strong> ({$vo['team_name']})</td>
+                                <td><strong>{$vo['username']}</strong> ({$vo['team_name']|trim|default='未分组'})</td>
                                 <td>{$vo['yw_num']}</td>
                             </tr>
                             {/volist}
@@ -2414,9 +2414,8 @@
             // 填充下拉框
             $.each(users, function(index, user) {
                 var displayName = user.username;
-                if (user.team_name) {
-                    displayName += ' (' + user.team_name + ')';
-                }
+                // team_name 为空时显示“未分组”，避免出现空括号
+                displayName += ' (' + normalizeTeamName(user.team_name) + ')';
                 $select.append('<option value="' + user.username + '">' + displayName + '</option>');
             });
         }
