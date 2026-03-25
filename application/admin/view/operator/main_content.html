@@ -137,6 +137,20 @@
         vertical-align: middle;
     }
 
+    /*
+     * 业务人员业绩表：利润 / 利润率列
+     * 全局 .wukong-table thead th 为左对齐，tbody 数字列为右对齐会导致表头与数据错位；
+     * 此处用专用 class 让表头与单元格、合计行统一右对齐，排序图标随表头文字一起在右侧。
+     */
+    #performanceTable thead th.col-profit,
+    #performanceTable thead th.col-profit-rate,
+    #performanceTable tbody td.col-profit,
+    #performanceTable tbody td.col-profit-rate,
+    #performanceTable tfoot td.col-profit,
+    #performanceTable tfoot td.col-profit-rate {
+        text-align: right;
+    }
+
     /* 业务人员业绩表弹窗头部（Windows 风格关闭按钮） */
     .performance-modal-header {
         display: flex;
@@ -532,10 +546,10 @@
                             <th data-sort="team_name" style="cursor: pointer; user-select: none;">
                                 所属团队 <i class="bi bi-arrow-down-up sort-icon"></i>
                             </th>
-                            <th data-sort="profit" style="cursor: pointer; user-select: none;">
+                            <th class="col-profit" data-sort="profit" style="cursor: pointer; user-select: none;">
                                 利润 <i class="bi bi-arrow-down-up sort-icon"></i>
                             </th>
-                            <th data-sort="profit_rate" style="cursor: pointer; user-select: none;">
+                            <th class="col-profit-rate" data-sort="profit_rate" style="cursor: pointer; user-select: none;">
                                 利润率 <i class="bi bi-arrow-down-up sort-icon"></i>
                             </th>
                         </tr>
@@ -2045,8 +2059,8 @@
             '<td><strong>合计</strong></td>' +
             '<td><span class="text-muted" style="font-weight: normal; font-size: 12px;">当前结果汇总</span></td>' +
             '<td>-</td>' +
-            '<td style="text-align: right;"><strong>' + s.total_profit + '</strong></td>' +
-            '<td style="text-align: right;"><strong>' + s.profit_rate + '%</strong><br>' +
+            '<td class="col-profit"><strong>' + s.total_profit + '</strong></td>' +
+            '<td class="col-profit-rate"><strong>' + s.profit_rate + '%</strong><br>' +
             '<span class="text-muted" style="font-weight: normal; font-size: 12px;">金额合计 ' + s.total_money + '</span></td>' +
             '</tr>';
         $foot.append(row);
@@ -2069,8 +2083,8 @@
                     '<td>' + (typeof item.rank !== 'undefined' ? item.rank : '-') + '</td>' +
                     '<td>' + (item.username || '') + '</td>' +
                     '<td>' + teamLabel + '</td>' +
-                    '<td style="text-align: right;">' + (item.profit || '0.00') + '</td>' +
-                    '<td style="text-align: right;">' + (item.profit_rate || '0.00') + '%</td>' +
+                    '<td class="col-profit">' + (item.profit || '0.00') + '</td>' +
+                    '<td class="col-profit-rate">' + (item.profit_rate || '0.00') + '%</td>' +
                     '</tr>';
                 tbody.append(row);
             });
