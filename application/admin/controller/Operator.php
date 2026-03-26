@@ -3189,8 +3189,9 @@ private function exportToExcel($data)
             // 与客户列表一致：自定义时间覆盖 timebucket
             $keyword['timebucket'] = $this->buildTimeWhere($at_time, 'at_time');
         }
-
-        return model('Client')->buildClientSearchAllBaseQuery($keyword);
+        // 关键：必须以“客户列表最终结果集（join+group 去重后）”作为基础集，否则会出现与列表 total 不一致
+        $finalIdQuerySql = model('Client')->buildClientSearchListAllFinalIdQuery($keyword)->buildSql();
+        return Db::table([$finalIdQuerySql => 'l']);
     }
 
     // ===========================
@@ -3205,7 +3206,7 @@ private function exportToExcel($data)
     {
         $items = [
             // '测试团队',
-            '自己的团队11',
+            // '自己的团队11',
         ];
 
         $items = array_map(function ($v) {
@@ -3224,8 +3225,8 @@ private function exportToExcel($data)
     {
         $items = [
             // '测试账号',
-            '郭志华',
-            '郭志华2',
+            // '郭志华',
+            // '郭志华2',
         ];
 
         $items = array_map(function ($v) {
@@ -3281,15 +3282,43 @@ private function exportToExcel($data)
 
             // 基础数据集：严格复用客户列表口径（crm_leads + at_time + pr_user 可见范围）
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
-            $query = (clone $baseQuery)
-                ->leftJoin('admin a', 'l.pr_user = a.username');
+            $baseTotal = (int)(clone $baseQuery)->count();
+
+            \think\facade\Log::info('[InquirySummaryDebug] params=' . json_encode([
+                'timebucket' => $timebucket,
+                'at_time' => $at_time,
+                'excludedTeams' => $excludedTeams,
+                'excludedUsers' => $excludedUsers,
+            ], JSON_UNESCAPED_UNICODE));
+            \think\facade\Log::info('[InquirySummaryDebug] base_total=' . $baseTotal);
+
+            $query = (clone $baseQuery)->leftJoin('admin a', 'l.pr_user = a.username');
+            $rawTotal = (int)(clone $query)->count();
+            \think\facade\Log::info('[InquirySummaryDebug] raw_total_before_excludes=' . $rawTotal);
+
+            // 分步应用排除，便于定位差异
+            $afterExcludeTeamTotal = $rawTotal;
+            if (!empty($excludedTeams)) {
+                $qTeam = (clone $query);
+                $this->applyInquirySummaryExcludes($qTeam, $excludedTeams, [], $normalizedTeamExpr);
+                $afterExcludeTeamTotal = (int)$qTeam->count();
+            }
+            \think\facade\Log::info('[InquirySummaryDebug] after_exclude_team_total=' . $afterExcludeTeamTotal);
+
+            $afterExcludeUserTotal = $afterExcludeTeamTotal;
+            if (!empty($excludedUsers)) {
+                $qUser = (clone $query);
+                $this->applyInquirySummaryExcludes($qUser, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
+                $afterExcludeUserTotal = (int)$qUser->count();
+            }
+            \think\facade\Log::info('[InquirySummaryDebug] after_excludes_total=' . $afterExcludeUserTotal);
 
             // 先保证基础集一致，再做人为排除
             $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
 
             $rows = $query
                 ->group($normalizedTeamExpr)
-                ->field($normalizedTeamExpr . ' as team_name,count(distinct l.id) as yw_num')
+                ->field($normalizedTeamExpr . ' as team_name,count(*) as yw_num')
                 ->order('yw_num desc')
                 ->order('team_name')
                 ->select();
@@ -3305,6 +3334,7 @@ private function exportToExcel($data)
                     'yw_num' => $count,
                 ];
             }
+            \think\facade\Log::info('[InquirySummaryDebug] grouped_total=' . $total);
 
             return json([
                 'code' => 0,
@@ -3321,6 +3351,67 @@ private function exportToExcel($data)
                 'summary' => ['total_count' => 0],
             ]);
         }
+    }
+
+    /**
+     * 临时调试接口：对比“客户列表真实总数”与“询盘汇总基础集总数”，并给出 id 差异样本（最多20条）
+     * 仅管理员可访问（aid=1 / group_id=1 / username=admin）
+     */
+    public function debugInquirySummaryCompare()
+    {
+        $user = Admin::getMyInfo();
+        $isAdmin = (int)session('aid') === 1
+            || (int)($user['group_id'] ?? 0) === 1
+            || (string)($user['username'] ?? '') === 'admin';
+        if (!$isAdmin) {
+            return json(['code' => 403, 'msg' => 'forbidden', 'data' => []]);
+        }
+
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+
+        // 与 Client::clientSearchAll() 一致的关键字结构：最终只用 keyword['timebucket'] 承载 at_time 条件
+        $keyword = [];
+        if ($timebucket !== '') {
+            $keyword['timebucket'] = $this->buildTimeWhere($timebucket, 'at_time');
+        }
+        if ($at_time !== '') {
+            $keyword['timebucket'] = $this->buildTimeWhere($at_time, 'at_time');
+        }
+
+        $clientList = model('Client')->getClientSearchListAll(1, 1, $keyword);
+        $clientTotal = (int)($clientList['total'] ?? 0);
+
+        $inquiryBaseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+        $inquiryBaseTotal = (int)(clone $inquiryBaseQuery)->count();
+
+        // 用“客户列表最终结果集”做基准差异对比（id层面）
+        $clientFinalIdSql = model('Client')->buildClientSearchListAllFinalIdQuery($keyword)->field('l.id')->buildSql();
+        $inquiryFinalIdSql = (clone $inquiryBaseQuery)->field('l.id')->buildSql();
+
+        $onlyInClient = Db::table([$clientFinalIdSql => 'c'])
+            ->leftJoin([$inquiryFinalIdSql => 'i'], 'c.id = i.id')
+            ->whereNull('i.id')
+            ->limit(20)
+            ->column('c.id');
+
+        $onlyInInquiry = Db::table([$inquiryFinalIdSql => 'i'])
+            ->leftJoin([$clientFinalIdSql => 'c'], 'i.id = c.id')
+            ->whereNull('c.id')
+            ->limit(20)
+            ->column('i.id');
+
+        return json([
+            'code' => 0,
+            'msg' => 'ok',
+            'data' => [
+                'params' => ['timebucket' => $timebucket, 'at_time' => $at_time],
+                'client_total' => $clientTotal,
+                'inquiry_base_total' => $inquiryBaseTotal,
+                'only_in_client_ids' => array_values(array_map('intval', (array)$onlyInClient)),
+                'only_in_inquiry_ids' => array_values(array_map('intval', (array)$onlyInInquiry)),
+            ],
+        ]);
     }
 
     /**

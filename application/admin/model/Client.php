@@ -618,6 +618,25 @@ class Client extends Model
             ->where($mapPrUser);
     }
 
+    /**
+     * 客户列表（全部）最终结果集（用于对齐其它统计口径）：
+     * - 与 getClientSearchListAll() 使用同一套 joins + group 去重逻辑
+     * - 只选择必要字段（id/pr_user/inquiry_id/port_id），避免额外开销
+     * - 不分页、不排序（排序不影响结果集）
+     */
+    public function buildClientSearchListAllFinalIdQuery(array $keyword = [])
+    {
+        return $this->buildClientSearchAllBaseQuery($keyword)
+            ->leftJoin('crm_contacts c', "c.leads_id = l.id AND c.is_delete = 0 AND c.contact_type IN (1,3)")
+            ->field([
+                'l.id',
+                'l.pr_user',
+                'l.inquiry_id',
+                'l.port_id',
+            ])
+            ->group('l.id');
+    }
+
     //客户列表查询所有
     // 查询（客户列表页用）
     public function getClientSearchListAll($page, $limit, $keyword)
