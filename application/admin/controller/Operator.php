@@ -3153,25 +3153,66 @@ private function exportToExcel($data)
     }
 
     /**
-     * 业务询盘汇总三连屏：构建与控制面板「业务询盘汇总」一致的 leads 时间条件。
+     * 统一解析时间参数：与 buildPerformanceOrderWhere 保持同一规则。
+     * - 自定义格式：at_time = "YYYY-MM-DD,YYYY-MM-DD"（优先）
+     * - 否则使用 timebucket
+     * - 若二者都为空，默认 month
+     */
+    private function resolveInquirySummaryTimeParams(string $timebucket = '', string $at_time = ''): array
+    {
+        if ($at_time !== '' && strpos($at_time, ',') !== false) {
+            $date_parts = explode(',', $at_time);
+            if (count($date_parts) === 2) {
+                $start_date = trim($date_parts[0]);
+                $end_date   = trim($date_parts[1]);
+                if ($start_date !== '' && $end_date !== '') {
+                    return [
+                        'is_custom' => true,
+                        'start_date' => $start_date,
+                        'end_date' => $end_date,
+                        'timebucket' => '',
+                    ];
+                }
+            }
+        }
+
+        return [
+            'is_custom' => false,
+            'start_date' => '',
+            'end_date' => '',
+            'timebucket' => $timebucket !== '' ? $timebucket : 'month',
+        ];
+    }
+
+    /**
+     * 业务询盘汇总三连屏：构建与团队业绩表同时间解析规则的 leads 时间条件。
      */
     private function buildInquirySummaryLeadsWhere(string $timebucket = '', string $at_time = ''): array
     {
         $l_where_sub = [['status', '=', 1]];
-        if ($timebucket !== '') {
-            $time_where_at = $this->buildTimeWhere($timebucket, 'at_time');
-            $time_where_kh = $this->buildTimeWhere($timebucket, 'to_kh_time');
-            $l_where_sub[] = function($query) use ($time_where_at, $time_where_kh) {
-                $query->where([$time_where_at])->whereOr([$time_where_kh]);
+        $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time);
+
+        if ($time_params['is_custom']) {
+            $start_time = $time_params['start_date'] . ' 00:00:00';
+            $end_time = $time_params['end_date'] . ' 23:59:59';
+            $l_where_sub[] = function ($query) use ($start_time, $end_time) {
+                $query->where(function ($q) use ($start_time, $end_time) {
+                    $q->where('at_time', '>=', $start_time)
+                        ->where('at_time', '<=', $end_time);
+                })->whereOr(function ($q) use ($start_time, $end_time) {
+                    $q->where('to_kh_time', '>=', $start_time)
+                        ->where('to_kh_time', '<=', $end_time);
+                });
             };
+            return $l_where_sub;
         }
-        if ($at_time !== '') {
-            $time_where_at = $this->buildTimeWhere($at_time, 'at_time');
-            $time_where_kh = $this->buildTimeWhere($at_time, 'to_kh_time');
-            $l_where_sub[] = function($query) use ($time_where_at, $time_where_kh) {
-                $query->where([$time_where_at])->whereOr([$time_where_kh]);
-            };
-        }
+
+        $effective_timebucket = $time_params['timebucket'];
+        $time_where_at = $this->buildTimeWhere($effective_timebucket, 'at_time');
+        $time_where_kh = $this->buildTimeWhere($effective_timebucket, 'to_kh_time');
+        $l_where_sub[] = function ($query) use ($time_where_at, $time_where_kh) {
+            $query->where([$time_where_at])->whereOr([$time_where_kh]);
+        };
         return $l_where_sub;
     }
 
@@ -3182,12 +3223,14 @@ private function exportToExcel($data)
     private function buildInquirySummaryClientBaseQuery(string $timebucket = '', string $at_time = '')
     {
         $keyword = [];
-        if ($timebucket !== '') {
-            $keyword['timebucket'] = $this->buildTimeWhere($timebucket, 'at_time');
-        }
-        if ($at_time !== '') {
-            // 与客户列表一致：自定义时间覆盖 timebucket
-            $keyword['timebucket'] = $this->buildTimeWhere($at_time, 'at_time');
+        $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time);
+        if ($time_params['is_custom']) {
+            $keyword['timebucket'] = [
+                ['at_time', '>=', $time_params['start_date'] . ' 00:00:00'],
+                ['at_time', '<=', $time_params['end_date'] . ' 23:59:59'],
+            ];
+        } else {
+            $keyword['timebucket'] = $this->buildTimeWhere($time_params['timebucket'], 'at_time');
         }
         // 关键：必须以“客户列表最终结果集（join+group 去重后）”作为基础集，否则会出现与列表 total 不一致
         $finalIdQuerySql = model('Client')->buildClientSearchListAllFinalIdQuery($keyword)->buildSql();

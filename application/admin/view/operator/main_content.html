@@ -679,9 +679,9 @@
                 </div>
             </div>
             <!-- 时间筛选区：仅“团队询盘汇总”三连屏使用 -->
-            <div class="filter-bar" id="inquirySummaryTimeFilterBar" style="padding: 12px 15px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex-shrink: 0;">
+            <div class="filter-bar" id="inquirySummaryTimeFilterBar" style="padding: 15px; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; flex-shrink: 0;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <label style="margin: 0; white-space: nowrap; color:#6b7280;">时间筛选：</label>
+                    <label style="margin: 0; white-space: nowrap;">时间筛选：</label>
                     <select id="inquirySummaryTimeFilter" class="form-select" style="width: 150px;">
                         <option value="today">今天</option>
                         <option value="yesterday">昨天</option>
@@ -692,7 +692,9 @@
                     </select>
                 </div>
                 <div id="inquirySummaryCustomTimeRange" style="display: none; gap: 8px; align-items: center;">
-                    <input type="text" id="inquirySummaryAtTime" class="form-control" style="width: 220px;" placeholder="选择日期范围">
+                    <input type="date" id="inquirySummaryStartDate" class="form-control" style="width: 150px;">
+                    <span>至</span>
+                    <input type="date" id="inquirySummaryEndDate" class="form-control" style="width: 150px;">
                 </div>
                 <button type="button" class="btn btn-primary btn-sm" id="inquirySummaryFilterBtn" style="margin-left: auto;">
                     <i class="bi bi-search"></i> 筛选
@@ -897,50 +899,28 @@
         });
     });
 
+    // 统一获取询盘汇总时间参数（严格对齐团队业绩表）
     function getInquirySummaryTimeParams() {
-        var timebucket = ($('#inquirySummaryTimeFilter').val() || '').trim();
+        var timeFilter = ($('#inquirySummaryTimeFilter').val() || 'month').trim();
+        var timebucket = '';
         var at_time = '';
 
-        // 默认：本月
-        if (!timebucket) timebucket = 'month';
-
-        if (timebucket === 'custom') {
-            at_time = ($('#inquirySummaryAtTime').val() || '').trim();
-            if (!at_time) {
-                layer.msg('请选择自定义时间范围', {icon: 2});
+        if (timeFilter === 'custom') {
+            var startDate = ($('#inquirySummaryStartDate').val() || '').trim();
+            var endDate = ($('#inquirySummaryEndDate').val() || '').trim();
+            if (startDate && endDate) {
+                at_time = startDate + ',' + endDate;
+                timebucket = '';
+            } else {
+                layer.msg('请选择开始日期和结束日期', {icon: 2});
                 return null;
             }
-            return {timebucket: '', at_time: at_time};
-        }
-
-        return {timebucket: timebucket, at_time: ''};
-    }
-
-    var inquirySummaryTimeRangePickerInited = false;
-    function initInquirySummaryTimeRangePicker() {
-        if (inquirySummaryTimeRangePickerInited) return;
-        if (typeof layui === 'undefined' || !layui.use) return;
-
-        inquirySummaryTimeRangePickerInited = true;
-        layui.use(['laydate'], function () {
-            var laydate = layui.laydate;
-            if (!laydate) return;
-            laydate.render({
-                elem: '#inquirySummaryAtTime',
-                range: true, // 开启范围选择
-                trigger: 'click',
-            });
-        });
-    }
-
-    function inquirySummarySetCustomTimeVisible(visible) {
-        var $wrap = $('#inquirySummaryCustomTimeRange');
-        if (visible) {
-            $wrap.css('display', 'flex');
         } else {
-            $wrap.css('display', 'none');
-            $('#inquirySummaryAtTime').val('');
+            timebucket = timeFilter || 'month';
+            at_time = '';
         }
+
+        return {timebucket: timebucket, at_time: at_time};
     }
 
     // 按当前时间筛选 UI 的值重新加载三屏，并尝试联动刷新第二、第三屏
@@ -997,21 +977,36 @@
 
     function inquirySummaryResetTimeFilterUI() {
         $('#inquirySummaryTimeFilter').val('month');
-        inquirySummarySetCustomTimeVisible(false);
-        $('#inquirySummaryAtTime').val('');
+        $('#inquirySummaryStartDate').val('');
+        $('#inquirySummaryEndDate').val('');
+        $('#inquirySummaryCustomTimeRange').css('display', 'none');
 
         // 清空已缓存的时间条件
         window.InquirySplit.lastTimebucket = '';
         window.InquirySplit.lastAtTime = '';
+
+        // 清空联动选中状态，恢复默认文案与空态
+        window.InquirySplit.lastTeamName = '';
+        window.InquirySplit.lastUsername = '';
+        $('#inquiryMemberPaneTitle').text('👥 个人询盘汇总');
+        $('#inquiryChannelPaneTitle').text('📋 个人询盘渠道分类明细');
+        renderInquiryEmpty($('#inquiryMemberPane'), '请选择团队查看个人询盘汇总');
+        renderInquiryEmpty($('#inquiryChannelPane'), '请点击业务员名称查看渠道分类明细');
+        updateInquiryPaneSummary('#inquiryMemberPaneSummary', null);
+        updateInquiryPaneSummary('#inquiryChannelPaneSummary', null);
+        $('#inquiryTeamPane .inquiry-team-clickable').removeClass('is-active');
+        $('#inquiryMemberPane .inquiry-member-clickable').removeClass('is-active');
     }
 
     function bindInquirySummaryTimeFilterEvents() {
-        initInquirySummaryTimeRangePicker();
-
-        // 下拉切换：仅 custom 时显示日期范围
+        // 下拉切换：仅 custom 时显示日期范围（对齐团队业绩表）
         $('#inquirySummaryTimeFilter').off('change.inquirySummaryTimeFilter').on('change.inquirySummaryTimeFilter', function () {
             var val = ($(this).val() || '').trim();
-            inquirySummarySetCustomTimeVisible(val === 'custom');
+            if (val === 'custom') {
+                $('#inquirySummaryCustomTimeRange').css('display', 'flex');
+            } else {
+                $('#inquirySummaryCustomTimeRange').css('display', 'none');
+            }
         });
 
         // 筛选按钮
@@ -1019,10 +1014,10 @@
             inquirySummaryApplyTimeFilterAndLinkage();
         });
 
-        // 重置按钮：恢复本月，并联动刷新第二、第三屏（按当前选中状态判断存在性）
+        // 重置按钮：恢复本月并清空联动选中状态，只重载默认第一屏
         $('#inquirySummaryResetBtn').off('click.inquirySummaryResetBtn').on('click.inquirySummaryResetBtn', function () {
             inquirySummaryResetTimeFilterUI();
-            inquirySummaryApplyTimeFilterAndLinkage();
+            window.InquirySplit.loadTeamSummary();
         });
     }
 
