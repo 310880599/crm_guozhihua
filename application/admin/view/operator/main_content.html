@@ -1101,6 +1101,21 @@
         $('#inquiryChannelPane').html(html);
     }
 
+    function buildInquiryAjaxErrorMessage(xhr, status, fallbackMsg) {
+        if (status === 'timeout') {
+            return '请求超时（30秒），请稍后重试';
+        }
+        var jsonMsg = xhr && xhr.responseJSON && xhr.responseJSON.msg ? String(xhr.responseJSON.msg).trim() : '';
+        if (jsonMsg) {
+            return jsonMsg;
+        }
+        var textMsg = xhr && xhr.responseText ? String(xhr.responseText).replace(/\s+/g, ' ').trim() : '';
+        if (textMsg) {
+            return (fallbackMsg || '请求失败') + '：' + textMsg.substr(0, 160);
+        }
+        return fallbackMsg || '请求失败，请稍后重试';
+    }
+
     window.InquirySplit = window.InquirySplit || {
         lastTeamName: '',
         lastUsername: '',
@@ -1125,14 +1140,17 @@
                         updateInquiryPaneSummary('#inquiryTeamPaneSummary', res.summary || {});
                         self.bindTeamClick();
                     } else {
-                        renderInquiryEmpty($('#inquiryTeamPane'), res.msg || '暂无数据');
+                        var bizMsg = res.msg || '获取团队汇总失败';
+                        renderInquiryEmpty($('#inquiryTeamPane'), bizMsg);
                         updateInquiryPaneSummary('#inquiryTeamPaneSummary', null);
+                        layer.msg(bizMsg, {icon: 2});
                     }
                     return res;
                 }, function(xhr, status) {
-                    var msg = status === 'timeout' ? '请求超时，请稍后重试' : '数据加载失败，请稍后重试';
+                    var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取团队汇总失败');
                     renderInquiryEmpty($('#inquiryTeamPane'), msg);
                     updateInquiryPaneSummary('#inquiryTeamPaneSummary', null);
+                    layer.msg(msg, {icon: 2, time: 4000});
                     return null;
                 });
         },
@@ -1157,14 +1175,17 @@
                         updateInquiryPaneSummary('#inquiryMemberPaneSummary', res.summary || {});
                         self.bindMemberClick();
                     } else {
-                        renderInquiryEmpty($('#inquiryMemberPane'), res.msg || '暂无数据');
+                        var bizMsg = res.msg || '获取成员汇总失败';
+                        renderInquiryEmpty($('#inquiryMemberPane'), bizMsg);
                         updateInquiryPaneSummary('#inquiryMemberPaneSummary', null);
+                        layer.msg(bizMsg, {icon: 2});
                     }
                     return res;
                 }, function(xhr, status) {
-                    var msg = status === 'timeout' ? '请求超时，请稍后重试' : '数据加载失败，请稍后重试';
+                    var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取成员汇总失败');
                     renderInquiryEmpty($('#inquiryMemberPane'), msg);
                     updateInquiryPaneSummary('#inquiryMemberPaneSummary', null);
+                    layer.msg(msg, {icon: 2, time: 4000});
                     return null;
                 });
         },
@@ -1188,14 +1209,17 @@
                         renderInquiryChannelPane(username, res.data || []);
                         updateInquiryPaneSummary('#inquiryChannelPaneSummary', res.summary || {});
                     } else {
-                        renderInquiryEmpty($('#inquiryChannelPane'), res.msg || '暂无数据');
+                        var bizMsg = res.msg || '获取渠道汇总失败';
+                        renderInquiryEmpty($('#inquiryChannelPane'), bizMsg);
                         updateInquiryPaneSummary('#inquiryChannelPaneSummary', null);
+                        layer.msg(bizMsg, {icon: 2});
                     }
                     return res;
                 }, function(xhr, status) {
-                    var msg = status === 'timeout' ? '请求超时，请稍后重试' : '数据加载失败，请稍后重试';
+                    var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取渠道汇总失败');
                     renderInquiryEmpty($('#inquiryChannelPane'), msg);
                     updateInquiryPaneSummary('#inquiryChannelPaneSummary', null);
+                    layer.msg(msg, {icon: 2, time: 4000});
                     return null;
                 });
         },

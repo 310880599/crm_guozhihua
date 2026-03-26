@@ -547,10 +547,26 @@ class Client extends Model
     }
 
 
-    //客户列表查询所有
-    // 查询（客户列表页用）
-    public function getClientSearchListAll($page, $limit, $keyword)
+    /**
+     * 客户列表（全部）基础查询：
+     * - 与 getClientSearchListAll() 使用完全一致的筛选/权限/时间口径
+     * - 不负责分页
+     * - 不负责展示字段格式化
+     */
+    public function buildClientSearchAllBaseQuery(array $keyword = [])
     {
+        $keyword = array_merge([
+            'timebucket' => '',
+            'kh_rank' => '',
+            'kh_status' => '',
+            'phone' => '',
+            'kh_name' => '',
+            'xs_source' => '',
+            'pr_user' => '',
+            'inquiry_id' => '',
+            'port_id' => '',
+        ], $keyword);
+
         $mapAtTime   = []; // 添加时间
         $mapKhRank   = []; // 客户级别
         $mapKhStatus = []; // 客户状态
@@ -558,24 +574,18 @@ class Client extends Model
         $mapKhName   = []; // 客户名称
         $mapXsSource = []; // 客户来源
         $mapPrUser   = []; // 负责人
+        $mapInquiry  = []; // 所属渠道
+        $mapPort     = []; // 运营端口
 
         if (!empty($keyword['timebucket'])) $mapAtTime[] = $keyword['timebucket'];
         if ($keyword['kh_rank']   !== '' && $keyword['kh_rank']   !== null) $mapKhRank   = ['kh_rank'   => $keyword['kh_rank']];
         if ($keyword['kh_status'] !== '' && $keyword['kh_status'] !== null) $mapKhStatus = ['kh_status' => $keyword['kh_status']];
-        if (!empty($keyword['phone']))  $mapPhone = $this->getContactSearchAll($keyword['phone'], 'l'); // 传别名
+        if (!empty($keyword['phone']))  $mapPhone = $this->getContactSearchAll($keyword['phone'], 'l');
         if (!empty($keyword['kh_name'])) $mapKhName = [['kh_name', 'like', '%' . $keyword['kh_name'] . '%']];
         if ($keyword['xs_source'] !== '' && $keyword['xs_source'] !== null) $mapXsSource = ['xs_source' => $keyword['xs_source']];
         if (!empty($keyword['pr_user'])) $mapPrUser = [['pr_user', 'like', '%' . $keyword['pr_user'] . '%']];
-
-        // 新增筛选：所属渠道 inquiry_id 和 运营端口 port_id
-        $mapInquiry = [];
-        if ($keyword['inquiry_id'] !== '' && $keyword['inquiry_id'] !== null) {
-            $mapInquiry = ['l.inquiry_id' => $keyword['inquiry_id']];
-        }
-        $mapPort = [];
-        if ($keyword['port_id'] !== '' && $keyword['port_id'] !== null) {
-            $mapPort = ['l.port_id' => $keyword['port_id']];
-        }
+        if ($keyword['inquiry_id'] !== '' && $keyword['inquiry_id'] !== null) $mapInquiry = ['l.inquiry_id' => $keyword['inquiry_id']];
+        if ($keyword['port_id'] !== '' && $keyword['port_id'] !== null) $mapPort = ['l.port_id' => $keyword['port_id']];
 
         $current_admin = Admin::getMyInfo();
         $team_name = $current_admin['team_name'] ?? '';
@@ -586,13 +596,14 @@ class Client extends Model
         $usernames  = [$current_admin['username']];
         if ($current_admin['group_id'] == 1) {
             $usernames = [];
-            if ($a_where) $usernames = Db::name('admin')->where($a_where)->column('username');
+            if ($a_where) {
+                $usernames = Db::name('admin')->where($a_where)->column('username');
+            }
         } elseif ($team_name) {
             $usernames = Db::name('admin')->where('team_name', $team_name)->where($a_where)->column('username');
         }
 
-        // 主查询：别名 l；单次左连接 contacts，聚合主/辅电话
-        $result = Db::table('crm_leads')->alias('l')
+        return Db::table('crm_leads')->alias('l')
             ->where(function ($query) use ($usernames) {
                 if ($usernames) $query->whereIn('l.pr_user', $usernames);
             })
@@ -604,13 +615,18 @@ class Client extends Model
             ->where($mapInquiry)
             ->where($mapPort)
             ->where($mapAtTime)
-            ->where($mapPrUser)
+            ->where($mapPrUser);
+    }
+
+    //客户列表查询所有
+    // 查询（客户列表页用）
+    public function getClientSearchListAll($page, $limit, $keyword)
+    {
+        $result = $this->buildClientSearchAllBaseQuery((array)$keyword)
             ->leftJoin('crm_contacts c', "c.leads_id = l.id AND c.is_delete = 0 AND c.contact_type IN (1,3)")
             ->field([
                 'l.*',
-                // 主电话：聚合所有 contact_type=1 的号码，用英文逗号分隔
-                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 1, c.contact_value, NULL) ORDER BY c.id SEPARATOR ',') AS main_phone",  // **替换:** 原先用 `<br>` 分隔
-                // 辅助电话：保留原逻辑
+                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 1, c.contact_value, NULL) ORDER BY c.id SEPARATOR ',') AS main_phone",
                 "GROUP_CONCAT(DISTINCT IF(c.contact_type = 3, c.contact_value, NULL) ORDER BY c.id SEPARATOR '<br>') AS aux_phone",
             ])
             ->group('l.id')
