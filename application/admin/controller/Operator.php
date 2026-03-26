@@ -3175,6 +3175,71 @@ private function exportToExcel($data)
         return $l_where_sub;
     }
 
+    /**
+     * 业务询盘汇总三连屏：构建“与客户列表一致”的基础 leads 子查询（唯一口径标准）。
+     *
+     * 口径来源：application/admin/model/Client.php::getClientSearchListAll()
+     * - 表：crm_leads
+     * - 时间字段：只使用 at_time（不使用 to_kh_time）
+     * - 不额外限制 status / issuccess（保持客户列表现状）
+     * - 按客户列表同样的可见业务员（pr_user）范围做约束
+     *
+     * @return string buildSql() 的子查询 SQL（别名使用 l）
+     */
+    private function buildInquiryBaseLeadsSubQueryByClientListRule(string $timebucket = '', string $at_time = ''): string
+    {
+        $current_admin = Admin::getMyInfo();
+
+        // 客户列表时间口径：at_time；自定义 at_time 覆盖 timebucket
+        $timeCondition = '';
+        if ($at_time !== '') {
+            $timeCondition = $at_time;
+        } elseif ($timebucket !== '') {
+            $timeCondition = $timebucket;
+        }
+
+        // 客户列表权限口径：根据当前用户的 org / team / group_id 计算可见负责人 username 列表
+        $a_where = [];
+        $org = (string)($current_admin['org'] ?? '');
+        if ($org !== '' && strpos($org, 'admin') === false) {
+            $a_where = [$this->getOrgWhere($org)];
+        }
+
+        $usernames = [trim((string)($current_admin['username'] ?? ''))];
+        $group_id = (int)($current_admin['group_id'] ?? 0);
+        $team_name = trim((string)($current_admin['team_name'] ?? ''));
+
+        if ($group_id === 1) {
+            // 超管：若存在 org 限制则按 org 取用户名；否则不限制 pr_user（与客户列表一致）
+            $usernames = [];
+            if (!empty($a_where)) {
+                $usernames = Db::name('admin')->where($a_where)->column('username');
+            }
+        } elseif ($team_name !== '') {
+            // 主管：查看本团队（叠加 org 过滤，保持与客户列表一致）
+            $usernames = Db::name('admin')
+                ->where('team_name', $team_name)
+                ->where($a_where)
+                ->column('username');
+        }
+
+        // 基础 leads 集合（只取三屏统计所需字段；一条 leads = 一个询盘）
+        $query = Db::table('crm_leads')->alias('l')
+            ->field('l.id,l.pr_user,l.inquiry_id,l.port_id,l.at_time');
+
+        if ($timeCondition !== '') {
+            $query->where($this->buildTimeWhere($timeCondition, 'at_time'));
+        }
+
+        // 仅当用户名列表非空时才收窄负责人；空数组表示“不限制”（与客户列表一致）
+        $usernames = array_values(array_unique(array_filter(array_map('trim', (array)$usernames))));
+        if (!empty($usernames)) {
+            $query->whereIn('l.pr_user', $usernames);
+        }
+
+        return $query->buildSql();
+    }
+
     // ===========================
     // 新增：团队询盘汇总排除配置（仅影响三连屏）
     // ===========================
@@ -3223,14 +3288,24 @@ private function exportToExcel($data)
      * 新增：统一应用团队/业务员排除条件（优先 SQL 层过滤）。
      * 注意：这里默认按 a.team_name / a.username 过滤，保持现有 getLeadsSubQuery() 链式别名写法不变。
      */
-    private function applyInquirySummaryExcludes($query, array $excludedTeams = [], array $excludedUsers = [])
+    private function applyInquirySummaryExcludes($query, array $excludedTeams = [], array $excludedUsers = [], string $normalizedTeamExpr = '')
     {
         if (!empty($excludedTeams)) {
-            // ThinkPHP 5.1 兼容写法：where field not in (...)
-            $query->where('a.team_name', 'not in', $excludedTeams);
+            // 团队排除必须基于“归一化后的团队名”，否则 NULL/空白会漏排或误排
+            if ($normalizedTeamExpr !== '') {
+                $escaped = array_map(function ($v) {
+                    return "'" . addslashes((string)$v) . "'";
+                }, $excludedTeams);
+                $inSql = implode(',', $escaped);
+                $query->whereRaw("({$normalizedTeamExpr}) NOT IN ({$inSql})");
+            } else {
+                // 兼容旧调用：没有传归一化表达式时，退回按 a.team_name 排除
+                $query->where('a.team_name', 'not in', $excludedTeams);
+            }
         }
         if (!empty($excludedUsers)) {
-            $query->where('a.username', 'not in', $excludedUsers);
+            // 业务员排除以 leads.pr_user 为准，避免因 admin 不存在/未启用导致排除失效
+            $query->where('l.pr_user', 'not in', $excludedUsers);
         }
         return $query;
     }
@@ -3243,10 +3318,6 @@ private function exportToExcel($data)
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
 
-        $current_admin = Admin::getMyInfo();
-        $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
-        $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]]];
-
         // 新增：排除团队/排除业务员（影响统计口径，不只是展示隐藏）
         $excludedTeams = $this->getExcludedInquiryTeamNames();
         $excludedUsers = $this->getExcludedInquiryUsernames();
@@ -3254,13 +3325,17 @@ private function exportToExcel($data)
         // 团队名称归一化：NULL/空字符串/纯空白 => "未分组"，其余 TRIM 后作为团队名
         $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
 
-        $query = $this->getLeadsSubQuery($l_where_sub)
-            ->where($yw_where);
-        $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers);
+        // 基础数据集：严格复用客户列表口径（crm_leads + at_time + pr_user 可见范围）
+        $baseSubQuery = $this->buildInquiryBaseLeadsSubQueryByClientListRule($timebucket, $at_time);
+        $query = Db::table([$baseSubQuery => 'l'])
+            ->leftJoin('admin a', 'l.pr_user = a.username');
+
+        // 先保证基础集一致，再做人为排除
+        $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
 
         $rows = $query
             ->group($normalizedTeamExpr)
-            ->field($normalizedTeamExpr . ' as team_name,count(l.id) as yw_num')
+            ->field($normalizedTeamExpr . ' as team_name,count(distinct l.id) as yw_num')
             ->order('yw_num desc')
             ->order('team_name')
             ->select();
@@ -3314,19 +3389,20 @@ private function exportToExcel($data)
             ]);
         }
 
-        $current_admin = Admin::getMyInfo();
-        $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
-        $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]]];
-
         // 新增：排除业务员（第二屏不显示，且不计入统计）
         $excludedUsers = $this->getExcludedInquiryUsernames();
 
-        $query = $this->getLeadsSubQuery($l_where_sub)
-            ->where($yw_where);
+        // 同一套基础数据集（与客户列表一致）
+        $baseSubQuery = $this->buildInquiryBaseLeadsSubQueryByClientListRule($timebucket, $at_time);
+        $query = Db::table([$baseSubQuery => 'l'])
+            ->leftJoin('admin a', 'l.pr_user = a.username');
+
         if ($team_name === '未分组') {
-            // 点击“未分组”时：查出 team_name 为空/NULL/纯空白 的成员
+            // 点击“未分组”时：team_name 为空/NULL/纯空白，或 admin 匹配不到（都归并为未分组）
             $query->where(function ($q) {
-                $q->whereNull('a.team_name')->whereOrRaw("TRIM(a.team_name) = ''");
+                $q->whereNull('a.username')
+                    ->whereOrNull('a.team_name')
+                    ->whereOrRaw("TRIM(a.team_name) = ''");
             });
         } else {
             // 正常团队：仍按团队名精确匹配（同时 TRIM，避免数据里前后空格导致查不到）
@@ -3336,10 +3412,10 @@ private function exportToExcel($data)
         $this->applyInquirySummaryExcludes($query, [], $excludedUsers);
 
         $rows = $query
-            ->group('a.username,a.team_name')
-            ->field('a.username,a.team_name,count(l.id) as yw_num')
+            ->group('l.pr_user')
+            ->field('l.pr_user as username,count(distinct l.id) as yw_num')
             ->order('yw_num desc')
-            ->order('a.username')
+            ->order('username')
             ->select();
 
         $result = [];
@@ -3392,25 +3468,12 @@ private function exportToExcel($data)
             ]);
         }
 
-        $current_admin = Admin::getMyInfo();
-        $l_where_sub = $this->buildInquirySummaryLeadsWhere($timebucket, $at_time);
-        $yw_where = [$this->getOrgWhere($current_admin['org']), ['is_open', '=', 1], ['group_id', 'in', [$this->ywgid, $this->ywzgid]], ['username', '=', $username]];
-
-        $user_exists = Db::table('admin')->where($yw_where)->count();
-        if ((int)$user_exists <= 0) {
-            return json([
-                'code' => 403,
-                'msg' => '无权限查看该成员数据',
-                'data' => [],
-                'summary' => ['total_count' => 0],
-            ]);
-        }
-
-        $rows = $this->getLeadsSubQuery($l_where_sub)
-            ->where($yw_where)
-            ->where('a.username', '=', $username)
+        // 权限口径：以客户列表可见负责人范围为准（不再额外叠加 is_open/group_id 等会缩小范围的 admin 条件）
+        $baseSubQuery = $this->buildInquiryBaseLeadsSubQueryByClientListRule($timebucket, $at_time);
+        $rows = Db::table([$baseSubQuery => 'l'])
+            ->where('l.pr_user', '=', $username)
             ->group('l.inquiry_id')
-            ->field('l.inquiry_id,count(l.id) as yw_num')
+            ->field('l.inquiry_id,count(distinct l.id) as yw_num')
             ->order('yw_num desc')
             ->select();
 
