@@ -3632,5 +3632,335 @@ private function exportToExcel($data)
         }
     }
 
+    // ===========================
+    // 运营询盘汇总表三连屏（operationInquirySummary）
+    // ===========================
+
+    /**
+     * 解析逗号分隔端口 ID：trim、去重，仅保留正整数（与现有 FIND_IN_SET 用法兼容）。
+     */
+    private function parseCsvPortIdsForOperatorInquiry($raw): array
+    {
+        $raw = trim((string)$raw);
+        if ($raw === '') {
+            return [];
+        }
+        $parts = preg_split('/\s*,\s*/', $raw);
+        $out = [];
+        foreach ($parts as $p) {
+            $p = trim((string)$p);
+            if ($p === '' || !ctype_digit($p)) {
+                continue;
+            }
+            $v = (int)$p;
+            if ($v > 0) {
+                $out[$v] = $v;
+            }
+        }
+        return array_values($out);
+    }
+
+    /**
+     * 运营人员列表口径：与 getYyLeadsSubQuery 一致（运营组、启用、组织），可按询盘来源筛选；
+     * 未配置 port_id 的账号也返回，便于第二屏展示 0、第三屏空态。
+     */
+    private function fetchOperationStaffRowsForInquirySummary(int $inquiryIdToken): array
+    {
+        $current_admin = Admin::getMyInfo();
+        $q = Db::table('admin')
+            ->where($this->getOrgWhere($current_admin['org']))
+            ->where('group_id', '=', $this->yygid)
+            ->where('is_open', '=', 1);
+
+        if ($inquiryIdToken <= 0) {
+            $q->where(function ($sub) {
+                $sub->whereNull('inquiry_id')
+                    ->whereOr('inquiry_id', '=', '')
+                    ->whereOr('inquiry_id', '=', 0);
+            });
+        } else {
+            $q->whereRaw('CAST(inquiry_id AS UNSIGNED) = ?', [$inquiryIdToken]);
+        }
+
+        return $q->field('username,port_id,inquiry_id')->order('username')->select();
+    }
+
+    /**
+     * 按询盘来源 bucket 过滤基础子查询 l（0 表示未知/空来源）。
+     */
+    private function applyOperatorInquiryLeadsSourceBucket($query, int $inquiryIdToken)
+    {
+        if ($inquiryIdToken <= 0) {
+            $query->whereRaw("(l.inquiry_id IS NULL OR l.inquiry_id = 0 OR TRIM(IFNULL(CAST(l.inquiry_id AS CHAR), '')) = '')");
+        } else {
+            $query->where('l.inquiry_id', '=', $inquiryIdToken);
+        }
+        return $query;
+    }
+
+    /**
+     * l.port_id 与运营人员端口集合存在交集时的 SQL 片段（无端口时返回永假，计数为 0）。
+     */
+    private function buildLeadPortIntersectAdminPortsWhere(array $adminPortIds): string
+    {
+        if (empty($adminPortIds)) {
+            return '1=0';
+        }
+        $parts = [];
+        foreach ($adminPortIds as $pid) {
+            $pid = (int)$pid;
+            if ($pid <= 0) {
+                continue;
+            }
+            $parts[] = "FIND_IN_SET('{$pid}', l.port_id) > 0";
+        }
+        return empty($parts) ? '1=0' : '(' . implode(' OR ', $parts) . ')';
+    }
+
+    /**
+     * 校验并返回当前组织下、运营组、负责指定来源的运营账号（第三屏用）。
+     */
+    private function findOperationStaffForPortSummary(string $username, int $inquiryIdToken): ?array
+    {
+        $username = trim($username);
+        if ($username === '') {
+            return null;
+        }
+        $current_admin = Admin::getMyInfo();
+        $row = Db::table('admin')
+            ->where($this->getOrgWhere($current_admin['org']))
+            ->where('username', '=', $username)
+            ->where('group_id', '=', $this->yygid)
+            ->where('is_open', '=', 1)
+            ->field('username,port_id,inquiry_id')
+            ->find();
+        if (empty($row)) {
+            return null;
+        }
+        if ($inquiryIdToken <= 0) {
+            $ok = ($row['inquiry_id'] === null || $row['inquiry_id'] === '' || (int)$row['inquiry_id'] === 0);
+        } else {
+            $ok = ((int)$row['inquiry_id'] === $inquiryIdToken) || ((string)(int)$row['inquiry_id'] === (string)$inquiryIdToken);
+        }
+        return $ok ? $row : null;
+    }
+
+    /**
+     * 第一屏：按询盘来源汇总（基础集与「团队询盘汇总」相同：客户列表最终 id 集）。
+     */
+    public function getOperationInquirySummarySourceData()
+    {
+        try {
+            $timebucket = Request::param('timebucket', '');
+            $at_time = Request::param('at_time', '');
+
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+
+            $bucketExpr = 'CASE WHEN l.inquiry_id IS NULL OR l.inquiry_id = 0 OR TRIM(IFNULL(CAST(l.inquiry_id AS CHAR), \'\')) = \'\' THEN 0 ELSE CAST(l.inquiry_id AS UNSIGNED) END';
+
+            $rows = (clone $baseQuery)
+                ->field($bucketExpr . ' AS inquiry_bucket, COUNT(*) AS yw_num')
+                ->group([$bucketExpr])
+                ->order('yw_num', 'desc')
+                ->order('inquiry_bucket', 'asc')
+                ->select();
+
+            $buckets = [];
+            foreach ($rows as $row) {
+                $buckets[] = (int)($row['inquiry_bucket'] ?? 0);
+            }
+            $buckets = array_values(array_unique(array_filter($buckets, function ($v) {
+                return $v > 0;
+            })));
+            $inquiry_map = [];
+            if (!empty($buckets)) {
+                $inquiry_map = Db::table('crm_inquiry')->where('id', 'in', $buckets)->column('inquiry_name', 'id');
+            }
+
+            $result = [];
+            $total = 0;
+            $idx = 0;
+            foreach ($rows as $row) {
+                $bucket = (int)($row['inquiry_bucket'] ?? 0);
+                $count = (int)($row['yw_num'] ?? 0);
+                $total += $count;
+                if ($bucket <= 0) {
+                    $name = '未知来源';
+                    $iid = 0;
+                } else {
+                    $name = $inquiry_map[$bucket] ?? ('ID:' . $bucket);
+                    $iid = $bucket;
+                }
+                $idx++;
+                $result[] = [
+                    'rank' => $idx,
+                    'inquiry_id' => $iid,
+                    'inquiry_name' => $name,
+                    'yw_num' => $count,
+                ];
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $result,
+                'summary' => ['total_count' => $total],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OperationInquirySummary] getOperationInquirySummarySourceData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '询盘来源汇总获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+    }
+
+    /**
+     * 第二屏：指定来源下各运营人员询盘数（线索与本人 port_id 配置有交集才计入；每人 count 为 distinct l.id，不重复膨胀）。
+     */
+    public function getOperationInquirySummaryStaffData()
+    {
+        try {
+            $inquiry_id = (int)Request::param('inquiry_id', 0);
+            $timebucket = Request::param('timebucket', '');
+            $at_time = Request::param('at_time', '');
+
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
+
+            $staffRows = $this->fetchOperationStaffRowsForInquirySummary($inquiry_id);
+            if (empty($staffRows)) {
+                return json([
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'data' => [],
+                    'summary' => ['total_count' => 0],
+                ]);
+            }
+
+            $result = [];
+            $total = 0;
+            foreach ($staffRows as $op) {
+                $uname = trim((string)($op['username'] ?? ''));
+                if ($uname === '') {
+                    continue;
+                }
+                $ports = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+                $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($ports);
+                $cnt = (int)(clone $baseQuery)->whereRaw($portWhere)->count('l.id');
+                $total += $cnt;
+                $result[] = [
+                    'username' => $uname,
+                    'yw_num' => $cnt,
+                ];
+            }
+
+            usort($result, function ($a, $b) {
+                if ($a['yw_num'] !== $b['yw_num']) {
+                    return $b['yw_num'] <=> $a['yw_num'];
+                }
+                return strcmp($a['username'], $b['username']);
+            });
+            foreach ($result as $i => &$r) {
+                $r['rank'] = $i + 1;
+            }
+            unset($r);
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $result,
+                'summary' => ['total_count' => $total],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OperationInquirySummary] getOperationInquirySummaryStaffData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '运营人员汇总获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+    }
+
+    /**
+     * 第三屏：指定运营人员名下各端口询盘数（每端口 count distinct l.id；与第二屏同一来源与时间口径）。
+     */
+    public function getOperationInquirySummaryPortData()
+    {
+        try {
+            $inquiry_id = (int)Request::param('inquiry_id', 0);
+            $username = trim((string)Request::param('username', ''));
+            $timebucket = Request::param('timebucket', '');
+            $at_time = Request::param('at_time', '');
+
+            $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
+            if ($op === null) {
+                return json([
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'data' => [],
+                    'summary' => ['total_count' => 0],
+                ]);
+            }
+
+            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+            if (empty($portIds)) {
+                return json([
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'data' => [],
+                    'summary' => ['total_count' => 0],
+                ]);
+            }
+
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
+
+            $port_map = Db::table('crm_inquiry_port')->where('id', 'in', $portIds)->column('port_name', 'id');
+
+            $result = [];
+            $total = 0;
+            foreach ($portIds as $pid) {
+                $w = "FIND_IN_SET('{$pid}', l.port_id) > 0";
+                $cnt = (int)(clone $baseQuery)->whereRaw($w)->count('l.id');
+                $total += $cnt;
+                $result[] = [
+                    'port_id' => $pid,
+                    'port_name' => $port_map[$pid] ?? ('ID:' . $pid),
+                    'yw_num' => $cnt,
+                ];
+            }
+
+            usort($result, function ($a, $b) {
+                if ($a['yw_num'] !== $b['yw_num']) {
+                    return $b['yw_num'] <=> $a['yw_num'];
+                }
+                return strcmp($a['port_name'], $b['port_name']);
+            });
+            foreach ($result as $i => &$r) {
+                $r['rank'] = $i + 1;
+            }
+            unset($r);
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $result,
+                'summary' => ['total_count' => $total],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OperationInquirySummary] getOperationInquirySummaryPortData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '运营端口汇总获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['total_count' => 0],
+            ]);
+        }
+    }
+
 }
 
