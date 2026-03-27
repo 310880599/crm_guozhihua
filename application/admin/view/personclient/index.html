@@ -118,6 +118,56 @@
         transform: translateY(-1px);
         box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
     }
+
+    /* 高级查询折叠（对齐待审核页结构，配色沿用本页蓝色） */
+    #advancedSearchFieldset.wukong-search-card {
+        margin: 0 0 20px 0;
+        padding: 0;
+        border: none;
+        min-width: 0;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
+    #advancedSearchFieldset.wukong-search-card > .layui-form {
+        display: block !important;
+    }
+    .advanced-search-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 15px;
+        background: #4285f4;
+        border-radius: 8px 8px 0 0;
+        color: #fff;
+    }
+    .advanced-search-title {
+        font-size: 16px;
+        font-weight: 600;
+    }
+    #toggleAdvancedSearch {
+        border-color: rgba(255, 255, 255, 0.35);
+        color: #fff;
+        background: rgba(255, 255, 255, 0.12);
+    }
+    #toggleAdvancedSearch:hover {
+        background: rgba(255, 255, 255, 0.22);
+        border-color: rgba(255, 255, 255, 0.45);
+        color: #fff;
+    }
+    .advanced-search-collapsed .advanced-search-header {
+        border-radius: 8px;
+    }
+    .advanced-search-collapsed #advancedSearchBody {
+        display: none !important;
+    }
+    #advancedSearchBody {
+        padding: 20px;
+        padding-top: 16px;
+    }
+    #advancedSearchBody .layui-form-item:last-child {
+        margin-bottom: 0;
+    }
     
     /* 表格容器样式 */
     .personclient-table-wrapper {
@@ -784,10 +834,14 @@
     }
 </style>
 <div class="personclient-list-container">
-    <!-- 查询区域 -->
-    <div class="wukong-search-card">
+    <!-- 查询区域：高级查询（默认折叠，状态见 localStorage） -->
+    <fieldset class="layui-elem-field wukong-search-card advanced-search-collapsed" id="advancedSearchFieldset">
         <div class="layui-form" lay-filter="LAY-app-contlist-search">
-
+            <div class="advanced-search-header">
+                <div class="advanced-search-title">高级查询</div>
+                <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="toggleAdvancedSearch">展开</button>
+            </div>
+            <div id="advancedSearchBody">
                 <div class="layui-form-item" style="text-align:left;padding-left:20px;">
 
                     <div class="layui-inline">
@@ -909,6 +963,7 @@
 
             </div>
         </div>
+    </fieldset>
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
     </div>
     
@@ -1107,6 +1162,73 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     // localStorage 的 key（用于兜底）
     var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
 
+    // ================= 高级查询：折叠/展开 + localStorage 记忆 =================
+    var PERSONCLIENT_ADVANCED_SEARCH_KEY = 'personclient_mycustomer_advanced_search_expanded';
+
+    function readAdvancedSearchState() {
+        try {
+            return localStorage.getItem(PERSONCLIENT_ADVANCED_SEARCH_KEY) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function saveAdvancedSearchState(expanded) {
+        try {
+            localStorage.setItem(PERSONCLIENT_ADVANCED_SEARCH_KEY, expanded ? '1' : '0');
+        } catch (e) {}
+    }
+
+    /**
+     * @param {boolean} expanded
+     * @param {{ animate?: boolean }} [options]
+     */
+    function applyAdvancedSearchState(expanded, options) {
+        options = options || {};
+        var animate = !!options.animate;
+        var $fs = $('#advancedSearchFieldset');
+        var $body = $('#advancedSearchBody');
+        var $btn = $('#toggleAdvancedSearch');
+        if (!$fs.length || !$body.length || !$btn.length) return;
+
+        if (expanded) {
+            if (animate) {
+                $fs.removeClass('advanced-search-collapsed');
+                $body.stop(true, true).slideDown(200);
+            } else {
+                $fs.removeClass('advanced-search-collapsed');
+                $body.stop(true, true).css('display', '').show();
+            }
+            $btn.text('收起');
+        } else {
+            $btn.text('展开');
+            if (animate) {
+                $body.stop(true, true).slideUp(200, function () {
+                    $fs.addClass('advanced-search-collapsed');
+                });
+            } else {
+                $body.stop(true, true).hide();
+                $fs.addClass('advanced-search-collapsed');
+            }
+        }
+    }
+
+    function initAdvancedSearchToggle() {
+        applyAdvancedSearchState(readAdvancedSearchState(), { animate: false });
+        $('#toggleAdvancedSearch')
+            .off('click.pCAdvSearch')
+            .on('click.pCAdvSearch', function (e) {
+                e.preventDefault();
+                var expanded = !$('#advancedSearchFieldset').hasClass('advanced-search-collapsed');
+                var next = !expanded;
+                saveAdvancedSearchState(next);
+                applyAdvancedSearchState(next, { animate: true });
+            });
+    }
+
+    initAdvancedSearchToggle();
+    window.initPersonclientAdvancedSearchToggle = initAdvancedSearchToggle;
+
      // 列定义
      var cols = [[
          { type: 'checkbox',  width: 50 },
@@ -1260,6 +1382,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         limit: 8,
         page: { limits: [5,8,10, 20, 50, 100, 200, 500] },
         done: function(res, curr, count) {
+            // 表格每次 reload/done 后按 localStorage 恢复高级查询展开状态（避免与其它逻辑冲突）
+            applyAdvancedSearchState(readAdvancedSearchState(), { animate: false });
+
             // 绑定列宽拖拽保存监听（每次 done 都会执行，先 off 再 on 避免重复绑定）
             bindResizeSave();
             
