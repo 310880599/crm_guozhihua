@@ -80,6 +80,46 @@
             padding: 10px 15px;
         }
 
+        /* 成交客户页：高级查询折叠标题栏（与待审核页风格一致） */
+        #advancedSearchFieldset {
+            padding: 0;
+            border: 1px solid #e8e8e8;
+        }
+        #advancedSearchFieldset > .advanced-search-header {
+            margin: 0;
+        }
+        .advanced-search-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 15px;
+            background: #6695ea;
+            border-radius: 8px 8px 0 0;
+            color: #fff;
+        }
+        .advanced-search-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        #toggleAdvancedSearch {
+            border-color: rgba(255, 255, 255, .35);
+            color: #fff;
+            background: rgba(255, 255, 255, .12);
+        }
+        #toggleAdvancedSearch:hover {
+            background: rgba(255, 255, 255, .2);
+        }
+        .advanced-search-collapsed #advancedSearchBody {
+            display: none !important;
+        }
+        .advanced-search-collapsed .advanced-search-header {
+            border-radius: 8px;
+        }
+        #advancedSearchBody {
+            padding: 0;
+            margin: 0;
+        }
+
         .layui-card {
             background: #fafafa;
             border-radius: 6px;
@@ -429,8 +469,12 @@
 <div class="admin-main layui-anim layui-anim-upbit">
 
     <!-- 高级查询表单 -->
-    <fieldset class="layui-elem-field">
-        <legend>高级查询</legend>
+    <fieldset class="layui-elem-field advanced-search-collapsed" id="advancedSearchFieldset">
+        <div class="advanced-search-header">
+            <div class="advanced-search-title">高级查询</div>
+            <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="toggleAdvancedSearch">展开</button>
+        </div>
+        <div id="advancedSearchBody">
         <div class="layui-card" style="box-shadow:none; margin-top:10px;">
             <div class="layui-form layui-card-header layuiadmin-card-header-auto" style="border-bottom:transparent; height:auto;">
                 <div class="layui-form-item" style="text-align:left; padding-left:20px;">
@@ -524,6 +568,7 @@
                 </div>
             </div>
         </div>
+        </div>
     </fieldset>
 
     <!-- 成交客户列表表格 -->
@@ -596,6 +641,57 @@
 <script>
 layui.use(['table','form','upload','util','laydate','layer'], function(){
     var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery, upload = layui.upload, layer = layui.layer;
+
+    /** 成交客户页：高级查询展开/收起（仅本页，localStorage 记忆） */
+    var ADVANCED_SEARCH_STORAGE_KEY = 'crm_client_chengjiao_advanced_search_expanded';
+    function readChengjiaoAdvancedSearchExpanded() {
+        try {
+            return localStorage.getItem(ADVANCED_SEARCH_STORAGE_KEY) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+    function writeChengjiaoAdvancedSearchExpanded(expanded) {
+        try {
+            localStorage.setItem(ADVANCED_SEARCH_STORAGE_KEY, expanded ? '1' : '0');
+        } catch (e) {}
+    }
+    function applyChengjiaoAdvancedSearchState(expanded, useAnimation) {
+        var $fs = $('#advancedSearchFieldset');
+        var $body = $('#advancedSearchBody');
+        var $btn = $('#toggleAdvancedSearch');
+        if (!$fs.length || !$body.length || !$btn.length) {
+            return;
+        }
+        if (useAnimation) {
+            if (expanded) {
+                $fs.removeClass('advanced-search-collapsed');
+                $body.stop(true, true).css('display', 'none').slideDown(200);
+                $btn.text('收起');
+            } else {
+                $body.stop(true, true).slideUp(200, function () {
+                    $fs.addClass('advanced-search-collapsed');
+                });
+                $btn.text('展开');
+            }
+        } else {
+            $body.stop(true, true).removeAttr('style');
+            if (expanded) {
+                $fs.removeClass('advanced-search-collapsed');
+                $btn.text('收起');
+            } else {
+                $fs.addClass('advanced-search-collapsed');
+                $btn.text('展开');
+            }
+        }
+    }
+    applyChengjiaoAdvancedSearchState(readChengjiaoAdvancedSearchExpanded(), false);
+    $('#toggleAdvancedSearch').on('click', function () {
+        var willExpand = $('#advancedSearchFieldset').hasClass('advanced-search-collapsed');
+        writeChengjiaoAdvancedSearchExpanded(willExpand);
+        applyChengjiaoAdvancedSearchState(willExpand, true);
+    });
+
     var followIndex = null; // 记住"写跟进弹窗"的 layer index
     var isMobile = $(window).width() < 768;
     var currentUsername = "{$Think.session.username}" || "default";
