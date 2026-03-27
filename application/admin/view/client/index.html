@@ -81,6 +81,38 @@
     padding: 10px 15px;
 }
 
+        /* 我的客户 - 高级查询折叠（作用域在 #clientAdvancedSearchFieldset，避免污染其它页） */
+        #clientAdvancedSearchFieldset {
+            overflow: hidden;
+        }
+        #clientAdvancedSearchFieldset .advanced-search-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 15px;
+            background: #6695ea;
+            border-radius: 8px 8px 0 0;
+            color: #fff;
+        }
+        #clientAdvancedSearchFieldset .advanced-search-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        #clientAdvancedSearchFieldset #toggleClientAdvancedSearch {
+            border-color: rgba(255, 255, 255, 0.35);
+            color: #fff;
+            background: rgba(255, 255, 255, 0.12);
+        }
+        #clientAdvancedSearchFieldset #toggleClientAdvancedSearch:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        #clientAdvancedSearchFieldset.advanced-search-collapsed #clientAdvancedSearchBody {
+            display: none !important;
+        }
+        #clientAdvancedSearchFieldset.advanced-search-collapsed .advanced-search-header {
+            border-radius: 8px;
+        }
+
         .layui-card {
             background: #fafafa;
             border-radius: 6px;
@@ -436,8 +468,12 @@
 <body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
 
     <div class="admin-main layui-anim layui-anim-upbit">
-        <fieldset class="layui-elem-field">
-            <legend>高级查询</legend>
+        <fieldset class="layui-elem-field advanced-search-collapsed client-advanced-search-wrap" id="clientAdvancedSearchFieldset">
+            <div class="advanced-search-header">
+                <div class="advanced-search-title">高级查询</div>
+                <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="toggleClientAdvancedSearch">展开</button>
+            </div>
+            <div id="clientAdvancedSearchBody">
             <div class="layui-card" style="box-shadow:none; margin-top:10px;">
                 <div class="layui-form layui-card-header layuiadmin-card-header-auto"
                     style="border-bottom: transparent; height:auto;">
@@ -525,6 +561,7 @@
                         </button>
                     </div>
                 </div>
+            </div>
             </div>
         </fieldset>
 
@@ -632,6 +669,66 @@
                 $ = layui.jquery,
                 upload = layui.upload,
                 util = layui.util;
+
+            var CLIENT_ADV_SEARCH_STORAGE_KEY = 'client_index_advanced_search_expanded';
+            var CLIENT_ADV_SEARCH_CLICK_NS = 'clientAdvSearchToggle';
+
+            function applyAdvancedSearchState() {
+                var $fs = $('#clientAdvancedSearchFieldset');
+                var $body = $('#clientAdvancedSearchBody');
+                var $btn = $('#toggleClientAdvancedSearch');
+                if (!$fs.length || !$body.length || !$btn.length) {
+                    return;
+                }
+                $body.stop(true, true);
+                var raw = null;
+                try {
+                    raw = localStorage.getItem(CLIENT_ADV_SEARCH_STORAGE_KEY);
+                } catch (e) {}
+                var expanded = (raw === '1');
+                $body.css({ display: '', height: '', overflow: '', marginTop: '', marginBottom: '', paddingTop: '', paddingBottom: '' });
+                if (expanded) {
+                    $fs.removeClass('advanced-search-collapsed');
+                    $btn.text('收起');
+                } else {
+                    $fs.addClass('advanced-search-collapsed');
+                    $btn.text('展开');
+                }
+            }
+
+            function bindAdvancedSearchToggle() {
+                var $fs = $('#clientAdvancedSearchFieldset');
+                var $body = $('#clientAdvancedSearchBody');
+                var $btn = $('#toggleClientAdvancedSearch');
+                if (!$fs.length || !$body.length || !$btn.length) {
+                    return;
+                }
+                $btn.off('click.' + CLIENT_ADV_SEARCH_CLICK_NS).on('click.' + CLIENT_ADV_SEARCH_CLICK_NS, function () {
+                    if ($fs.hasClass('advanced-search-collapsed')) {
+                        $fs.removeClass('advanced-search-collapsed');
+                        $body.stop(true, true).slideDown(200);
+                        $btn.text('收起');
+                        try {
+                            localStorage.setItem(CLIENT_ADV_SEARCH_STORAGE_KEY, '1');
+                        } catch (e) {}
+                    } else {
+                        $body.stop(true, true).slideUp(200, function () {
+                            $fs.addClass('advanced-search-collapsed');
+                        });
+                        $btn.text('展开');
+                        try {
+                            localStorage.setItem(CLIENT_ADV_SEARCH_STORAGE_KEY, '0');
+                        } catch (e) {}
+                    }
+                });
+            }
+
+            applyAdvancedSearchState();
+            bindAdvancedSearchToggle();
+            window.clientIndexAdvancedSearch = {
+                applyState: applyAdvancedSearchState,
+                bindToggle: bindAdvancedSearchToggle
+            };
 
             // 表格初始化（默认不加任何筛选条件）
             var tableIn = table.render({
