@@ -176,9 +176,8 @@
     }
      
 
-    /* ✅ 仅这两列：最多两行，多的省略 */
-    .layui-table-view td[data-field="product_name"] .layui-table-cell,
-    .layui-table-view td[data-field="last_up_records"] .layui-table-cell{
+    /* ✅ 仅「产品名称」：最多两行，多的省略 */
+    .layui-table-view td[data-field="product_name"] .layui-table-cell{
         white-space: normal !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
@@ -186,6 +185,48 @@
         -webkit-line-clamp: 2;      /* 最多 2 行 */
         -webkit-box-orient: vertical;
         word-break: break-word !important;
+    }
+
+    /* ✅「最新跟进记录」：单行省略（tooltip 展示全文，见 .pc-last-record-cell） */
+    .layui-table-view td[data-field="last_up_records"] .layui-table-cell{
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    .layui-table-view td[data-field="last_up_records"] .pc-last-record-wrap{
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 100%;
+    }
+    .layui-table-view td[data-field="last_up_records"] .pc-last-record-cell{
+        display: block;
+        width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        box-sizing: border-box;
+    }
+
+    /* 最新跟进记录：悬浮完整内容（由 JS 定位到 body） */
+    #pc-last-record-tooltip.pc-last-record-tooltip{
+        position: fixed;
+        z-index: 2000000000;
+        max-width: 380px;
+        min-width: 120px;
+        padding: 8px 12px;
+        background: #fff;
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+        font-size: 13px;
+        line-height: 1.55;
+        color: #333;
+        word-break: break-word;
+        white-space: pre-wrap;
+        pointer-events: none;
+        box-sizing: border-box;
     }
 
      /* 表头单元格 */
@@ -731,14 +772,17 @@
         box-sizing: border-box !important;
     }
 
-    /* 3) 两行省略列：保证两行仍可读（不让它被压成一团） */
-    .layui-table-view td[data-field="product_name"] .layui-table-cell,
-    .layui-table-view td[data-field="last_up_records"] .layui-table-cell{
+    /* 3) 两行省略列（产品名称）：保证两行仍可读 */
+    .layui-table-view td[data-field="product_name"] .layui-table-cell{
         line-height: 17px !important;
         padding-top: 4px !important;
         padding-bottom: 4px !important;
-        /* 两行内容最小高度：17*2 + padding(8) ≈ 42，可按体验微调 */
         min-height: 42px !important;
+    }
+    /* 最新跟进记录：单行，与其它列一致用紧凑行高 */
+    .layui-table-view td[data-field="last_up_records"] .layui-table-cell{
+        line-height: 18px !important;
+        min-height: 32px !important;
     }
 
     /* 4) 操作列：按钮整体同步紧凑 + 垂直居中 */
@@ -772,15 +816,18 @@
         box-sizing: border-box !important;
     }
 
-    /* 8) 固定列中的两行省略列也要保证可读性 */
+    /* 8) 固定列中的两行省略列（产品名称） */
     .layui-table-fixed-l td[data-field="product_name"] .layui-table-cell,
-    .layui-table-fixed-l td[data-field="last_up_records"] .layui-table-cell,
-    .layui-table-fixed-r td[data-field="product_name"] .layui-table-cell,
-    .layui-table-fixed-r td[data-field="last_up_records"] .layui-table-cell{
+    .layui-table-fixed-r td[data-field="product_name"] .layui-table-cell{
         line-height: 17px !important;
         padding-top: 4px !important;
         padding-bottom: 4px !important;
         min-height: 42px !important;
+    }
+    .layui-table-fixed-l td[data-field="last_up_records"] .layui-table-cell,
+    .layui-table-fixed-r td[data-field="last_up_records"] .layui-table-cell{
+        line-height: 18px !important;
+        min-height: 32px !important;
     }
 
 
@@ -1138,6 +1185,99 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     // localStorage 的 key（用于兜底）
     var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
 
+    /** 最新跟进记录列：HTML 转义（防 XSS） */
+    function personclientEscapeHtml(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+    /** data-* 属性值转义 */
+    function personclientEncodeAttr(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    /** 最新跟进记录：悬浮层（仅截断时显示，挂到 body，避免被表格遮挡） */
+    function ensureLastRecordTooltipEl() {
+        var $t = $('#pc-last-record-tooltip');
+        if (!$t.length) {
+            $('body').append('<div id="pc-last-record-tooltip" class="pc-last-record-tooltip" style="display:none;"></div>');
+            $t = $('#pc-last-record-tooltip');
+        }
+        return $t;
+    }
+    function hideLastRecordTooltip() {
+        $('#pc-last-record-tooltip').hide().empty().css({ visibility: '' });
+    }
+    function positionLastRecordTooltip($tip, anchorEl) {
+        var rect = anchorEl.getBoundingClientRect();
+        var margin = 8;
+        var maxW = 380;
+        $tip.css({
+            maxWidth: maxW + 'px',
+            display: 'block',
+            visibility: 'hidden',
+            left: 0,
+            top: 0
+        });
+        var tw = $tip.outerWidth();
+        var th = $tip.outerHeight();
+        var vw = window.innerWidth || document.documentElement.clientWidth;
+        var vh = window.innerHeight || document.documentElement.clientHeight;
+        var left = rect.left;
+        if (left + tw > vw - margin) {
+            left = Math.max(margin, vw - tw - margin);
+        }
+        var top = rect.bottom + margin;
+        if (top + th > vh - margin && rect.top > th + margin) {
+            top = rect.top - th - margin;
+        }
+        if (top + th > vh - margin) {
+            top = Math.max(margin, vh - th - margin);
+        }
+        if (left < margin) {
+            left = margin;
+        }
+        $tip.css({ left: left + 'px', top: top + 'px', visibility: 'visible' });
+    }
+    function bindLastRecordTooltip() {
+        var $view = $('#' + tableId).next('.layui-table-view');
+        $(document).off('mouseenter.pcLastRecTip mouseleave.pcLastRecTip', '.layui-table-view td[data-field="last_up_records"] .pc-last-record-cell');
+        $(document).on('mouseenter.pcLastRecTip', '.layui-table-view td[data-field="last_up_records"] .pc-last-record-cell', function () {
+            var el = this;
+            var full = $(el).attr('data-pc-full');
+            if (full == null || full === '') {
+                return;
+            }
+            if (el.scrollWidth <= el.clientWidth + 1) {
+                return;
+            }
+            var $tip = ensureLastRecordTooltipEl();
+            $tip.text(full);
+            positionLastRecordTooltip($tip, el);
+        });
+        $(document).on('mouseleave.pcLastRecTip', '.layui-table-view td[data-field="last_up_records"] .pc-last-record-cell', function () {
+            hideLastRecordTooltip();
+        });
+        if ($view.length) {
+            $view.find('.layui-table-main, .layui-table-fixed-r .layui-table-body, .layui-table-fixed-l .layui-table-body')
+                .off('scroll.pcLastRecTip')
+                .on('scroll.pcLastRecTip', function () {
+                    hideLastRecordTooltip();
+                });
+        }
+    }
+    $(window).off('resize.pcLastRecTip').on('resize.pcLastRecTip', function () {
+        hideLastRecordTooltip();
+    });
+
      // 列定义
      var cols = [[
          { type: 'checkbox',  width: 50 },
@@ -1147,7 +1287,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
          }},
          { field: 'product_name', title: '产品名称',  width: 120 }, 
          { field: 'main_phone', title: '主电话', width: 120 },
-         { field: 'last_up_records', title: '最新跟进记录', width: 120 },
+         { field: 'last_up_records', title: '最新跟进记录', width: 120, templet: function (d) {
+             var raw = d.last_up_records;
+             if (raw == null) {
+                 return '';
+             }
+             var text = String(raw);
+             if (text.trim() === '') {
+                 return '';
+             }
+             var safe = personclientEscapeHtml(text);
+             var attr = personclientEncodeAttr(text);
+             return '<div class="pc-last-record-wrap"><span class="pc-last-record-cell" data-pc-full="' + attr + '">' + safe + '</span></div>';
+         }},
          { field: 'last_up_time', title: '最新跟进时间', width: 120 },
          { field: 'aux_phone', title: '辅助电话', width: 120 },
          { field: 'inquiry_name', title: '所属渠道', width: 120},     // 原"询盘来源"列
@@ -1293,6 +1445,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         done: function(res, curr, count) {
             // 绑定列宽拖拽保存监听（每次 done 都会执行，先 off 再 on 避免重复绑定）
             bindResizeSave();
+
+            bindLastRecordTooltip();
             
             // ===============================
             // 【修改】同步固定列行高 - 升级版（解决 Layui fixed 列晚生成问题）
