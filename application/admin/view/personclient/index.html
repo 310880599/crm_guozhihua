@@ -666,6 +666,30 @@
         box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.1);
         outline: none;
     }
+
+    /* 全部跟进记录弹窗：仅「跟进内容」列多行完整展示，不影响主列表与其它表格 */
+    #all-follow-dialog #af-table + .layui-table-view .layui-table-body td[data-field="reply_msg"],
+    #all-follow-dialog #af-table + .layui-table-view .layui-table-body td[data-field="reply_msg"] .layui-table-cell {
+        overflow: visible;
+    }
+    #all-follow-dialog #af-table + .layui-table-view .layui-table-body td[data-field="reply_msg"] .layui-table-cell {
+        white-space: normal;
+        word-wrap: break-word;
+        word-break: break-word;
+        overflow: visible;
+        text-overflow: clip;
+        height: auto !important;
+        max-height: none !important;
+        line-height: 1.6;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+    #all-follow-dialog #af-table + .layui-table-view .layui-table-body tr {
+        height: auto !important;
+    }
+    #all-follow-dialog #af-table + .layui-table-view .layui-table-body td {
+        vertical-align: top;
+    }
     
     #submit-comment {
         background: #4285f4;
@@ -1749,7 +1773,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                     end_date: ''
                 },
                 done: function(res, curr, count) {
-                    // 表格渲染完成
+                    var $view = $('#all-follow-dialog #af-table').next('.layui-table-view');
+                    if ($view.length) {
+                        $view.find('.layui-table-body td[data-field="reply_msg"] .layui-table-cell').css({height: 'auto', maxHeight: 'none'});
+                    }
                 }
             });
         }, 100);
