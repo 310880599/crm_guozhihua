@@ -18,10 +18,11 @@
         margin-bottom: 10px;
         border-radius: 4px;
     }
-    /* 两个业绩按钮：撑满列 */
+    /* 控制面板四个统计按钮：撑满列，统一尺寸 */
     .wukong-btn-per-user,
     .wukong-btn-per-team,
-    .wukong-btn-inquiry-summary{
+    .wukong-btn-inquiry-summary,
+    .wukong-btn-operation-inquiry-summary {
         width: 100%;
         display: flex;
         align-items: center;
@@ -50,11 +51,21 @@
         border: none;
         color: #fff;
     }
+    /* 运营询盘汇总：珊瑚橙独立主题（与蓝/绿/紫区分） */
+    .wukong-btn-operation-inquiry-summary {
+        background: linear-gradient(135deg, #ea580c, #fb923c);
+        border: none;
+        color: #fff;
+    }
+    .wukong-btn-operation-inquiry-summary .bi {
+        color: #fff;
+    }
 
     /* hover 微动效 */
     .wukong-btn-per-user:hover,
     .wukong-btn-per-team:hover,
-    .wukong-btn-inquiry-summary:hover{
+    .wukong-btn-inquiry-summary:hover,
+    .wukong-btn-operation-inquiry-summary:hover {
         filter: brightness(1.03);
         transform: translateY(-1px);
         transition: all .15s ease;
@@ -127,14 +138,126 @@
         padding: 4px 8px;
         border-radius: 4px;
     }
-    /* 询盘汇总三连屏：选中高亮（团队 / 运营） */
+    /* 业务询盘汇总三连屏：选中高亮（紫色） */
     .inquiry-team-clickable.is-active,
-    .inquiry-member-clickable.is-active,
-    .op-inq-source-clickable.is-active,
-    .op-inq-staff-clickable.is-active {
+    .inquiry-member-clickable.is-active {
         background-color: #f3e8ff;
         padding: 2px 6px;
         border-radius: 4px;
+    }
+    /* 运营询盘汇总三连屏：选中高亮（珊瑚橙体系，限定在运营容器内） */
+    #operationInquirySummarySplitLayout .op-inq-source-clickable.is-active,
+    #operationInquirySummarySplitLayout .op-inq-staff-clickable.is-active {
+        background-color: #ffedd5;
+        color: #9a3412 !important;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+
+    /* ========== 运营询盘汇总三连屏主题（仅 #operationInquirySummarySplitLayout） ========== */
+    #operationInquirySummarySplitLayout {
+        --op-inq-accent: #ea580c;
+        --op-inq-accent-mid: #f97316;
+        --op-inq-accent-soft: #fff7ed;
+        --op-inq-accent-text: #9a3412;
+        --op-inq-accent-link: #c2410c;
+        --op-inq-edge: rgba(234, 88, 12, 0.22);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-header {
+        padding: 15px;
+        background: linear-gradient(90deg, var(--op-inq-accent), var(--op-inq-accent-mid));
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-shrink: 0;
+        box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-header .btn.btn-light {
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        color: #7c2d12;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-header .btn.btn-light:hover {
+        background: #fff;
+        color: #9a3412;
+        filter: none;
+        transform: none;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-split-left,
+    #operationInquirySummarySplitLayout .op-inquiry-split-mid {
+        border-right: 1px solid var(--op-inq-edge) !important;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-filter-bar {
+        padding: 15px;
+        border-bottom: 1px solid var(--op-inq-edge);
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex-wrap: wrap;
+        flex-shrink: 0;
+        background: linear-gradient(180deg, var(--op-inq-accent-soft), #fff);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-filter {
+        margin-left: auto;
+        background: linear-gradient(135deg, var(--op-inq-accent), var(--op-inq-accent-mid));
+        border: none;
+        color: #fff;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-filter:hover {
+        filter: brightness(1.05);
+        color: #fff;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-reset {
+        background: #fff;
+        border: 1px solid var(--op-inq-edge);
+        color: var(--op-inq-accent-text);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-reset:hover {
+        background: var(--op-inq-accent-soft);
+        color: #7c2d12;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-summary {
+        padding: 10px 20px;
+        border-top: 1px solid var(--op-inq-edge);
+        background: linear-gradient(180deg, #fffefb, #fff7ed);
+        flex-shrink: 0;
+        font-weight: 600;
+        color: var(--op-inq-accent-text);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: #78716c;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-empty-icon {
+        font-size: 48px;
+        margin-bottom: 15px;
+        display: block;
+        color: #fb923c;
+        opacity: 0.85;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-empty-text {
+        font-size: 16px;
+        margin: 0;
+        color: #57534e;
+    }
+    #operationInquirySummarySplitLayout .op-inq-source-clickable,
+    #operationInquirySummarySplitLayout .op-inq-staff-clickable {
+        color: var(--op-inq-accent-link) !important;
+        font-weight: 600;
+        text-decoration: none;
+    }
+    #operationInquirySummarySplitLayout .op-inq-source-clickable:hover,
+    #operationInquirySummarySplitLayout .op-inq-staff-clickable:hover {
+        color: var(--op-inq-accent) !important;
+        text-decoration: underline;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-subhead {
+        padding: 15px 20px;
+        border-bottom: 1px solid var(--op-inq-edge);
+        background: var(--op-inq-accent-soft);
+        color: #44403c;
     }
     /* === split-layout end === */
 
@@ -203,26 +326,26 @@
 
  </style>
 <div class="col-md-8">
-    <!-- 业绩按钮：左业务员，右团队 -->
+    <!-- 统计按钮 2×2：每行两列等宽（col-md-6），按钮 width:100% 对齐 -->
     <div class="row g-3 mb-3">
-        <div class="col-md-4">
+        <div class="col-md-6">
             <button type="button" class="btn wukong-btn wukong-btn-primary wukong-btn-per-user" id="showPerformanceBtn">
                 <i class="bi bi-bar-chart-line"></i> 查看业务人员业绩表
             </button>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-6">
             <button type="button" class="btn wukong-btn wukong-btn-primary wukong-btn-per-team" id="showTeamPerformanceBtn">
                 <i class="bi bi-people-fill"></i> 查看团队业绩表
             </button>
         </div>
     </div>
     <div class="row g-3 mb-3">
-        <div class="col-md-4">
+        <div class="col-md-6">
             <button type="button" class="btn wukong-btn wukong-btn-primary wukong-btn-inquiry-summary" id="showInquirySummaryBtn">
                 <i class="bi bi-diagram-3"></i> 查看业务询盘汇总表
             </button>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-6">
             <button type="button" class="btn wukong-btn wukong-btn-primary wukong-btn-operation-inquiry-summary" id="showOperationInquirySummaryBtn">
                 <i class="bi bi-grid-1x2"></i> 查看运营询盘汇总表
             </button>
@@ -760,10 +883,10 @@
 </div>
 
 <!-- 运营询盘汇总表三连屏（operationInquirySummary） -->
-<div id="operationInquirySummarySplitLayout" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #f6f8fb; z-index: 20000003;">
+<div id="operationInquirySummarySplitLayout" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #fffdfb; z-index: 20000003;">
     <div class="split-wrap op-inquiry-split-wrap" style="display: flex; height: 100%; width: 100%; overflow: hidden;">
-        <div class="split-left op-inquiry-split-left" style="width: 30%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
-            <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #7c3aed, #9333ea); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+        <div class="split-left op-inquiry-split-left" style="width: 30%; background: #ffffff; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="pane-header op-inquiry-pane-header">
                 <span style="font-size: 16px; font-weight: 600;">📊 询盘来源汇总</span>
                 <div>
                     <button class="btn btn-sm btn-light" id="opInqSplitLeftMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
@@ -771,7 +894,7 @@
                     <button class="btn btn-sm btn-light" id="opInqSplitClose" title="关闭" style="margin-left: 8px;"><i class="bi bi-x-lg"></i></button>
                 </div>
             </div>
-            <div class="filter-bar" id="operationInquirySummaryTimeFilterBar" style="padding: 15px; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; flex-shrink: 0;">
+            <div class="filter-bar op-inquiry-filter-bar" id="operationInquirySummaryTimeFilterBar">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <label style="margin: 0; white-space: nowrap;">时间筛选：</label>
                     <select id="operationInquirySummaryTimeFilter" class="form-select" style="width: 150px;">
@@ -788,19 +911,19 @@
                     <span>至</span>
                     <input type="date" id="operationInquirySummaryEndDate" class="form-control" style="width: 150px;">
                 </div>
-                <button type="button" class="btn btn-primary btn-sm" id="operationInquirySummaryFilterBtn" style="margin-left: auto;">
+                <button type="button" class="btn btn-sm op-inquiry-btn-filter" id="operationInquirySummaryFilterBtn">
                     <i class="bi bi-search"></i> 筛选
                 </button>
-                <button type="button" class="btn btn-secondary btn-sm" id="operationInquirySummaryResetBtn">
+                <button type="button" class="btn btn-sm op-inquiry-btn-reset" id="operationInquirySummaryResetBtn">
                     <i class="bi bi-arrow-counterclockwise"></i> 重置
                 </button>
             </div>
             <div id="opInquirySourcePane" style="flex: 1; overflow-y: auto; padding: 20px;"></div>
-            <div id="opInquirySourcePaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：总询盘数 0</div>
+            <div id="opInquirySourcePaneSummary" class="op-inquiry-pane-summary">合计：总询盘数 0</div>
         </div>
 
-        <div class="split-mid op-inquiry-split-mid" style="width: 35%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
-            <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #7c3aed, #9333ea); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+        <div class="split-mid op-inquiry-split-mid" style="width: 35%; background: #ffffff; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="pane-header op-inquiry-pane-header">
                 <span style="font-size: 16px; font-weight: 600;" id="opInquiryStaffPaneTitle">👤 运营人员询盘汇总</span>
                 <div>
                     <button class="btn btn-sm btn-light" id="opInqSplitMidRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
@@ -809,16 +932,16 @@
                 </div>
             </div>
             <div id="opInquiryStaffPane" style="flex: 1; overflow-y: auto; padding: 20px;">
-                <div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;">
-                    <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
-                    <p style="font-size: 16px; margin: 0;">请选择询盘来源查看运营人员汇总</p>
+                <div class="empty op-inquiry-empty-state">
+                    <i class="bi bi-inbox op-inquiry-empty-icon"></i>
+                    <p class="op-inquiry-empty-text">请选择询盘来源查看运营人员汇总</p>
                 </div>
             </div>
-            <div id="opInquiryStaffPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：总询盘数 0</div>
+            <div id="opInquiryStaffPaneSummary" class="op-inquiry-pane-summary">合计：总询盘数 0</div>
         </div>
 
         <div class="split-right op-inquiry-split-right" style="width: 35%; background: #ffffff; display: flex; flex-direction: column; overflow: hidden;">
-            <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #7c3aed, #9333ea); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+            <div class="pane-header op-inquiry-pane-header">
                 <span style="font-size: 16px; font-weight: 600;" id="opInquiryPortPaneTitle">🔌 运营端口询盘明细</span>
                 <div>
                     <button class="btn btn-sm btn-light" id="opInqSplitRightRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
@@ -827,12 +950,12 @@
                 </div>
             </div>
             <div id="opInquiryPortPane" style="flex: 1; overflow-y: auto; padding: 20px;">
-                <div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;">
-                    <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
-                    <p style="font-size: 16px; margin: 0;">请点击运营人员查看端口明细</p>
+                <div class="empty op-inquiry-empty-state">
+                    <i class="bi bi-inbox op-inquiry-empty-icon"></i>
+                    <p class="op-inquiry-empty-text">请点击运营人员查看端口明细</p>
                 </div>
             </div>
-            <div id="opInquiryPortPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：总询盘数 0</div>
+            <div id="opInquiryPortPaneSummary" class="op-inquiry-pane-summary">合计：总询盘数 0</div>
         </div>
     </div>
 </div>
@@ -1561,7 +1684,7 @@
     }
 
     function renderOpInquiryEmpty($container, text) {
-        $container.html('<div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i><p style="font-size: 16px; margin: 0;">' + text + '</p></div>');
+        $container.html('<div class="empty op-inquiry-empty-state"><i class="bi bi-inbox op-inquiry-empty-icon"></i><p class="op-inquiry-empty-text">' + text + '</p></div>');
     }
 
     function escapeHtml(str) {
@@ -1585,7 +1708,7 @@
                 var name = item.inquiry_name != null ? String(item.inquiry_name) : '未知来源';
                 html += '<tr>'
                     + '<td>' + (item.rank || (i + 1)) + '</td>'
-                    + '<td><a href="javascript:void(0);" class="op-inq-source-clickable" data-inquiry-id="' + iid + '" style="color:#7c3aed;font-weight:600;text-decoration:none;">' + escapeHtml(name) + '</a></td>'
+                    + '<td><a href="javascript:void(0);" class="op-inq-source-clickable" data-inquiry-id="' + iid + '">' + escapeHtml(name) + '</a></td>'
                     + '<td style="text-align:right;">' + (item.yw_num || 0) + '</td>'
                     + '</tr>';
             });
@@ -1598,7 +1721,7 @@
 
     function renderOpInquiryStaffPane(inquiryId, inquiryName, data) {
         var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
-            + '<div style="padding: 15px 20px; border-bottom:1px solid #e9ecef; background:#f8f9fa;">'
+            + '<div class="op-inquiry-subhead">'
             + '询盘来源：<strong>' + escapeHtml(inquiryName || '') + '</strong></div>'
             + '<div style="padding: 20px; overflow-x: auto;">'
             + '<table class="wukong-table" style="width:100%;">'
@@ -1608,7 +1731,7 @@
                 var username = (item.username || '').trim();
                 html += '<tr>'
                     + '<td>' + (item.rank || (i + 1)) + '</td>'
-                    + '<td><a href="javascript:void(0);" class="op-inq-staff-clickable" data-username="' + encodeURIComponent(username) + '" style="color:#7c3aed;font-weight:600;text-decoration:none;">' + escapeHtml(username) + '</a></td>'
+                    + '<td><a href="javascript:void(0);" class="op-inq-staff-clickable" data-username="' + encodeURIComponent(username) + '">' + escapeHtml(username) + '</a></td>'
                     + '<td style="text-align:right;">' + (item.yw_num || 0) + '</td>'
                     + '</tr>';
             });
@@ -1621,7 +1744,7 @@
 
     function renderOpInquiryPortPane(username, data) {
         var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
-            + '<div style="padding: 15px 20px; border-bottom:1px solid #e9ecef; background:#f8f9fa;">'
+            + '<div class="op-inquiry-subhead">'
             + '运营人员：<strong>' + escapeHtml(username || '') + '</strong></div>'
             + '<div style="padding: 20px; overflow-x: auto;">'
             + '<table class="wukong-table" style="width:100%;">'
