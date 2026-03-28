@@ -3887,6 +3887,8 @@ private function exportToExcel($data)
 
     /**
      * 第三屏：指定运营人员名下各端口询盘数（每端口 count distinct l.id；与第二屏同一来源与时间口径）。
+     * username 非空：按「来源 + 运营人员」所配端口统计（原逻辑）。
+     * username 为空：按「来源」统计 crm_inquiry_port 中该来源下全部端口的询盘数（无运营人员配置时使用）。
      */
     public function getOperationInquirySummaryPortData()
     {
@@ -3896,34 +3898,72 @@ private function exportToExcel($data)
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
 
-            $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
-            if ($op === null) {
-                return json([
-                    'code' => 0,
-                    'msg' => '获取成功',
-                    'data' => [],
-                    'summary' => ['total_count' => 0],
-                ]);
-            }
-
-            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
-            if (empty($portIds)) {
-                return json([
-                    'code' => 0,
-                    'msg' => '获取成功',
-                    'data' => [],
-                    'summary' => ['total_count' => 0],
-                ]);
-            }
-
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
 
-            $port_map = Db::table('crm_inquiry_port')->where('id', 'in', $portIds)->column('port_name', 'id');
+            if ($username !== '') {
+                $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
+                if ($op === null) {
+                    return json([
+                        'code' => 0,
+                        'msg' => '获取成功',
+                        'data' => [],
+                        'summary' => ['total_count' => 0],
+                    ]);
+                }
+
+                $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+                if (empty($portIds)) {
+                    return json([
+                        'code' => 0,
+                        'msg' => '获取成功',
+                        'data' => [],
+                        'summary' => ['total_count' => 0],
+                    ]);
+                }
+
+                $port_map = Db::table('crm_inquiry_port')->where('id', 'in', $portIds)->column('port_name', 'id');
+            } else {
+                $portRows = Db::table('crm_inquiry_port')
+                    ->where('inquiry_id', '=', $inquiry_id)
+                    ->field('id,port_name')
+                    ->order('port_name', 'asc')
+                    ->select();
+                if (empty($portRows)) {
+                    return json([
+                        'code' => 0,
+                        'msg' => '获取成功',
+                        'data' => [],
+                        'summary' => ['total_count' => 0],
+                    ]);
+                }
+                $portIds = [];
+                $port_map = [];
+                foreach ($portRows as $prow) {
+                    $pid = (int)($prow['id'] ?? 0);
+                    if ($pid <= 0) {
+                        continue;
+                    }
+                    $portIds[] = $pid;
+                    $port_map[$pid] = (string)($prow['port_name'] ?? ('ID:' . $pid));
+                }
+                if (empty($portIds)) {
+                    return json([
+                        'code' => 0,
+                        'msg' => '获取成功',
+                        'data' => [],
+                        'summary' => ['total_count' => 0],
+                    ]);
+                }
+            }
 
             $result = [];
             $total = 0;
             foreach ($portIds as $pid) {
+                $pid = (int)$pid;
+                if ($pid <= 0) {
+                    continue;
+                }
                 $w = "FIND_IN_SET('{$pid}', l.port_id) > 0";
                 $cnt = (int)(clone $baseQuery)->whereRaw($w)->count('l.id');
                 $total += $cnt;

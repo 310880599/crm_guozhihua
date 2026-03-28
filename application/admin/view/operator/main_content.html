@@ -1624,9 +1624,17 @@
                 return null;
             }
             return self.loadStaffSummary(prevIid).then(function (staffRes) {
+                if (!staffRes || (staffRes.code !== 0 && staffRes.code !== 200)) {
+                    return null;
+                }
+                var rows = staffRes.data || [];
+                if (rows.length === 0) {
+                    self.lastUsername = '';
+                    return self.loadPortSummary(prevIid, '');
+                }
                 var userOk = false;
                 if (prevUser) {
-                    userOk = staffRes && Array.isArray(staffRes.data) && staffRes.data.some(function (item) {
+                    userOk = rows.some(function (item) {
                         return $.trim(item.username || '') === prevUser;
                     });
                 }
@@ -1736,16 +1744,20 @@
                     + '</tr>';
             });
         } else {
-            html += '<tr><td colspan="3" class="text-center text-muted">该来源下暂无运营人员或未产生匹配询盘</td></tr>';
+            html += '<tr><td colspan="3" class="text-center text-muted">该来源下暂无运营人员，已在右侧直接展示端口明细</td></tr>';
         }
         html += '</tbody></table></div></div>';
         $('#opInquiryStaffPane').html(html);
     }
 
-    function renderOpInquiryPortPane(username, data) {
+    function renderOpInquiryPortPane(username, data, inquiryNameForSource) {
+        var uname = (username || '').trim();
+        var isSourceOnly = !uname;
+        var subheadLine = isSourceOnly
+            ? ('询盘来源：<strong>' + escapeHtml(inquiryNameForSource || '') + '</strong>（按来源统计全部端口）')
+            : ('运营人员：<strong>' + escapeHtml(uname) + '</strong>');
         var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
-            + '<div class="op-inquiry-subhead">'
-            + '运营人员：<strong>' + escapeHtml(username || '') + '</strong></div>'
+            + '<div class="op-inquiry-subhead">' + subheadLine + '</div>'
             + '<div style="padding: 20px; overflow-x: auto;">'
             + '<table class="wukong-table" style="width:100%;">'
             + '<thead><tr><th style="width:80px;">排名</th><th>运营端口</th><th style="text-align:right;">询盘数量</th></tr></thead><tbody>';
@@ -1836,7 +1848,15 @@
                 data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
-                    renderOpInquiryStaffPane(inquiryId, name, res.data || []);
+                    var rows = res.data || [];
+                    if (rows.length === 0) {
+                        renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧直接展示端口明细');
+                        updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', { total_count: 0 });
+                        self.lastUsername = '';
+                        self.bindStaffClick();
+                        return self.loadPortSummary(inquiryId, '');
+                    }
+                    renderOpInquiryStaffPane(inquiryId, name, rows);
                     updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', res.summary || {});
                     self.bindStaffClick();
                 } else {
@@ -1859,19 +1879,25 @@
             var self = this;
             var params = getOperationInquirySummaryTimeParams();
             if (!params) return $.Deferred().resolve(null).promise();
-            self.lastUsername = username;
+            var uname = (username === undefined || username === null) ? '' : String(username).trim();
+            self.lastUsername = uname;
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
-            $('#opInquiryPortPaneTitle').text('🔌 ' + username + ' - 运营端口询盘明细');
+            if (uname) {
+                $('#opInquiryPortPaneTitle').text('🔌 ' + uname + ' - 运营端口询盘明细');
+            } else {
+                var src = (self.lastInquiryName || '').trim() || '该来源';
+                $('#opInquiryPortPaneTitle').text('🔌 ' + src + ' - 运营端口询盘明细');
+            }
             return $.ajax({
                 url: '{:url("Operator/getOperationInquirySummaryPortData")}',
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {inquiry_id: inquiryId, username: username, timebucket: params.timebucket, at_time: params.at_time},
+                data: {inquiry_id: inquiryId, username: uname, timebucket: params.timebucket, at_time: params.at_time},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
-                    renderOpInquiryPortPane(username, res.data || []);
+                    renderOpInquiryPortPane(uname, res.data || [], self.lastInquiryName);
                     updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', res.summary || {});
                 } else {
                     var bizMsg = res.msg || '获取端口汇总失败';
@@ -2001,17 +2027,13 @@
             window.OperatorInquirySummarySplit.loadStaffSummary(window.OperatorInquirySummarySplit.lastInquiryId);
         });
         $('#opInqSplitRightRefresh').off('click.opInq').on('click.opInq', function() {
-            if (!window.OperatorInquirySummarySplit.lastUsername) {
-                layer.msg('请先选择运营人员', {icon: 2});
-                return;
-            }
             if (window.OperatorInquirySummarySplit.lastInquiryId === null || window.OperatorInquirySummarySplit.lastInquiryId === undefined) {
                 layer.msg('请先选择询盘来源', {icon: 2});
                 return;
             }
             window.OperatorInquirySummarySplit.loadPortSummary(
                 window.OperatorInquirySummarySplit.lastInquiryId,
-                window.OperatorInquirySummarySplit.lastUsername
+                window.OperatorInquirySummarySplit.lastUsername || ''
             );
         });
     }
