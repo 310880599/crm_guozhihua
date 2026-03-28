@@ -120,14 +120,17 @@
     }
 
     /* 高级查询折叠（对齐待审核页结构，配色沿用本页蓝色） */
+    /* 不用 overflow:hidden，避免高级查询内 layui 下拉 dl / 自定义下拉被裁切；圆角由 header/body 各自样式承担 */
     #advancedSearchFieldset.wukong-search-card {
         margin: 0 0 20px 0;
         padding: 0;
         border: none;
         min-width: 0;
         border-radius: 8px;
-        overflow: hidden;
+        overflow: visible;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        position: relative;
+        z-index: 2;
     }
     #advancedSearchFieldset.wukong-search-card > .layui-form {
         display: block !important;
@@ -164,6 +167,11 @@
     #advancedSearchBody {
         padding: 20px;
         padding-top: 16px;
+        overflow: visible;
+    }
+    #advancedSearchFieldset .layui-form-select dl,
+    #advancedSearchFieldset .layui-form-select.custom-select dl {
+        z-index: 10050 !important;
     }
     #advancedSearchBody .layui-form-item:last-child {
         margin-bottom: 0;

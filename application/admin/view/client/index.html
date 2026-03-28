@@ -81,9 +81,18 @@
     padding: 10px 15px;
 }
 
-        /* 我的客户 - 高级查询折叠（作用域在 #clientAdvancedSearchFieldset，避免污染其它页） */
+        /* 我的客户 - 高级查询折叠（作用域在 #clientAdvancedSearchFieldset，避免污染其它页）
+           外层不设 overflow:hidden，否则 layui 单选/搜索下拉的 dl 会被裁切；折叠仍由 .advanced-search-collapsed + #clientAdvancedSearchBody 控制 */
         #clientAdvancedSearchFieldset {
-            overflow: hidden;
+            overflow: visible;
+            position: relative;
+            z-index: 2;
+        }
+        #clientAdvancedSearchBody {
+            overflow: visible;
+        }
+        #clientAdvancedSearchFieldset .layui-form-select dl {
+            z-index: 10050 !important;
         }
         #clientAdvancedSearchFieldset .advanced-search-header {
             display: flex;
