@@ -172,8 +172,11 @@
         position: relative;
         z-index: 1;
     }
-    /* 触发器与展开态同层提高，避免同区域内按钮行、其它表单项盖住下拉 */
+    /* 高级查询内部先建立低层基线，避免同级表单项互相压盖 */
+    #advancedSearchFieldset .layui-form-item,
+    #advancedSearchFieldset .layui-inline,
     #advancedSearchFieldset .layui-input-inline {
+        overflow: visible;
         position: relative;
         z-index: 1;
     }
@@ -181,12 +184,17 @@
         position: relative;
         z-index: 1;
     }
-    #advancedSearchFieldset .layui-form-selected {
-        z-index: 1300 !important;
+    #advancedSearchFieldset .select-open-top {
+        z-index: 3000 !important;
     }
+    #advancedSearchFieldset .select-open-top .layui-form-select,
+    #advancedSearchFieldset .layui-form-selected {
+        z-index: 3000 !important;
+    }
+    #advancedSearchFieldset .select-open-top .layui-form-select dl,
     #advancedSearchFieldset .layui-form-select dl,
     #advancedSearchFieldset .layui-form-select.custom-select dl {
-        z-index: 1301 !important;
+        z-index: 3001 !important;
     }
     #advancedSearchBody .layui-form-item:last-child {
         margin-bottom: 0;
@@ -1334,7 +1342,43 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             });
     }
 
+    function bindPersonclientAdvancedSelectLayerFix() {
+        var $scope = $('#advancedSearchFieldset');
+        if (!$scope.length) return;
+
+        function clearSelectOpenTop() {
+            $scope.find('.select-open-top').removeClass('select-open-top');
+        }
+
+        function raiseCurrentSelect($selectWrap) {
+            clearSelectOpenTop();
+            $selectWrap.closest('.layui-input-inline').addClass('select-open-top');
+            $selectWrap.closest('.layui-inline').addClass('select-open-top');
+            $selectWrap.closest('.layui-form-item').addClass('select-open-top');
+        }
+
+        $scope.off('click.personclientSelectTop', '.layui-form-select .layui-select-title')
+            .on('click.personclientSelectTop', '.layui-form-select .layui-select-title', function () {
+                var $selectWrap = $(this).closest('.layui-form-select');
+                setTimeout(function () {
+                    if ($selectWrap.hasClass('layui-form-selected')) {
+                        raiseCurrentSelect($selectWrap);
+                    } else {
+                        clearSelectOpenTop();
+                    }
+                }, 0);
+            });
+
+        $(document).off('click.personclientSelectTopDoc').on('click.personclientSelectTopDoc', function () {
+            setTimeout(function () {
+                var hasOpened = $scope.find('.layui-form-select.layui-form-selected').length > 0;
+                if (!hasOpened) clearSelectOpenTop();
+            }, 0);
+        });
+    }
+
     initAdvancedSearchToggle();
+    bindPersonclientAdvancedSelectLayerFix();
     window.initPersonclientAdvancedSearchToggle = initAdvancedSearchToggle;
 
     /** 最新跟进记录列：HTML 转义（防 XSS） */

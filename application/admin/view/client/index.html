@@ -94,7 +94,10 @@
             position: relative;
             z-index: 1;
         }
+        #clientAdvancedSearchFieldset .layui-form-item,
+        #clientAdvancedSearchFieldset .layui-inline,
         #clientAdvancedSearchFieldset .layui-input-inline {
+            overflow: visible;
             position: relative;
             z-index: 1;
         }
@@ -102,11 +105,16 @@
             position: relative;
             z-index: 1;
         }
-        #clientAdvancedSearchFieldset .layui-form-selected {
-            z-index: 1300 !important;
+        #clientAdvancedSearchFieldset .select-open-top {
+            z-index: 3000 !important;
         }
+        #clientAdvancedSearchFieldset .select-open-top .layui-form-select,
+        #clientAdvancedSearchFieldset .layui-form-selected {
+            z-index: 3000 !important;
+        }
+        #clientAdvancedSearchFieldset .select-open-top .layui-form-select dl,
         #clientAdvancedSearchFieldset .layui-form-select dl {
-            z-index: 1301 !important;
+            z-index: 3001 !important;
         }
 
         /* 客户列表主表格：整体层叠低于高级查询，与「我的客户」页一致 */
@@ -760,8 +768,48 @@
                 });
             }
 
+            function bindClientAdvancedSelectLayerFix() {
+                var $scope = $('#clientAdvancedSearchFieldset');
+                if (!$scope.length) {
+                    return;
+                }
+
+                function clearSelectOpenTop() {
+                    $scope.find('.select-open-top').removeClass('select-open-top');
+                }
+
+                function raiseCurrentSelect($selectWrap) {
+                    clearSelectOpenTop();
+                    $selectWrap.closest('.layui-input-inline').addClass('select-open-top');
+                    $selectWrap.closest('.layui-inline').addClass('select-open-top');
+                    $selectWrap.closest('.layui-form-item').addClass('select-open-top');
+                }
+
+                $scope.off('click.clientAdvSelectTop', '.layui-form-select .layui-select-title')
+                    .on('click.clientAdvSelectTop', '.layui-form-select .layui-select-title', function () {
+                        var $selectWrap = $(this).closest('.layui-form-select');
+                        setTimeout(function () {
+                            if ($selectWrap.hasClass('layui-form-selected')) {
+                                raiseCurrentSelect($selectWrap);
+                            } else {
+                                clearSelectOpenTop();
+                            }
+                        }, 0);
+                    });
+
+                $(document).off('click.clientAdvSelectTopDoc').on('click.clientAdvSelectTopDoc', function () {
+                    setTimeout(function () {
+                        var hasOpened = $scope.find('.layui-form-select.layui-form-selected').length > 0;
+                        if (!hasOpened) {
+                            clearSelectOpenTop();
+                        }
+                    }, 0);
+                });
+            }
+
             applyAdvancedSearchState();
             bindAdvancedSearchToggle();
+            bindClientAdvancedSelectLayerFix();
             window.clientIndexAdvancedSearch = {
                 applyState: applyAdvancedSearchState,
                 bindToggle: bindAdvancedSearchToggle
