@@ -843,6 +843,36 @@
     .layui-table-view .layui-table-fixed-l .layui-table-body{
         overflow: visible !important;  /* 关键：干掉 layui.css 里的 overflow:hidden */
     }
+
+    /* ===============================
+       全部跟进记录弹窗 #all-follow-dialog / #af-table：
+       仅此处覆盖全局「单行省略」与下方「紧凑 min-height」（必须放在本页样式末尾 + !important）
+       =============================== */
+    #all-follow-dialog .layui-table-view .layui-table-body tr {
+        height: auto !important;
+    }
+    #all-follow-dialog .layui-table-view .layui-table-body td {
+        vertical-align: top !important;
+    }
+    #all-follow-dialog .layui-table-view td[data-field="reply_msg"] .layui-table-cell {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: break-all !important;
+        overflow-wrap: anywhere !important;
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        line-height: 22px !important;
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+    }
+    #all-follow-dialog .layui-table-view .af-reply-msg-cell {
+        white-space: pre-wrap !important;
+        word-break: break-all !important;
+        overflow-wrap: anywhere !important;
+        line-height: 22px !important;
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域 -->
@@ -1616,6 +1646,25 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     }
 
+    /**
+     * 全部跟进记录弹窗 af-table：表格 body 滚动时节流行高同步（仅 #all-follow-dialog）
+     */
+    function bindAllFollowTableScrollSync() {
+        var $view = $('#all-follow-dialog #af-table').next('.layui-table-view');
+        if (!$view.length) return;
+        var scrollTimer = null;
+        $view.find('.layui-table-main, .layui-table-fixed-r .layui-table-body, .layui-table-fixed-l .layui-table-body')
+            .off('scroll.afAllFollowSync')
+            .on('scroll.afAllFollowSync', function () {
+                if (scrollTimer) {
+                    clearTimeout(scrollTimer);
+                }
+                scrollTimer = setTimeout(function () {
+                    syncAllFollowTableRowHeights();
+                }, 100);
+            });
+    }
+
     // ✅新增：初始化全部跟进表格
     function initAllFollowTable(leadsId) {
         // 如果表格已存在，先销毁（使用 setTimeout 确保 DOM 已准备好）
@@ -1646,7 +1695,18 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 cols: [[
                     {field: 'create_date', title: '跟进时间', width: 180, sort: true},
                     {field: 'username', title: '跟进人', width: 120},
-                    {field: 'reply_msg', title: '跟进内容', minWidth: 300}
+                    {
+                        field: 'reply_msg',
+                        title: '跟进内容',
+                        minWidth: 420,
+                        templet: function (d) {
+                            var txt = d.reply_msg == null ? '' : String(d.reply_msg);
+                            var esc = (typeof layui !== 'undefined' && layui.util && typeof layui.util.escape === 'function')
+                                ? layui.util.escape(txt)
+                                : txt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                            return '<div class="af-reply-msg-cell">' + esc + '</div>';
+                        }
+                    }
                 ]],
                 where: {
                     leads_id: leadsId,
@@ -1654,8 +1714,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                     start_date: '',
                     end_date: ''
                 },
-                done: function(res, curr, count) {
-                    // 表格渲染完成
+                done: function (res, curr, count) {
+                    syncAllFollowTableRowHeights();
+                    setTimeout(syncAllFollowTableRowHeights, 0);
+                    setTimeout(syncAllFollowTableRowHeights, 50);
+                    bindAllFollowTableScrollSync();
                 }
             });
         }, 100);
@@ -1690,6 +1753,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 keyword: keyword,
                 start_date: startDate,
                 end_date: endDate
+            },
+            done: function () {
+                syncAllFollowTableRowHeights();
+                setTimeout(syncAllFollowTableRowHeights, 0);
+                setTimeout(syncAllFollowTableRowHeights, 50);
+                bindAllFollowTableScrollSync();
             }
         });
     });
@@ -1713,6 +1782,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 keyword: '',
                 start_date: '',
                 end_date: ''
+            },
+            done: function () {
+                syncAllFollowTableRowHeights();
+                setTimeout(syncAllFollowTableRowHeights, 0);
+                setTimeout(syncAllFollowTableRowHeights, 50);
+                bindAllFollowTableScrollSync();
             }
         });
     });
@@ -1838,6 +1913,86 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             }
         }
 
+    /**
+     * 全部跟进记录弹窗 af-table：主表与固定列（若有）行高对齐，避免多行内容后行高不一致
+     * 仅作用于 #all-follow-dialog 内，不影响主列表 table-list
+     */
+    function syncAllFollowTableRowHeights() {
+        try {
+            var $view = $('#all-follow-dialog #af-table').next('.layui-table-view');
+            if (!$view.length) return;
+
+            var $mainRows = $view.find('.layui-table-main tbody tr');
+            if (!$mainRows.length) return;
+
+            var $fixRRows = $view.find('.layui-table-fixed-r tbody tr');
+            var $fixLRows = $view.find('.layui-table-fixed-l tbody tr');
+
+            function setHImportant(el, h) {
+                if (!el) return;
+                el.style.setProperty('height', h + 'px', 'important');
+            }
+
+            function resetHImportant(el) {
+                if (!el) return;
+                el.style.removeProperty('height');
+            }
+
+            $mainRows.each(function () {
+                resetHImportant(this);
+                $(this).find('td').each(function () { resetHImportant(this); });
+                $(this).find('td .layui-table-cell').each(function () { resetHImportant(this); });
+            });
+
+            if ($fixRRows.length) {
+                $fixRRows.each(function () {
+                    resetHImportant(this);
+                    $(this).find('td').each(function () { resetHImportant(this); });
+                    $(this).find('td .layui-table-cell').each(function () { resetHImportant(this); });
+                });
+            }
+
+            if ($fixLRows.length) {
+                $fixLRows.each(function () {
+                    resetHImportant(this);
+                    $(this).find('td').each(function () { resetHImportant(this); });
+                    $(this).find('td .layui-table-cell').each(function () { resetHImportant(this); });
+                });
+            }
+
+            $mainRows.each(function (index) {
+                var mainRow = this;
+                var fixRRow = ($fixRRows.length > index) ? $fixRRows.get(index) : null;
+                var fixLRow = ($fixLRows.length > index) ? $fixLRows.get(index) : null;
+
+                var hMain = $(mainRow).outerHeight() || 0;
+                var hR = fixRRow ? ($(fixRRow).outerHeight() || 0) : 0;
+                var hL = fixLRow ? ($(fixLRow).outerHeight() || 0) : 0;
+
+                var h = Math.max(hMain, hR, hL);
+                if (h <= 0) return;
+
+                setHImportant(mainRow, h);
+                $(mainRow).find('td').each(function () { setHImportant(this, h); });
+                $(mainRow).find('td .layui-table-cell').each(function () { setHImportant(this, h); });
+
+                if (fixRRow) {
+                    setHImportant(fixRRow, h);
+                    $(fixRRow).find('td').each(function () { setHImportant(this, h); });
+                    $(fixRRow).find('td .layui-table-cell').each(function () { setHImportant(this, h); });
+                }
+
+                if (fixLRow) {
+                    setHImportant(fixLRow, h);
+                    $(fixLRow).find('td').each(function () { setHImportant(this, h); });
+                    $(fixLRow).find('td .layui-table-cell').each(function () { setHImportant(this, h); });
+                }
+            });
+        } catch (e) {
+            console.warn('全部跟进表格行高同步失败:', e);
+        }
+    }
+
 
     // ✅ 窗口resize防抖处理
     var resizeTimer = null;
@@ -1847,6 +2002,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }
         resizeTimer = setTimeout(function() {
             syncFixedRowHeights();
+            syncAllFollowTableRowHeights();
         }, 150);
     });
 
