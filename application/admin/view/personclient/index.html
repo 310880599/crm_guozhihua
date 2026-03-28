@@ -184,17 +184,19 @@
         position: relative;
         z-index: 1;
     }
+    /* 高级查询内：谁打开谁置顶（含 layui select 与 EditableSelect，二者共用 .select-open-top） */
     #advancedSearchFieldset .select-open-top {
-        z-index: 3000 !important;
+        z-index: 4000 !important;
     }
     #advancedSearchFieldset .select-open-top .layui-form-select,
     #advancedSearchFieldset .layui-form-selected {
-        z-index: 3000 !important;
+        z-index: 4000 !important;
     }
+    /* EditableSelect 面板须高于同区其它 .layui-inline / 日期输入（跟进时间等保持默认 z-index:1） */
     #advancedSearchFieldset .select-open-top .layui-form-select dl,
     #advancedSearchFieldset .layui-form-select dl,
     #advancedSearchFieldset .layui-form-select.custom-select dl {
-        z-index: 3001 !important;
+        z-index: 4001 !important;
     }
     #advancedSearchBody .layui-form-item:last-child {
         margin-bottom: 0;
@@ -1350,18 +1352,48 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             $scope.find('.select-open-top').removeClass('select-open-top');
         }
 
+        /** layui 原生：layui-form-selected；EditableSelect：无该类，仅 dl 为 display:block */
+        function isSelectDropdownOpen($selectWrap) {
+            if (!$selectWrap || !$selectWrap.length) return false;
+            if ($selectWrap.hasClass('layui-form-selected')) return true;
+            var $dl = $selectWrap.children('dl').first();
+            if (!$dl.length) return false;
+            try {
+                return $dl.css('display') === 'block';
+            } catch (e) {
+                return false;
+            }
+        }
+
         function raiseCurrentSelect($selectWrap) {
             clearSelectOpenTop();
-            $selectWrap.closest('.layui-input-inline').addClass('select-open-top');
+            $selectWrap.closest('.layui-input-inline, .layui-input-4').addClass('select-open-top');
             $selectWrap.closest('.layui-inline').addClass('select-open-top');
             $selectWrap.closest('.layui-form-item').addClass('select-open-top');
+        }
+
+        function syncSelectOpenTopFromDom() {
+            setTimeout(function () {
+                var hasLayui = $scope.find('.layui-form-select.layui-form-selected').length > 0;
+                var hasEditableOrDlOpen = false;
+                $scope.find('.layui-form-select').each(function () {
+                    var $w = $(this);
+                    if (isSelectDropdownOpen($w)) {
+                        hasEditableOrDlOpen = true;
+                        return false;
+                    }
+                });
+                if (!hasLayui && !hasEditableOrDlOpen) {
+                    clearSelectOpenTop();
+                }
+            }, 0);
         }
 
         $scope.off('click.personclientSelectTop', '.layui-form-select .layui-select-title')
             .on('click.personclientSelectTop', '.layui-form-select .layui-select-title', function () {
                 var $selectWrap = $(this).closest('.layui-form-select');
                 setTimeout(function () {
-                    if ($selectWrap.hasClass('layui-form-selected')) {
+                    if (isSelectDropdownOpen($selectWrap)) {
                         raiseCurrentSelect($selectWrap);
                     } else {
                         clearSelectOpenTop();
@@ -1369,11 +1401,25 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 }, 0);
             });
 
+        /* EditableSelect：输入过滤时也会展开 dl，需同步置顶（不依赖 layui-form-selected） */
+        $scope.off('input.personclientSelectTop', '.layui-form-select .layui-select-title input.layui-input')
+            .on('input.personclientSelectTop', '.layui-form-select .layui-select-title input.layui-input', function () {
+                var $selectWrap = $(this).closest('.layui-form-select');
+                setTimeout(function () {
+                    if (isSelectDropdownOpen($selectWrap)) {
+                        raiseCurrentSelect($selectWrap);
+                    }
+                }, 0);
+            });
+
         $(document).off('click.personclientSelectTopDoc').on('click.personclientSelectTopDoc', function () {
-            setTimeout(function () {
-                var hasOpened = $scope.find('.layui-form-select.layui-form-selected').length > 0;
-                if (!hasOpened) clearSelectOpenTop();
-            }, 0);
+            syncSelectOpenTopFromDom();
+        });
+
+        $(document).off('keydown.personclientSelectTopEsc').on('keydown.personclientSelectTopEsc', function (e) {
+            if (e.key === 'Escape') {
+                syncSelectOpenTopFromDom();
+            }
         });
     }
 
