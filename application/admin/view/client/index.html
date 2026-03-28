@@ -86,13 +86,41 @@
         #clientAdvancedSearchFieldset {
             overflow: visible;
             position: relative;
-            z-index: 2;
+            /* 高于下方 table 渲染出的 .layui-table-view / 固定列 / 工具栏，否则 dl 再高也逃不出低层叠上下文 */
+            z-index: 1200;
         }
         #clientAdvancedSearchBody {
             overflow: visible;
+            position: relative;
+            z-index: 1;
+        }
+        #clientAdvancedSearchFieldset .layui-input-inline {
+            position: relative;
+            z-index: 1;
+        }
+        #clientAdvancedSearchFieldset .layui-form-select {
+            position: relative;
+            z-index: 1;
+        }
+        #clientAdvancedSearchFieldset .layui-form-selected {
+            z-index: 1300 !important;
         }
         #clientAdvancedSearchFieldset .layui-form-select dl {
-            z-index: 10050 !important;
+            z-index: 1301 !important;
+        }
+
+        /* 客户列表主表格：整体层叠低于高级查询，与「我的客户」页一致 */
+        .admin-main > .layui-table-view {
+            position: relative;
+            z-index: 0;
+        }
+        .admin-main .layui-table-fixed-l,
+        .admin-main .layui-table-fixed-r {
+            z-index: 99 !important;
+        }
+        .admin-main .layui-table-tool {
+            position: relative;
+            z-index: 1;
         }
         #clientAdvancedSearchFieldset .advanced-search-header {
             display: flex;

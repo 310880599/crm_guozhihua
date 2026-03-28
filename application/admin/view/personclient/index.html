@@ -130,7 +130,8 @@
         overflow: visible;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         position: relative;
-        z-index: 2;
+        /* 必须高于下方 .layui-table-view / 固定列 / 工具栏，否则下拉仅提高 dl 仍处在低层叠上下文中，会被表格层整体盖住 */
+        z-index: 1200;
     }
     #advancedSearchFieldset.wukong-search-card > .layui-form {
         display: block !important;
@@ -168,10 +169,24 @@
         padding: 20px;
         padding-top: 16px;
         overflow: visible;
+        position: relative;
+        z-index: 1;
+    }
+    /* 触发器与展开态同层提高，避免同区域内按钮行、其它表单项盖住下拉 */
+    #advancedSearchFieldset .layui-input-inline {
+        position: relative;
+        z-index: 1;
+    }
+    #advancedSearchFieldset .layui-form-select {
+        position: relative;
+        z-index: 1;
+    }
+    #advancedSearchFieldset .layui-form-selected {
+        z-index: 1300 !important;
     }
     #advancedSearchFieldset .layui-form-select dl,
     #advancedSearchFieldset .layui-form-select.custom-select dl {
-        z-index: 10050 !important;
+        z-index: 1301 !important;
     }
     #advancedSearchBody .layui-form-item:last-child {
         margin-bottom: 0;
@@ -189,7 +204,10 @@
         flex-direction: column;
     }
     
-     /* LayUI 表格视图撑满 */
+     /* 主列表表格：层叠低于高级查询 fieldset（弹窗内表格勿用此条，故只作用在列表容器下） */
+     .personclient-list-container > .layui-table-view {
+         z-index: 0;
+     }
      .layui-table-view {
          flex: 1;
          display: flex;
@@ -292,10 +310,10 @@
          white-space: nowrap !important;
      }
     
-    /* 确保固定列在横向滚动时正常显示 */
-    .layui-table-fixed-l,
-    .layui-table-fixed-r {
-        z-index: 999 !important;
+    /* 固定列仅需在表头/表格内部叠在滚动区域之上，勿用过高 z-index（否则会盖过高级查询整块区域） */
+    .personclient-list-container .layui-table-fixed-l,
+    .personclient-list-container .layui-table-fixed-r {
+        z-index: 99 !important;
     }
     
     /* LayUI 表格工具栏样式优化 */
@@ -309,6 +327,11 @@
         align-items: center;
         flex-wrap: wrap;
         gap: 8px;
+    }
+    /* 主列表工具栏层叠压低，避免盖过高级查询下拉（外观仍由上条全局样式控制） */
+    .personclient-list-container .layui-table-tool {
+        position: relative;
+        z-index: 1;
     }
     
     .layui-table-tool .layui-btn {
