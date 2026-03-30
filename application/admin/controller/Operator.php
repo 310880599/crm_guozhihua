@@ -3218,17 +3218,61 @@ private function exportToExcel($data)
     }
 
     /**
-     * 业务询盘汇总三连屏：复用客户列表真实口径基础查询。
-     * 口径来源：application/admin/model/Client.php::buildClientSearchAllBaseQuery()
+     * 检测 crm_leads 中可用于“返单”过滤的来源字段。
+     * 优先 source；若历史库无 source 则回退 xs_source；都不存在时返回空字符串。
      */
-    private function applyInquirySummarySourceExclude($query, string $alias = 'l')
+    private function getInquirySummarySourceField(): string
     {
-        $alias = trim($alias);
-        if ($alias === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $alias)) {
-            $alias = 'l';
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
         }
-        // 仅排除 source=返单；source 为空/NULL 的记录保留。
-        $query->whereRaw("({$alias}.source IS NULL OR TRIM({$alias}.source) <> '返单')");
+
+        $fields = [];
+        try {
+            $columns = Db::query('SHOW COLUMNS FROM `crm_leads`');
+            foreach ((array)$columns as $col) {
+                if (!empty($col['Field'])) {
+                    $fields[] = (string)$col['Field'];
+                }
+            }
+        } catch (\Throwable $e) {
+            $fields = [];
+        }
+
+        if (in_array('source', $fields, true)) {
+            $cached = 'source';
+        } elseif (in_array('xs_source', $fields, true)) {
+            $cached = 'xs_source';
+        } else {
+            $cached = '';
+        }
+
+        return $cached;
+    }
+
+    /**
+     * 统一应用“排除返单”过滤。
+     * 过滤规则：source IS NULL OR TRIM(source) <> '返单'
+     */
+    private function applyInquirySummarySourceExclude($query, string $field, string $alias = '')
+    {
+        $field = trim($field);
+        if ($field === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $field)) {
+            return $query;
+        }
+
+        $column = $field;
+        $alias = trim($alias);
+        if ($alias !== '' && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $alias)) {
+            $column = $alias . '.' . $field;
+        }
+
+        $query->where(function ($q) use ($column) {
+            $q->whereNull($column)
+                ->whereOrRaw("TRIM({$column}) <> '返单'");
+        });
+
         return $query;
     }
 
@@ -3248,12 +3292,31 @@ private function exportToExcel($data)
         } else {
             $keyword['timebucket'] = $this->buildTimeWhere($time_params['timebucket'], 'at_time');
         }
-        // 关键：必须以“客户列表最终结果集（join+group 去重后）”作为基础集，否则会出现与列表 total 不一致
-        $finalIdQuerySql = model('Client')->buildClientSearchListAllFinalIdQuery($keyword)->buildSql();
-        $query = Db::table([$finalIdQuerySql => 'l']);
+
+        // 关键：返单过滤必须放在 crm_leads 原始层，不能放在最终子查询别名 l 上。
+        $clientBaseQuery = model('Client')->buildClientSearchAllBaseQuery($keyword);
         if ($excludeRepeatSource) {
-            $this->applyInquirySummarySourceExclude($query, 'l');
+            $sourceField = $this->getInquirySummarySourceField();
+            if ($sourceField !== '') {
+                $this->applyInquirySummarySourceExclude($clientBaseQuery, $sourceField, 'l');
+            } else {
+                \think\facade\Log::warning('[InquirySummary] source/xs_source 字段不存在，已跳过返单过滤');
+            }
         }
+
+        // 与客户列表最终结果集保持同构（join + group 去重）
+        $finalIdQuerySql = (clone $clientBaseQuery)
+            ->leftJoin('crm_contacts c', "c.leads_id = l.id AND c.is_delete = 0 AND c.contact_type IN (1,3)")
+            ->field([
+                'l.id',
+                'l.pr_user',
+                'l.inquiry_id',
+                'l.port_id',
+            ])
+            ->group('l.id')
+            ->buildSql();
+
+        $query = Db::table([$finalIdQuerySql => 'l']);
         return $query;
     }
 
