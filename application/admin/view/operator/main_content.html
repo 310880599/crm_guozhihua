@@ -1704,6 +1704,13 @@
             .replace(/"/g, '&quot;');
     }
 
+    function isOpInquiryUnknownSource(inquiryId, inquiryName) {
+        var iid = parseInt(inquiryId, 10);
+        if (isNaN(iid)) iid = 0;
+        var name = (inquiryName || '').trim();
+        return iid <= 0 || name === '未知来源';
+    }
+
     function renderOpInquirySourcePane(data) {
         var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
             + '<div style="padding: 20px; overflow-x: auto;">'
@@ -1773,6 +1780,93 @@
             html += '<tr><td colspan="3" class="text-center text-muted">暂无端口配置或暂无匹配询盘</td></tr>';
         }
         html += '</tbody></table></div></div>';
+        $('#opInquiryPortPane').html(html);
+    }
+
+    function renderOpInquiryUnknownDetailPane(payload, inquiryNameForSource) {
+        var rows = payload && payload.data ? payload.data : [];
+        var reasonStats = payload && payload.reason_stats ? payload.reason_stats : [];
+        var summary = payload && payload.summary ? payload.summary : {};
+        var total = summary && summary.total_count ? parseInt(summary.total_count, 10) : 0;
+        if (isNaN(total)) total = 0;
+
+        var statTexts = [];
+        if (reasonStats && reasonStats.length) {
+            $.each(reasonStats, function(_, item) {
+                statTexts.push((item.reason_type || '其他异常') + '：' + (item.count || 0));
+            });
+        }
+
+        var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
+            + '<div class="op-inquiry-subhead">'
+            + '询盘来源：<strong>' + escapeHtml(inquiryNameForSource || '未知来源') + '</strong>'
+            + '；当前未知来源总数：<strong>' + total + '</strong>'
+            + (statTexts.length ? ('；其中 ' + escapeHtml(statTexts.join('，'))) : '')
+            + '</div>'
+            + '<div style="padding: 20px; overflow-x: auto;">'
+            + '<table class="wukong-table" style="width:100%;">'
+            + '<thead><tr><th style="width:80px;">排名</th><th>异常原因</th><th style="text-align:right;">数量</th></tr></thead><tbody>';
+
+        var rankedRows = [];
+        $.each(rows || [], function(_, item) {
+            var cnt = parseInt(item.count, 10);
+            if (isNaN(cnt)) cnt = 0;
+            if (cnt > 0) {
+                rankedRows.push(item);
+            }
+        });
+        rankedRows.sort(function(a, b) {
+            return (parseInt(b.count, 10) || 0) - (parseInt(a.count, 10) || 0);
+        });
+
+        if (rankedRows.length) {
+            $.each(rankedRows, function(i, item) {
+                html += '<tr>'
+                    + '<td>' + (i + 1) + '</td>'
+                    + '<td>' + escapeHtml(item.reason_type || '') + '</td>'
+                    + '<td style="text-align:right;">' + (item.count || 0) + '</td>'
+                    + '</tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">该时间范围内暂无未知来源异常数据</td></tr>';
+        }
+        html += '</tbody></table></div>';
+
+        if (rankedRows.length) {
+            html += '<div style="padding: 0 20px 20px 20px;">';
+            $.each(rankedRows, function(i, item) {
+                var samples = item.samples || [];
+                html += '<div style="margin-top: 14px; border: 1px solid #f3d1bc; border-radius: 8px; overflow: hidden;">'
+                    + '<div style="padding: 10px 12px; background: #fff5ef; color: #b55f2e; font-weight: 600;">'
+                    + (i + 1) + '. ' + escapeHtml(item.reason_type || '') + '（' + (item.count || 0) + '）'
+                    + '</div>'
+                    + '<div style="padding: 10px 12px; overflow-x: auto;">'
+                    + '<table class="wukong-table" style="width:100%;">'
+                    + '<thead><tr>'
+                    + '<th>leads_id</th><th>kh_name</th><th>pr_user</th><th>inquiry_id</th><th>port_id</th><th>source_port</th><th>oper_user</th>'
+                    + '</tr></thead><tbody>';
+
+                if (samples.length) {
+                    $.each(samples, function(_, s) {
+                        html += '<tr>'
+                            + '<td>' + escapeHtml(s.leads_id || '') + '</td>'
+                            + '<td>' + escapeHtml(s.kh_name || '') + '</td>'
+                            + '<td>' + escapeHtml(s.pr_user || '') + '</td>'
+                            + '<td>' + escapeHtml(s.inquiry_id || '') + '</td>'
+                            + '<td>' + escapeHtml(s.port_id || '') + '</td>'
+                            + '<td>' + escapeHtml(s.source_port || '') + '</td>'
+                            + '<td>' + escapeHtml(s.oper_user || '') + '</td>'
+                            + '</tr>';
+                    });
+                } else {
+                    html += '<tr><td colspan="7" class="text-center text-muted">暂无样本</td></tr>';
+                }
+                html += '</tbody></table></div></div>';
+            });
+            html += '</div>';
+        }
+
+        html += '</div>';
         $('#opInquiryPortPane').html(html);
     }
 
@@ -1850,7 +1944,11 @@
                 if (res.code === 0 || res.code === 200) {
                     var rows = res.data || [];
                     if (rows.length === 0) {
-                        renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧直接展示端口明细');
+                        if (isOpInquiryUnknownSource(inquiryId, name)) {
+                            renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧展示未知来源异常明细');
+                        } else {
+                            renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧直接展示端口明细');
+                        }
                         updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', { total_count: 0 });
                         self.lastUsername = '';
                         self.bindStaffClick();
@@ -1875,6 +1973,42 @@
             });
         },
 
+        loadUnknownSourceDetail: function(inquiryId) {
+            var self = this;
+            var params = getOperationInquirySummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+
+            var src = (self.lastInquiryName || '').trim() || '未知来源';
+            $('#opInquiryPortPaneTitle').text('🔎 ' + src + ' - 异常明细');
+
+            return $.ajax({
+                url: '{:url("Operator/getOperationInquiryUnknownSourceDetailData")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time},
+            }).then(function(res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderOpInquiryUnknownDetailPane(res || {}, self.lastInquiryName || '未知来源');
+                    updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', res.summary || {});
+                } else {
+                    var bizMsg = res.msg || '获取未知来源异常明细失败';
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), bizMsg);
+                    updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function(xhr, status) {
+                var msg = buildOpInquiryAjaxErrorMessage(xhr, status, '获取未知来源异常明细失败');
+                renderOpInquiryEmpty($('#opInquiryPortPane'), msg);
+                updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
         loadPortSummary: function(inquiryId, username) {
             var self = this;
             var params = getOperationInquirySummaryTimeParams();
@@ -1883,6 +2017,9 @@
             self.lastUsername = uname;
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            if (isOpInquiryUnknownSource(inquiryId, self.lastInquiryName)) {
+                return self.loadUnknownSourceDetail(inquiryId);
+            }
             if (uname) {
                 $('#opInquiryPortPaneTitle').text('🔌 ' + uname + ' - 运营端口询盘明细');
             } else {
@@ -1925,7 +2062,11 @@
                 self.lastInquiryName = ($(this).text() || '').trim();
                 self.lastUsername = '';
                 self.loadStaffSummary(iid);
-                renderOpInquiryEmpty($('#opInquiryPortPane'), '请点击运营人员查看端口明细');
+                if (isOpInquiryUnknownSource(iid, self.lastInquiryName)) {
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), '正在加载未知来源异常明细...');
+                } else {
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), '请点击运营人员查看端口明细');
+                }
                 updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
             });
         },
@@ -1939,7 +2080,11 @@
                 var username = raw;
                 try { username = decodeURIComponent(raw); } catch (e) {}
                 username = (username || '').trim();
-                self.loadPortSummary(self.lastInquiryId, username);
+                if (isOpInquiryUnknownSource(self.lastInquiryId, self.lastInquiryName)) {
+                    self.loadUnknownSourceDetail(self.lastInquiryId);
+                } else {
+                    self.loadPortSummary(self.lastInquiryId, username);
+                }
             });
         }
     };

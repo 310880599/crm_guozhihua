@@ -4165,5 +4165,198 @@ private function exportToExcel($data)
         }
     }
 
+    /**
+     * 未知来源第三屏：异常原因明细（按当前时间筛选与来源 bucket 口径）。
+     */
+    public function getOperationInquiryUnknownSourceDetailData()
+    {
+        try {
+            $inquiry_id = (int)Request::param('inquiry_id', 0);
+            $timebucket = Request::param('timebucket', '');
+            $at_time = Request::param('at_time', '');
+
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
+            $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
+
+            $leadsColumns = $this->getInquirySummaryLeadsColumns();
+            $selectFields = [
+                'src.id AS leads_id',
+                'src.pr_user',
+                'src.inquiry_id',
+                'src.port_id',
+            ];
+            foreach (['kh_name', 'source_port', 'oper_user'] as $field) {
+                if (in_array($field, $leadsColumns, true)) {
+                    $selectFields[] = 'src.' . $field;
+                }
+            }
+
+            $leadRows = (clone $baseQuery)
+                ->leftJoin('crm_leads src', 'src.id = l.id')
+                ->field($selectFields)
+                ->select();
+
+            $reasonDefs = [
+                'inquiry_null' => 'inquiry_id 为 NULL',
+                'inquiry_empty' => 'inquiry_id 为空字符串',
+                'inquiry_zero' => 'inquiry_id 为 0',
+                'inquiry_not_exists' => 'inquiry_id 在 crm_inquiry 表中不存在',
+                'no_staff' => 'inquiry_id 正常但没有匹配到运营人员',
+                'no_port' => 'inquiry_id 正常但没有匹配到运营端口',
+                'other' => '其他异常',
+            ];
+            $groups = [];
+            foreach ($reasonDefs as $reasonKey => $reasonType) {
+                $groups[$reasonKey] = [
+                    'reason_key' => $reasonKey,
+                    'reason_type' => $reasonType,
+                    'count' => 0,
+                    'samples' => [],
+                ];
+            }
+
+            $inquiryIds = [];
+            foreach ($leadRows as $row) {
+                $raw = isset($row['inquiry_id']) ? trim((string)$row['inquiry_id']) : '';
+                if ($raw === '' || !preg_match('/^-?\d+$/', $raw)) {
+                    continue;
+                }
+                $iid = (int)$raw;
+                if ($iid > 0) {
+                    $inquiryIds[$iid] = $iid;
+                }
+            }
+            $inquiryIds = array_values($inquiryIds);
+
+            $inquiryExistsMap = [];
+            if (!empty($inquiryIds)) {
+                $existsIds = Db::table('crm_inquiry')->where('id', 'in', $inquiryIds)->column('id');
+                foreach ((array)$existsIds as $eid) {
+                    $eid = (int)$eid;
+                    if ($eid > 0) {
+                        $inquiryExistsMap[$eid] = true;
+                    }
+                }
+            }
+
+            $staffInquiryMap = [];
+            $currentAdmin = Admin::getMyInfo();
+            $staffRows = Db::table('admin')
+                ->where($this->getOrgWhere($currentAdmin['org']))
+                ->where('group_id', '=', $this->yygid)
+                ->where('is_open', '=', 1)
+                ->field('inquiry_id')
+                ->select();
+            foreach ((array)$staffRows as $srow) {
+                $sid = isset($srow['inquiry_id']) ? (int)$srow['inquiry_id'] : 0;
+                if ($sid > 0) {
+                    $staffInquiryMap[$sid] = true;
+                }
+            }
+
+            $portInquiryMap = [];
+            $portInquiryIds = Db::table('crm_inquiry_port')
+                ->where('inquiry_id', '>', 0)
+                ->column('inquiry_id');
+            foreach ((array)$portInquiryIds as $pid) {
+                $pid = (int)$pid;
+                if ($pid > 0) {
+                    $portInquiryMap[$pid] = true;
+                }
+            }
+
+            foreach ($leadRows as $row) {
+                $reasonKey = $this->classifyOperationInquiryUnknownReason(
+                    $row,
+                    $inquiryExistsMap,
+                    $staffInquiryMap,
+                    $portInquiryMap
+                );
+                if (!isset($groups[$reasonKey])) {
+                    $reasonKey = 'other';
+                }
+
+                $groups[$reasonKey]['count']++;
+                if (count($groups[$reasonKey]['samples']) < 10) {
+                    $groups[$reasonKey]['samples'][] = [
+                        'leads_id' => isset($row['leads_id']) ? (int)$row['leads_id'] : 0,
+                        'kh_name' => isset($row['kh_name']) ? (string)$row['kh_name'] : '',
+                        'pr_user' => isset($row['pr_user']) ? (string)$row['pr_user'] : '',
+                        'inquiry_id' => isset($row['inquiry_id']) ? (string)$row['inquiry_id'] : '',
+                        'port_id' => isset($row['port_id']) ? (string)$row['port_id'] : '',
+                        'source_port' => isset($row['source_port']) ? (string)$row['source_port'] : '',
+                        'oper_user' => isset($row['oper_user']) ? (string)$row['oper_user'] : '',
+                    ];
+                }
+            }
+
+            $data = [];
+            $reasonStats = [];
+            $total = 0;
+            foreach ($reasonDefs as $reasonKey => $reasonType) {
+                $group = $groups[$reasonKey];
+                $total += (int)$group['count'];
+                $reasonStats[] = [
+                    'reason_key' => $reasonKey,
+                    'reason_type' => $reasonType,
+                    'count' => (int)$group['count'],
+                ];
+                $data[] = $group;
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $data,
+                'summary' => ['total_count' => $total],
+                'reason_stats' => $reasonStats,
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OperationInquirySummary] getOperationInquiryUnknownSourceDetailData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '未知来源异常明细获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['total_count' => 0],
+                'reason_stats' => [],
+            ]);
+        }
+    }
+
+    /**
+     * 未知来源异常分类（优先级：NULL/空字符串/0/缺失来源映射/无运营人员/无端口/其他）。
+     */
+    private function classifyOperationInquiryUnknownReason(array $leadRow, array $inquiryExistsMap, array $staffInquiryMap, array $portInquiryMap): string
+    {
+        if (!array_key_exists('inquiry_id', $leadRow) || $leadRow['inquiry_id'] === null) {
+            return 'inquiry_null';
+        }
+
+        $rawStr = trim((string)$leadRow['inquiry_id']);
+        if ($rawStr === '') {
+            return 'inquiry_empty';
+        }
+
+        if (preg_match('/^-?\d+$/', $rawStr)) {
+            $iid = (int)$rawStr;
+            if ($iid === 0) {
+                return 'inquiry_zero';
+            }
+            if ($iid > 0) {
+                if (empty($inquiryExistsMap[$iid])) {
+                    return 'inquiry_not_exists';
+                }
+                if (empty($staffInquiryMap[$iid])) {
+                    return 'no_staff';
+                }
+                if (empty($portInquiryMap[$iid])) {
+                    return 'no_port';
+                }
+            }
+        }
+
+        return 'other';
+    }
+
 }
 
