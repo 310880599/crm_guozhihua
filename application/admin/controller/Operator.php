@@ -3221,7 +3221,22 @@ private function exportToExcel($data)
      * 业务询盘汇总三连屏：复用客户列表真实口径基础查询。
      * 口径来源：application/admin/model/Client.php::buildClientSearchAllBaseQuery()
      */
-    private function buildInquirySummaryClientBaseQuery(string $timebucket = '', string $at_time = '')
+    private function applyInquirySummarySourceExclude($query, string $alias = 'l')
+    {
+        $alias = trim($alias);
+        if ($alias === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $alias)) {
+            $alias = 'l';
+        }
+        // 仅排除 source=返单；source 为空/NULL 的记录保留。
+        $query->whereRaw("({$alias}.source IS NULL OR TRIM({$alias}.source) <> '返单')");
+        return $query;
+    }
+
+    /**
+     * 业务询盘汇总三连屏：复用客户列表真实口径基础查询。
+     * 口径来源：application/admin/model/Client.php::buildClientSearchAllBaseQuery()
+     */
+    private function buildInquirySummaryClientBaseQuery(string $timebucket = '', string $at_time = '', bool $excludeRepeatSource = true)
     {
         $keyword = [];
         $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time);
@@ -3235,7 +3250,11 @@ private function exportToExcel($data)
         }
         // 关键：必须以“客户列表最终结果集（join+group 去重后）”作为基础集，否则会出现与列表 total 不一致
         $finalIdQuerySql = model('Client')->buildClientSearchListAllFinalIdQuery($keyword)->buildSql();
-        return Db::table([$finalIdQuerySql => 'l']);
+        $query = Db::table([$finalIdQuerySql => 'l']);
+        if ($excludeRepeatSource) {
+            $this->applyInquirySummarySourceExclude($query, 'l');
+        }
+        return $query;
     }
 
     // ===========================
@@ -3755,7 +3774,7 @@ private function exportToExcel($data)
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
 
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
 
             $bucketExpr = 'CASE WHEN l.inquiry_id IS NULL OR l.inquiry_id = 0 OR TRIM(IFNULL(CAST(l.inquiry_id AS CHAR), \'\')) = \'\' THEN 0 ELSE CAST(l.inquiry_id AS UNSIGNED) END';
 
@@ -3828,7 +3847,7 @@ private function exportToExcel($data)
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
 
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
 
             $staffRows = $this->fetchOperationStaffRowsForInquirySummary($inquiry_id);
@@ -3899,7 +3918,7 @@ private function exportToExcel($data)
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
 
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
 
             if ($username !== '') {
