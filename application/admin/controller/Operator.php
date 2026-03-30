@@ -3218,10 +3218,9 @@ private function exportToExcel($data)
     }
 
     /**
-     * 检测 crm_leads 中可用于“返单”过滤的来源字段。
-     * 优先 source；若历史库无 source 则回退 xs_source；都不存在时返回空字符串。
+     * 获取 crm_leads 字段列表（缓存）。
      */
-    private function getInquirySummarySourceField(): string
+    private function getInquirySummaryLeadsColumns(): array
     {
         static $cached = null;
         if ($cached !== null) {
@@ -3240,20 +3239,73 @@ private function exportToExcel($data)
             $fields = [];
         }
 
-        if (in_array('source', $fields, true)) {
-            $cached = 'source';
-        } elseif (in_array('xs_source', $fields, true)) {
-            $cached = 'xs_source';
-        } else {
-            $cached = '';
-        }
-
+        $cached = array_values(array_unique($fields));
         return $cached;
     }
 
     /**
-     * 统一应用“排除返单”过滤。
-     * 过滤规则：source IS NULL OR TRIM(source) <> '返单'
+     * 向后兼容：返回首选来源字段（source 优先，其次 xs_source）。
+     */
+    private function getInquirySummarySourceField(): string
+    {
+        $fields = $this->getInquirySummaryLeadsColumns();
+        if (in_array('source', $fields, true)) {
+            return 'source';
+        }
+        if (in_array('xs_source', $fields, true)) {
+            return 'xs_source';
+        }
+        return '';
+    }
+
+    /**
+     * 获取可用于“返单”过滤的来源字段集合（同时支持 source + xs_source）。
+     */
+    private function getInquirySummaryRepeatSourceFields(): array
+    {
+        $fields = $this->getInquirySummaryLeadsColumns();
+        $out = [];
+        if (in_array('source', $fields, true)) {
+            $out[] = 'source';
+        }
+        if (in_array('xs_source', $fields, true)) {
+            $out[] = 'xs_source';
+        }
+        return $out;
+    }
+
+    /**
+     * 动态查询“返单”渠道 ID（crm_inquiry.inquiry_name='返单'）。
+     */
+    private function getInquirySummaryRepeatInquiryIds(): array
+    {
+        static $cached = null;
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        try {
+            $ids = Db::table('crm_inquiry')
+                ->whereRaw("TRIM(IFNULL(inquiry_name, '')) = '返单'")
+                ->column('id');
+        } catch (\Throwable $e) {
+            $ids = [];
+        }
+
+        $normalized = [];
+        foreach ((array)$ids as $id) {
+            $iid = (int)$id;
+            if ($iid > 0) {
+                $normalized[$iid] = $iid;
+            }
+        }
+        $cached = array_values($normalized);
+        return $cached;
+    }
+
+    /**
+     * 统一应用单字段“排除返单”过滤（source/xs_source 可复用）。
+     * 过滤规则：字段为空或去空白后不等于“返单”。
      */
     private function applyInquirySummarySourceExclude($query, string $field, string $alias = '')
     {
@@ -3270,8 +3322,41 @@ private function exportToExcel($data)
 
         $query->where(function ($q) use ($column) {
             $q->whereNull($column)
-                ->whereOrRaw("TRIM({$column}) <> '返单'");
+                ->whereOrRaw("TRIM(IFNULL({$column}, '')) <> '返单'");
         });
+
+        return $query;
+    }
+
+    /**
+     * 统一排除“返单”客户（三列统计共用）：
+     * - crm_leads.source = '返单'
+     * - crm_leads.xs_source = '返单'
+     * - crm_leads.inquiry_id 对应 crm_inquiry.inquiry_name = '返单'
+     */
+    private function applyInquirySummaryExcludeRepeatLead($query, string $leadAlias = 'l')
+    {
+        $leadAlias = trim($leadAlias);
+        if ($leadAlias === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $leadAlias)) {
+            $leadAlias = 'l';
+        }
+
+        // A/B：同时排除 source 与 xs_source 的“返单”
+        $sourceFields = $this->getInquirySummaryRepeatSourceFields();
+        foreach ($sourceFields as $field) {
+            $this->applyInquirySummarySourceExclude($query, $field, $leadAlias);
+        }
+
+        // C：排除 inquiry_id 命中“返单”渠道
+        $columns = $this->getInquirySummaryLeadsColumns();
+        $repeatInquiryIds = $this->getInquirySummaryRepeatInquiryIds();
+        if (in_array('inquiry_id', $columns, true) && !empty($repeatInquiryIds)) {
+            $inquiryColumn = $leadAlias . '.inquiry_id';
+            $query->where(function ($q) use ($inquiryColumn, $repeatInquiryIds) {
+                $q->whereNull($inquiryColumn)
+                    ->whereOr($inquiryColumn, 'not in', $repeatInquiryIds);
+            });
+        }
 
         return $query;
     }
@@ -3296,12 +3381,7 @@ private function exportToExcel($data)
         // 关键：返单过滤必须放在 crm_leads 原始层，不能放在最终子查询别名 l 上。
         $clientBaseQuery = model('Client')->buildClientSearchAllBaseQuery($keyword);
         if ($excludeRepeatSource) {
-            $sourceField = $this->getInquirySummarySourceField();
-            if ($sourceField !== '') {
-                $this->applyInquirySummarySourceExclude($clientBaseQuery, $sourceField, 'l');
-            } else {
-                \think\facade\Log::warning('[InquirySummary] source/xs_source 字段不存在，已跳过返单过滤');
-            }
+            $this->applyInquirySummaryExcludeRepeatLead($clientBaseQuery, 'l');
         }
 
         // 与客户列表最终结果集保持同构（join + group 去重）
