@@ -84,6 +84,7 @@ $this->assign('adminResult', $adminResult);
         }
         
          $query->alias('c')
+              ->whereRaw("TRIM(c.source) <> '返单'")
               ->join('admin a', 'c.pr_user = a.username', 'LEFT')
               ->field('c.*, a.team_name')
               ->append(['contact'])
