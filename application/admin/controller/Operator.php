@@ -2941,8 +2941,19 @@ private function exportToExcel($data)
             $dateParts = explode(',', $at_time);
             if (count($dateParts) === 2) {
                 $startDate = trim((string)$dateParts[0]);
-                $endDate = trim((string)$dateParts[1]);
-                if ($startDate !== '' && $endDate !== '') {
+                $endDate   = trim((string)$dateParts[1]);
+
+                $isValidDate = function ($date) {
+                    $dt = \DateTime::createFromFormat('Y-m-d', (string)$date);
+                    return $dt && $dt->format('Y-m-d') === $date;
+                };
+
+                if ($isValidDate($startDate) && $isValidDate($endDate)) {
+                    if ($startDate > $endDate) {
+                        $tmp = $startDate;
+                        $startDate = $endDate;
+                        $endDate = $tmp;
+                    }
                     $query->where('o.order_time', '>=', $startDate . ' 00:00:00');
                     $query->where('o.order_time', '<=', $endDate . ' 23:59:59');
                     return $query;
@@ -2950,11 +2961,39 @@ private function exportToExcel($data)
             }
         }
 
-        $effectiveBucket = $timebucket !== '' ? $timebucket : 'month';
-        $timeWhere = $this->buildTimeWhere($effectiveBucket, 'o.order_time');
-        if (is_array($timeWhere) && isset($timeWhere[0])) {
-            $query->where($timeWhere[0], $timeWhere[1] ?? '=', $timeWhere[2] ?? null);
+        $bucket = strtolower(trim((string)$timebucket));
+        if ($bucket === '' || $bucket === 'custom') {
+            $bucket = 'month';
         }
+
+        $now = time();
+        switch ($bucket) {
+            case 'today':
+                $start = date('Y-m-d 00:00:00', $now);
+                $end   = date('Y-m-d 23:59:59', $now);
+                break;
+            case 'yesterday':
+                $ts    = strtotime('-1 day', $now);
+                $start = date('Y-m-d 00:00:00', $ts);
+                $end   = date('Y-m-d 23:59:59', $ts);
+                break;
+            case 'week':
+                $start = date('Y-m-d 00:00:00', strtotime('monday this week', $now));
+                $end   = date('Y-m-d 23:59:59', strtotime('sunday this week', $now));
+                break;
+            case 'year':
+                $start = date('Y-01-01 00:00:00', $now);
+                $end   = date('Y-12-31 23:59:59', $now);
+                break;
+            case 'month':
+            default:
+                $start = date('Y-m-01 00:00:00', $now);
+                $end   = date('Y-m-t 23:59:59', $now);
+                break;
+        }
+
+        $query->where('o.order_time', '>=', $start);
+        $query->where('o.order_time', '<=', $end);
         return $query;
     }
 
