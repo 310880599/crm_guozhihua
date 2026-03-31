@@ -84,11 +84,13 @@ $this->assign('adminResult', $adminResult);
         }
         
          $query->alias('c')
-              ->whereRaw("TRIM(c.source) <> '返单'")
               ->join('admin a', 'c.pr_user = a.username', 'LEFT')
               ->field('c.*, a.team_name')
               ->append(['contact'])
               ->hidden(['contacts']);
+        
+        // 动态兼容“返单”排除：source/xs_source/inquiry_id 均按实际字段存在性处理
+        $this->applyInquirySummaryExcludeRepeatLead($query, 'c');
         
         // 如果有联系方式搜索条件，添加 leads_id 过滤
         if (!empty($contactLeadsIds)) {
