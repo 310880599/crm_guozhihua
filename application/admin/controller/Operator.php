@@ -3163,19 +3163,55 @@ private function exportToExcel($data)
     }
 
     /**
+     * 订单产品汇总：统一团队名称口径
+     * 优先订单快照 o.team_name，其次 admin.team_name，最后“未分组”
+     */
+    private function getOrderProductSummaryTeamExpr(): string
+    {
+        return "IFNULL(NULLIF(TRIM(o.team_name),''), IFNULL(NULLIF(TRIM(a.team_name),''), '未分组'))";
+    }
+
+    /**
+     * 订单产品汇总：专用时间过滤（避免通用 where 结构在 join/alias 场景下歧义）
+     */
+    private function applyOrderProductSummaryTimeFilter($query, string $timebucket = '', string $at_time = '')
+    {
+        // 自定义时间范围优先：YYYY-MM-DD,YYYY-MM-DD
+        if ($at_time !== '' && strpos($at_time, ',') !== false) {
+            $dateParts = explode(',', $at_time);
+            if (count($dateParts) === 2) {
+                $startDate = trim((string)$dateParts[0]);
+                $endDate = trim((string)$dateParts[1]);
+                if ($startDate !== '' && $endDate !== '') {
+                    $query->where('o.order_time', '>=', $startDate . ' 00:00:00');
+                    $query->where('o.order_time', '<=', $endDate . ' 23:59:59');
+                    return $query;
+                }
+            }
+        }
+
+        $effectiveBucket = $timebucket !== '' ? $timebucket : 'month';
+        $timeWhere = $this->buildTimeWhere($effectiveBucket, 'o.order_time');
+        if (is_array($timeWhere) && isset($timeWhere[0])) {
+            $query->where($timeWhere[0], $timeWhere[1] ?? '=', $timeWhere[2] ?? null);
+        }
+        return $query;
+    }
+
+    /**
      * 订单产品汇总：公共基础查询
      * - 主表：crm_order_item
      * - 关联：crm_client_order
-     * - 时间/状态：复用 buildPerformanceOrderWhere（check_status=2 + order_time）
+     * - 时间/状态：专用过滤（check_status=2 + order_time）
      */
     private function buildOrderProductSummaryBaseQuery(array $orgUsernames, string $timebucket = '', string $at_time = '')
     {
         $query = Db::table('crm_order_item')->alias('oi')
-            ->join('crm_client_order o', 'oi.order_id = o.id', 'INNER');
+            ->join('crm_client_order o', 'oi.order_id = o.id', 'INNER')
+            ->leftJoin('admin a', 'o.pr_user = a.username');
 
-        $where = $this->buildPerformanceOrderWhere($timebucket, $at_time, [], 'o');
-        $this->applyPerformanceWhereToQuery($query, $where);
-
+        $query->where('o.check_status', '=', 2);
+        $this->applyOrderProductSummaryTimeFilter($query, $timebucket, $at_time);
         $query->where('o.pr_user', 'in', $orgUsernames);
         $query->whereRaw("TRIM(IFNULL(oi.product_name, '')) <> ''");
 
@@ -3188,11 +3224,8 @@ private function exportToExcel($data)
     private function applyOrderProductSummaryTeamFilter($query, string $teamName)
     {
         $teamName = $this->normalizeOrderProductTeamName($teamName);
-        if ($teamName === '未分组') {
-            $query->whereRaw("TRIM(IFNULL(o.team_name, '')) = ''");
-        } else {
-            $query->whereRaw("TRIM(IFNULL(o.team_name, '')) = ?", [$teamName]);
-        }
+        $teamExpr = $this->getOrderProductSummaryTeamExpr();
+        $query->whereRaw($teamExpr . " = ?", [$teamName]);
         return $query;
     }
 
@@ -3220,6 +3253,7 @@ private function exportToExcel($data)
 
         try {
             $baseQuery = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+            $teamExpr = $this->getOrderProductSummaryTeamExpr();
 
             $productRows = (clone $baseQuery)
                 ->field("TRIM(oi.product_name) as product_name, SUM(COALESCE(oi.qty, 0)) as sale_qty")
@@ -3242,15 +3276,15 @@ private function exportToExcel($data)
 
             $teamRows = (clone $baseQuery)
                 ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
-                ->field("TRIM(IFNULL(o.team_name, '')) as raw_team_name, SUM(COALESCE(oi.qty, 0)) as sale_qty, COUNT(DISTINCT o.pr_user) as member_count")
-                ->group("TRIM(IFNULL(o.team_name, ''))")
-                ->order('sale_qty desc, raw_team_name asc')
+                ->field($teamExpr . " as team_name, SUM(COALESCE(oi.qty, 0)) as sale_qty, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
+                ->group($teamExpr)
+                ->order('sale_qty desc, team_name asc')
                 ->select();
 
             $teams = [];
             $teamRank = 1;
             foreach ((array)$teamRows as $row) {
-                $teamName = $this->normalizeOrderProductTeamName((string)($row['raw_team_name'] ?? ''));
+                $teamName = $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? ''));
                 $teams[] = [
                     'rank' => $teamRank++,
                     'team_name' => $teamName,
@@ -3391,7 +3425,7 @@ private function exportToExcel($data)
 
         try {
             $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
-            $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) = ?", [$username]);
+            $query->where('o.pr_user', '=', $username);
 
             $rows = $query
                 ->field("TRIM(oi.product_name) as product_name, SUM(COALESCE(oi.qty, 0)) as sale_qty")
