@@ -2270,7 +2270,8 @@ private function exportToExcel($data)
             '范文清',
             '郭志华',
             '郭志华2',
-            '付淑雅'
+            '付淑雅',
+            '叶诗龙'
         ];
         // 清洗排除名单：去空格、去空值、去重
         $excludeUsernames = array_values(array_unique(array_filter(array_map(function ($name) {
