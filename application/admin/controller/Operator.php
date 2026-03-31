@@ -3909,6 +3909,90 @@ private function exportToExcel($data)
     }
 
     /**
+     * 第三屏合法端口映射：仅取当前 inquiry_id 下真实存在的端口。
+     */
+    private function getInquiryPortNameMapForSummary(int $inquiryId): array
+    {
+        if ($inquiryId <= 0) {
+            return [];
+        }
+        $rows = Db::table('crm_inquiry_port')
+            ->where('inquiry_id', '=', $inquiryId)
+            ->field('id,port_name')
+            ->select();
+        $map = [];
+        foreach ($rows as $row) {
+            $pid = (int)($row['id'] ?? 0);
+            if ($pid <= 0) {
+                continue;
+            }
+            $name = trim((string)($row['port_name'] ?? ''));
+            if ($name === '') {
+                $name = 'ID:' . $pid;
+            }
+            $map[$pid] = $name;
+        }
+        return $map;
+    }
+
+    /**
+     * 第三屏按 leads 集合聚合端口：
+     * - 每条 leads 仅计入 1 个分组（首个合法端口）
+     * - 无任何合法端口命中时归入兜底分组
+     */
+    private function buildOperationInquiryPortSummaryFromLeadRows(array $leadRows, array $validPortMap, string $fallbackName = '未分配端口'): array
+    {
+        $groups = [];
+        $total = 0;
+        foreach ($leadRows as $row) {
+            $total++;
+            $leadPortIds = $this->parseCsvPortIdsForOperatorInquiry($row['port_id'] ?? '');
+            $bucketPortId = 0;
+            foreach ($leadPortIds as $pid) {
+                $pid = (int)$pid;
+                if ($pid > 0 && isset($validPortMap[$pid])) {
+                    $bucketPortId = $pid;
+                    break;
+                }
+            }
+
+            if ($bucketPortId > 0) {
+                $bucketKey = 'p_' . $bucketPortId;
+                $bucketName = $validPortMap[$bucketPortId] ?? ('ID:' . $bucketPortId);
+            } else {
+                $bucketKey = 'p_0';
+                $bucketName = $fallbackName;
+            }
+
+            if (!isset($groups[$bucketKey])) {
+                $groups[$bucketKey] = [
+                    'port_id' => $bucketPortId,
+                    'port_name' => $bucketName,
+                    'yw_num' => 0,
+                ];
+            }
+            $groups[$bucketKey]['yw_num']++;
+        }
+
+        $result = array_values($groups);
+        usort($result, function ($a, $b) {
+            if ((int)$a['yw_num'] !== (int)$b['yw_num']) {
+                return (int)$b['yw_num'] <=> (int)$a['yw_num'];
+            }
+            return strcmp((string)$a['port_name'], (string)$b['port_name']);
+        });
+        foreach ($result as $i => &$r) {
+            $r['rank'] = $i + 1;
+        }
+        unset($r);
+
+        return [
+            'data' => $result,
+            'summary' => ['total_count' => $total],
+        ];
+    }
+
+    /**
      * 第一屏：按询盘来源汇总（基础集与「团队询盘汇总」相同：客户列表最终 id 集）。
      */
     public function getOperationInquirySummarySourceData()
@@ -4049,9 +4133,10 @@ private function exportToExcel($data)
     }
 
     /**
-     * 第三屏：指定运营人员名下各端口询盘数（每端口 count distinct l.id；与第二屏同一来源与时间口径）。
-     * username 非空：按「来源 + 运营人员」所配端口统计（原逻辑）。
-     * username 为空：按「来源」统计 crm_inquiry_port 中该来源下全部端口的询盘数（无运营人员配置时使用）。
+     * 第三屏：端口询盘明细（与第一/第二屏同一来源与时间口径）。
+     * - 先确定统计范围内的全部 leads
+     * - 每条 leads 仅归属一个端口（首个合法端口）
+     * - 无合法端口命中统一归入「未分配端口」
      */
     public function getOperationInquirySummaryPortData()
     {
@@ -4063,6 +4148,9 @@ private function exportToExcel($data)
 
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
+
+            $validPortMap = $this->getInquiryPortNameMapForSummary($inquiry_id);
+            $leadScopeQuery = clone $baseQuery;
 
             if ($username !== '') {
                 $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
@@ -4085,74 +4173,31 @@ private function exportToExcel($data)
                     ]);
                 }
 
-                $port_map = Db::table('crm_inquiry_port')->where('id', 'in', $portIds)->column('port_name', 'id');
+                $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($portIds);
+                $leadScopeQuery->whereRaw($portWhere);
+            }
+
+            $leadRows = $leadScopeQuery
+                ->field('l.id,l.port_id')
+                ->select();
+            if (is_array($leadRows)) {
+                $leadRowsArr = $leadRows;
+            } elseif (is_object($leadRows) && method_exists($leadRows, 'toArray')) {
+                $leadRowsArr = $leadRows->toArray();
             } else {
-                $portRows = Db::table('crm_inquiry_port')
-                    ->where('inquiry_id', '=', $inquiry_id)
-                    ->field('id,port_name')
-                    ->order('port_name', 'asc')
-                    ->select();
-                if (empty($portRows)) {
-                    return json([
-                        'code' => 0,
-                        'msg' => '获取成功',
-                        'data' => [],
-                        'summary' => ['total_count' => 0],
-                    ]);
-                }
-                $portIds = [];
-                $port_map = [];
-                foreach ($portRows as $prow) {
-                    $pid = (int)($prow['id'] ?? 0);
-                    if ($pid <= 0) {
-                        continue;
-                    }
-                    $portIds[] = $pid;
-                    $port_map[$pid] = (string)($prow['port_name'] ?? ('ID:' . $pid));
-                }
-                if (empty($portIds)) {
-                    return json([
-                        'code' => 0,
-                        'msg' => '获取成功',
-                        'data' => [],
-                        'summary' => ['total_count' => 0],
-                    ]);
-                }
+                $leadRowsArr = iterator_to_array($leadRows);
             }
-
-            $result = [];
-            $total = 0;
-            foreach ($portIds as $pid) {
-                $pid = (int)$pid;
-                if ($pid <= 0) {
-                    continue;
-                }
-                $w = "FIND_IN_SET('{$pid}', l.port_id) > 0";
-                $cnt = (int)(clone $baseQuery)->whereRaw($w)->count('l.id');
-                $total += $cnt;
-                $result[] = [
-                    'port_id' => $pid,
-                    'port_name' => $port_map[$pid] ?? ('ID:' . $pid),
-                    'yw_num' => $cnt,
-                ];
-            }
-
-            usort($result, function ($a, $b) {
-                if ($a['yw_num'] !== $b['yw_num']) {
-                    return $b['yw_num'] <=> $a['yw_num'];
-                }
-                return strcmp($a['port_name'], $b['port_name']);
-            });
-            foreach ($result as $i => &$r) {
-                $r['rank'] = $i + 1;
-            }
-            unset($r);
+            $portSummary = $this->buildOperationInquiryPortSummaryFromLeadRows(
+                $leadRowsArr,
+                $validPortMap,
+                '未分配端口'
+            );
 
             return json([
                 'code' => 0,
                 'msg' => '获取成功',
-                'data' => $result,
-                'summary' => ['total_count' => $total],
+                'data' => $portSummary['data'],
+                'summary' => $portSummary['summary'],
             ]);
         } catch (\Throwable $e) {
             \think\facade\Log::error('[OperationInquirySummary] getOperationInquirySummaryPortData failed: ' . $e->getMessage());
