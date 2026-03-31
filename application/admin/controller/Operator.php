@@ -1133,160 +1133,25 @@ private function exportToExcel($data)
             }
         }
         
-        //订单产品数据 - 通过来源端口匹配运营人员
-        // 先获取所有运营人员的 inquiry_id 和 port_id
-        $yy_admins_for_order = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
-            ->where('group_id', '=', $this->yygid)
-            ->where('is_open', '=', 1)
-            ->where('inquiry_id', '<>', '')
-            ->where('inquiry_id', '<>', null)
-            ->where('port_id', '<>', '')
-            ->where('port_id', '<>', null)
-            ->field('admin_id,inquiry_id,port_id')
-            ->select();
-        
+        // 订单产品数据（统一订单产品汇总口径：crm_order_item + crm_client_order）
         $order_prod = [];
-        if (!empty($yy_admins_for_order)) {
-            // 批量获取所有渠道信息
-            $inquiry_ids = array_unique(array_column($yy_admins_for_order, 'inquiry_id'));
-            $inquiry_map = [];
-            if (!empty($inquiry_ids)) {
-                $inquiry_map = Db::table('crm_inquiry')
-                    ->where('id', 'in', $inquiry_ids)
-                    ->column('inquiry_name', 'id');
-            }
-            
-            // 批量获取所有端口信息
-            $all_port_ids = [];
-            $inquiry_port_map = [];
-            foreach ($yy_admins_for_order as $admin) {
-                $admin_port_ids = !empty($admin['port_id']) ? array_filter(array_map('trim', explode(',', $admin['port_id']))) : [];
-                foreach ($admin_port_ids as $port_id) {
-                    $all_port_ids[] = $port_id;
-                    if (!isset($inquiry_port_map[$admin['inquiry_id']])) {
-                        $inquiry_port_map[$admin['inquiry_id']] = [];
-                    }
+        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+        if (!empty($orgUsernames)) {
+            $summary_timebucket = (string)($keyword['timebucket'] ?? '');
+            $summary_at_time = (string)($keyword['at_time'] ?? '');
+            $order_rows = $this->buildOrderProductSummaryProductSalesQuery($orgUsernames, $summary_timebucket, $summary_at_time)
+                ->limit(10)
+                ->select();
+
+            foreach ((array)$order_rows as $row) {
+                $name = trim((string)($row['product_name'] ?? ''));
+                if ($name === '') {
+                    continue;
                 }
-            }
-            $all_port_ids = array_unique($all_port_ids);
-            
-            if (!empty($all_port_ids)) {
-                $port_list = Db::table('crm_inquiry_port')
-                    ->where('id', 'in', $all_port_ids)
-                    ->field('id,inquiry_id,port_name')
-                    ->select();
-                foreach ($port_list as $port) {
-                    if (!isset($inquiry_port_map[$port['inquiry_id']])) {
-                        $inquiry_port_map[$port['inquiry_id']] = [];
-                    }
-                    $inquiry_port_map[$port['inquiry_id']][$port['id']] = $port['port_name'];
-                }
-            }
-            
-            // 构建运营人员的匹配条件
-            $yy_conditions = [];
-            foreach ($yy_admins_for_order as $admin) {
-                $admin_inquiry_id = $admin['inquiry_id'];
-                $admin_port_ids = !empty($admin['port_id']) ? array_filter(array_map('trim', explode(',', $admin['port_id']))) : [];
-                
-                if (empty($admin_port_ids)) continue;
-                
-                // 从缓存中获取端口名称
-                $port_names = [];
-                if (isset($inquiry_port_map[$admin_inquiry_id])) {
-                    foreach ($admin_port_ids as $port_id) {
-                        if (isset($inquiry_port_map[$admin_inquiry_id][$port_id]) && !empty($inquiry_port_map[$admin_inquiry_id][$port_id])) {
-                            $port_names[] = addslashes($inquiry_port_map[$admin_inquiry_id][$port_id]);
-                        }
-                    }
-                }
-                
-                if (!empty($port_names)) {
-                    // 构建端口名称匹配条件
-                    $port_conditions = [];
-                    foreach ($port_names as $port_name) {
-                        $port_conditions[] = "o.source_port = '{$port_name}'";
-                    }
-                    if (!empty($port_conditions)) {
-                        $port_where = '(' . implode(' OR ', $port_conditions) . ')';
-                        // 从缓存中获取渠道名称
-                        $inquiry_name = isset($inquiry_map[$admin_inquiry_id]) ? $inquiry_map[$admin_inquiry_id] : '';
-                        if (!empty($inquiry_name)) {
-                            $inquiry_name_escaped = addslashes($inquiry_name);
-                            $yy_conditions[] = "(o.source = '{$inquiry_name_escaped}' AND {$port_where})";
-                        }
-                    }
-                }
-            }
-            
-            if (!empty($yy_conditions)) {
-                $yy_where_raw = '(' . implode(' OR ', $yy_conditions) . ')';
-                // 统计订单表中的产品名称，按相同名称统计销量
-                // 优先从主表的 product_name 字段统计，如果为空则从明细表 crm_order_item 获取
-                // 先统计主表有 product_name 的订单
-                $order_prod_main = Db::table('crm_client_order')
-                    ->alias('o')
-                    ->where($o_where)
-                    ->whereRaw($yy_where_raw)
-                    ->where('o.product_name', '<>', '')
-                    ->where('o.product_name', '<>', null)
-                    ->group('o.product_name')
-                    ->field('o.product_name,count(o.id) as count')
-                    ->select();
-                
-                // 统计主表 product_name 为空，但从明细表获取的订单
-                // 通过 JOIN 订单明细表，获取产品名称
-                $order_prod_detail = Db::table('crm_client_order')
-                    ->alias('o')
-                    ->join('crm_order_item oi', 'o.id = oi.order_id', 'INNER')
-                    ->where($o_where)
-                    ->whereRaw($yy_where_raw)
-                    ->where(function($query) {
-                        $query->where('o.product_name', '')
-                            ->whereOr('o.product_name', null);
-                    })
-                    ->where('oi.product_name', '<>', '')
-                    ->where('oi.product_name', '<>', null)
-                    ->group('oi.product_name')
-                    ->field('oi.product_name,count(oi.id) as count')
-                    ->select();
-                
-                // 合并结果，按产品名称汇总
-                $order_prod_map = [];
-                foreach ($order_prod_main as $item) {
-                    $product_name = trim($item['product_name']);
-                    if (!empty($product_name)) {
-                        if (!isset($order_prod_map[$product_name])) {
-                            $order_prod_map[$product_name] = 0;
-                        }
-                        $order_prod_map[$product_name] += $item['count'];
-                    }
-                }
-                foreach ($order_prod_detail as $item) {
-                    $product_name = trim($item['product_name']);
-                    if (!empty($product_name)) {
-                        if (!isset($order_prod_map[$product_name])) {
-                            $order_prod_map[$product_name] = 0;
-                        }
-                        $order_prod_map[$product_name] += $item['count'];
-                    }
-                }
-                
-                // 转换为数组格式并排序
-                $order_prod = [];
-                foreach ($order_prod_map as $product_name => $count) {
-                    $order_prod[] = [
-                        'product_name' => $product_name,
-                        'count' => $count
-                    ];
-                }
-                // 按销量降序排序
-                usort($order_prod, function($a, $b) {
-                    return $b['count'] - $a['count'];
-                });
-                // 限制前10条
-                $order_prod = array_slice($order_prod, 0, 10);
+                $order_prod[] = [
+                    'product_name' => $name,
+                    'count' => (float)($row['sale_qty'] ?? 0),
+                ];
             }
         }
 
@@ -1803,133 +1668,28 @@ private function exportToExcel($data)
                 }
             }
         } else {
-            //订单产品数据 - 通过来源端口匹配运营人员
-            // 先获取所有运营人员的 inquiry_id 和 port_id
-            $yy_admins_for_order = Db::table('admin')
-                ->where($this->getOrgWhere($current_admin['org']))
-                ->where('group_id', '=', $this->yygid)
-                ->where('is_open', '=', 1)
-                ->where('inquiry_id', '<>', '')
-                ->where('inquiry_id', '<>', null)
-                ->where('port_id', '<>', '')
-                ->where('port_id', '<>', null)
-                ->field('admin_id,inquiry_id,port_id')
-                ->select();
-            
             $data = [];
-            if (!empty($yy_admins_for_order)) {
-                // 构建运营人员的匹配条件
-                // 订单表的 source_port 是端口名称（文字），需要通过 crm_inquiry_port 表转换为端口ID
-                // 然后通过端口ID匹配 admin 表中的 port_id（多选值，使用 FIND_IN_SET）
-                $yy_conditions = [];
-                foreach ($yy_admins_for_order as $admin) {
-                    $admin_inquiry_id = $admin['inquiry_id'];
-                    $admin_port_ids = !empty($admin['port_id']) ? array_filter(explode(',', $admin['port_id'])) : [];
-                    
-                    if (empty($admin_port_ids)) continue;
-                    
-                    // 获取该渠道下所有端口的名称列表
-                    $port_names = [];
-                    foreach ($admin_port_ids as $port_id) {
-                        $port_id = trim($port_id);
-                        if ($port_id) {
-                            $port_info = Db::table('crm_inquiry_port')
-                                ->where('id', $port_id)
-                                ->where('inquiry_id', $admin_inquiry_id)
-                                ->field('port_name')
-                                ->find();
-                            if ($port_info && !empty($port_info['port_name'])) {
-                                $port_names[] = addslashes($port_info['port_name']); // 转义防止SQL注入
-                            }
-                        }
-                    }
-                    
-                    if (!empty($port_names)) {
-                        // 构建端口名称匹配条件
-                        $port_conditions = [];
-                        foreach ($port_names as $port_name) {
-                            $port_conditions[] = "o.source_port = '{$port_name}'";
-                        }
-                        if (!empty($port_conditions)) {
-                            $port_where = '(' . implode(' OR ', $port_conditions) . ')';
-                            // 还需要匹配渠道：通过 source 字段（渠道名称）匹配
-                            $inquiry_info = Db::table('crm_inquiry')
-                                ->where('id', $admin_inquiry_id)
-                                ->field('inquiry_name')
-                                ->find();
-                            if ($inquiry_info && !empty($inquiry_info['inquiry_name'])) {
-                                $inquiry_name = addslashes($inquiry_info['inquiry_name']); // 转义防止SQL注入
-                                $yy_conditions[] = "(o.source = '{$inquiry_name}' AND {$port_where})";
-                            }
-                        }
-                    }
+            $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+            if (!empty($orgUsernames)) {
+                $summary_timebucket = '';
+                $summary_at_time = '';
+                if (Request::param('at_time')) {
+                    $summary_at_time = (string)Request::param('at_time');
+                } elseif (Request::param('timebucket')) {
+                    $summary_timebucket = (string)Request::param('timebucket');
                 }
-                
-                if (!empty($yy_conditions)) {
-                    $yy_where_raw = '(' . implode(' OR ', $yy_conditions) . ')';
-                    // 统计订单表中的产品名称，按相同名称统计销量
-                    // 优先从主表的 product_name 字段统计，如果为空则从明细表 crm_order_item 获取
-                    // 先统计主表有 product_name 的订单
-                    $order_prod_main = Db::table('crm_client_order')
-                        ->alias('o')
-                        ->where($o_where)
-                        ->whereRaw($yy_where_raw)
-                        ->where('o.product_name', '<>', '')
-                        ->where('o.product_name', '<>', null)
-                        ->group('o.product_name')
-                        ->field('o.product_name,count(o.id) as count')
-                        ->select();
-                    
-                    // 统计主表 product_name 为空，但从明细表获取的订单
-                    // 通过 JOIN 订单明细表，获取产品名称
-                    $order_prod_detail = Db::table('crm_client_order')
-                        ->alias('o')
-                        ->join('crm_order_item oi', 'o.id = oi.order_id', 'INNER')
-                        ->where($o_where)
-                        ->whereRaw($yy_where_raw)
-                        ->where(function($query) {
-                            $query->where('o.product_name', '')
-                                ->whereOr('o.product_name', null);
-                        })
-                        ->where('oi.product_name', '<>', '')
-                        ->where('oi.product_name', '<>', null)
-                        ->group('oi.product_name')
-                        ->field('oi.product_name,count(oi.id) as count')
-                        ->select();
-                    
-                    // 合并结果，按产品名称汇总
-                    $order_prod_map = [];
-                    foreach ($order_prod_main as $item) {
-                        $product_name = trim($item['product_name']);
-                        if (!empty($product_name)) {
-                            if (!isset($order_prod_map[$product_name])) {
-                                $order_prod_map[$product_name] = 0;
-                            }
-                            $order_prod_map[$product_name] += $item['count'];
-                        }
+
+                $rows = $this->buildOrderProductSummaryProductSalesQuery($orgUsernames, $summary_timebucket, $summary_at_time)
+                    ->select();
+                foreach ((array)$rows as $row) {
+                    $name = trim((string)($row['product_name'] ?? ''));
+                    if ($name === '') {
+                        continue;
                     }
-                    foreach ($order_prod_detail as $item) {
-                        $product_name = trim($item['product_name']);
-                        if (!empty($product_name)) {
-                            if (!isset($order_prod_map[$product_name])) {
-                                $order_prod_map[$product_name] = 0;
-                            }
-                            $order_prod_map[$product_name] += $item['count'];
-                        }
-                    }
-                    
-                    // 转换为数组格式并排序
-                    $data = [];
-                    foreach ($order_prod_map as $product_name => $count) {
-                        $data[] = [
-                            'product_name' => $product_name,
-                            'count' => $count
-                        ];
-                    }
-                    // 按销量降序排序
-                    usort($data, function($a, $b) {
-                        return $b['count'] - $a['count'];
-                    });
+                    $data[] = [
+                        'product_name' => $name,
+                        'count' => (float)($row['sale_qty'] ?? 0),
+                    ];
                 }
             }
         }
@@ -3199,6 +2959,17 @@ private function exportToExcel($data)
     }
 
     /**
+     * 订单产品汇总：公司/个人产品销量聚合
+     */
+    private function buildOrderProductSummaryProductSalesQuery(array $orgUsernames, string $timebucket = '', string $at_time = '')
+    {
+        return $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time)
+            ->field('oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty')
+            ->group('oi.product_name')
+            ->order('sale_qty desc, oi.product_name asc');
+    }
+
+    /**
      * 订单产品汇总：公共基础查询
      * - 主表：crm_order_item
      * - 关联：crm_client_order
@@ -3252,13 +3023,9 @@ private function exportToExcel($data)
         }
 
         try {
-            $baseQuery = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
             $teamExpr = $this->getOrderProductSummaryTeamExpr();
 
-            $productRows = (clone $baseQuery)
-                ->field("TRIM(oi.product_name) as product_name, SUM(COALESCE(oi.qty, 0)) as sale_qty")
-                ->group("TRIM(oi.product_name)")
-                ->order('sale_qty desc, product_name asc')
+            $productRows = $this->buildOrderProductSummaryProductSalesQuery($orgUsernames, $timebucket, $at_time)
                 ->select();
 
             $products = [];
@@ -3274,9 +3041,9 @@ private function exportToExcel($data)
                 ];
             }
 
-            $teamRows = (clone $baseQuery)
+            $teamRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time)
                 ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
-                ->field($teamExpr . " as team_name, SUM(COALESCE(oi.qty, 0)) as sale_qty, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
+                ->field($teamExpr . " as team_name, SUM(IFNULL(oi.qty,0)) as sale_qty, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
                 ->group($teamExpr)
                 ->order('sale_qty desc, team_name asc')
                 ->select();
@@ -3293,7 +3060,7 @@ private function exportToExcel($data)
                 ];
             }
 
-            $memberRows = (clone $baseQuery)
+            $memberRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time)
                 ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
                 ->field("TRIM(o.pr_user) as username")
                 ->group("TRIM(o.pr_user)")
@@ -3356,7 +3123,7 @@ private function exportToExcel($data)
             $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
 
             $rows = $query
-                ->field("TRIM(o.pr_user) as username, SUM(COALESCE(oi.qty, 0)) as sale_qty")
+                ->field("TRIM(o.pr_user) as username, SUM(IFNULL(oi.qty,0)) as sale_qty")
                 ->group("TRIM(o.pr_user)")
                 ->order('sale_qty desc, username asc')
                 ->select();
@@ -3428,9 +3195,9 @@ private function exportToExcel($data)
             $query->where('o.pr_user', '=', $username);
 
             $rows = $query
-                ->field("TRIM(oi.product_name) as product_name, SUM(COALESCE(oi.qty, 0)) as sale_qty")
-                ->group("TRIM(oi.product_name)")
-                ->order('sale_qty desc, product_name asc')
+                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty")
+                ->group("oi.product_name")
+                ->order('sale_qty desc, oi.product_name asc')
                 ->select();
 
             $data = [];
