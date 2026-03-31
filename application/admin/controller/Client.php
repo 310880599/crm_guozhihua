@@ -2294,6 +2294,68 @@ class Client extends Common
         return $phones;
     }
 
+    // 解析运营端口：支持数组 / JSON字符串 / 逗号分隔；仅保留正整数并去重
+    private function normalizePortIds($raw): array
+    {
+        $portIds = [];
+        if (is_array($raw)) {
+            $portIds = $raw;
+        } else if (is_string($raw)) {
+            $str = trim($raw);
+            if ($str !== '') {
+                if ($str[0] === '[') {
+                    $tmp = json_decode($str, true);
+                    if (is_array($tmp)) {
+                        $portIds = $tmp;
+                    } else {
+                        $portIds = [$str];
+                    }
+                } else {
+                    $portIds = explode(',', $str);
+                }
+            }
+        } else if ($raw !== null) {
+            $portIds = [(string)$raw];
+        }
+
+        $portIds = array_map(function ($v) {
+            return preg_replace('/\D/', '', (string)$v);
+        }, $portIds);
+
+        return array_values(array_unique(array_filter($portIds, function ($v) {
+            return $v !== '';
+        })));
+    }
+
+    // 校验所属渠道 + 运营端口（必填 + 合法组合）
+    private function validateInquiryAndPortData($inquiryId, $portIds): array
+    {
+        $inquiryId = (int)preg_replace('/\D/', '', (string)$inquiryId);
+        if ($inquiryId <= 0) {
+            return [false, '请选择所属渠道', 0, []];
+        }
+
+        $portIds = $this->normalizePortIds($portIds);
+        if (empty($portIds)) {
+            return [false, '请选择运营端口', $inquiryId, []];
+        }
+
+        $inquiryExists = Db::table('crm_inquiry')->where('id', $inquiryId)->find();
+        if (!$inquiryExists) {
+            return [false, '请选择所属渠道', $inquiryId, []];
+        }
+
+        $validCount = Db::table('crm_inquiry_port')
+            ->where('inquiry_id', $inquiryId)
+            ->whereIn('id', $portIds)
+            ->count();
+        if ((int)$validCount !== count($portIds)) {
+            return [false, '运营端口数据无效，请重新选择', $inquiryId, []];
+        }
+
+        return [true, '', $inquiryId, $portIds];
+    }
+
     /**
      * 验证国际手机号格式
      * @param string $phone 原始手机号
@@ -2401,11 +2463,18 @@ class Client extends Common
             
             $data['oper_user']    = Request::param('oper_user');
             $data['remark']       = Request::param('remark', '');
-            $data['inquiry_id'] = Request::param('inquiry_id'); // 单选渠道
-            // 多选端口 ID 数组
-            $portIds = Request::param('port_id/a');
-            // 多选端口拼接成 1,2,3,4
-            $data['port_id'] = $portIds ? implode(',', $portIds) : '';
+            $inquiryId = Request::param('inquiry_id');
+            $portIdsRaw = Request::param('port_id/a');
+            if ($portIdsRaw === null) {
+                $portIdsRaw = Request::param('port_id');
+            }
+            list($validInquiryPort, $inquiryPortMsg, $cleanInquiryId, $cleanPortIds) = $this->validateInquiryAndPortData($inquiryId, $portIdsRaw);
+            if (!$validInquiryPort) {
+                $this->redisUnLock();
+                return fail($inquiryPortMsg);
+            }
+            $data['inquiry_id'] = $cleanInquiryId;
+            $data['port_id'] = implode(',', $cleanPortIds);
 
 
             // 检查 source_port 字段是否存在，如果存在则添加
@@ -2727,11 +2796,18 @@ class Client extends Common
             $data['oper_user']    = \think\facade\Request::param('oper_user');      // 运营人员ID（与你的 add 保持一致）
             $data['remark']       = \think\facade\Request::param('remark', '');
             $data['ut_time']      = date("Y-m-d H:i:s");
-            $data['inquiry_id'] = Request::param('inquiry_id'); // 单选渠道
-            // 多选端口 ID 数组
-            $portIds = Request::param('port_id/a');
-            // 多选端口拼接成 1,2,3,4
-            $data['port_id'] = $portIds ? implode(',', $portIds) : '';
+            $inquiryId = Request::param('inquiry_id');
+            $portIdsRaw = Request::param('port_id/a');
+            if ($portIdsRaw === null) {
+                $portIdsRaw = Request::param('port_id');
+            }
+            list($validInquiryPort, $inquiryPortMsg, $cleanInquiryId, $cleanPortIds) = $this->validateInquiryAndPortData($inquiryId, $portIdsRaw);
+            if (!$validInquiryPort) {
+                $this->redisUnLock();
+                return fail($inquiryPortMsg);
+            }
+            $data['inquiry_id'] = $cleanInquiryId;
+            $data['port_id'] = implode(',', $cleanPortIds);
 
             
             // 检查 source_port 字段是否存在，如果存在则添加

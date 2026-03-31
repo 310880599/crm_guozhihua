@@ -137,7 +137,7 @@
             <div class="layui-form-item">
                 <label class="layui-form-label">所属渠道<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <select name="inquiry_id" id="inquiry_id" lay-filter="inquiry_id">
+                    <select name="inquiry_id" id="inquiry_id" lay-filter="inquiry_id" lay-verify="required">
                         <option value="">请选择所属渠道</option>
                         {volist name="channelList" id="ch"} 
                             <option value="{$ch.id}" {if isset($result) && $result.inquiry_id == $ch.id}selected{/if}>{$ch.inquiry_name}</option>
@@ -328,6 +328,21 @@
             });
 
 
+            function getValidPortIds() {
+                var selected = $('#port_id').val();
+                if (typeof selected === 'undefined' || selected === null) {
+                    return [];
+                }
+                if (!Array.isArray(selected)) {
+                    selected = [selected];
+                }
+                return selected.map(function (v) {
+                    return $.trim(String(v));
+                }).filter(function (v) {
+                    return v !== '';
+                });
+            }
+
 
             // 监听表单提交
             form.on('submit(submit)', function (data) {
@@ -365,14 +380,29 @@
                     return false;
                 }
 
-                // 3) 将主电话以 JSON 数组方式提交，后端 parsePhones 支持 JSON / 数组
-                data.field.more_phones = JSON.stringify(phones);
+                // 3) 前端强校验：所属渠道/运营端口
+                var inquiryId = $.trim($('#inquiry_id').val() || '');
+                if (!inquiryId) {
+                    layer.msg('请选择所属渠道');
+                    return false;
+                }
+                var portIds = getValidPortIds();
+                if (portIds.length === 0) {
+                    layer.msg('请选择运营端口');
+                    return false;
+                }
 
-                // 4) 清理可能存在的旧字段，避免干扰（容错）
+                // 4) 将主电话以 JSON 数组方式提交，后端 parsePhones 支持 JSON / 数组
+                data.field.more_phones = JSON.stringify(phones);
+                data.field.inquiry_id = inquiryId;
+                data.field.port_id = portIds;
+
+                // 5) 清理可能存在的旧字段，避免干扰（容错）
                 delete data.field['more_phones[]'];
                 delete data.field['phone'];
+                delete data.field['port_id[]'];
 
-                // 5) 提交
+                // 6) 提交
                 $.post("{:url('Client/add')}", data.field, function (res) {
                     if (res.code === 0) {
                         layer.msg(res.msg, { time: 2000 }, function () {
