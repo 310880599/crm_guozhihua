@@ -3154,6 +3154,285 @@ private function exportToExcel($data)
     }
 
     /**
+     * 订单产品汇总：团队名标准化（空值统一为“未分组”）
+     */
+    private function normalizeOrderProductTeamName(string $teamName): string
+    {
+        $teamName = trim($teamName);
+        return $teamName === '' ? '未分组' : $teamName;
+    }
+
+    /**
+     * 订单产品汇总：公共基础查询
+     * - 主表：crm_order_item
+     * - 关联：crm_client_order
+     * - 时间/状态：复用 buildPerformanceOrderWhere（check_status=2 + order_time）
+     */
+    private function buildOrderProductSummaryBaseQuery(array $orgUsernames, string $timebucket = '', string $at_time = '')
+    {
+        $query = Db::table('crm_order_item')->alias('oi')
+            ->join('crm_client_order o', 'oi.order_id = o.id', 'INNER');
+
+        $where = $this->buildPerformanceOrderWhere($timebucket, $at_time, [], 'o');
+        $this->applyPerformanceWhereToQuery($query, $where);
+
+        $query->where('o.pr_user', 'in', $orgUsernames);
+        $query->whereRaw("TRIM(IFNULL(oi.product_name, '')) <> ''");
+
+        return $query;
+    }
+
+    /**
+     * 订单产品汇总：按团队过滤（支持“未分组”）
+     */
+    private function applyOrderProductSummaryTeamFilter($query, string $teamName)
+    {
+        $teamName = $this->normalizeOrderProductTeamName($teamName);
+        if ($teamName === '未分组') {
+            $query->whereRaw("TRIM(IFNULL(o.team_name, '')) = ''");
+        } else {
+            $query->whereRaw("TRIM(IFNULL(o.team_name, '')) = ?", [$teamName]);
+        }
+        return $query;
+    }
+
+    /**
+     * 第一屏：全公司产品销量排行 + 第二屏团队列表
+     */
+    public function getOrderProductSummaryData()
+    {
+        $timebucket = Request::param('timebucket', '');
+        $at_time    = Request::param('at_time', '');
+        $current_admin = Admin::getMyInfo();
+        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+
+        if (empty($orgUsernames)) {
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => ['products' => [], 'teams' => []],
+                'summary' => [
+                    'company' => ['total_product_count' => 0, 'total_sales_qty' => 0],
+                    'team' => ['team_count' => 0, 'member_count' => 0],
+                ],
+            ]);
+        }
+
+        try {
+            $baseQuery = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+
+            $productRows = (clone $baseQuery)
+                ->field("TRIM(oi.product_name) as product_name, SUM(COALESCE(oi.qty, 0)) as sale_qty")
+                ->group("TRIM(oi.product_name)")
+                ->order('sale_qty desc, product_name asc')
+                ->select();
+
+            $products = [];
+            $totalSalesQty = 0.0;
+            $rank = 1;
+            foreach ((array)$productRows as $row) {
+                $qty = (float)($row['sale_qty'] ?? 0);
+                $totalSalesQty += $qty;
+                $products[] = [
+                    'rank' => $rank++,
+                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'sale_qty' => $qty,
+                ];
+            }
+
+            $teamRows = (clone $baseQuery)
+                ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
+                ->field("TRIM(IFNULL(o.team_name, '')) as raw_team_name, SUM(COALESCE(oi.qty, 0)) as sale_qty, COUNT(DISTINCT o.pr_user) as member_count")
+                ->group("TRIM(IFNULL(o.team_name, ''))")
+                ->order('sale_qty desc, raw_team_name asc')
+                ->select();
+
+            $teams = [];
+            $teamRank = 1;
+            foreach ((array)$teamRows as $row) {
+                $teamName = $this->normalizeOrderProductTeamName((string)($row['raw_team_name'] ?? ''));
+                $teams[] = [
+                    'rank' => $teamRank++,
+                    'team_name' => $teamName,
+                    'sale_qty' => (float)($row['sale_qty'] ?? 0),
+                    'member_count' => (int)($row['member_count'] ?? 0),
+                ];
+            }
+
+            $memberRows = (clone $baseQuery)
+                ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
+                ->field("TRIM(o.pr_user) as username")
+                ->group("TRIM(o.pr_user)")
+                ->select();
+            $memberCount = count((array)$memberRows);
+
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => [
+                    'products' => $products,
+                    'teams' => $teams,
+                ],
+                'summary' => [
+                    'company' => [
+                        'total_product_count' => count($products),
+                        'total_sales_qty' => $totalSalesQty,
+                    ],
+                    'team' => [
+                        'team_count' => count($teams),
+                        'member_count' => $memberCount,
+                    ],
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OrderProductSummary] getOrderProductSummaryData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '订单产品汇总获取失败：' . $e->getMessage(),
+                'data' => ['products' => [], 'teams' => []],
+            ]);
+        }
+    }
+
+    /**
+     * 第二屏：指定团队的成员列表（按销量排序）
+     */
+    public function getOrderProductTeamMembers()
+    {
+        $team_name = trim((string)Request::param('team_name', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+        $current_admin = Admin::getMyInfo();
+        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+
+        if (empty($orgUsernames)) {
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => [],
+                'summary' => ['team_count' => 0, 'member_count' => 0, 'total_sales_qty' => 0],
+            ]);
+        }
+
+        $team_name = $this->normalizeOrderProductTeamName($team_name);
+
+        try {
+            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+            $this->applyOrderProductSummaryTeamFilter($query, $team_name);
+            $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
+
+            $rows = $query
+                ->field("TRIM(o.pr_user) as username, SUM(COALESCE(oi.qty, 0)) as sale_qty")
+                ->group("TRIM(o.pr_user)")
+                ->order('sale_qty desc, username asc')
+                ->select();
+
+            $data = [];
+            $rank = 1;
+            $totalSalesQty = 0.0;
+            foreach ((array)$rows as $row) {
+                $qty = (float)($row['sale_qty'] ?? 0);
+                $totalSalesQty += $qty;
+                $data[] = [
+                    'rank' => $rank++,
+                    'username' => trim((string)($row['username'] ?? '')),
+                    'sale_qty' => $qty,
+                ];
+            }
+
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => $data,
+                'summary' => [
+                    'team_count' => empty($data) ? 0 : 1,
+                    'member_count' => count($data),
+                    'total_sales_qty' => $totalSalesQty,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OrderProductSummary] getOrderProductTeamMembers failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '团队成员获取失败：' . $e->getMessage(),
+                'data' => [],
+            ]);
+        }
+    }
+
+    /**
+     * 第三屏：指定业务员的产品销量排行
+     */
+    public function getOrderProductUserProducts()
+    {
+        $username = trim((string)Request::param('username', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+        $current_admin = Admin::getMyInfo();
+        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+
+        if ($username === '') {
+            return json([
+                'code' => 422,
+                'msg' => '请先选择业务员',
+                'data' => [],
+                'summary' => ['user_product_count' => 0, 'total_sales_qty' => 0],
+            ]);
+        }
+
+        if (!empty($orgUsernames) && !in_array($username, $orgUsernames, true)) {
+            return json([
+                'code' => 403,
+                'msg' => '无权限查看该业务员数据',
+                'data' => [],
+                'summary' => ['user_product_count' => 0, 'total_sales_qty' => 0],
+            ]);
+        }
+
+        try {
+            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+            $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) = ?", [$username]);
+
+            $rows = $query
+                ->field("TRIM(oi.product_name) as product_name, SUM(COALESCE(oi.qty, 0)) as sale_qty")
+                ->group("TRIM(oi.product_name)")
+                ->order('sale_qty desc, product_name asc')
+                ->select();
+
+            $data = [];
+            $rank = 1;
+            $totalSalesQty = 0.0;
+            foreach ((array)$rows as $row) {
+                $qty = (float)($row['sale_qty'] ?? 0);
+                $totalSalesQty += $qty;
+                $data[] = [
+                    'rank' => $rank++,
+                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'sale_qty' => $qty,
+                ];
+            }
+
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => $data,
+                'summary' => [
+                    'user_product_count' => count($data),
+                    'total_sales_qty' => $totalSalesQty,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OrderProductSummary] getOrderProductUserProducts failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '个人产品销量获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['user_product_count' => 0, 'total_sales_qty' => 0],
+            ]);
+        }
+    }
+
+    /**
      * 统一解析时间参数：与 buildPerformanceOrderWhere 保持同一规则。
      * - 自定义格式：at_time = "YYYY-MM-DD,YYYY-MM-DD"（优先）
      * - 否则使用 timebucket

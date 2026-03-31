@@ -22,7 +22,8 @@
     .wukong-btn-per-user,
     .wukong-btn-per-team,
     .wukong-btn-inquiry-summary,
-    .wukong-btn-operation-inquiry-summary {
+    .wukong-btn-operation-inquiry-summary,
+    .wukong-btn-order-product-summary {
         width: 100%;
         display: flex;
         align-items: center;
@@ -57,6 +58,11 @@
         border: none;
         color: #fff;
     }
+    .wukong-btn-order-product-summary{
+        background: linear-gradient(135deg, #0ea5a4, #14b8a6);
+        border: none;
+        color: #fff;
+    }
     .wukong-btn-operation-inquiry-summary .bi {
         color: #fff;
     }
@@ -65,7 +71,8 @@
     .wukong-btn-per-user:hover,
     .wukong-btn-per-team:hover,
     .wukong-btn-inquiry-summary:hover,
-    .wukong-btn-operation-inquiry-summary:hover {
+    .wukong-btn-operation-inquiry-summary:hover,
+    .wukong-btn-order-product-summary:hover {
         filter: brightness(1.03);
         transform: translateY(-1px);
         transition: all .15s ease;
@@ -150,6 +157,14 @@
     #operationInquirySummarySplitLayout .op-inq-staff-clickable.is-active {
         background-color: #ffedd5;
         color: #9a3412 !important;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+    /* 订单产品汇总三连屏：选中高亮（青绿色） */
+    #orderProductSummarySplitLayout .order-product-team-clickable.is-active,
+    #orderProductSummarySplitLayout .order-product-user-clickable.is-active {
+        background-color: #ccfbf1;
+        color: #0f766e !important;
         padding: 2px 6px;
         border-radius: 4px;
     }
@@ -348,6 +363,13 @@
         <div class="col-md-6">
             <button type="button" class="btn wukong-btn wukong-btn-primary wukong-btn-operation-inquiry-summary" id="showOperationInquirySummaryBtn">
                 <i class="bi bi-grid-1x2"></i> 查看运营询盘汇总表
+            </button>
+        </div>
+    </div>
+    <div class="row g-3 mb-3">
+        <div class="col-md-6">
+            <button type="button" class="btn wukong-btn wukong-btn-primary wukong-btn-order-product-summary" id="showOrderProductSummaryBtn">
+                <i class="bi bi-box-seam"></i> 查看订单产品汇总表
             </button>
         </div>
     </div>
@@ -878,6 +900,84 @@
                 </div>
             </div>
             <div id="inquiryChannelPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：总询盘数 0</div>
+        </div>
+    </div>
+</div>
+
+<!-- 订单产品汇总三连屏 -->
+<div id="orderProductSummarySplitLayout" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #f6f8fb; z-index: 20000004;">
+    <div class="split-wrap order-product-split-wrap" style="display: flex; height: 100%; width: 100%; overflow: hidden;">
+        <div class="split-left order-product-split-left" style="width: 30%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #0f766e, #14b8a6); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+                <span style="font-size: 16px; font-weight: 600;">📦 公司产品销量排行</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitLeftMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitLeftCollapse" title="收起/展开"><i class="bi bi-chevron-left"></i></button>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitClose" title="关闭" style="margin-left: 8px;"><i class="bi bi-x-lg"></i></button>
+                </div>
+            </div>
+            <div class="filter-bar" id="orderProductSummaryTimeFilterBar" style="padding: 15px; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; flex-shrink: 0;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="margin: 0; white-space: nowrap;">时间筛选：</label>
+                    <select id="orderProductSummaryTimeFilter" class="form-select" style="width: 150px;">
+                        <option value="today">今天</option>
+                        <option value="yesterday">昨天</option>
+                        <option value="week">本周</option>
+                        <option value="month" selected>本月</option>
+                        <option value="year">本年</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                </div>
+                <div id="orderProductSummaryCustomTimeRange" style="display: none; gap: 8px; align-items: center;">
+                    <input type="date" id="orderProductSummaryStartDate" class="form-control" style="width: 150px;">
+                    <span>至</span>
+                    <input type="date" id="orderProductSummaryEndDate" class="form-control" style="width: 150px;">
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" id="orderProductSummaryFilterBtn" style="margin-left: auto;">
+                    <i class="bi bi-search"></i> 筛选
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" id="orderProductSummaryResetBtn">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重置
+                </button>
+            </div>
+            <div id="orderProductCompanyPane" style="flex: 1; overflow-y: auto; padding: 20px;"></div>
+            <div id="orderProductCompanyPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总销量 0</div>
+        </div>
+
+        <div class="split-mid order-product-split-mid" style="width: 35%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #0f766e, #14b8a6); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+                <span style="font-size: 16px; font-weight: 600;" id="orderProductTeamPaneTitle">👥 团队成员列表</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitMidRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitMidMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitMidCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+            <div id="orderProductTeamPane" style="flex: 1; overflow-y: auto; padding: 20px;">
+                <div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;">
+                    <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
+                    <p style="font-size: 16px; margin: 0;">请选择团队展开成员列表</p>
+                </div>
+            </div>
+            <div id="orderProductTeamPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：团队数 0 ｜ 成员数 0</div>
+        </div>
+
+        <div class="split-right order-product-split-right" style="width: 35%; background: #ffffff; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #0f766e, #14b8a6); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+                <span style="font-size: 16px; font-weight: 600;" id="orderProductUserPaneTitle">👤 个人产品销量排行</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitRightRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitRightMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="orderProductSplitRightCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+            <div id="orderProductUserPane" style="flex: 1; overflow-y: auto; padding: 20px;">
+                <div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;">
+                    <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
+                    <p style="font-size: 16px; margin: 0;">请点击团队成员查看个人产品销量排行</p>
+                </div>
+            </div>
+            <div id="orderProductUserPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总销量 0</div>
         </div>
     </div>
 </div>
@@ -1573,6 +1673,564 @@
         window.InquirySplit.loadTeamSummary();
         bindInquirySplitLayoutEvents();
         $('#inquirySummarySplitLayout').show();
+
+        layer.close(loading);
+        $btn.prop('disabled', false).html(originalText);
+    });
+
+    function getOrderProductSummaryTimeParams() {
+        var timeFilter = ($('#orderProductSummaryTimeFilter').val() || 'month').trim();
+        var timebucket = '';
+        var at_time = '';
+        if (timeFilter === 'custom') {
+            var startDate = ($('#orderProductSummaryStartDate').val() || '').trim();
+            var endDate = ($('#orderProductSummaryEndDate').val() || '').trim();
+            if (startDate && endDate) {
+                at_time = startDate + ',' + endDate;
+            } else {
+                layer.msg('请选择开始日期和结束日期', {icon: 2});
+                return null;
+            }
+        } else {
+            timebucket = timeFilter || 'month';
+        }
+        return {timebucket: timebucket, at_time: at_time};
+    }
+
+    function updateOrderProductPaneSummary(selector, summary) {
+        if (selector === '#orderProductCompanyPaneSummary') {
+            var companyKinds = summary && summary.total_product_count ? summary.total_product_count : 0;
+            var companyQty = summary && summary.total_sales_qty ? summary.total_sales_qty : 0;
+            $(selector).html('合计：产品种类 ' + companyKinds + ' ｜ 总销量 ' + companyQty);
+            return;
+        }
+        if (selector === '#orderProductTeamPaneSummary') {
+            var teamCount = summary && summary.team_count ? summary.team_count : 0;
+            var memberCount = summary && summary.member_count ? summary.member_count : 0;
+            $(selector).html('合计：团队数 ' + teamCount + ' ｜ 成员数 ' + memberCount);
+            return;
+        }
+        var userKinds = summary && summary.user_product_count ? summary.user_product_count : 0;
+        var userQty = summary && summary.total_sales_qty ? summary.total_sales_qty : 0;
+        $(selector).html('合计：产品种类 ' + userKinds + ' ｜ 总销量 ' + userQty);
+    }
+
+    function renderOrderProductEmpty($container, text) {
+        $container.html('<div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i><p style="font-size: 16px; margin: 0;">' + text + '</p></div>');
+    }
+
+    function renderOrderProductCompanyPane(data) {
+        var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
+            + '<div style="padding: 20px; overflow-x: auto;">'
+            + '<table class="wukong-table" style="width:100%;">'
+            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th><th style="text-align:right;">销量</th></tr></thead><tbody>';
+        if (data && data.length) {
+            $.each(data, function(i, item) {
+                html += '<tr>'
+                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td>' + escapeHtml(item.product_name || '') + '</td>'
+                    + '<td style="text-align:right;">' + (item.sale_qty || 0) + '</td>'
+                    + '</tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">暂无订单产品销量数据</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#orderProductCompanyPane').html(html);
+    }
+
+    function renderOrderProductTeamPane(data) {
+        if (!data || !data.length) {
+            renderOrderProductEmpty($('#orderProductTeamPane'), '当前时间范围暂无团队产品销量数据');
+            return;
+        }
+        var html = '<div style="background:#fff;border-radius:8px;overflow:hidden;">';
+        $.each(data, function(i, item) {
+            var teamName = normalizeTeamName(item.team_name || '');
+            var teamEncoded = encodeURIComponent(teamName);
+            html += '<div class="order-product-team-block" data-team-encoded="' + teamEncoded + '" style="border-bottom:1px solid #eef2f7;">'
+                + '<div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+                + '<a href="javascript:void(0);" class="order-product-team-clickable" data-team-encoded="' + teamEncoded + '" style="font-weight:600;color:#0f766e;text-decoration:none;">'
+                + '<i class="bi bi-caret-right-fill order-product-team-arrow" style="margin-right:6px;"></i>'
+                + escapeHtml(teamName)
+                + '</a>'
+                + '<span class="text-muted" style="font-size:12px;">销量 ' + (item.sale_qty || 0) + ' ｜ 成员 ' + (item.member_count || 0) + '</span>'
+                + '</div>'
+                + '<div class="order-product-team-members" data-team-encoded="' + teamEncoded + '" style="display:none;padding:0 16px 12px 34px;"></div>'
+                + '</div>';
+        });
+        html += '</div>';
+        $('#orderProductTeamPane').html(html);
+    }
+
+    function renderOrderProductTeamMembers(teamName, data) {
+        var targetEncoded = encodeURIComponent(normalizeTeamName(teamName || ''));
+        var $container = $('#orderProductTeamPane .order-product-team-members[data-team-encoded="' + targetEncoded + '"]');
+        if (!$container.length) return;
+        var html = '';
+        if (data && data.length) {
+            html += '<div style="padding-top:6px;"></div>';
+            $.each(data, function(i, item) {
+                var username = (item.username || '').trim();
+                html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #e5e7eb;">'
+                    + '<a href="javascript:void(0);" class="order-product-user-clickable" data-username="' + encodeURIComponent(username) + '" style="color:#0f766e;font-weight:600;text-decoration:none;">'
+                    + '<span style="display:inline-block;width:22px;color:#6b7280;">' + (item.rank || (i + 1)) + '.</span>' + escapeHtml(username) + '</a>'
+                    + '<span class="text-muted" style="font-size:12px;">销量 ' + (item.sale_qty || 0) + '</span>'
+                    + '</div>';
+            });
+        } else {
+            html = '<div class="text-muted" style="padding:8px 0;">该团队暂无成员销量数据</div>';
+        }
+        $container.html(html).show();
+    }
+
+    function renderOrderProductUserPane(username, data) {
+        var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
+            + '<div style="padding: 15px 20px; border-bottom:1px solid #e9ecef; background:#f8f9fa;">业务员：<strong>' + escapeHtml(username) + '</strong></div>'
+            + '<div style="padding: 20px; overflow-x: auto;">'
+            + '<table class="wukong-table" style="width:100%;">'
+            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th><th style="text-align:right;">销量</th></tr></thead><tbody>';
+        if (data && data.length) {
+            $.each(data, function(i, item) {
+                html += '<tr>'
+                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td>' + escapeHtml(item.product_name || '') + '</td>'
+                    + '<td style="text-align:right;">' + (item.sale_qty || 0) + '</td>'
+                    + '</tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">该业务员暂无产品销量数据</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#orderProductUserPane').html(html);
+    }
+
+    function getOrderProductTeamLinkByName(teamName) {
+        var found = null;
+        $('#orderProductTeamPane .order-product-team-clickable').each(function() {
+            var raw = $(this).attr('data-team-encoded') || '';
+            var current = raw;
+            try { current = decodeURIComponent(raw); } catch(e) {}
+            if ($.trim(current || '') === $.trim(teamName || '')) {
+                found = $(this);
+                return false;
+            }
+        });
+        return found;
+    }
+
+    function getOrderProductUserLinkByName(username) {
+        var found = null;
+        $('#orderProductTeamPane .order-product-user-clickable').each(function() {
+            var raw = $(this).attr('data-username') || '';
+            var current = raw;
+            try { current = decodeURIComponent(raw); } catch(e) {}
+            if ($.trim(current || '') === $.trim(username || '')) {
+                found = $(this);
+                return false;
+            }
+        });
+        return found;
+    }
+
+    window.OrderProductSummarySplit = window.OrderProductSummarySplit || {
+        lastTeamName: '',
+        lastUsername: '',
+        lastTimebucket: '',
+        lastAtTime: '',
+        teamRows: [],
+        teamMembersCache: {},
+
+        loadSummary: function() {
+            var self = this;
+            var params = getOrderProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            return $.ajax({
+                url: '{:url("Operator/getOrderProductSummaryData")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: params,
+            }).then(function(res) {
+                if (res.code === 0 || res.code === 200) {
+                    var payload = res.data || {};
+                    self.teamRows = payload.teams || [];
+                    self.teamMembersCache = {};
+                    renderOrderProductCompanyPane(payload.products || []);
+                    renderOrderProductTeamPane(payload.teams || []);
+                    updateOrderProductPaneSummary('#orderProductCompanyPaneSummary', (res.summary || {}).company || {});
+                    updateOrderProductPaneSummary('#orderProductTeamPaneSummary', (res.summary || {}).team || {});
+                    self.bindTeamClick();
+                } else {
+                    var bizMsg = res.msg || '获取订单产品汇总失败';
+                    renderOrderProductEmpty($('#orderProductCompanyPane'), bizMsg);
+                    renderOrderProductEmpty($('#orderProductTeamPane'), bizMsg);
+                    updateOrderProductPaneSummary('#orderProductCompanyPaneSummary', null);
+                    updateOrderProductPaneSummary('#orderProductTeamPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function(xhr, status) {
+                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取订单产品汇总失败');
+                renderOrderProductEmpty($('#orderProductCompanyPane'), msg);
+                renderOrderProductEmpty($('#orderProductTeamPane'), msg);
+                updateOrderProductPaneSummary('#orderProductCompanyPaneSummary', null);
+                updateOrderProductPaneSummary('#orderProductTeamPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadTeamMembers: function(teamName, forceReload) {
+            var self = this;
+            var normalizedTeamName = normalizeTeamName(teamName || '');
+            var params = getOrderProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTeamName = normalizedTeamName;
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            $('#orderProductTeamPaneTitle').text('👥 团队：' + normalizedTeamName + ' - 成员列表');
+
+            if (!forceReload && self.teamMembersCache[normalizedTeamName]) {
+                renderOrderProductTeamMembers(normalizedTeamName, self.teamMembersCache[normalizedTeamName]);
+                self.bindUserClick();
+                return $.Deferred().resolve({
+                    code: 200,
+                    data: self.teamMembersCache[normalizedTeamName],
+                    summary: {member_count: self.teamMembersCache[normalizedTeamName].length}
+                }).promise();
+            }
+
+            return $.ajax({
+                url: '{:url("Operator/getOrderProductTeamMembers")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time},
+            }).then(function(res) {
+                if (res.code === 0 || res.code === 200) {
+                    var rows = res.data || [];
+                    self.teamMembersCache[normalizedTeamName] = rows;
+                    renderOrderProductTeamMembers(normalizedTeamName, rows);
+                    self.bindUserClick();
+                } else {
+                    var bizMsg = res.msg || '获取团队成员失败';
+                    renderOrderProductTeamMembers(normalizedTeamName, []);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function(xhr, status) {
+                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取团队成员失败');
+                renderOrderProductTeamMembers(normalizedTeamName, []);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadUserProducts: function(username) {
+            var self = this;
+            var params = getOrderProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastUsername = (username || '').trim();
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            $('#orderProductUserPaneTitle').text('👤 ' + self.lastUsername + ' - 产品销量排行');
+            return $.ajax({
+                url: '{:url("Operator/getOrderProductUserProducts")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {username: self.lastUsername, timebucket: params.timebucket, at_time: params.at_time},
+            }).then(function(res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderOrderProductUserPane(self.lastUsername, res.data || []);
+                    updateOrderProductPaneSummary('#orderProductUserPaneSummary', res.summary || {});
+                } else {
+                    var bizMsg = res.msg || '获取个人产品销量失败';
+                    renderOrderProductEmpty($('#orderProductUserPane'), bizMsg);
+                    updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function(xhr, status) {
+                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取个人产品销量失败');
+                renderOrderProductEmpty($('#orderProductUserPane'), msg);
+                updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        bindTeamClick: function() {
+            var self = this;
+            $('#orderProductTeamPane').off('click', '.order-product-team-clickable').on('click', '.order-product-team-clickable', function() {
+                var $link = $(this);
+                var $block = $link.closest('.order-product-team-block');
+                var $members = $block.find('.order-product-team-members');
+                var raw = $link.attr('data-team-encoded') || '';
+                var teamName = raw;
+                try { teamName = decodeURIComponent(raw); } catch(e) {}
+                teamName = normalizeTeamName(teamName);
+
+                var isSameActive = $link.hasClass('is-active');
+                var isExpanded = $members.is(':visible');
+                if (isSameActive && isExpanded) {
+                    $members.hide();
+                    $link.removeClass('is-active');
+                    $link.find('.order-product-team-arrow').removeClass('bi-caret-down-fill').addClass('bi-caret-right-fill');
+                    self.lastTeamName = '';
+                    self.lastUsername = '';
+                    $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
+                    $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
+                    renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+                    updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                    $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
+                    return;
+                }
+
+                $('#orderProductTeamPane .order-product-team-clickable').removeClass('is-active');
+                $('#orderProductTeamPane .order-product-team-members').hide();
+                $('#orderProductTeamPane .order-product-team-arrow').removeClass('bi-caret-down-fill').addClass('bi-caret-right-fill');
+                $link.addClass('is-active');
+                $members.html('<div class="text-muted" style="padding:8px 0;">加载中...</div>').show();
+                $link.find('.order-product-team-arrow').removeClass('bi-caret-right-fill').addClass('bi-caret-down-fill');
+
+                self.lastUsername = '';
+                $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
+                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+                updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                self.loadTeamMembers(teamName, false);
+            });
+        },
+
+        bindUserClick: function() {
+            var self = this;
+            $('#orderProductTeamPane').off('click', '.order-product-user-clickable').on('click', '.order-product-user-clickable', function() {
+                $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
+                $(this).addClass('is-active');
+                var raw = $(this).attr('data-username') || $(this).text().trim();
+                var username = raw;
+                try { username = decodeURIComponent(raw); } catch(e) {}
+                self.loadUserProducts((username || '').trim());
+            });
+        }
+    };
+
+    function loadOrderProductSummaryData() {
+        return window.OrderProductSummarySplit.loadSummary();
+    }
+
+    function orderProductSummaryResetTimeFilterUI() {
+        $('#orderProductSummaryTimeFilter').val('month');
+        $('#orderProductSummaryStartDate').val('');
+        $('#orderProductSummaryEndDate').val('');
+        $('#orderProductSummaryCustomTimeRange').css('display', 'none');
+
+        window.OrderProductSummarySplit.lastTimebucket = '';
+        window.OrderProductSummarySplit.lastAtTime = '';
+        window.OrderProductSummarySplit.lastTeamName = '';
+        window.OrderProductSummarySplit.lastUsername = '';
+        window.OrderProductSummarySplit.teamMembersCache = {};
+        $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
+        $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
+        renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+        updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+        $('#orderProductTeamPane .order-product-team-clickable').removeClass('is-active');
+        $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
+    }
+
+    function orderProductSummaryApplyTimeFilterAndLinkage() {
+        var self = window.OrderProductSummarySplit;
+        var prevTeam = (self.lastTeamName || '').trim();
+        var prevUser = (self.lastUsername || '').trim();
+        var timeParams = getOrderProductSummaryTimeParams();
+        if (!timeParams) return;
+
+        return loadOrderProductSummaryData().then(function(res) {
+            var teamRows = res && res.data && Array.isArray(res.data.teams) ? res.data.teams : [];
+            var teamExists = false;
+            if (prevTeam) {
+                teamExists = teamRows.some(function(item) {
+                    return normalizeTeamName(item.team_name || '') === prevTeam;
+                });
+            }
+            if (!prevTeam || !teamExists) {
+                self.lastTeamName = '';
+                self.lastUsername = '';
+                $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
+                $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
+                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+                updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                return null;
+            }
+
+            var $teamLink = getOrderProductTeamLinkByName(prevTeam);
+            if (!$teamLink || !$teamLink.length) {
+                return null;
+            }
+
+            $('#orderProductTeamPane .order-product-team-clickable').removeClass('is-active');
+            $('#orderProductTeamPane .order-product-team-members').hide();
+            $('#orderProductTeamPane .order-product-team-arrow').removeClass('bi-caret-down-fill').addClass('bi-caret-right-fill');
+            $teamLink.addClass('is-active');
+            $teamLink.find('.order-product-team-arrow').removeClass('bi-caret-right-fill').addClass('bi-caret-down-fill');
+            var $block = $teamLink.closest('.order-product-team-block');
+            $block.find('.order-product-team-members').html('<div class="text-muted" style="padding:8px 0;">加载中...</div>').show();
+
+            return self.loadTeamMembers(prevTeam, true).then(function(memberRes) {
+                var rows = memberRes && memberRes.data ? memberRes.data : [];
+                var userExists = false;
+                if (prevUser) {
+                    userExists = rows.some(function(item) {
+                        return $.trim(item.username || '') === prevUser;
+                    });
+                }
+
+                if (prevUser && userExists) {
+                    var $userLink = getOrderProductUserLinkByName(prevUser);
+                    if ($userLink && $userLink.length) {
+                        $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
+                        $userLink.addClass('is-active');
+                    }
+                    return self.loadUserProducts(prevUser);
+                }
+
+                self.lastUsername = '';
+                $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
+                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+                updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                return null;
+            });
+        });
+    }
+
+    function bindOrderProductSummaryEvents() {
+        $('#orderProductSummaryTimeFilter').off('change.orderProductTimeFilter').on('change.orderProductTimeFilter', function () {
+            var val = ($(this).val() || '').trim();
+            if (val === 'custom') {
+                $('#orderProductSummaryCustomTimeRange').css('display', 'flex');
+            } else {
+                $('#orderProductSummaryCustomTimeRange').css('display', 'none');
+            }
+        });
+
+        $('#orderProductSummaryFilterBtn').off('click.orderProductFilterBtn').on('click.orderProductFilterBtn', function () {
+            orderProductSummaryApplyTimeFilterAndLinkage();
+        });
+
+        $('#orderProductSummaryResetBtn').off('click.orderProductResetBtn').on('click.orderProductResetBtn', function () {
+            orderProductSummaryResetTimeFilterUI();
+            loadOrderProductSummaryData();
+        });
+    }
+
+    function bindOrderProductSplitLayoutEvents() {
+        var $layout = $('#orderProductSummarySplitLayout');
+        var $left = $layout.find('.order-product-split-left');
+        var $mid = $layout.find('.order-product-split-mid');
+        var $right = $layout.find('.order-product-split-right');
+
+        $('#orderProductSplitClose').off('click').on('click', function() {
+            $layout.hide();
+        });
+        $('#orderProductSplitLeftMaximize').off('click').on('click', function() {
+            if ($left.hasClass('maximized')) {
+                $left.removeClass('maximized').css('width', '30%');
+                $mid.removeClass('hidden').css('width', '35%');
+                $right.removeClass('hidden').css('width', '35%');
+            } else {
+                $left.addClass('maximized').css('width', '100%');
+                $mid.addClass('hidden').css('width', '0');
+                $right.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#orderProductSplitLeftCollapse').off('click').on('click', function() {
+            if ($left.hasClass('collapsed')) {
+                $left.removeClass('collapsed').css('width', '30%');
+                $mid.css('width', '35%');
+                $right.css('width', '35%');
+            } else {
+                $left.addClass('collapsed').css('width', '64px');
+                $mid.css('width', 'calc((100% - 64px) / 2)');
+                $right.css('width', 'calc((100% - 64px) / 2)');
+            }
+        });
+        $('#orderProductSplitMidMaximize').off('click').on('click', function() {
+            if ($mid.hasClass('maximized')) {
+                $mid.removeClass('maximized').css('width', '35%');
+                $left.removeClass('hidden').css('width', '30%');
+                $right.removeClass('hidden').css('width', '35%');
+            } else {
+                $mid.addClass('maximized').css('width', '100%');
+                $left.addClass('hidden').css('width', '0');
+                $right.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#orderProductSplitMidCollapse').off('click').on('click', function() {
+            if ($mid.hasClass('collapsed')) {
+                $mid.removeClass('collapsed').css('width', '35%');
+                $right.css('width', '35%');
+                $left.css('width', '30%');
+            } else {
+                $mid.addClass('collapsed').css('width', '64px');
+                $right.css('width', 'calc(70% - 64px)');
+                $left.css('width', '30%');
+            }
+        });
+        $('#orderProductSplitRightMaximize').off('click').on('click', function() {
+            if ($right.hasClass('maximized')) {
+                $right.removeClass('maximized').css('width', '35%');
+                $left.removeClass('hidden').css('width', '30%');
+                $mid.removeClass('hidden').css('width', '35%');
+            } else {
+                $right.addClass('maximized').css('width', '100%');
+                $left.addClass('hidden').css('width', '0');
+                $mid.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#orderProductSplitRightCollapse').off('click').on('click', function() {
+            if ($right.hasClass('collapsed')) {
+                $right.removeClass('collapsed').css('width', '35%');
+                $mid.css('width', '35%');
+                $left.css('width', '30%');
+            } else {
+                $right.addClass('collapsed').css('width', '64px');
+                $mid.css('width', 'calc(70% - 64px)');
+                $left.css('width', '30%');
+            }
+        });
+
+        $('#orderProductSplitMidRefresh').off('click').on('click', function() {
+            if (!window.OrderProductSummarySplit.lastTeamName) {
+                layer.msg('请先选择团队', {icon: 2});
+                return;
+            }
+            window.OrderProductSummarySplit.loadTeamMembers(window.OrderProductSummarySplit.lastTeamName, true);
+        });
+        $('#orderProductSplitRightRefresh').off('click').on('click', function() {
+            if (!window.OrderProductSummarySplit.lastUsername) {
+                layer.msg('请先选择业务员', {icon: 2});
+                return;
+            }
+            window.OrderProductSummarySplit.loadUserProducts(window.OrderProductSummarySplit.lastUsername);
+        });
+    }
+
+    $('#showOrderProductSummaryBtn').off('click').on('click', function() {
+        var $btn = $(this);
+        var originalText = $btn.html();
+        $btn.prop('disabled', true).html('<i class="bi bi-hourglass-split"></i> 加载中...');
+        var loading = layer.load(2, {time: 30000});
+
+        window.OrderProductSummarySplit.lastTeamName = '';
+        window.OrderProductSummarySplit.lastUsername = '';
+        orderProductSummaryResetTimeFilterUI();
+        bindOrderProductSummaryEvents();
+        bindOrderProductSplitLayoutEvents();
+        loadOrderProductSummaryData();
+        $('#orderProductSummarySplitLayout').show();
 
         layer.close(loading);
         $btn.prop('disabled', false).html(originalText);
