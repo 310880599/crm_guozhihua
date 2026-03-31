@@ -3201,6 +3201,72 @@ private function exportToExcel($data)
     }
 
     /**
+     * 第三屏：指定团队的产品销量排行
+     */
+    public function getOrderProductTeamProducts()
+    {
+        $team_name = trim((string)Request::param('team_name', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+        $current_admin = Admin::getMyInfo();
+        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+
+        if (empty($orgUsernames)) {
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => [],
+                'summary' => ['team_product_count' => 0, 'total_sales_qty' => 0],
+            ]);
+        }
+
+        $team_name = $this->normalizeOrderProductTeamName($team_name);
+
+        try {
+            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+            $this->applyOrderProductSummaryTeamFilter($query, $team_name);
+            $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
+
+            $rows = $query
+                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty")
+                ->group("oi.product_name")
+                ->order("sale_qty desc, oi.product_name asc")
+                ->select();
+
+            $data = [];
+            $rank = 1;
+            $totalSalesQty = 0.0;
+            foreach ((array)$rows as $row) {
+                $qty = (float)($row['sale_qty'] ?? 0);
+                $totalSalesQty += $qty;
+                $data[] = [
+                    'rank' => $rank++,
+                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'sale_qty' => $qty,
+                ];
+            }
+
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => $data,
+                'summary' => [
+                    'team_product_count' => count($data),
+                    'total_sales_qty' => $totalSalesQty,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OrderProductSummary] getOrderProductTeamProducts failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '团队产品销量获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['team_product_count' => 0, 'total_sales_qty' => 0],
+            ]);
+        }
+    }
+
+    /**
      * 第三屏：指定业务员的产品销量排行
      */
     public function getOrderProductUserProducts()

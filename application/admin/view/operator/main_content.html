@@ -974,7 +974,7 @@
             <div id="orderProductUserPane" style="flex: 1; overflow-y: auto; padding: 20px;">
                 <div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;">
                     <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
-                    <p style="font-size: 16px; margin: 0;">请点击团队成员查看个人产品销量排行</p>
+                    <p style="font-size: 16px; margin: 0;">请点击团队或团队成员查看产品销量排行</p>
                 </div>
             </div>
             <div id="orderProductUserPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总销量 0</div>
@@ -1710,9 +1710,16 @@
             $(selector).html('合计：团队数 ' + teamCount + ' ｜ 成员数 ' + memberCount);
             return;
         }
-        var userKinds = summary && summary.user_product_count ? summary.user_product_count : 0;
-        var userQty = summary && summary.total_sales_qty ? summary.total_sales_qty : 0;
-        $(selector).html('合计：产品种类 ' + userKinds + ' ｜ 总销量 ' + userQty);
+        var productKinds = 0;
+        if (summary) {
+            if (summary.team_product_count !== undefined && summary.team_product_count !== null) {
+                productKinds = summary.team_product_count;
+            } else if (summary.user_product_count !== undefined && summary.user_product_count !== null) {
+                productKinds = summary.user_product_count;
+            }
+        }
+        var productQty = summary && summary.total_sales_qty ? summary.total_sales_qty : 0;
+        $(selector).html('合计：产品种类 ' + productKinds + ' ｜ 总销量 ' + productQty);
     }
 
     function renderOrderProductEmpty($container, text) {
@@ -1805,6 +1812,27 @@
         $('#orderProductUserPane').html(html);
     }
 
+    function renderOrderProductTeamProductPane(teamName, data) {
+        var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
+            + '<div style="padding: 15px 20px; border-bottom:1px solid #e9ecef; background:#f8f9fa;">团队：<strong>' + escapeHtml(teamName) + '</strong></div>'
+            + '<div style="padding: 20px; overflow-x: auto;">'
+            + '<table class="wukong-table" style="width:100%;">'
+            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th><th style="text-align:right;">销量</th></tr></thead><tbody>';
+        if (data && data.length) {
+            $.each(data, function(i, item) {
+                html += '<tr>'
+                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td>' + escapeHtml(item.product_name || '') + '</td>'
+                    + '<td style="text-align:right;">' + (item.sale_qty || 0) + '</td>'
+                    + '</tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">该团队暂无产品销量数据</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#orderProductUserPane').html(html);
+    }
+
     function getOrderProductTeamLinkByName(teamName) {
         var found = null;
         $('#orderProductTeamPane .order-product-team-clickable').each(function() {
@@ -1836,6 +1864,7 @@
     window.OrderProductSummarySplit = window.OrderProductSummarySplit || {
         lastTeamName: '',
         lastUsername: '',
+        lastViewMode: '',
         lastTimebucket: '',
         lastAtTime: '',
         teamRows: [],
@@ -1929,11 +1958,49 @@
             });
         },
 
+        loadTeamProducts: function(teamName) {
+            var self = this;
+            var normalizedTeamName = normalizeTeamName(teamName || '');
+            var params = getOrderProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTeamName = normalizedTeamName;
+            self.lastUsername = '';
+            self.lastViewMode = 'team';
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            $('#orderProductUserPaneTitle').text('👥 团队：' + normalizedTeamName + ' - 产品销量排行');
+            return $.ajax({
+                url: '{:url("Operator/getOrderProductTeamProducts")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time},
+            }).then(function(res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderOrderProductTeamProductPane(normalizedTeamName, res.data || []);
+                    updateOrderProductPaneSummary('#orderProductUserPaneSummary', res.summary || {});
+                } else {
+                    var bizMsg = res.msg || '获取团队产品销量失败';
+                    renderOrderProductEmpty($('#orderProductUserPane'), bizMsg);
+                    updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function(xhr, status) {
+                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取团队产品销量失败');
+                renderOrderProductEmpty($('#orderProductUserPane'), msg);
+                updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
         loadUserProducts: function(username) {
             var self = this;
             var params = getOrderProductSummaryTimeParams();
             if (!params) return $.Deferred().resolve(null).promise();
             self.lastUsername = (username || '').trim();
+            self.lastViewMode = 'user';
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
             $('#orderProductUserPaneTitle').text('👤 ' + self.lastUsername + ' - 产品销量排行');
@@ -1982,9 +2049,10 @@
                     $link.find('.order-product-team-arrow').removeClass('bi-caret-down-fill').addClass('bi-caret-right-fill');
                     self.lastTeamName = '';
                     self.lastUsername = '';
+                    self.lastViewMode = '';
                     $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
                     $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-                    renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+                    renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品销量排行');
                     updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                     $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
                     return;
@@ -1998,10 +2066,12 @@
                 $link.find('.order-product-team-arrow').removeClass('bi-caret-right-fill').addClass('bi-caret-down-fill');
 
                 self.lastUsername = '';
-                $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+                $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
+                $('#orderProductUserPaneTitle').text('👥 团队：' + teamName + ' - 产品销量排行');
+                renderOrderProductEmpty($('#orderProductUserPane'), '加载中...');
                 updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                 self.loadTeamMembers(teamName, false);
+                self.loadTeamProducts(teamName);
             });
         },
 
@@ -2010,6 +2080,11 @@
             $('#orderProductTeamPane').off('click', '.order-product-user-clickable').on('click', '.order-product-user-clickable', function() {
                 $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
                 $(this).addClass('is-active');
+                var $teamBlock = $(this).closest('.order-product-team-block');
+                var teamRaw = $teamBlock.find('.order-product-team-clickable').attr('data-team-encoded') || '';
+                var teamName = teamRaw;
+                try { teamName = decodeURIComponent(teamRaw); } catch(e) {}
+                self.lastTeamName = normalizeTeamName(teamName || '');
                 var raw = $(this).attr('data-username') || $(this).text().trim();
                 var username = raw;
                 try { username = decodeURIComponent(raw); } catch(e) {}
@@ -2032,10 +2107,11 @@
         window.OrderProductSummarySplit.lastAtTime = '';
         window.OrderProductSummarySplit.lastTeamName = '';
         window.OrderProductSummarySplit.lastUsername = '';
+        window.OrderProductSummarySplit.lastViewMode = '';
         window.OrderProductSummarySplit.teamMembersCache = {};
         $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
         $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-        renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+        renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品销量排行');
         updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
         $('#orderProductTeamPane .order-product-team-clickable').removeClass('is-active');
         $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
@@ -2045,6 +2121,7 @@
         var self = window.OrderProductSummarySplit;
         var prevTeam = (self.lastTeamName || '').trim();
         var prevUser = (self.lastUsername || '').trim();
+        var prevViewMode = (self.lastViewMode || '').trim();
         var timeParams = getOrderProductSummaryTimeParams();
         if (!timeParams) return;
 
@@ -2059,9 +2136,10 @@
             if (!prevTeam || !teamExists) {
                 self.lastTeamName = '';
                 self.lastUsername = '';
+                self.lastViewMode = '';
                 $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
                 $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
+                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品销量排行');
                 updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                 return null;
             }
@@ -2094,14 +2172,14 @@
                         $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
                         $userLink.addClass('is-active');
                     }
-                    return self.loadUserProducts(prevUser);
+                    if (prevViewMode === 'user') {
+                        return self.loadUserProducts(prevUser);
+                    }
                 }
 
                 self.lastUsername = '';
-                $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队成员查看个人产品销量排行');
-                updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
-                return null;
+                $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
+                return self.loadTeamProducts(prevTeam);
             });
         });
     }
@@ -2210,11 +2288,20 @@
             window.OrderProductSummarySplit.loadTeamMembers(window.OrderProductSummarySplit.lastTeamName, true);
         });
         $('#orderProductSplitRightRefresh').off('click').on('click', function() {
-            if (!window.OrderProductSummarySplit.lastUsername) {
-                layer.msg('请先选择业务员', {icon: 2});
+            var self = window.OrderProductSummarySplit;
+            if (self.lastViewMode === 'user') {
+                if (!self.lastUsername) {
+                    layer.msg('请先选择业务员', {icon: 2});
+                    return;
+                }
+                self.loadUserProducts(self.lastUsername);
                 return;
             }
-            window.OrderProductSummarySplit.loadUserProducts(window.OrderProductSummarySplit.lastUsername);
+            if (self.lastTeamName) {
+                self.loadTeamProducts(self.lastTeamName);
+                return;
+            }
+            layer.msg('请先选择团队', {icon: 2});
         });
     }
 
@@ -2226,6 +2313,7 @@
 
         window.OrderProductSummarySplit.lastTeamName = '';
         window.OrderProductSummarySplit.lastUsername = '';
+        window.OrderProductSummarySplit.lastViewMode = '';
         orderProductSummaryResetTimeFilterUI();
         bindOrderProductSummaryEvents();
         bindOrderProductSplitLayoutEvents();
