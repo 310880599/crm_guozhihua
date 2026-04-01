@@ -2247,6 +2247,14 @@ private function exportToExcel($data)
         $month_keys = trim((string)Request::param('month_keys', ''));
         $filter_username = Request::param('username', '');
 
+        $empty_summary = [
+            'total_profit' => number_format(0, 2),
+            'total_money'  => number_format(0, 2),
+            'profit_rate'  => number_format(0, 2),
+        ];
+
+        try {
+
         // 需要从业绩表中排除的业务员（按姓名匹配）
         // 后续只需要在这里增删名字即可控制显示范围
         $excludeUsernames = [
@@ -2265,12 +2273,6 @@ private function exportToExcel($data)
         $excludeMap = array_fill_keys($excludeUsernames, true);
 
         $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username, $month_keys);
-
-        $empty_summary = [
-            'total_profit' => number_format(0, 2),
-            'total_money'  => number_format(0, 2),
-            'profit_rate'  => number_format(0, 2),
-        ];
 
         // 1) summary：与订单列表 totalProfit/totalMoney 同源（对整批 where 求和，不受补零行影响）
         $totalsQuery = Db::table('crm_client_order');
@@ -2418,6 +2420,15 @@ private function exportToExcel($data)
                 'profit_rate' => number_format($sum_rate_all, 2),
             ],
         ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[Performance] getPerformanceData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '获取业务人员业绩数据失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => $empty_summary,
+            ]);
+        }
     }
 
     /**
@@ -2603,7 +2614,14 @@ private function exportToExcel($data)
             $query->where($this->getOrgWhere($org));
         }
         $rows = $query->select();
-        return $rows ? array_filter(array_column($rows, 'username')) : [];
+        if (empty($rows)) {
+            return [];
+        }
+        $usernames = array_map(function ($username) {
+            return trim((string)$username);
+        }, array_column($rows, 'username'));
+        $usernames = array_values(array_unique(array_filter($usernames)));
+        return $usernames;
     }
 
     /**
@@ -2617,26 +2635,28 @@ private function exportToExcel($data)
         $timebucket = Request::param('timebucket', '');
         $at_time    = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
+        $emptySummary = ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00'];
 
-        $current_admin = Admin::getMyInfo();
+        try {
+            $current_admin = Admin::getMyInfo();
 
-        // 组织内全部 username，与订单列表口径一致（不限制 group_id，避免漏掉 17/18 等真实成员）
-        $usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-        if (empty($usernames)) {
-            return json([
-                'code' => 0,
-                'msg' => '获取成功',
-                'data' => [],
-                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
-            ]);
-        }
+            // 组织内全部 username，与订单列表口径一致（不限制 group_id，避免漏掉 17/18 等真实成员）
+            $usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
+            if (empty($usernames)) {
+                return json([
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'data' => [],
+                    'summary' => $emptySummary
+                ]);
+            }
 
-        $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-            ->where('pr_user', 'in', $usernames)
-            ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
-            ->group('team_name')
-            ->order('total_profit desc')
-            ->select();
+            $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
+                ->whereIn('pr_user', $usernames)
+                ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
+                ->group('team_name')
+                ->order('total_profit desc')
+                ->select();
 
         $result = [];
         $sum_profit = 0;
@@ -2664,16 +2684,25 @@ private function exportToExcel($data)
         unset($item);
 
         $sum_rate = $sum_money > 0 ? round($sum_profit / $sum_money * 100, 2) : 0;
-        return json([
-            'code' => 0,
-            'msg' => '获取成功',
-            'data' => $result,
-            'summary' => [
-                'total_profit' => number_format($sum_profit, 2),
-                'total_money'  => number_format($sum_money, 2),
-                'profit_rate'  => number_format($sum_rate, 2),
-            ]
-        ]);
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $result,
+                'summary' => [
+                    'total_profit' => number_format($sum_profit, 2),
+                    'total_money'  => number_format($sum_money, 2),
+                    'profit_rate'  => number_format($sum_rate, 2),
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[Performance] getTeamPerformanceData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '获取团队业绩数据失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => $emptySummary
+            ]);
+        }
     }
 
     /**
@@ -2706,8 +2735,10 @@ private function exportToExcel($data)
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
+        $emptySummary = ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00'];
 
-        $current_admin = Admin::getMyInfo();
+        try {
+            $current_admin = Admin::getMyInfo();
 
         // 1) 组织权限内的全部 username（与订单列表一致，不限制 group_id）
         $org_usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
@@ -2715,14 +2746,14 @@ private function exportToExcel($data)
         // 标准化：空/null/空格/"未分组" 都视为未分组
         $is_ungrouped = ($team_name === '' || $team_name === '未分组');
 
-        if (empty($org_usernames)) {
-            return json([
-                'code' => 200,
-                'msg' => 'ok',
-                'data' => [],
-                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
-            ]);
-        }
+            if (empty($org_usernames)) {
+                return json([
+                    'code' => 200,
+                    'msg' => 'ok',
+                    'data' => [],
+                    'summary' => $emptySummary
+                ]);
+            }
 
         // 2) 先从 admin 表取该团队的业务员用户名集合（组织权限内）
         $team_usernames_query = Db::name('admin')
@@ -2738,14 +2769,14 @@ private function exportToExcel($data)
         $team_usernames = $team_usernames ? array_values(array_filter($team_usernames)) : [];
 
         // 该团队没有成员：优雅返回空数据
-        if (empty($team_usernames)) {
-            return json([
-                'code' => 200,
-                'msg' => 'ok',
-                'data' => [],
-                'summary' => ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00']
-            ]);
-        }
+            if (empty($team_usernames)) {
+                return json([
+                    'code' => 200,
+                    'msg' => 'ok',
+                    'data' => [],
+                    'summary' => $emptySummary
+                ]);
+            }
 
         // 3) 按成员用户名集合统计订单（不要依赖订单表 team_name，避免历史脏数据/不同步）
         $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
@@ -2807,16 +2838,25 @@ private function exportToExcel($data)
         unset($item);
 
         $sum_rate = $sum_money > 0 ? round($sum_profit / $sum_money * 100, 2) : 0;
-        return json([
-            'code' => 200,
-            'msg' => 'ok',
-            'data' => $result,
-            'summary' => [
-                'total_profit' => number_format($sum_profit, 2),
-                'total_money'  => number_format($sum_money, 2),
-                'profit_rate'  => number_format($sum_rate, 2),
-            ]
-        ]);
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => $result,
+                'summary' => [
+                    'total_profit' => number_format($sum_profit, 2),
+                    'total_money'  => number_format($sum_money, 2),
+                    'profit_rate'  => number_format($sum_rate, 2),
+                ]
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[Performance] getTeamMemberPerformanceData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '获取团队成员业绩数据失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => $emptySummary
+            ]);
+        }
     }
 
     /**
@@ -3002,7 +3042,8 @@ private function exportToExcel($data)
      */
     private function applySafeDateRangeWhereRaw($query, string $fieldExpr, string $startAt, string $endAt)
     {
-        $query->whereRaw($fieldExpr . ' BETWEEN ? AND ?', [$startAt, $endAt]);
+        // 避免 whereRaw 占位符绑定错位，统一走构造器参数绑定
+        $query->where($fieldExpr, '>=', $startAt)->where($fieldExpr, '<=', $endAt);
         return $query;
     }
 
@@ -3078,8 +3119,15 @@ private function exportToExcel($data)
         if (!empty($monthRanges)) {
             $query->where(function ($monthOrQuery) use ($monthRanges, $fieldExpr) {
                 foreach ($monthRanges as $idx => $range) {
-                    $method = $idx === 0 ? 'whereRaw' : 'whereOrRaw';
-                    $monthOrQuery->{$method}('(' . $fieldExpr . ' BETWEEN ? AND ?)', [$range['start'], $range['end']]);
+                    if ($idx === 0) {
+                        $monthOrQuery->where(function ($subQuery) use ($fieldExpr, $range) {
+                            $subQuery->where($fieldExpr, '>=', $range['start'])->where($fieldExpr, '<=', $range['end']);
+                        });
+                    } else {
+                        $monthOrQuery->whereOr(function ($subQuery) use ($fieldExpr, $range) {
+                            $subQuery->where($fieldExpr, '>=', $range['start'])->where($fieldExpr, '<=', $range['end']);
+                        });
+                    }
                 }
             });
             return $query;
@@ -3141,7 +3189,11 @@ private function exportToExcel($data)
 
         $query->where('o.check_status', '=', 2);
         $this->applyOrderProductSummaryTimeFilter($query, $timebucket, $at_time, $month_keys);
-        $query->where('o.pr_user', 'in', $orgUsernames);
+        if (empty($orgUsernames)) {
+            $query->whereRaw('1=0');
+            return $query;
+        }
+        $query->whereIn('o.pr_user', $orgUsernames);
         $query->whereRaw("TRIM(IFNULL(oi.product_name, '')) <> ''");
 
         return $query;
@@ -3154,7 +3206,7 @@ private function exportToExcel($data)
     {
         $teamName = $this->normalizeOrderProductTeamName($teamName);
         $teamExpr = $this->getOrderProductSummaryTeamExpr();
-        $query->whereRaw($teamExpr . " = ?", [$teamName]);
+        $query->whereRaw($teamExpr . " = :team_name", ['team_name' => $teamName]);
         return $query;
     }
 
@@ -3263,6 +3315,15 @@ private function exportToExcel($data)
                 'code' => 500,
                 'msg' => '订单产品汇总获取失败：' . $e->getMessage(),
                 'data' => ['products' => [], 'teams' => []],
+                'summary' => [
+                    'company' => [
+                        'total_product_count' => 0,
+                        'total_sales_qty' => 0,
+                        'total_profit_raw' => 0,
+                        'total_profit' => number_format(0, 2, '.', ','),
+                    ],
+                    'team' => ['team_count' => 0, 'member_count' => 0],
+                ],
             ]);
         }
     }
@@ -3331,6 +3392,7 @@ private function exportToExcel($data)
                 'code' => 500,
                 'msg' => '团队成员获取失败：' . $e->getMessage(),
                 'data' => [],
+                'summary' => ['team_count' => 0, 'member_count' => 0, 'total_sales_qty' => 0],
             ]);
         }
     }
