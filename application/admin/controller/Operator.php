@@ -2937,8 +2937,55 @@ private function exportToExcel($data)
     /**
      * 订单产品汇总：专用时间过滤（避免通用 where 结构在 join/alias 场景下歧义）
      */
-    private function applyOrderProductSummaryTimeFilter($query, string $timebucket = '', string $at_time = '')
+    private function parseOrderProductSummaryMonthKeys(string $month_keys = ''): array
     {
+        $month_keys = trim($month_keys);
+        if ($month_keys === '') {
+            return [];
+        }
+
+        $items = explode(',', $month_keys);
+        $ranges = [];
+        $seen = [];
+        foreach ($items as $item) {
+            $monthKey = trim((string)$item);
+            if ($monthKey === '' || isset($seen[$monthKey])) {
+                continue;
+            }
+            if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $monthKey)) {
+                continue;
+            }
+            $monthStartTs = strtotime($monthKey . '-01 00:00:00');
+            if ($monthStartTs === false) {
+                continue;
+            }
+            $ranges[] = [
+                'key' => $monthKey,
+                'start' => date('Y-m-01 00:00:00', $monthStartTs),
+                'end' => date('Y-m-t 23:59:59', $monthStartTs),
+            ];
+            $seen[$monthKey] = true;
+        }
+
+        return $ranges;
+    }
+
+    private function applyOrderProductSummaryTimeFilter($query, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    {
+        $monthRanges = $this->parseOrderProductSummaryMonthKeys($month_keys);
+        if (!empty($monthRanges)) {
+            $query->where(function ($monthOrQuery) use ($monthRanges) {
+                foreach ($monthRanges as $idx => $range) {
+                    $method = $idx === 0 ? 'where' : 'whereOr';
+                    $monthOrQuery->{$method}(function ($monthQuery) use ($range) {
+                        $monthQuery->where('o.order_time', '>=', $range['start']);
+                        $monthQuery->where('o.order_time', '<=', $range['end']);
+                    });
+                }
+            });
+            return $query;
+        }
+
         // 自定义时间范围优先：YYYY-MM-DD,YYYY-MM-DD
         if ($at_time !== '' && strpos($at_time, ',') !== false) {
             $dateParts = explode(',', $at_time);
@@ -3004,9 +3051,9 @@ private function exportToExcel($data)
     /**
      * 订单产品汇总：公司/个人产品销量聚合
      */
-    private function buildOrderProductSummaryProductSalesQuery(array $orgUsernames, string $timebucket = '', string $at_time = '')
+    private function buildOrderProductSummaryProductSalesQuery(array $orgUsernames, string $timebucket = '', string $at_time = '', string $month_keys = '')
     {
-        return $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time)
+        return $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys)
             ->field('oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit')
             ->group('oi.product_name')
             ->order('total_profit desc, sale_qty desc, oi.product_name asc');
@@ -3018,14 +3065,14 @@ private function exportToExcel($data)
      * - 关联：crm_client_order
      * - 时间/状态：专用过滤（check_status=2 + order_time）
      */
-    private function buildOrderProductSummaryBaseQuery(array $orgUsernames, string $timebucket = '', string $at_time = '')
+    private function buildOrderProductSummaryBaseQuery(array $orgUsernames, string $timebucket = '', string $at_time = '', string $month_keys = '')
     {
         $query = Db::table('crm_order_item')->alias('oi')
             ->join('crm_client_order o', 'oi.order_id = o.id', 'INNER')
             ->leftJoin('admin a', 'o.pr_user = a.username');
 
         $query->where('o.check_status', '=', 2);
-        $this->applyOrderProductSummaryTimeFilter($query, $timebucket, $at_time);
+        $this->applyOrderProductSummaryTimeFilter($query, $timebucket, $at_time, $month_keys);
         $query->where('o.pr_user', 'in', $orgUsernames);
         $query->whereRaw("TRIM(IFNULL(oi.product_name, '')) <> ''");
 
@@ -3050,6 +3097,7 @@ private function exportToExcel($data)
     {
         $timebucket = Request::param('timebucket', '');
         $at_time    = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
         $current_admin = Admin::getMyInfo();
         $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
 
@@ -3073,7 +3121,7 @@ private function exportToExcel($data)
         try {
             $teamExpr = $this->getOrderProductSummaryTeamExpr();
 
-            $productRows = $this->buildOrderProductSummaryProductSalesQuery($orgUsernames, $timebucket, $at_time)
+            $productRows = $this->buildOrderProductSummaryProductSalesQuery($orgUsernames, $timebucket, $at_time, $month_keys)
                 ->select();
 
             $products = [];
@@ -3095,7 +3143,7 @@ private function exportToExcel($data)
                 ];
             }
 
-            $teamRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time)
+            $teamRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys)
                 ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
                 ->field($teamExpr . " as team_name, SUM(IFNULL(oi.qty,0)) as sale_qty, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
                 ->group($teamExpr)
@@ -3114,7 +3162,7 @@ private function exportToExcel($data)
                 ];
             }
 
-            $memberRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time)
+            $memberRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys)
                 ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
                 ->field("TRIM(o.pr_user) as username")
                 ->group("TRIM(o.pr_user)")
@@ -3160,6 +3208,7 @@ private function exportToExcel($data)
         $team_name = trim((string)Request::param('team_name', ''));
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
         $current_admin = Admin::getMyInfo();
         $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
 
@@ -3175,7 +3224,7 @@ private function exportToExcel($data)
         $team_name = $this->normalizeOrderProductTeamName($team_name);
 
         try {
-            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
             $this->applyOrderProductSummaryTeamFilter($query, $team_name);
             $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
 
@@ -3226,6 +3275,7 @@ private function exportToExcel($data)
         $team_name = trim((string)Request::param('team_name', ''));
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
         $current_admin = Admin::getMyInfo();
         $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
 
@@ -3247,7 +3297,7 @@ private function exportToExcel($data)
         $team_name = $this->normalizeOrderProductTeamName($team_name);
 
         try {
-            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
             $this->applyOrderProductSummaryTeamFilter($query, $team_name);
             $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
 
@@ -3313,6 +3363,7 @@ private function exportToExcel($data)
         $username = trim((string)Request::param('username', ''));
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
         $current_admin = Admin::getMyInfo();
         $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
 
@@ -3347,7 +3398,7 @@ private function exportToExcel($data)
         }
 
         try {
-            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time);
+            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
             $query->where('o.pr_user', '=', $username);
 
             $rows = $query

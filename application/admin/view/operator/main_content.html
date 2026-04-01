@@ -168,6 +168,47 @@
         padding: 2px 6px;
         border-radius: 4px;
     }
+    #orderProductSummarySplitLayout .order-product-month-shortcut-wrap {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    #orderProductSummarySplitLayout .order-product-month-shortcut-label {
+        margin: 0;
+        white-space: nowrap;
+        color: #0f766e;
+        font-weight: 600;
+    }
+    #orderProductSummarySplitLayout .order-product-month-shortcut-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    #orderProductSummarySplitLayout .order-product-month-btn {
+        min-width: 48px;
+        height: 30px;
+        padding: 0 10px;
+        border: 1px solid #99f6e4;
+        border-radius: 6px;
+        background: #f0fdfa;
+        color: #0f766e;
+        font-size: 12px;
+        line-height: 28px;
+        cursor: pointer;
+        transition: all .15s ease;
+    }
+    #orderProductSummarySplitLayout .order-product-month-btn:hover {
+        border-color: #14b8a6;
+        background: #ccfbf1;
+    }
+    #orderProductSummarySplitLayout .order-product-month-btn.is-active {
+        border-color: #0f766e;
+        background: linear-gradient(135deg, #14b8a6, #0f766e);
+        color: #fff;
+        box-shadow: 0 1px 2px rgba(15, 118, 110, .25);
+    }
 
     /* ========== 运营询盘汇总三连屏主题（仅 #operationInquirySummarySplitLayout） ========== */
     #operationInquirySummarySplitLayout {
@@ -933,6 +974,23 @@
                     <span>至</span>
                     <input type="date" id="orderProductSummaryEndDate" class="form-control" style="width: 150px;">
                 </div>
+                <div id="orderProductSummaryMonthShortcutWrap" class="order-product-month-shortcut-wrap">
+                    <label class="order-product-month-shortcut-label">月份快捷：</label>
+                    <div class="order-product-month-shortcut-buttons">
+                        <button type="button" class="order-product-month-btn" data-month="1">1月</button>
+                        <button type="button" class="order-product-month-btn" data-month="2">2月</button>
+                        <button type="button" class="order-product-month-btn" data-month="3">3月</button>
+                        <button type="button" class="order-product-month-btn" data-month="4">4月</button>
+                        <button type="button" class="order-product-month-btn" data-month="5">5月</button>
+                        <button type="button" class="order-product-month-btn" data-month="6">6月</button>
+                        <button type="button" class="order-product-month-btn" data-month="7">7月</button>
+                        <button type="button" class="order-product-month-btn" data-month="8">8月</button>
+                        <button type="button" class="order-product-month-btn" data-month="9">9月</button>
+                        <button type="button" class="order-product-month-btn" data-month="10">10月</button>
+                        <button type="button" class="order-product-month-btn" data-month="11">11月</button>
+                        <button type="button" class="order-product-month-btn" data-month="12">12月</button>
+                    </div>
+                </div>
                 <button type="button" class="btn btn-primary btn-sm" id="orderProductSummaryFilterBtn" style="margin-left: auto;">
                     <i class="bi bi-search"></i> 筛选
                 </button>
@@ -1678,10 +1736,43 @@
         $btn.prop('disabled', false).html(originalText);
     });
 
+    function getOrderProductSummaryMonthKeys() {
+        var year = (new Date()).getFullYear();
+        var monthNums = [];
+        $('#orderProductSummaryMonthShortcutWrap .order-product-month-btn.is-active').each(function() {
+            var raw = ($(this).attr('data-month') || '').trim();
+            var monthNum = parseInt(raw, 10);
+            if (!isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
+                monthNums.push(monthNum);
+            }
+        });
+        if (!monthNums.length) return '';
+        monthNums.sort(function(a, b) { return a - b; });
+        var keys = [];
+        var seen = {};
+        $.each(monthNums, function(_, monthNum) {
+            var mm = monthNum < 10 ? ('0' + monthNum) : String(monthNum);
+            var key = year + '-' + mm;
+            if (!seen[key]) {
+                seen[key] = true;
+                keys.push(key);
+            }
+        });
+        return keys.join(',');
+    }
+
+    function clearOrderProductSummaryMonthShortcutSelection() {
+        $('#orderProductSummaryMonthShortcutWrap .order-product-month-btn').removeClass('is-active');
+    }
+
     function getOrderProductSummaryTimeParams() {
         var timeFilter = ($('#orderProductSummaryTimeFilter').val() || 'month').trim();
         var timebucket = '';
         var at_time = '';
+        var month_keys = getOrderProductSummaryMonthKeys();
+        if (month_keys) {
+            return {timebucket: '', at_time: '', month_keys: month_keys};
+        }
         if (timeFilter === 'custom') {
             var startDate = ($('#orderProductSummaryStartDate').val() || '').trim();
             var endDate = ($('#orderProductSummaryEndDate').val() || '').trim();
@@ -1694,7 +1785,7 @@
         } else {
             timebucket = timeFilter || 'month';
         }
-        return {timebucket: timebucket, at_time: at_time};
+        return {timebucket: timebucket, at_time: at_time, month_keys: ''};
     }
 
     // ===== [开始] 订单产品汇总第一屏利润/销量排序改造 =====
@@ -2031,6 +2122,7 @@
         lastViewMode: '',
         lastTimebucket: '',
         lastAtTime: '',
+        lastMonthKeys: '',
         companySortField: 'total_profit',
         companySortOrder: 'desc',
         companyProductsRaw: [],
@@ -2046,6 +2138,7 @@
             if (!params) return $.Deferred().resolve(null).promise();
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             return $.ajax({
                 url: '{:url("Operator/getOrderProductSummaryData")}',
                 type: 'POST',
@@ -2092,6 +2185,7 @@
             self.lastTeamName = normalizedTeamName;
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             $('#orderProductTeamPaneTitle').text('👥 团队：' + normalizedTeamName + ' - 成员列表');
 
             if (!forceReload && self.teamMembersCache[normalizedTeamName]) {
@@ -2109,7 +2203,7 @@
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time},
+                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
                     var rows = res.data || [];
@@ -2140,6 +2234,7 @@
             self.lastViewMode = 'team';
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             resetOrderProductDetailSortState();
             self.userProductsRaw = [];
             $('#orderProductUserPaneTitle').text('👥 团队：' + normalizedTeamName + ' - 产品利润/销量排行');
@@ -2148,7 +2243,7 @@
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time},
+                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
                     renderOrderProductTeamProductPane(normalizedTeamName, res.data || []);
@@ -2177,6 +2272,7 @@
             self.lastViewMode = 'user';
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             resetOrderProductDetailSortState();
             self.userProductsRaw = [];
             $('#orderProductUserPaneTitle').text('👤 成员：' + self.lastUsername + ' - 产品利润/销量排行');
@@ -2185,7 +2281,7 @@
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {username: self.lastUsername, timebucket: params.timebucket, at_time: params.at_time},
+                data: {username: self.lastUsername, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
                     renderOrderProductUserPane(self.lastUsername, res.data || []);
@@ -2280,9 +2376,11 @@
         $('#orderProductSummaryStartDate').val('');
         $('#orderProductSummaryEndDate').val('');
         $('#orderProductSummaryCustomTimeRange').css('display', 'none');
+        clearOrderProductSummaryMonthShortcutSelection();
 
         window.OrderProductSummarySplit.lastTimebucket = '';
         window.OrderProductSummarySplit.lastAtTime = '';
+        window.OrderProductSummarySplit.lastMonthKeys = '';
         window.OrderProductSummarySplit.lastTeamName = '';
         window.OrderProductSummarySplit.lastUsername = '';
         window.OrderProductSummarySplit.lastViewMode = '';
@@ -2373,12 +2471,30 @@
     function bindOrderProductSummaryEvents() {
         $('#orderProductSummaryTimeFilter').off('change.orderProductTimeFilter').on('change.orderProductTimeFilter', function () {
             var val = ($(this).val() || '').trim();
+            clearOrderProductSummaryMonthShortcutSelection();
             if (val === 'custom') {
                 $('#orderProductSummaryCustomTimeRange').css('display', 'flex');
             } else {
                 $('#orderProductSummaryCustomTimeRange').css('display', 'none');
             }
         });
+        $('#orderProductSummaryMonthShortcutWrap').off('click.orderProductMonthBtn', '.order-product-month-btn').on('click.orderProductMonthBtn', '.order-product-month-btn', function () {
+            $(this).toggleClass('is-active');
+            var monthKeys = getOrderProductSummaryMonthKeys();
+            if (monthKeys) {
+                $('#orderProductSummaryStartDate').val('');
+                $('#orderProductSummaryEndDate').val('');
+                $('#orderProductSummaryCustomTimeRange').css('display', 'none');
+                if (($('#orderProductSummaryTimeFilter').val() || '').trim() === 'custom') {
+                    $('#orderProductSummaryTimeFilter').val('month');
+                }
+            }
+        });
+        $('#orderProductSummaryStartDate, #orderProductSummaryEndDate')
+            .off('change.orderProductCustomDateInput')
+            .on('change.orderProductCustomDateInput', function () {
+                clearOrderProductSummaryMonthShortcutSelection();
+            });
 
         $('#orderProductSummaryFilterBtn').off('click.orderProductFilterBtn').on('click.orderProductFilterBtn', function () {
             orderProductSummaryApplyTimeFilterAndLinkage();
