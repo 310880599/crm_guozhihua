@@ -909,7 +909,7 @@
     <div class="split-wrap order-product-split-wrap" style="display: flex; height: 100%; width: 100%; overflow: hidden;">
         <div class="split-left order-product-split-left" style="width: 30%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
             <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #0f766e, #14b8a6); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
-                <span style="font-size: 16px; font-weight: 600;">📦 公司产品销量排行</span>
+                <span style="font-size: 16px; font-weight: 600;">📦 公司产品利润/销量排行</span>
                 <div>
                     <button class="btn btn-sm btn-light" id="orderProductSplitLeftMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
                     <button class="btn btn-sm btn-light" id="orderProductSplitLeftCollapse" title="收起/展开"><i class="bi bi-chevron-left"></i></button>
@@ -941,7 +941,7 @@
                 </button>
             </div>
             <div id="orderProductCompanyPane" style="flex: 1; overflow-y: auto; padding: 20px;"></div>
-            <div id="orderProductCompanyPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总销量 0</div>
+            <div id="orderProductCompanyPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总利润 0.00 ｜ 总销量 0</div>
         </div>
 
         <div class="split-mid order-product-split-mid" style="width: 35%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
@@ -1697,11 +1697,87 @@
         return {timebucket: timebucket, at_time: at_time};
     }
 
+    // ===== [开始] 订单产品汇总第一屏利润/销量排序改造 =====
+    function toOrderProductNumber(val) {
+        if (typeof val === 'number') {
+            return isFinite(val) ? val : 0;
+        }
+        if (val === null || val === undefined) return 0;
+        var parsed = parseFloat(String(val).replace(/,/g, ''));
+        return isNaN(parsed) ? 0 : parsed;
+    }
+
+    function formatOrderProductAmount2(val) {
+        var n = toOrderProductNumber(val);
+        var parts = n.toFixed(2).split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return parts.join('.');
+    }
+
+    function formatOrderProductQty(val) {
+        var n = toOrderProductNumber(val);
+        if (Math.abs(n - Math.round(n)) < 0.0000001) {
+            return String(Math.round(n));
+        }
+        return String(parseFloat(n.toFixed(4)));
+    }
+
+    function getOrderProductCompanySortValue(item, field) {
+        if (field === 'total_profit') {
+            if (item.total_profit_raw !== undefined && item.total_profit_raw !== null) {
+                return toOrderProductNumber(item.total_profit_raw);
+            }
+            return toOrderProductNumber(item.total_profit);
+        }
+        if (item.sale_qty_raw !== undefined && item.sale_qty_raw !== null) {
+            return toOrderProductNumber(item.sale_qty_raw);
+        }
+        return toOrderProductNumber(item.sale_qty);
+    }
+
+    function sortOrderProductCompanyRows(data, sortField, sortOrder) {
+        var rows = Array.isArray(data) ? data.slice() : [];
+        rows.sort(function(a, b) {
+            var orderSign = sortOrder === 'asc' ? 1 : -1;
+            var aPrimary = getOrderProductCompanySortValue(a, sortField);
+            var bPrimary = getOrderProductCompanySortValue(b, sortField);
+            if (aPrimary !== bPrimary) {
+                return (aPrimary - bPrimary) * orderSign;
+            }
+
+            var aProfit = getOrderProductCompanySortValue(a, 'total_profit');
+            var bProfit = getOrderProductCompanySortValue(b, 'total_profit');
+            var aQty = getOrderProductCompanySortValue(a, 'sale_qty');
+            var bQty = getOrderProductCompanySortValue(b, 'sale_qty');
+            if (sortField === 'total_profit') {
+                if (aQty !== bQty) return bQty - aQty;
+            } else {
+                if (aProfit !== bProfit) return bProfit - aProfit;
+            }
+
+            var aName = $.trim((a && a.product_name) ? String(a.product_name) : '');
+            var bName = $.trim((b && b.product_name) ? String(b.product_name) : '');
+            return aName.localeCompare(bName, 'zh-CN');
+        });
+        return rows;
+    }
+
+    function buildOrderProductSortIndicator(field) {
+        var split = window.OrderProductSummarySplit = window.OrderProductSummarySplit || {};
+        if ((split.companySortField || 'total_profit') !== field) {
+            return '<span style="opacity:.45;margin-left:4px;">↕</span>';
+        }
+        return (split.companySortOrder || 'desc') === 'asc'
+            ? '<span style="margin-left:4px;">↑</span>'
+            : '<span style="margin-left:4px;">↓</span>';
+    }
+
     function updateOrderProductPaneSummary(selector, summary) {
         if (selector === '#orderProductCompanyPaneSummary') {
             var companyKinds = summary && summary.total_product_count ? summary.total_product_count : 0;
-            var companyQty = summary && summary.total_sales_qty ? summary.total_sales_qty : 0;
-            $(selector).html('合计：产品种类 ' + companyKinds + ' ｜ 总销量 ' + companyQty);
+            var companyProfitRaw = summary && summary.total_profit_raw !== undefined ? summary.total_profit_raw : 0;
+            var companyQty = summary && summary.total_sales_qty !== undefined ? summary.total_sales_qty : 0;
+            $(selector).html('合计：产品种类 ' + companyKinds + ' ｜ 总利润 ' + formatOrderProductAmount2(companyProfitRaw) + ' ｜ 总销量 ' + formatOrderProductQty(companyQty));
             return;
         }
         if (selector === '#orderProductTeamPaneSummary') {
@@ -1727,24 +1803,50 @@
     }
 
     function renderOrderProductCompanyPane(data) {
+        var split = window.OrderProductSummarySplit = window.OrderProductSummarySplit || {};
+        if (Array.isArray(data)) {
+            split.companyProductsRaw = data.slice();
+        }
+        split.companySortField = split.companySortField || 'total_profit';
+        split.companySortOrder = split.companySortOrder || 'desc';
+        var rows = sortOrderProductCompanyRows(split.companyProductsRaw || [], split.companySortField, split.companySortOrder);
         var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
             + '<div style="padding: 20px; overflow-x: auto;">'
             + '<table class="wukong-table" style="width:100%;">'
-            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th><th style="text-align:right;">销量</th></tr></thead><tbody>';
-        if (data && data.length) {
-            $.each(data, function(i, item) {
+            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th>'
+            + '<th style="text-align:right;"><a href="javascript:void(0);" class="order-product-company-sort" data-sort-field="total_profit" style="color:inherit;text-decoration:none;">利润' + buildOrderProductSortIndicator('total_profit') + '</a></th>'
+            + '<th style="text-align:right;"><a href="javascript:void(0);" class="order-product-company-sort" data-sort-field="sale_qty" style="color:inherit;text-decoration:none;">销量' + buildOrderProductSortIndicator('sale_qty') + '</a></th>'
+            + '</tr></thead><tbody>';
+        if (rows && rows.length) {
+            $.each(rows, function(i, item) {
+                var saleQtyRaw = item.sale_qty_raw !== undefined ? item.sale_qty_raw : item.sale_qty;
+                var totalProfitRaw = item.total_profit_raw !== undefined ? item.total_profit_raw : item.total_profit;
                 html += '<tr>'
-                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td>' + (i + 1) + '</td>'
                     + '<td>' + escapeHtml(item.product_name || '') + '</td>'
-                    + '<td style="text-align:right;">' + (item.sale_qty || 0) + '</td>'
+                    + '<td style="text-align:right;">' + formatOrderProductAmount2(totalProfitRaw) + '</td>'
+                    + '<td style="text-align:right;">' + formatOrderProductQty(saleQtyRaw) + '</td>'
                     + '</tr>';
             });
         } else {
-            html += '<tr><td colspan="3" class="text-center text-muted">暂无订单产品销量数据</td></tr>';
+            html += '<tr><td colspan="4" class="text-center text-muted">暂无订单产品销量数据</td></tr>';
         }
         html += '</tbody></table></div></div>';
         $('#orderProductCompanyPane').html(html);
+
+        $('#orderProductCompanyPane').off('click.orderProductCompanySort', '.order-product-company-sort').on('click.orderProductCompanySort', '.order-product-company-sort', function() {
+            var field = ($(this).attr('data-sort-field') || '').trim();
+            if (!field) return;
+            if (split.companySortField === field) {
+                split.companySortOrder = split.companySortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                split.companySortField = field;
+                split.companySortOrder = 'desc';
+            }
+            renderOrderProductCompanyPane();
+        });
     }
+    // ===== [结束] 订单产品汇总第一屏利润/销量排序改造 =====
 
     function renderOrderProductTeamPane(data) {
         if (!data || !data.length) {
@@ -1867,6 +1969,9 @@
         lastViewMode: '',
         lastTimebucket: '',
         lastAtTime: '',
+        companySortField: 'total_profit',
+        companySortOrder: 'desc',
+        companyProductsRaw: [],
         teamRows: [],
         teamMembersCache: {},
 
@@ -1885,6 +1990,8 @@
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
                     var payload = res.data || {};
+                    self.companySortField = self.companySortField || 'total_profit';
+                    self.companySortOrder = self.companySortOrder || 'desc';
                     self.teamRows = payload.teams || [];
                     self.teamMembersCache = {};
                     renderOrderProductCompanyPane(payload.products || []);
@@ -2108,6 +2215,9 @@
         window.OrderProductSummarySplit.lastTeamName = '';
         window.OrderProductSummarySplit.lastUsername = '';
         window.OrderProductSummarySplit.lastViewMode = '';
+        window.OrderProductSummarySplit.companySortField = 'total_profit';
+        window.OrderProductSummarySplit.companySortOrder = 'desc';
+        window.OrderProductSummarySplit.companyProductsRaw = [];
         window.OrderProductSummarySplit.teamMembersCache = {};
         $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
         $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');

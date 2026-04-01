@@ -3000,15 +3000,16 @@ private function exportToExcel($data)
         return $query;
     }
 
+    // ===== [开始] 订单产品汇总第一屏利润/销量排序改造 =====
     /**
      * 订单产品汇总：公司/个人产品销量聚合
      */
     private function buildOrderProductSummaryProductSalesQuery(array $orgUsernames, string $timebucket = '', string $at_time = '')
     {
         return $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time)
-            ->field('oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty')
+            ->field('oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit')
             ->group('oi.product_name')
-            ->order('sale_qty desc, oi.product_name asc');
+            ->order('total_profit desc, sale_qty desc, oi.product_name asc');
     }
 
     /**
@@ -3058,7 +3059,12 @@ private function exportToExcel($data)
                 'msg' => 'ok',
                 'data' => ['products' => [], 'teams' => []],
                 'summary' => [
-                    'company' => ['total_product_count' => 0, 'total_sales_qty' => 0],
+                    'company' => [
+                        'total_product_count' => 0,
+                        'total_sales_qty' => 0,
+                        'total_profit_raw' => 0,
+                        'total_profit' => number_format(0, 2, '.', ','),
+                    ],
                     'team' => ['team_count' => 0, 'member_count' => 0],
                 ],
             ]);
@@ -3072,14 +3078,20 @@ private function exportToExcel($data)
 
             $products = [];
             $totalSalesQty = 0.0;
+            $totalProfit = 0.0;
             $rank = 1;
             foreach ((array)$productRows as $row) {
                 $qty = (float)($row['sale_qty'] ?? 0);
+                $profit = (float)($row['total_profit'] ?? 0);
                 $totalSalesQty += $qty;
+                $totalProfit += $profit;
                 $products[] = [
                     'rank' => $rank++,
                     'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'sale_qty_raw' => $qty,
                     'sale_qty' => $qty,
+                    'total_profit_raw' => $profit,
+                    'total_profit' => number_format($profit, 2, '.', ','),
                 ];
             }
 
@@ -3120,6 +3132,8 @@ private function exportToExcel($data)
                     'company' => [
                         'total_product_count' => count($products),
                         'total_sales_qty' => $totalSalesQty,
+                        'total_profit_raw' => $totalProfit,
+                        'total_profit' => number_format($totalProfit, 2, '.', ','),
                     ],
                     'team' => [
                         'team_count' => count($teams),
@@ -3136,6 +3150,7 @@ private function exportToExcel($data)
             ]);
         }
     }
+    // ===== [结束] 订单产品汇总第一屏利润/销量排序改造 =====
 
     /**
      * 第二屏：指定团队的成员列表（按销量排序）
