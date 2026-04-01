@@ -654,6 +654,41 @@
                 field: '',
                 order: ''
             };
+            // 待审核列表当前筛选条件缓存（用于审核后刷新时保留查询条件）
+            var pendingCurrentFilters = {};
+            function buildPendingKeywordFromForm() {
+                var raw = {};
+                $('#searchForm').serializeArray().forEach(function (item) {
+                    raw[item.name] = item.value;
+                });
+                var keyword = {};
+                for (var k in raw) {
+                    if (!raw.hasOwnProperty(k)) continue;
+                    var v = (typeof raw[k] === 'string') ? $.trim(raw[k]) : raw[k];
+                    if (v !== '' && v !== null && typeof v !== 'undefined') {
+                        keyword[k] = v;
+                    }
+                }
+                // timebucket 有值时必须传
+                if (raw.hasOwnProperty('timebucket')) {
+                    var tb = $.trim(raw.timebucket || '');
+                    if (tb !== '') keyword.timebucket = tb;
+                }
+                return keyword;
+            }
+            function setPendingCurrentFiltersFromForm() {
+                var keyword = buildPendingKeywordFromForm();
+                // 首次进入/空值时默认本月，和后端默认口径一致
+                if (!keyword.timebucket) keyword.timebucket = 'month';
+                pendingCurrentFilters = { keyword: keyword };
+                return $.extend(true, {}, pendingCurrentFilters);
+            }
+            function getPendingCurrentFilters() {
+                if (!pendingCurrentFilters || !pendingCurrentFilters.keyword) {
+                    return setPendingCurrentFiltersFromForm();
+                }
+                return $.extend(true, {}, pendingCurrentFilters);
+            }
             function buildOrderColWhitelist(tableCols) {
                 var arr = [];
                 (tableCols || []).forEach(function (c) {
@@ -1352,6 +1387,7 @@
             restoreColOrder(pendingCols[0]);
             restoreColConfig(pendingCols[0]);
             restoreColWidth(pendingCols[0]);
+            setPendingCurrentFiltersFromForm();
 
             var tableIn = table.render({
                 elem: '#table-list',
@@ -1364,6 +1400,7 @@
                 limit: 10, //每页默认显示的数量
                 // 关闭 layui 本地排序，统一走后端排序
                 autoSort: false,
+                where: getPendingCurrentFilters(),
 
                 page: { limits: [10, 20, 30, 40, 50, 100, 200, 500,9999999] },
                 totalRow: true,// 开启统计行
@@ -1397,7 +1434,7 @@
               restoreColOrder(cols0);
               restoreColConfig(cols0);
               restoreColWidth(cols0);
-              var where = (tableIn.config && tableIn.config.where) ? tableIn.config.where : {};
+              var where = getPendingCurrentFilters();
               var url = (tableIn.config && tableIn.config.url) ? tableIn.config.url : '{:url("pendingindex")}';
               var opt = { cols: [cols0], where: where, url: url };
               if (extraOpt && typeof extraOpt === 'object') {
@@ -1408,7 +1445,7 @@
             // ====== END 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
             // 根据当前 tableIn.config.where 与前端记住的排序状态，生成带排序的 where
             function getReloadWhereWithSort() {
-                var baseWhere = (tableIn.config && tableIn.config.where) ? tableIn.config.where : {};
+                var baseWhere = getPendingCurrentFilters();
                 var where = {};
 
                 for (var k in baseWhere) {
@@ -1434,7 +1471,7 @@
 
             // 表头排序：点击利润等列时传 field/order 给后台，并回到第一页
             table.on('sort(table-list)', function (obj) {
-                var baseWhere = (tableIn.config && tableIn.config.where) ? tableIn.config.where : {};
+                var baseWhere = getPendingCurrentFilters();
                 var where = {};
                 for (var k in baseWhere) if (baseWhere.hasOwnProperty(k)) where[k] = baseWhere[k];
                 if (obj.type) {
@@ -1679,12 +1716,10 @@
 
             //监听搜索
             form.on('submit(LAY-app-contlist-search)', function (data) {
-                var field = data.field;
-                table.reload('table-list', {
+                setPendingCurrentFiltersFromForm();
+                reloadTableWithDbCols({
                     url: "{:url('Order/pendingClientSearch')}",
-                    where: {
-                        keyword: data.field
-                    },
+                    where: getReloadWhereWithSort(),
                     page: {
                         curr: 1
                     }

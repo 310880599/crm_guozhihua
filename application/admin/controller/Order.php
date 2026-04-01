@@ -520,10 +520,12 @@ class Order extends Common
 
         if (request()->isPost()) {
             $params = Request::param();
-            if (!isset($params['keyword'])) {
+            if (!isset($params['keyword']) || !is_array($params['keyword'])) {
                 $params['keyword'] = [];
             }
-            $params['keyword']['timebucket'] = 'month';
+            if (!isset($params['keyword']['timebucket']) || $params['keyword']['timebucket'] === '') {
+                $params['keyword']['timebucket'] = 'month';
+            }
             Request::merge($params);
             return $this->pendingClientSearch();
             // $key = input('post.key');
