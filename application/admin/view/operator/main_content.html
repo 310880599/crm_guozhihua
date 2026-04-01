@@ -3442,8 +3442,15 @@
         var loading = layer.load(2, { time: 30 * 1000 });
 
         // 默认时间：month
-        var timebucket = 'month';
-        var at_time = '';
+        $('#teamPerformanceTimeFilter, #teamPane #teamPerformanceTimeFilter').val('month');
+        $('#teamPerformanceStartDate, #teamPane #teamPerformanceStartDate').val('');
+        $('#teamPerformanceEndDate, #teamPane #teamPerformanceEndDate').val('');
+        $('#teamPerformanceCustomTimeRange, #teamPane #teamPerformanceCustomTimeRange').css('display', 'none');
+        clearMonthQuickSelect('teamPerformance', '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap');
+        var initTimeParams = getTeamTimeParams() || {timebucket: 'month', at_time: '', month_keys: ''};
+        var timebucket = initTimeParams.timebucket || 'month';
+        var at_time = initTimeParams.at_time || '';
+        var month_keys = initTimeParams.month_keys || '';
 
         // 加载数据并显示分栏布局
         loadTeamPerformanceData(timebucket, at_time, month_keys, function() {
@@ -3652,7 +3659,7 @@
 
         // 更新全局时间状态（使用传入的真实时间参数）
         if (window.TeamSplit) {
-            window.TeamSplit.lastTimebucket = timebucket || 'month';
+            window.TeamSplit.lastTimebucket = month_keys ? '' : (timebucket || 'month');
             window.TeamSplit.lastAtTime = at_time || '';
             window.TeamSplit.lastMonthKeys = month_keys || '';
         }
@@ -3818,7 +3825,7 @@
         
         if ($timeFilter.length === 0) {
             // 如果都取不到，返回默认值
-            return {timebucket: 'month', at_time: ''};
+            return {timebucket: 'month', at_time: '', month_keys: ''};
         }
         
         var timeFilter = $timeFilter.val() || 'month';
@@ -3851,7 +3858,7 @@
                 return null;
             }
         } else {
-            timebucket = timeFilter;
+            timebucket = timeFilter || 'month';
             at_time = '';
         }
         
@@ -3916,7 +3923,7 @@
             var timeParams = getTeamTimeParams();
             if (!timeParams) {
                 // 自定义时间未选择完整，使用默认值
-                timeParams = {timebucket: 'month', at_time: ''};
+                timeParams = {timebucket: 'month', at_time: '', month_keys: ''};
             }
             loadTeamPerformanceData(timeParams.timebucket, timeParams.at_time, timeParams.month_keys || '');
         });
@@ -4571,29 +4578,43 @@
         });
     }
     
+    function getPerformanceTimeParams() {
+        var timeFilter = ($('#performanceTimeFilter').val() || 'month').trim();
+        var timebucket = '';
+        var at_time = '';
+        var month_keys = getMonthKeys('performance');
+        if (month_keys) {
+            return {timebucket: '', at_time: '', month_keys: month_keys};
+        }
+        if (timeFilter === 'custom') {
+            var startDate = ($('#performanceStartDate').val() || '').trim();
+            var endDate = ($('#performanceEndDate').val() || '').trim();
+            if (!startDate || !endDate) {
+                layer.msg('请选择完整的开始日期和结束日期', {icon: 2});
+                return null;
+            }
+            at_time = startDate + ',' + endDate;
+        } else {
+            timebucket = timeFilter || 'month';
+        }
+        return {timebucket: timebucket, at_time: at_time, month_keys: ''};
+    }
+
     // 筛选表格
     function filterPerformanceTable() {
         var selectedUser = $('#performanceUserFilter').val();
-        var timeFilter = $('#performanceTimeFilter').val();
-        var startDate = $('#performanceStartDate').val();
-        var endDate = $('#performanceEndDate').val();
-        var month_keys = getMonthKeys('performance');
-        if (month_keys) {
-            loadPerformanceData(selectedUser, '', '', month_keys);
+        var timeParams = getPerformanceTimeParams();
+        if (!timeParams) {
             return;
         }
-        
-        // 如果选择了自定义时间或时间筛选改变，需要重新请求数据
-        if (timeFilter === 'custom') {
-            if (!startDate || !endDate) {
-                layer.msg('请选择完整的开始日期和结束日期', {icon: 2});
-                return;
-            }
-            // 使用自定义时间范围重新请求数据
-            loadPerformanceData(selectedUser, '', startDate + ',' + endDate, '');
-        } else if (timeFilter && timeFilter !== 'custom') {
-            // 使用预设时间范围重新请求数据
-            loadPerformanceData(selectedUser, timeFilter, '', '');
+
+        if (timeParams.month_keys || timeParams.at_time || timeParams.timebucket) {
+            loadPerformanceData(
+                selectedUser,
+                timeParams.timebucket || '',
+                timeParams.at_time || '',
+                timeParams.month_keys || ''
+            );
         } else {
             // 只做前端筛选（业务员筛选）- 显示加载提示
             var loading = layer.load(2, {

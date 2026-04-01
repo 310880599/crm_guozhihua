@@ -2205,7 +2205,7 @@ private function exportToExcel($data)
 
         // 时间优先级统一：month_keys > at_time > timebucket > month
         $where[] = function ($query) use ($timebucket, $at_time, $month_keys) {
-            $this->applyMonthShortcutTimeFilter($query, 'order_time', $timebucket, $at_time, $month_keys);
+            $this->applyMonthShortcutTimeFilterSafe($query, 'order_time', $timebucket, $at_time, $month_keys);
         };
 
         // pr_user 范围：复制 Order::clientSearch() 中 admin + org 逻辑（不限制 is_open / group_id）
@@ -2537,7 +2537,7 @@ private function exportToExcel($data)
         $where[] = [$prefix . 'check_status', '=', 2];
         // 时间优先级统一：month_keys > at_time > timebucket > month
         $where[] = function ($query) use ($prefix, $timebucket, $at_time, $month_keys) {
-            $this->applyMonthShortcutTimeFilter($query, $prefix . 'order_time', $timebucket, $at_time, $month_keys);
+            $this->applyMonthShortcutTimeFilterSafe($query, $prefix . 'order_time', $timebucket, $at_time, $month_keys);
         };
 
         foreach ($extra as $k => $v) {
@@ -2985,19 +2985,101 @@ private function exportToExcel($data)
     }
 
     /**
-     * 通用：时间筛选优先级 month_keys > at_time > timebucket > month。
+     * 统一格式化可安全拼接到 whereRaw 的日期字段表达式。
+     * 仅允许 `field` 或 `alias.field` 形态，避免触发框架字段元数据解析（如 SHOW COLUMNS FROM o）。
      */
-    private function applyMonthShortcutTimeFilter($query, string $dateField, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    private function normalizeSafeDateFieldExpression(string $dateField, string $fallbackField = 'order_time'): string
     {
+        $dateField = trim((string)$dateField);
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $dateField)) {
+            return $dateField;
+        }
+        return $fallbackField;
+    }
+
+    /**
+     * 安全追加单段时间范围过滤（包含边界）。
+     */
+    private function applySafeDateRangeWhereRaw($query, string $fieldExpr, string $startAt, string $endAt)
+    {
+        $query->whereRaw($fieldExpr . ' BETWEEN ? AND ?', [$startAt, $endAt]);
+        return $query;
+    }
+
+    /**
+     * timebucket 转换为 [startDatetime, endDatetime]，统一补齐 00:00:00 / 23:59:59。
+     */
+    private function resolveTimebucketDateRange(string $timebucket = ''): array
+    {
+        $bucket = strtolower(trim((string)$timebucket));
+        if ($bucket === '' || $bucket === 'custom') {
+            $bucket = 'month';
+        }
+
+        switch ($bucket) {
+            case 'today':
+                $startTs = strtotime(date('Y-m-d') . ' 00:00:00');
+                $endTs = strtotime(date('Y-m-d') . ' 23:59:59');
+                break;
+            case 'yesterday':
+                $startTs = strtotime(date('Y-m-d', strtotime('-1 day')) . ' 00:00:00');
+                $endTs = strtotime(date('Y-m-d', strtotime('-1 day')) . ' 23:59:59');
+                break;
+            case 'week':
+                $startTs = strtotime('monday this week');
+                $endTs = strtotime('sunday this week');
+                if ($startTs !== false) {
+                    $startTs = strtotime(date('Y-m-d', $startTs) . ' 00:00:00');
+                }
+                if ($endTs !== false) {
+                    $endTs = strtotime(date('Y-m-d', $endTs) . ' 23:59:59');
+                }
+                break;
+            case 'year':
+                $year = date('Y');
+                $startTs = strtotime($year . '-01-01 00:00:00');
+                $endTs = strtotime($year . '-12-31 23:59:59');
+                break;
+            case 'last month':
+            case 'last_month':
+                $monthTs = strtotime(date('Y-m-01', strtotime('-1 month')) . ' 00:00:00');
+                $startTs = strtotime(date('Y-m-01 00:00:00', $monthTs));
+                $endTs = strtotime(date('Y-m-t 23:59:59', $monthTs));
+                break;
+            case 'month':
+            default:
+                $monthTs = strtotime(date('Y-m-01') . ' 00:00:00');
+                $startTs = strtotime(date('Y-m-01 00:00:00', $monthTs));
+                $endTs = strtotime(date('Y-m-t 23:59:59', $monthTs));
+                break;
+        }
+
+        if ($startTs === false || $endTs === false) {
+            $monthTs = strtotime(date('Y-m-01') . ' 00:00:00');
+            $startTs = strtotime(date('Y-m-01 00:00:00', $monthTs));
+            $endTs = strtotime(date('Y-m-t 23:59:59', $monthTs));
+        }
+
+        return [
+            'start' => date('Y-m-d H:i:s', $startTs),
+            'end' => date('Y-m-d H:i:s', $endTs),
+        ];
+    }
+
+    /**
+     * 通用：时间筛选优先级 month_keys > at_time > timebucket > month。
+     * 仅使用 whereRaw + 参数绑定，兼容带表别名字段（order_time/o.order_time/l.at_time/src.at_time...）。
+     */
+    private function applyMonthShortcutTimeFilterSafe($query, string $dateField, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    {
+        $fieldExpr = $this->normalizeSafeDateFieldExpression($dateField, 'order_time');
+
         $monthRanges = $this->parseMonthKeysToRanges($month_keys);
         if (!empty($monthRanges)) {
-            $query->where(function ($monthOrQuery) use ($monthRanges, $dateField) {
+            $query->where(function ($monthOrQuery) use ($monthRanges, $fieldExpr) {
                 foreach ($monthRanges as $idx => $range) {
-                    $method = $idx === 0 ? 'where' : 'whereOr';
-                    $monthOrQuery->{$method}(function ($monthQuery) use ($range, $dateField) {
-                        $monthQuery->where($dateField, '>=', $range['start']);
-                        $monthQuery->where($dateField, '<=', $range['end']);
-                    });
+                    $method = $idx === 0 ? 'whereRaw' : 'whereOrRaw';
+                    $monthOrQuery->{$method}('(' . $fieldExpr . ' BETWEEN ? AND ?)', [$range['start'], $range['end']]);
                 }
             });
             return $query;
@@ -3005,18 +3087,19 @@ private function exportToExcel($data)
 
         $dateRange = $this->parseCustomDateRange($at_time);
         if (!empty($dateRange)) {
-            $query->where($dateField, '>=', $dateRange[0] . ' 00:00:00');
-            $query->where($dateField, '<=', $dateRange[1] . ' 23:59:59');
-            return $query;
+            return $this->applySafeDateRangeWhereRaw($query, $fieldExpr, $dateRange[0] . ' 00:00:00', $dateRange[1] . ' 23:59:59');
         }
 
-        $bucket = strtolower(trim((string)$timebucket));
-        if ($bucket === '' || $bucket === 'custom') {
-            $bucket = 'month';
-        }
-        $timeWhere = $this->buildTimeWhere($bucket, $dateField);
-        $query->where([$timeWhere]);
-        return $query;
+        $bucketRange = $this->resolveTimebucketDateRange($timebucket);
+        return $this->applySafeDateRangeWhereRaw($query, $fieldExpr, $bucketRange['start'], $bucketRange['end']);
+    }
+
+    /**
+     * 兼容旧调用入口：统一转发到安全实现。
+     */
+    private function applyMonthShortcutTimeFilter($query, string $dateField, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    {
+        return $this->applyMonthShortcutTimeFilterSafe($query, $dateField, $timebucket, $at_time, $month_keys);
     }
 
     /**
@@ -3029,7 +3112,7 @@ private function exportToExcel($data)
 
     private function applyOrderProductSummaryTimeFilter($query, string $timebucket = '', string $at_time = '', string $month_keys = '')
     {
-        return $this->applyMonthShortcutTimeFilter($query, 'o.order_time', $timebucket, $at_time, $month_keys);
+        return $this->applyMonthShortcutTimeFilterSafe($query, 'o.order_time', $timebucket, $at_time, $month_keys);
     }
 
     // ===== [开始] 订单产品汇总第一屏利润/销量排序改造 =====
