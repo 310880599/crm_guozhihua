@@ -3219,7 +3219,7 @@ private function exportToExcel($data)
     }
 
     /**
-     * 第三屏：指定团队的产品销量排行
+     * 第三屏：指定团队的产品利润/销量排行
      */
     public function getOrderProductTeamProducts()
     {
@@ -3234,7 +3234,13 @@ private function exportToExcel($data)
                 'code' => 200,
                 'msg' => 'ok',
                 'data' => [],
-                'summary' => ['team_product_count' => 0, 'total_sales_qty' => 0],
+                'summary' => [
+                    'team_product_count' => 0,
+                    'total_product_count' => 0,
+                    'total_sales_qty' => 0,
+                    'total_profit_raw' => 0,
+                    'total_profit' => number_format(0, 2, '.', ','),
+                ],
             ]);
         }
 
@@ -3246,21 +3252,27 @@ private function exportToExcel($data)
             $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
 
             $rows = $query
-                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty")
+                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
                 ->group("oi.product_name")
-                ->order("sale_qty desc, oi.product_name asc")
+                ->order("total_profit desc, sale_qty desc, oi.product_name asc")
                 ->select();
 
             $data = [];
             $rank = 1;
             $totalSalesQty = 0.0;
+            $totalProfit = 0.0;
             foreach ((array)$rows as $row) {
                 $qty = (float)($row['sale_qty'] ?? 0);
+                $profit = (float)($row['total_profit'] ?? 0);
                 $totalSalesQty += $qty;
+                $totalProfit += $profit;
                 $data[] = [
                     'rank' => $rank++,
                     'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'sale_qty_raw' => $qty,
                     'sale_qty' => $qty,
+                    'total_profit_raw' => $profit,
+                    'total_profit' => number_format($profit, 2, '.', ','),
                 ];
             }
 
@@ -3270,22 +3282,31 @@ private function exportToExcel($data)
                 'data' => $data,
                 'summary' => [
                     'team_product_count' => count($data),
+                    'total_product_count' => count($data),
                     'total_sales_qty' => $totalSalesQty,
+                    'total_profit_raw' => $totalProfit,
+                    'total_profit' => number_format($totalProfit, 2, '.', ','),
                 ],
             ]);
         } catch (\Throwable $e) {
             \think\facade\Log::error('[OrderProductSummary] getOrderProductTeamProducts failed: ' . $e->getMessage());
             return json([
                 'code' => 500,
-                'msg' => '团队产品销量获取失败：' . $e->getMessage(),
+                'msg' => '团队产品排行获取失败：' . $e->getMessage(),
                 'data' => [],
-                'summary' => ['team_product_count' => 0, 'total_sales_qty' => 0],
+                'summary' => [
+                    'team_product_count' => 0,
+                    'total_product_count' => 0,
+                    'total_sales_qty' => 0,
+                    'total_profit_raw' => 0,
+                    'total_profit' => number_format(0, 2, '.', ','),
+                ],
             ]);
         }
     }
 
     /**
-     * 第三屏：指定业务员的产品销量排行
+     * 第三屏：指定业务员的产品利润/销量排行
      */
     public function getOrderProductUserProducts()
     {
@@ -3300,7 +3321,13 @@ private function exportToExcel($data)
                 'code' => 422,
                 'msg' => '请先选择业务员',
                 'data' => [],
-                'summary' => ['user_product_count' => 0, 'total_sales_qty' => 0],
+                'summary' => [
+                    'user_product_count' => 0,
+                    'total_product_count' => 0,
+                    'total_sales_qty' => 0,
+                    'total_profit_raw' => 0,
+                    'total_profit' => number_format(0, 2, '.', ','),
+                ],
             ]);
         }
 
@@ -3309,7 +3336,13 @@ private function exportToExcel($data)
                 'code' => 403,
                 'msg' => '无权限查看该业务员数据',
                 'data' => [],
-                'summary' => ['user_product_count' => 0, 'total_sales_qty' => 0],
+                'summary' => [
+                    'user_product_count' => 0,
+                    'total_product_count' => 0,
+                    'total_sales_qty' => 0,
+                    'total_profit_raw' => 0,
+                    'total_profit' => number_format(0, 2, '.', ','),
+                ],
             ]);
         }
 
@@ -3318,21 +3351,27 @@ private function exportToExcel($data)
             $query->where('o.pr_user', '=', $username);
 
             $rows = $query
-                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty")
+                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
                 ->group("oi.product_name")
-                ->order('sale_qty desc, oi.product_name asc')
+                ->order('total_profit desc, sale_qty desc, oi.product_name asc')
                 ->select();
 
             $data = [];
             $rank = 1;
             $totalSalesQty = 0.0;
+            $totalProfit = 0.0;
             foreach ((array)$rows as $row) {
                 $qty = (float)($row['sale_qty'] ?? 0);
+                $profit = (float)($row['total_profit'] ?? 0);
                 $totalSalesQty += $qty;
+                $totalProfit += $profit;
                 $data[] = [
                     'rank' => $rank++,
                     'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'sale_qty_raw' => $qty,
                     'sale_qty' => $qty,
+                    'total_profit_raw' => $profit,
+                    'total_profit' => number_format($profit, 2, '.', ','),
                 ];
             }
 
@@ -3342,16 +3381,25 @@ private function exportToExcel($data)
                 'data' => $data,
                 'summary' => [
                     'user_product_count' => count($data),
+                    'total_product_count' => count($data),
                     'total_sales_qty' => $totalSalesQty,
+                    'total_profit_raw' => $totalProfit,
+                    'total_profit' => number_format($totalProfit, 2, '.', ','),
                 ],
             ]);
         } catch (\Throwable $e) {
             \think\facade\Log::error('[OrderProductSummary] getOrderProductUserProducts failed: ' . $e->getMessage());
             return json([
                 'code' => 500,
-                'msg' => '个人产品销量获取失败：' . $e->getMessage(),
+                'msg' => '个人产品排行获取失败：' . $e->getMessage(),
                 'data' => [],
-                'summary' => ['user_product_count' => 0, 'total_sales_qty' => 0],
+                'summary' => [
+                    'user_product_count' => 0,
+                    'total_product_count' => 0,
+                    'total_sales_qty' => 0,
+                    'total_profit_raw' => 0,
+                    'total_profit' => number_format(0, 2, '.', ','),
+                ],
             ]);
         }
     }

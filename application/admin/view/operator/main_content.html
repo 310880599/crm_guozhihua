@@ -964,7 +964,7 @@
 
         <div class="split-right order-product-split-right" style="width: 35%; background: #ffffff; display: flex; flex-direction: column; overflow: hidden;">
             <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #0f766e, #14b8a6); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
-                <span style="font-size: 16px; font-weight: 600;" id="orderProductUserPaneTitle">👤 个人产品销量排行</span>
+                <span style="font-size: 16px; font-weight: 600;" id="orderProductUserPaneTitle">📦 产品利润/销量排行</span>
                 <div>
                     <button class="btn btn-sm btn-light" id="orderProductSplitRightRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
                     <button class="btn btn-sm btn-light" id="orderProductSplitRightMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
@@ -974,10 +974,10 @@
             <div id="orderProductUserPane" style="flex: 1; overflow-y: auto; padding: 20px;">
                 <div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;">
                     <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
-                    <p style="font-size: 16px; margin: 0;">请点击团队或团队成员查看产品销量排行</p>
+                    <p style="font-size: 16px; margin: 0;">请点击团队或团队成员查看产品利润/销量排行</p>
                 </div>
             </div>
-            <div id="orderProductUserPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总销量 0</div>
+            <div id="orderProductUserPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总利润 0.00 ｜ 总销量 0</div>
         </div>
     </div>
 </div>
@@ -1762,12 +1762,14 @@
         return rows;
     }
 
-    function buildOrderProductSortIndicator(field) {
+    function buildOrderProductSortIndicator(field, currentSortField, currentSortOrder) {
         var split = window.OrderProductSummarySplit = window.OrderProductSummarySplit || {};
-        if ((split.companySortField || 'total_profit') !== field) {
+        var activeSortField = currentSortField || split.companySortField || 'total_profit';
+        var activeSortOrder = currentSortOrder || split.companySortOrder || 'desc';
+        if (activeSortField !== field) {
             return '<span style="opacity:.45;margin-left:4px;">↕</span>';
         }
-        return (split.companySortOrder || 'desc') === 'asc'
+        return activeSortOrder === 'asc'
             ? '<span style="margin-left:4px;">↑</span>'
             : '<span style="margin-left:4px;">↓</span>';
     }
@@ -1788,14 +1790,17 @@
         }
         var productKinds = 0;
         if (summary) {
-            if (summary.team_product_count !== undefined && summary.team_product_count !== null) {
+            if (summary.total_product_count !== undefined && summary.total_product_count !== null) {
+                productKinds = summary.total_product_count;
+            } else if (summary.team_product_count !== undefined && summary.team_product_count !== null) {
                 productKinds = summary.team_product_count;
             } else if (summary.user_product_count !== undefined && summary.user_product_count !== null) {
                 productKinds = summary.user_product_count;
             }
         }
-        var productQty = summary && summary.total_sales_qty ? summary.total_sales_qty : 0;
-        $(selector).html('合计：产品种类 ' + productKinds + ' ｜ 总销量 ' + productQty);
+        var productQty = (summary && summary.total_sales_qty !== undefined) ? summary.total_sales_qty : 0;
+        var productProfitRaw = (summary && summary.total_profit_raw !== undefined) ? summary.total_profit_raw : 0;
+        $(selector).html('合计：产品种类 ' + productKinds + ' ｜ 总利润 ' + formatOrderProductAmount2(productProfitRaw) + ' ｜ 总销量 ' + formatOrderProductQty(productQty));
     }
 
     function renderOrderProductEmpty($container, text) {
@@ -1893,46 +1898,103 @@
         $container.html(html).show();
     }
 
-    function renderOrderProductUserPane(username, data) {
+    function getOrderProductDetailSortValue(item, field) {
+        if (field === 'total_profit') {
+            if (item && item.total_profit_raw !== undefined && item.total_profit_raw !== null) {
+                return toOrderProductNumber(item.total_profit_raw);
+            }
+            return toOrderProductNumber(item ? item.total_profit : 0);
+        }
+        if (item && item.sale_qty_raw !== undefined && item.sale_qty_raw !== null) {
+            return toOrderProductNumber(item.sale_qty_raw);
+        }
+        return toOrderProductNumber(item ? item.sale_qty : 0);
+    }
+
+    function sortOrderProductDetailRows(rows, sortField, sortOrder) {
+        var list = Array.isArray(rows) ? rows.slice() : [];
+        list.sort(function(a, b) {
+            var orderSign = sortOrder === 'asc' ? 1 : -1;
+            var aPrimary = getOrderProductDetailSortValue(a, sortField);
+            var bPrimary = getOrderProductDetailSortValue(b, sortField);
+            if (aPrimary !== bPrimary) {
+                return (aPrimary - bPrimary) * orderSign;
+            }
+
+            var aProfit = getOrderProductDetailSortValue(a, 'total_profit');
+            var bProfit = getOrderProductDetailSortValue(b, 'total_profit');
+            if (aProfit !== bProfit) return bProfit - aProfit;
+
+            var aQty = getOrderProductDetailSortValue(a, 'sale_qty');
+            var bQty = getOrderProductDetailSortValue(b, 'sale_qty');
+            if (aQty !== bQty) return bQty - aQty;
+
+            var aName = $.trim((a && a.product_name) ? String(a.product_name) : '');
+            var bName = $.trim((b && b.product_name) ? String(b.product_name) : '');
+            return aName.localeCompare(bName, 'zh-CN');
+        });
+        return list;
+    }
+
+    function resetOrderProductDetailSortState() {
+        var split = window.OrderProductSummarySplit = window.OrderProductSummarySplit || {};
+        split.userSortField = 'total_profit';
+        split.userSortOrder = 'desc';
+    }
+
+    function renderOrderProductDetailPane(roleLabel, roleName, data) {
+        var split = window.OrderProductSummarySplit = window.OrderProductSummarySplit || {};
+        if (Array.isArray(data)) {
+            split.userProductsRaw = data.slice();
+        }
+        split.userSortField = split.userSortField || 'total_profit';
+        split.userSortOrder = split.userSortOrder || 'desc';
+        var rows = sortOrderProductDetailRows(split.userProductsRaw || [], split.userSortField, split.userSortOrder);
+
         var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
-            + '<div style="padding: 15px 20px; border-bottom:1px solid #e9ecef; background:#f8f9fa;">业务员：<strong>' + escapeHtml(username) + '</strong></div>'
+            + '<div style="padding: 15px 20px; border-bottom:1px solid #e9ecef; background:#f8f9fa;">' + escapeHtml(roleLabel) + '：<strong>' + escapeHtml(roleName) + '</strong></div>'
             + '<div style="padding: 20px; overflow-x: auto;">'
             + '<table class="wukong-table" style="width:100%;">'
-            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th><th style="text-align:right;">销量</th></tr></thead><tbody>';
-        if (data && data.length) {
-            $.each(data, function(i, item) {
+            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th>'
+            + '<th style="text-align:right;"><a href="javascript:void(0);" class="order-product-detail-sort" data-sort-field="total_profit" style="color:inherit;text-decoration:none;">利润' + buildOrderProductSortIndicator('total_profit', split.userSortField, split.userSortOrder) + '</a></th>'
+            + '<th style="text-align:right;"><a href="javascript:void(0);" class="order-product-detail-sort" data-sort-field="sale_qty" style="color:inherit;text-decoration:none;">销量' + buildOrderProductSortIndicator('sale_qty', split.userSortField, split.userSortOrder) + '</a></th>'
+            + '</tr></thead><tbody>';
+        if (rows && rows.length) {
+            $.each(rows, function(i, item) {
+                var saleQtyRaw = item.sale_qty_raw !== undefined ? item.sale_qty_raw : item.sale_qty;
+                var totalProfitRaw = item.total_profit_raw !== undefined ? item.total_profit_raw : item.total_profit;
                 html += '<tr>'
-                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td>' + (i + 1) + '</td>'
                     + '<td>' + escapeHtml(item.product_name || '') + '</td>'
-                    + '<td style="text-align:right;">' + (item.sale_qty || 0) + '</td>'
+                    + '<td style="text-align:right;">' + formatOrderProductAmount2(totalProfitRaw) + '</td>'
+                    + '<td style="text-align:right;">' + formatOrderProductQty(saleQtyRaw) + '</td>'
                     + '</tr>';
             });
         } else {
-            html += '<tr><td colspan="3" class="text-center text-muted">该业务员暂无产品销量数据</td></tr>';
+            html += '<tr><td colspan="4" class="text-center text-muted">暂无订单产品排行数据</td></tr>';
         }
         html += '</tbody></table></div></div>';
         $('#orderProductUserPane').html(html);
+
+        $('#orderProductUserPane').off('click.orderProductDetailSort', '.order-product-detail-sort').on('click.orderProductDetailSort', '.order-product-detail-sort', function() {
+            var field = ($(this).attr('data-sort-field') || '').trim();
+            if (!field) return;
+            if (split.userSortField === field) {
+                split.userSortOrder = split.userSortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                split.userSortField = field;
+                split.userSortOrder = 'desc';
+            }
+            renderOrderProductDetailPane(roleLabel, roleName);
+        });
+    }
+
+    function renderOrderProductUserPane(username, data) {
+        renderOrderProductDetailPane('业务员', username, data);
     }
 
     function renderOrderProductTeamProductPane(teamName, data) {
-        var html = '<div style="background: #ffffff; border-radius: 8px; overflow: hidden;">'
-            + '<div style="padding: 15px 20px; border-bottom:1px solid #e9ecef; background:#f8f9fa;">团队：<strong>' + escapeHtml(teamName) + '</strong></div>'
-            + '<div style="padding: 20px; overflow-x: auto;">'
-            + '<table class="wukong-table" style="width:100%;">'
-            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th><th style="text-align:right;">销量</th></tr></thead><tbody>';
-        if (data && data.length) {
-            $.each(data, function(i, item) {
-                html += '<tr>'
-                    + '<td>' + (item.rank || (i + 1)) + '</td>'
-                    + '<td>' + escapeHtml(item.product_name || '') + '</td>'
-                    + '<td style="text-align:right;">' + (item.sale_qty || 0) + '</td>'
-                    + '</tr>';
-            });
-        } else {
-            html += '<tr><td colspan="3" class="text-center text-muted">该团队暂无产品销量数据</td></tr>';
-        }
-        html += '</tbody></table></div></div>';
-        $('#orderProductUserPane').html(html);
+        renderOrderProductDetailPane('团队', teamName, data);
     }
 
     function getOrderProductTeamLinkByName(teamName) {
@@ -1972,6 +2034,9 @@
         companySortField: 'total_profit',
         companySortOrder: 'desc',
         companyProductsRaw: [],
+        userSortField: 'total_profit',
+        userSortOrder: 'desc',
+        userProductsRaw: [],
         teamRows: [],
         teamMembersCache: {},
 
@@ -2075,7 +2140,9 @@
             self.lastViewMode = 'team';
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
-            $('#orderProductUserPaneTitle').text('👥 团队：' + normalizedTeamName + ' - 产品销量排行');
+            resetOrderProductDetailSortState();
+            self.userProductsRaw = [];
+            $('#orderProductUserPaneTitle').text('👥 团队：' + normalizedTeamName + ' - 产品利润/销量排行');
             return $.ajax({
                 url: '{:url("Operator/getOrderProductTeamProducts")}',
                 type: 'POST',
@@ -2087,14 +2154,14 @@
                     renderOrderProductTeamProductPane(normalizedTeamName, res.data || []);
                     updateOrderProductPaneSummary('#orderProductUserPaneSummary', res.summary || {});
                 } else {
-                    var bizMsg = res.msg || '获取团队产品销量失败';
+                    var bizMsg = res.msg || '获取团队产品排行失败';
                     renderOrderProductEmpty($('#orderProductUserPane'), bizMsg);
                     updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                     layer.msg(bizMsg, {icon: 2});
                 }
                 return res;
             }, function(xhr, status) {
-                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取团队产品销量失败');
+                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取团队产品排行失败');
                 renderOrderProductEmpty($('#orderProductUserPane'), msg);
                 updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                 layer.msg(msg, {icon: 2, time: 4000});
@@ -2110,7 +2177,9 @@
             self.lastViewMode = 'user';
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
-            $('#orderProductUserPaneTitle').text('👤 ' + self.lastUsername + ' - 产品销量排行');
+            resetOrderProductDetailSortState();
+            self.userProductsRaw = [];
+            $('#orderProductUserPaneTitle').text('👤 成员：' + self.lastUsername + ' - 产品利润/销量排行');
             return $.ajax({
                 url: '{:url("Operator/getOrderProductUserProducts")}',
                 type: 'POST',
@@ -2122,14 +2191,14 @@
                     renderOrderProductUserPane(self.lastUsername, res.data || []);
                     updateOrderProductPaneSummary('#orderProductUserPaneSummary', res.summary || {});
                 } else {
-                    var bizMsg = res.msg || '获取个人产品销量失败';
+                    var bizMsg = res.msg || '获取个人产品排行失败';
                     renderOrderProductEmpty($('#orderProductUserPane'), bizMsg);
                     updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                     layer.msg(bizMsg, {icon: 2});
                 }
                 return res;
             }, function(xhr, status) {
-                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取个人产品销量失败');
+                var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取个人产品排行失败');
                 renderOrderProductEmpty($('#orderProductUserPane'), msg);
                 updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                 layer.msg(msg, {icon: 2, time: 4000});
@@ -2157,9 +2226,11 @@
                     self.lastTeamName = '';
                     self.lastUsername = '';
                     self.lastViewMode = '';
+                    resetOrderProductDetailSortState();
+                    self.userProductsRaw = [];
                     $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
-                    $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-                    renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品销量排行');
+                    $('#orderProductUserPaneTitle').text('📦 产品利润/销量排行');
+                    renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品利润/销量排行');
                     updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                     $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
                     return;
@@ -2174,7 +2245,7 @@
 
                 self.lastUsername = '';
                 $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
-                $('#orderProductUserPaneTitle').text('👥 团队：' + teamName + ' - 产品销量排行');
+                $('#orderProductUserPaneTitle').text('👥 团队：' + teamName + ' - 产品利润/销量排行');
                 renderOrderProductEmpty($('#orderProductUserPane'), '加载中...');
                 updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                 self.loadTeamMembers(teamName, false);
@@ -2218,10 +2289,13 @@
         window.OrderProductSummarySplit.companySortField = 'total_profit';
         window.OrderProductSummarySplit.companySortOrder = 'desc';
         window.OrderProductSummarySplit.companyProductsRaw = [];
+        window.OrderProductSummarySplit.userSortField = 'total_profit';
+        window.OrderProductSummarySplit.userSortOrder = 'desc';
+        window.OrderProductSummarySplit.userProductsRaw = [];
         window.OrderProductSummarySplit.teamMembersCache = {};
         $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
-        $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-        renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品销量排行');
+        $('#orderProductUserPaneTitle').text('📦 产品利润/销量排行');
+        renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品利润/销量排行');
         updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
         $('#orderProductTeamPane .order-product-team-clickable').removeClass('is-active');
         $('#orderProductTeamPane .order-product-user-clickable').removeClass('is-active');
@@ -2247,9 +2321,11 @@
                 self.lastTeamName = '';
                 self.lastUsername = '';
                 self.lastViewMode = '';
+                resetOrderProductDetailSortState();
+                self.userProductsRaw = [];
                 $('#orderProductTeamPaneTitle').text('👥 团队成员列表');
-                $('#orderProductUserPaneTitle').text('👤 个人产品销量排行');
-                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品销量排行');
+                $('#orderProductUserPaneTitle').text('📦 产品利润/销量排行');
+                renderOrderProductEmpty($('#orderProductUserPane'), '请点击团队或团队成员查看产品利润/销量排行');
                 updateOrderProductPaneSummary('#orderProductUserPaneSummary', null);
                 return null;
             }
@@ -2404,10 +2480,14 @@
                     layer.msg('请先选择业务员', {icon: 2});
                     return;
                 }
+                resetOrderProductDetailSortState();
+                self.userProductsRaw = [];
                 self.loadUserProducts(self.lastUsername);
                 return;
             }
             if (self.lastTeamName) {
+                resetOrderProductDetailSortState();
+                self.userProductsRaw = [];
                 self.loadTeamProducts(self.lastTeamName);
                 return;
             }
