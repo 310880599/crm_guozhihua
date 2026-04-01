@@ -1197,6 +1197,30 @@
         syncMonthQuickSelectState(key, wrapSelector);
     }
 
+    function getMonthKeys(key) {
+        var state = monthQuickStateMap[key] || {selectedMonths: []};
+        var selectedMonths = (state.selectedMonths || []).slice();
+        if (!selectedMonths.length) return '';
+        selectedMonths = selectedMonths.filter(function(m) {
+            return m >= 1 && m <= 12;
+        }).sort(function(a, b) {
+            return a - b;
+        });
+        if (!selectedMonths.length) return '';
+        var year = (new Date()).getFullYear();
+        var seen = {};
+        var keys = [];
+        $.each(selectedMonths, function(_, month) {
+            var mm = month < 10 ? ('0' + month) : String(month);
+            var keyStr = year + '-' + mm;
+            if (!seen[keyStr]) {
+                seen[keyStr] = true;
+                keys.push(keyStr);
+            }
+        });
+        return keys.join(',');
+    }
+
     function getMonthRange(key) {
         var state = monthQuickStateMap[key] || {selectedMonths: []};
         var selectedMonths = (state.selectedMonths || []).slice();
@@ -1339,6 +1363,7 @@
         // 首次打开默认口径：本月 + 全部业务员 + 利润倒序
         var timebucket = 'month';
         var at_time = '';
+        var month_keys = '';
         $('#performanceUserFilter').val('');
         $('#performanceTimeFilter').val('month');
         $('#performanceCustomTimeRange').css('display', 'none');
@@ -1351,7 +1376,8 @@
             type: 'POST',
             data: {
                 timebucket: timebucket,
-                at_time: at_time
+                at_time: at_time,
+                month_keys: month_keys
             },
             dataType: 'json',
             timeout: 30000, // 30秒超时
@@ -1430,10 +1456,10 @@
         var timeFilter = ($('#inquirySummaryTimeFilter').val() || 'month').trim();
         var timebucket = '';
         var at_time = '';
-        var range = getMonthRange('inquirySummary');
+        var month_keys = getMonthKeys('inquirySummary');
 
-        if (range) {
-            return {timebucket: '', at_time: range.start + ' - ' + range.end};
+        if (month_keys) {
+            return {timebucket: '', at_time: '', month_keys: month_keys};
         }
 
         if (timeFilter === 'custom') {
@@ -1451,7 +1477,7 @@
             at_time = '';
         }
 
-        return {timebucket: timebucket, at_time: at_time};
+        return {timebucket: timebucket, at_time: at_time, month_keys: ''};
     }
 
     // 按当前时间筛选 UI 的值重新加载三屏，并尝试联动刷新第二、第三屏
@@ -1516,6 +1542,7 @@
         // 清空已缓存的时间条件
         window.InquirySplit.lastTimebucket = '';
         window.InquirySplit.lastAtTime = '';
+        window.InquirySplit.lastMonthKeys = '';
 
         // 清空联动选中状态，恢复默认文案与空态
         window.InquirySplit.lastTeamName = '';
@@ -1652,6 +1679,7 @@
         lastUsername: '',
         lastTimebucket: '',
         lastAtTime: '',
+        lastMonthKeys: '',
 
         loadTeamSummary: function() {
             var self = this;
@@ -1659,6 +1687,7 @@
             if (!params) return $.Deferred().resolve(null).promise();
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             return $.ajax({
                 url: '{:url("Operator/getInquiryTeamSummaryData")}',
                 type: 'POST',
@@ -1693,13 +1722,14 @@
             self.lastTeamName = teamName;
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             $('#inquiryMemberPaneTitle').text('👥 团队：' + teamName + ' - 个人询盘汇总');
             return $.ajax({
                 url: '{:url("Operator/getInquiryMemberSummaryData")}',
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {team_name: teamName, timebucket: params.timebucket, at_time: params.at_time},
+                data: {team_name: teamName, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''},
             }).then(function(res) {
                     if (res.code === 0 || res.code === 200) {
                         renderInquiryMemberPane(teamName, res.data || []);
@@ -1728,13 +1758,14 @@
             self.lastUsername = username;
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             $('#inquiryChannelPaneTitle').text('📋 ' + username + ' - 个人询盘渠道分类明细');
             return $.ajax({
                 url: '{:url("Operator/getInquiryChannelSummaryData")}',
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {username: username, timebucket: params.timebucket, at_time: params.at_time},
+                data: {username: username, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''},
             }).then(function(res) {
                     if (res.code === 0 || res.code === 200) {
                         renderInquiryChannelPane(username, res.data || []);
@@ -1907,9 +1938,9 @@
         var timeFilter = ($('#orderProductSummaryTimeFilter').val() || 'month').trim();
         var timebucket = '';
         var at_time = '';
-        var range = getMonthRange('orderProductSummary');
-        if (range) {
-            return {timebucket: '', at_time: range.start + ' - ' + range.end, month_keys: ''};
+        var month_keys = getMonthKeys('orderProductSummary');
+        if (month_keys) {
+            return {timebucket: '', at_time: '', month_keys: month_keys};
         }
         if (timeFilter === 'custom') {
             var startDate = ($('#orderProductSummaryStartDate').val() || '').trim();
@@ -2761,9 +2792,9 @@
         var timeFilter = ($('#operationInquirySummaryTimeFilter').val() || 'month').trim();
         var timebucket = '';
         var at_time = '';
-        var range = getMonthRange('operationInquirySummary');
-        if (range) {
-            return {timebucket: '', at_time: range.start + ' - ' + range.end};
+        var month_keys = getMonthKeys('operationInquirySummary');
+        if (month_keys) {
+            return {timebucket: '', at_time: '', month_keys: month_keys};
         }
         if (timeFilter === 'custom') {
             var startDate = ($('#operationInquirySummaryStartDate').val() || '').trim();
@@ -2779,7 +2810,7 @@
             timebucket = timeFilter || 'month';
             at_time = '';
         }
-        return {timebucket: timebucket, at_time: at_time};
+        return {timebucket: timebucket, at_time: at_time, month_keys: ''};
     }
 
     function operationInquirySummaryApplyTimeFilterAndLinkage() {
@@ -2839,6 +2870,7 @@
         clearMonthQuickSelect('operationInquirySummary', '#operationInquirySummaryMonthShortcutWrap');
         window.OperatorInquirySummarySplit.lastTimebucket = '';
         window.OperatorInquirySummarySplit.lastAtTime = '';
+        window.OperatorInquirySummarySplit.lastMonthKeys = '';
         window.OperatorInquirySummarySplit.lastInquiryId = null;
         window.OperatorInquirySummarySplit.lastUsername = '';
         $('#opInquiryStaffPaneTitle').text('👤 运营人员询盘汇总');
@@ -3078,6 +3110,7 @@
         lastUsername: '',
         lastTimebucket: '',
         lastAtTime: '',
+        lastMonthKeys: '',
 
         loadSourceSummary: function() {
             var self = this;
@@ -3085,6 +3118,7 @@
             if (!params) return $.Deferred().resolve(null).promise();
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             return $.ajax({
                 url: '{:url("Operator/getOperationInquirySummarySourceData")}',
                 type: 'POST',
@@ -3119,6 +3153,7 @@
             self.lastInquiryId = inquiryId;
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             var name = self.lastInquiryName || '';
             $('#opInquiryStaffPaneTitle').text('👤 ' + (name ? (name + ' - ') : '') + '运营人员询盘汇总');
             return $.ajax({
@@ -3126,7 +3161,7 @@
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time},
+                data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
                     var rows = res.data || [];
@@ -3166,6 +3201,7 @@
             if (!params) return $.Deferred().resolve(null).promise();
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
 
             var src = (self.lastInquiryName || '').trim() || '未知来源';
             $('#opInquiryPortPaneTitle').text('🔎 ' + src + ' - 异常明细');
@@ -3175,7 +3211,7 @@
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time},
+                data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
                     renderOpInquiryUnknownDetailPane(res || {}, self.lastInquiryName || '未知来源');
@@ -3204,6 +3240,7 @@
             self.lastUsername = uname;
             self.lastTimebucket = params.timebucket;
             self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
             if (isOpInquiryUnknownSource(inquiryId, self.lastInquiryName)) {
                 return self.loadUnknownSourceDetail(inquiryId);
             }
@@ -3218,7 +3255,7 @@
                 type: 'POST',
                 dataType: 'json',
                 timeout: 30000,
-                data: {inquiry_id: inquiryId, username: uname, timebucket: params.timebucket, at_time: params.at_time},
+                data: {inquiry_id: inquiryId, username: uname, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''},
             }).then(function(res) {
                 if (res.code === 0 || res.code === 200) {
                     renderOpInquiryPortPane(uname, res.data || [], self.lastInquiryName);
@@ -3409,7 +3446,7 @@
         var at_time = '';
 
         // 加载数据并显示分栏布局
-        loadTeamPerformanceData(timebucket, at_time, function() {
+        loadTeamPerformanceData(timebucket, at_time, month_keys, function() {
             layer.close(loading);
             $btn.prop('disabled', false).html(originalText);
 
@@ -3567,7 +3604,8 @@
                 if (window.TeamSplit && username) {
                     var timebucket = window.TeamSplit.lastTimebucket || 'month';
                     var at_time = window.TeamSplit.lastAtTime || '';
-                    window.TeamSplit.renderMemberDetail(username, timebucket, at_time);
+                    var month_keys = window.TeamSplit.lastMonthKeys || '';
+                    window.TeamSplit.renderMemberDetail(username, timebucket, at_time, month_keys);
                 }
             } else {
                 layer.msg('请先选择业务员', {icon: 2});
@@ -3582,10 +3620,11 @@
                     // 自定义时间未选择完整，使用保存的时间参数
                     timeParams = {
                         timebucket: window.TeamSplit.lastTimebucket || 'month',
-                        at_time: window.TeamSplit.lastAtTime || ''
+                            at_time: window.TeamSplit.lastAtTime || '',
+                            month_keys: window.TeamSplit.lastMonthKeys || ''
                     };
                 }
-                window.TeamSplit.renderMemberRank(window.TeamSplit.lastTeamId, window.TeamSplit.lastTeamName, timeParams.timebucket, timeParams.at_time);
+                window.TeamSplit.renderMemberRank(window.TeamSplit.lastTeamId, window.TeamSplit.lastTeamName, timeParams.timebucket, timeParams.at_time, timeParams.month_keys || '');
             } else {
                 layer.msg('请先选择团队', {icon: 2});
             }
@@ -3599,7 +3638,7 @@
     // === split-layout end ===
 
     // 加载团队业绩数据
-    function loadTeamPerformanceData(timebucket, at_time, successCallback, errorCallback) {
+    function loadTeamPerformanceData(timebucket, at_time, month_keys, successCallback, errorCallback) {
         // 禁用筛选/重置按钮（支持弹窗和分栏布局）
         var $filterBtn = $('#teamPerformanceFilterBtn, #teamPane #teamPerformanceFilterBtn');
         var $resetBtn = $('#teamPerformanceResetBtn, #teamPane #teamPerformanceResetBtn');
@@ -3615,6 +3654,7 @@
         if (window.TeamSplit) {
             window.TeamSplit.lastTimebucket = timebucket || 'month';
             window.TeamSplit.lastAtTime = at_time || '';
+            window.TeamSplit.lastMonthKeys = month_keys || '';
         }
 
         $.ajax({
@@ -3622,7 +3662,8 @@
             type: 'POST',
             data: {
                 timebucket: timebucket || '',
-                at_time: at_time || ''
+                at_time: at_time || '',
+                month_keys: month_keys || ''
             },
             dataType: 'json',
             timeout: 30000,
@@ -3660,12 +3701,14 @@
                             // 使用本次筛选的时间参数（传入的timebucket和at_time）
                             var currentTimebucket = timebucket || 'month';
                             var currentAtTime = at_time || '';
+                            var currentMonthKeys = month_keys || '';
                             
                             window.TeamSplit.renderMemberRank(
                                 window.TeamSplit.lastTeamId,
                                 window.TeamSplit.lastTeamName,
                                 currentTimebucket,
-                                currentAtTime
+                                currentAtTime,
+                                currentMonthKeys
                             );
                             
                             // renderMemberRank内部会在success回调中自动刷新个人订单清单（如果已选择成员）
@@ -3781,10 +3824,9 @@
         var timeFilter = $timeFilter.val() || 'month';
         var timebucket = '';
         var at_time = '';
-        var range = getMonthRange('teamPerformance');
-
-        if (range) {
-            return {timebucket: '', at_time: range.start + ' - ' + range.end};
+        var month_keys = getMonthKeys('teamPerformance');
+        if (month_keys) {
+            return {timebucket: '', at_time: '', month_keys: month_keys};
         }
         
         if (timeFilter === 'custom') {
@@ -3813,7 +3855,7 @@
             at_time = '';
         }
         
-        return {timebucket: timebucket, at_time: at_time};
+        return {timebucket: timebucket, at_time: at_time, month_keys: ''};
     }
 
     // 绑定团队业绩表的筛选/重置事件
@@ -3855,7 +3897,7 @@
             if (!timeParams) {
                 return; // 自定义时间未选择完整，getTeamTimeParams已经提示了
             }
-            loadTeamPerformanceData(timeParams.timebucket, timeParams.at_time);
+            loadTeamPerformanceData(timeParams.timebucket, timeParams.at_time, timeParams.month_keys || '');
         });
 
         // 重置按钮点击（支持弹窗和分栏布局）
@@ -3866,7 +3908,7 @@
             $('#teamPerformanceCustomTimeRange, #teamPane #teamPerformanceCustomTimeRange').css('display', 'none');
             clearMonthQuickSelect('teamPerformance', '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap');
             
-            loadTeamPerformanceData('month', '');
+            loadTeamPerformanceData('month', '', '');
         });
 
         // 刷新按钮（支持弹窗和分栏布局）
@@ -3876,7 +3918,7 @@
                 // 自定义时间未选择完整，使用默认值
                 timeParams = {timebucket: 'month', at_time: ''};
             }
-            loadTeamPerformanceData(timeParams.timebucket, timeParams.at_time);
+            loadTeamPerformanceData(timeParams.timebucket, timeParams.at_time, timeParams.month_keys || '');
         });
     }
 
@@ -3890,6 +3932,7 @@
         lastMemberName: null,
         lastTimebucket: 'month',
         lastAtTime: '',
+        lastMonthKeys: '',
 
         /**
          * 渲染成员排名到中列容器
@@ -3898,7 +3941,7 @@
          * @param {string} timebucket - 时间筛选（today/yesterday/week/month/year/custom）
          * @param {string} at_time - 自定义时间范围（格式：start_date,end_date）
          */
-        renderMemberRank: function(teamId, teamName, timebucket, at_time) {
+        renderMemberRank: function(teamId, teamName, timebucket, at_time, month_keys) {
             var self = this;
             
             // 统一标准化团队名，确保显示/点击/保存/比较一致
@@ -3910,6 +3953,7 @@
             self.lastTeamName = teamName;
             self.lastTimebucket = timebucket || 'month';
             self.lastAtTime = at_time || '';
+            self.lastMonthKeys = month_keys || '';
 
             // 更新中列标题
             var timeDisplay = self._formatTimeDisplay(timebucket, at_time);
@@ -3933,7 +3977,8 @@
                 data: {
                     team_name: teamName,
                     timebucket: timebucket || '',
-                    at_time: at_time || ''
+                    at_time: at_time || '',
+                    month_keys: month_keys || ''
                 },
                 dataType: 'json',
                 timeout: 30000,
@@ -3956,7 +4001,7 @@
                         
                         // 如果已选择成员且成员仍存在，自动刷新个人订单清单
                         if (self.lastMemberName && currentMemberExists) {
-                            self.renderMemberDetail(self.lastMemberName, timebucket || self.lastTimebucket, at_time || self.lastAtTime);
+                            self.renderMemberDetail(self.lastMemberName, timebucket || self.lastTimebucket, at_time || self.lastAtTime, month_keys || self.lastMonthKeys);
                         } else if (self.lastMemberName && !currentMemberExists) {
                             // 如果成员不存在，清空右侧面板
                             $('#memberDetailPane').html('<div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;"><i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i><p style="font-size: 16px; margin: 0;">当前时间范围无数据</p></div>');
@@ -4092,18 +4137,21 @@
                 var timeParams = getTeamTimeParams();
                 var timebucket = '';
                 var at_time = '';
+                var month_keys = '';
                 
                 if (timeParams) {
                     timebucket = timeParams.timebucket;
                     at_time = timeParams.at_time;
+                    month_keys = timeParams.month_keys || '';
                 } else {
                     // 如果getTeamTimeParams返回null（自定义时间未选择完整），使用保存的时间参数
                     timebucket = self.lastTimebucket || 'month';
                     at_time = self.lastAtTime || '';
+                    month_keys = self.lastMonthKeys || '';
                 }
                 
                 // 调用渲染函数，渲染到右列（传入解码后的中文用户名）
-                self.renderMemberDetail(username, timebucket, at_time);
+                self.renderMemberDetail(username, timebucket, at_time, month_keys);
             });
         },
         
@@ -4113,13 +4161,14 @@
          * @param {string} timebucket - 时间筛选（today/yesterday/week/month/year/custom）
          * @param {string} at_time - 自定义时间范围（格式：start_date,end_date）
          */
-        renderMemberDetail: function(username, timebucket, at_time) {
+        renderMemberDetail: function(username, timebucket, at_time, month_keys) {
             var self = this;
             
             // 保存当前选择的成员信息和时间参数
             self.lastMemberName = username;
             self.lastTimebucket = timebucket || self.lastTimebucket || 'month';
             self.lastAtTime = at_time || self.lastAtTime || '';
+            self.lastMonthKeys = month_keys || self.lastMonthKeys || '';
             
             // 更新右列标题
             var timeDisplay = self._formatTimeDisplay(timebucket || self.lastTimebucket, at_time || self.lastAtTime);
@@ -4145,7 +4194,8 @@
                     // 后端不应再依赖 team_name 过滤（未分组场景会再次踩坑），这里仅作为兼容字段保留
                     team_name: normalizeTeamName(self.lastTeamName || ''),
                     timebucket: timebucket || '',
-                    at_time: at_time || ''
+                    at_time: at_time || '',
+                    month_keys: month_keys || self.lastMonthKeys || ''
                 },
                 dataType: 'json',
                 timeout: 30000,
@@ -4527,10 +4577,9 @@
         var timeFilter = $('#performanceTimeFilter').val();
         var startDate = $('#performanceStartDate').val();
         var endDate = $('#performanceEndDate').val();
-        var range = getMonthRange('performance');
-
-        if (range) {
-            loadPerformanceData(selectedUser, '', range.start + ' - ' + range.end);
+        var month_keys = getMonthKeys('performance');
+        if (month_keys) {
+            loadPerformanceData(selectedUser, '', '', month_keys);
             return;
         }
         
@@ -4541,10 +4590,10 @@
                 return;
             }
             // 使用自定义时间范围重新请求数据
-            loadPerformanceData(selectedUser, '', startDate + ',' + endDate);
+            loadPerformanceData(selectedUser, '', startDate + ',' + endDate, '');
         } else if (timeFilter && timeFilter !== 'custom') {
             // 使用预设时间范围重新请求数据
-            loadPerformanceData(selectedUser, timeFilter, '');
+            loadPerformanceData(selectedUser, timeFilter, '', '');
         } else {
             // 只做前端筛选（业务员筛选）- 显示加载提示
             var loading = layer.load(2, {
@@ -4590,11 +4639,11 @@
         clearMonthQuickSelect('performance', '#performanceMonthShortcutWrap');
         
         // 重新加载数据（使用默认时间）
-        loadPerformanceData('', 'month', '');
+        loadPerformanceData('', 'month', '', '');
     }
     
     // 加载业绩数据
-    function loadPerformanceData(username, timebucket, at_time) {
+    function loadPerformanceData(username, timebucket, at_time, month_keys) {
         // 禁用筛选按钮，防止重复点击
         var $filterBtn = $('#performanceFilterBtn');
         var $resetBtn = $('#performanceResetBtn');
@@ -4615,7 +4664,8 @@
             data: {
                 username: username,
                 timebucket: timebucket,
-                at_time: at_time
+                at_time: at_time,
+                month_keys: month_keys || ''
             },
             dataType: 'json',
             timeout: 30000,

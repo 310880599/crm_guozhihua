@@ -116,18 +116,19 @@ function initTeamRowClick() {
         
         var timeParams = typeof getTeamTimeParams === 'function'
             ? getTeamTimeParams()
-            : {timebucket: 'month', at_time: ''};
+            : {timebucket: 'month', at_time: '', month_keys: ''};
         if (!timeParams) return;
         var timebucket = timeParams.timebucket || '';
         var at_time = timeParams.at_time || '';
+        var month_keys = timeParams.month_keys || '';
         
-        console.log('[team click] 时间参数:', {timebucket: timebucket, at_time: at_time});
+        console.log('[team click] 时间参数:', {timebucket: timebucket, at_time: at_time, month_keys: month_keys});
         
         // 检查是否在分栏布局中（通过检查 #teamPerformanceSplitLayout 是否显示）
         if ($('#teamPerformanceSplitLayout').is(':visible')) {
             // 在分栏布局中：调用渲染函数，渲染到中列
             if (window.TeamSplit && typeof window.TeamSplit.renderMemberRank === 'function') {
-                window.TeamSplit.renderMemberRank(teamName, teamName, timebucket, at_time);
+                window.TeamSplit.renderMemberRank(teamName, teamName, timebucket, at_time, month_keys);
             } else {
                 console.error('[team click] TeamSplit.renderMemberRank 函数不存在');
                 layer.msg('渲染函数未初始化', {icon: 2});
@@ -140,6 +141,9 @@ function initTeamRowClick() {
             }
             if (at_time) {
                 url += '&at_time=' + encodeURIComponent(at_time);
+            }
+            if (month_keys) {
+                url += '&month_keys=' + encodeURIComponent(month_keys);
             }
             
             console.log('[team click] 打开弹窗，URL:', url);

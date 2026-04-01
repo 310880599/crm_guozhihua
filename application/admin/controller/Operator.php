@@ -2193,7 +2193,7 @@ private function exportToExcel($data)
      * 说明：历史上业绩表先用「启用 + 业务组」admin 名单再 whereIn(pr_user)，会漏掉列表里仍统计到的订单；
      * 此处对齐列表：profile team_name、org→admin 拉 pr_user 范围、与列表相同的 check_status/order_time。
      */
-    private function buildOrderListAlignedOrderWhere(string $timebucket, string $at_time, string $filterPrUser = ''): array
+    private function buildOrderListAlignedOrderWhere(string $timebucket, string $at_time, string $filterPrUser = '', string $month_keys = ''): array
     {
         $where = [];
         $user = Admin::getMyInfo();
@@ -2203,26 +2203,10 @@ private function exportToExcel($data)
         }
         $where[] = ['check_status', '=', 2];
 
-        // 时间：与 buildPerformanceOrderWhere 一致（自定义逗号区间优先，否则 timebucket；弹窗默认本月）
-        $effective_timebucket = $timebucket;
-        if ($at_time === '' && $effective_timebucket === '') {
-            $effective_timebucket = 'month';
-        }
-        if ($at_time !== '' && strpos($at_time, ',') !== false) {
-            $date_parts = explode(',', $at_time);
-            if (count($date_parts) === 2) {
-                $start_date = trim($date_parts[0]);
-                $end_date = trim($date_parts[1]);
-                if ($start_date !== '' && $end_date !== '') {
-                    $where[] = ['order_time', '>=', $start_date . ' 00:00:00'];
-                    $where[] = ['order_time', '<=', $end_date . ' 23:59:59'];
-                }
-            }
-        } elseif ($effective_timebucket !== '') {
-            $where[] = $this->buildTimeWhere($effective_timebucket, 'order_time');
-        } else {
-            $where[] = $this->buildTimeWhere('month', 'order_time');
-        }
+        // 时间优先级统一：month_keys > at_time > timebucket > month
+        $where[] = function ($query) use ($timebucket, $at_time, $month_keys) {
+            $this->applyMonthShortcutTimeFilter($query, 'order_time', $timebucket, $at_time, $month_keys);
+        };
 
         // pr_user 范围：复制 Order::clientSearch() 中 admin + org 逻辑（不限制 is_open / group_id）
         $org_where = [];
@@ -2260,6 +2244,7 @@ private function exportToExcel($data)
     {
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
         $filter_username = Request::param('username', '');
 
         // 需要从业绩表中排除的业务员（按姓名匹配）
@@ -2279,7 +2264,7 @@ private function exportToExcel($data)
         }, $excludeUsernames))));
         $excludeMap = array_fill_keys($excludeUsernames, true);
 
-        $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username);
+        $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username, $month_keys);
 
         $empty_summary = [
             'total_profit' => number_format(0, 2),
@@ -2288,7 +2273,9 @@ private function exportToExcel($data)
         ];
 
         // 1) summary：与订单列表 totalProfit/totalMoney 同源（对整批 where 求和，不受补零行影响）
-        $totals_row = Db::table('crm_client_order')->where($where)
+        $totalsQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($totalsQuery, $where);
+        $totals_row = $totalsQuery
             ->field('SUM(profit) AS total_profit, SUM(money) AS total_money')
             ->find();
         $sum_profit_all = round((float)($totals_row['total_profit'] ?? 0), 2);
@@ -2298,7 +2285,9 @@ private function exportToExcel($data)
         // 2) 按 pr_user 聚合（空 pr_user 单独成桶，避免丢单）
         // MySQL 5.7: GROUP_CONCAT 的 SEPARATOR 需使用字符串字面量，不能用 CHAR(30)
         $teamNameSeparator = '||#||';
-        $order_stats = Db::table('crm_client_order')->where($where)
+        $orderStatsQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($orderStatsQuery, $where);
+        $order_stats = $orderStatsQuery
             ->fieldRaw(
                 "IFNULL(NULLIF(TRIM(pr_user),''), '__PR_EMPTY__') AS pr_bucket, "
                 . 'COUNT(id) AS order_count, SUM(profit) AS total_profit, SUM(money) AS total_money, '
@@ -2439,8 +2428,9 @@ private function exportToExcel($data)
     {
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
 
-        $where_new = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, '');
+        $where_new = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, '', $month_keys);
 
         $effective_timebucket = $timebucket;
         if ($at_time === '' && $effective_timebucket === '') {
@@ -2460,14 +2450,16 @@ private function exportToExcel($data)
 
         $cols = 'id,order_no,pr_user,team_name,order_time,money,profit,check_status';
 
-        $orders_new = Db::table('crm_client_order')->where($where_new)->field($cols)->select();
+        $ordersNewQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($ordersNewQuery, $where_new);
+        $orders_new = $ordersNewQuery->field($cols)->select();
         $ids_new = array_column($orders_new ?: [], 'id');
 
         if ($old_usernames === []) {
             $orders_old = [];
             $ids_old = [];
         } else {
-            $orders_old = $this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '')
+            $orders_old = $this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '', $month_keys)
                 ->where('pr_user', 'in', $old_usernames)
                 ->field($cols)
                 ->select();
@@ -2491,10 +2483,12 @@ private function exportToExcel($data)
         }
         $diff_profit = round($diff_profit, 2);
 
-        $sum_new = round((float)Db::table('crm_client_order')->where($where_new)->sum('profit'), 2);
+        $sumNewQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($sumNewQuery, $where_new);
+        $sum_new = round((float)$sumNewQuery->sum('profit'), 2);
         $sum_old = $old_usernames === []
             ? 0.0
-            : round((float)$this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '')
+            : round((float)$this->buildPerformanceOrderQuery($effective_timebucket, $at_time, [], '', $month_keys)
                 ->where('pr_user', 'in', $old_usernames)
                 ->sum('profit'), 2);
 
@@ -2536,39 +2530,15 @@ private function exportToExcel($data)
      * - 金额字段：money
      * - 利润字段：profit
      */
-    private function buildPerformanceOrderWhere(string $timebucket = '', string $at_time = '', array $extra = [], string $fieldPrefix = ''): array
+    private function buildPerformanceOrderWhere(string $timebucket = '', string $at_time = '', array $extra = [], string $fieldPrefix = '', string $month_keys = ''): array
     {
         $prefix = $fieldPrefix ? rtrim($fieldPrefix, '.') . '.' : '';
         $where = [];
         $where[] = [$prefix . 'check_status', '=', 2];
-
-        // 自定义时间范围（格式：start_date,end_date）优先
-        if ($at_time !== '' && strpos($at_time, ',') !== false) {
-            $date_parts = explode(',', $at_time);
-            if (count($date_parts) === 2) {
-                $start_date = trim($date_parts[0]);
-                $end_date   = trim($date_parts[1]);
-                if ($start_date !== '' && $end_date !== '') {
-                    $where[] = [$prefix . 'order_time', '>=', $start_date . ' 00:00:00'];
-                    $where[] = [$prefix . 'order_time', '<=', $end_date . ' 23:59:59'];
-                    foreach ($extra as $k => $v) {
-                        if (is_int($k) && is_array($v)) {
-                            $where[] = $v;
-                        } else {
-                            $where[] = [$prefix . $k, '=', $v];
-                        }
-                    }
-                    return $where;
-                }
-            }
-        }
-
-        // 否则按 timebucket / 默认本月
-        if ($timebucket !== '') {
-            $where[] = $this->buildTimeWhere($timebucket, $prefix . 'order_time');
-        } else {
-            $where[] = $this->buildTimeWhere('month', $prefix . 'order_time');
-        }
+        // 时间优先级统一：month_keys > at_time > timebucket > month
+        $where[] = function ($query) use ($prefix, $timebucket, $at_time, $month_keys) {
+            $this->applyMonthShortcutTimeFilter($query, $prefix . 'order_time', $timebucket, $at_time, $month_keys);
+        };
 
         foreach ($extra as $k => $v) {
             if (is_int($k) && is_array($v)) {
@@ -2611,10 +2581,10 @@ private function exportToExcel($data)
         return $query;
     }
 
-    private function buildPerformanceOrderQuery(string $timebucket = '', string $at_time = '', array $extra = [], string $alias = '')
+    private function buildPerformanceOrderQuery(string $timebucket = '', string $at_time = '', array $extra = [], string $alias = '', string $month_keys = '')
     {
         $query = $alias === '' ? Db::table('crm_client_order') : Db::table('crm_client_order')->alias($alias);
-        $where = $this->buildPerformanceOrderWhere($timebucket, $at_time, $extra, $alias);
+        $where = $this->buildPerformanceOrderWhere($timebucket, $at_time, $extra, $alias, $month_keys);
         return $this->applyPerformanceWhereToQuery($query, $where);
     }
 
@@ -2646,6 +2616,7 @@ private function exportToExcel($data)
     {
         $timebucket = Request::param('timebucket', '');
         $at_time    = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
 
         $current_admin = Admin::getMyInfo();
 
@@ -2660,7 +2631,7 @@ private function exportToExcel($data)
             ]);
         }
 
-        $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '')
+        $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
             ->where('pr_user', 'in', $usernames)
             ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
             ->group('team_name')
@@ -2714,10 +2685,12 @@ private function exportToExcel($data)
         $team_name = Request::param('team_name', '');
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
 
         $this->assign('team_name', $team_name);
         $this->assign('timebucket', $timebucket);
         $this->assign('at_time', $at_time);
+        $this->assign('month_keys', $month_keys);
 
         return $this->fetch('operator/team_member_performance_table');
     }
@@ -2732,6 +2705,7 @@ private function exportToExcel($data)
         $team_name = trim((string)$team_name_raw);
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
 
         $current_admin = Admin::getMyInfo();
 
@@ -2774,7 +2748,7 @@ private function exportToExcel($data)
         }
 
         // 3) 按成员用户名集合统计订单（不要依赖订单表 team_name，避免历史脏数据/不同步）
-        $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '')
+        $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
             ->whereIn('pr_user', $team_usernames)
             ->field('pr_user, SUM(profit) as total_profit, SUM(money) as total_money')
             ->group('pr_user')
@@ -2856,6 +2830,7 @@ private function exportToExcel($data)
         $team_name = Request::param('team_name', '');
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
 
         if (empty($username)) {
             return json([
@@ -2880,7 +2855,7 @@ private function exportToExcel($data)
 
         // 1) 查询该业务员订单明细（统一订单口径：crm_client_order，check_status=2，order_time）
         $extra = ['pr_user' => $username];
-        $orders_query = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '');
+        $orders_query = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '', $month_keys);
         $orders = $orders_query
             ->field('id,order_time,cname,money,profit')
             ->order('order_time desc,id desc')
@@ -2935,9 +2910,9 @@ private function exportToExcel($data)
     }
 
     /**
-     * 订单产品汇总：专用时间过滤（避免通用 where 结构在 join/alias 场景下歧义）
+     * 通用：解析 month_keys（YYYY-MM,YYYY-MM）为月份起止范围。
      */
-    private function parseOrderProductSummaryMonthKeys(string $month_keys = ''): array
+    private function parseMonthKeysToRanges(string $month_keys = ''): array
     {
         $month_keys = trim($month_keys);
         if ($month_keys === '') {
@@ -2970,81 +2945,91 @@ private function exportToExcel($data)
         return $ranges;
     }
 
-    private function applyOrderProductSummaryTimeFilter($query, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    /**
+     * 通用：解析 at_time 为 [startDate, endDate]，支持 "YYYY-MM-DD,YYYY-MM-DD" 与 "YYYY-MM-DD - YYYY-MM-DD"。
+     */
+    private function parseCustomDateRange(string $at_time = ''): array
     {
-        $monthRanges = $this->parseOrderProductSummaryMonthKeys($month_keys);
+        $at_time = trim((string)$at_time);
+        if ($at_time === '') {
+            return [];
+        }
+
+        $startDate = '';
+        $endDate = '';
+        if (strpos($at_time, ',') !== false) {
+            $dateParts = explode(',', $at_time, 2);
+            $startDate = trim((string)($dateParts[0] ?? ''));
+            $endDate = trim((string)($dateParts[1] ?? ''));
+        } elseif (strpos($at_time, ' - ') !== false) {
+            $dateParts = explode(' - ', $at_time, 2);
+            $startDate = trim((string)($dateParts[0] ?? ''));
+            $endDate = trim((string)($dateParts[1] ?? ''));
+        }
+
+        $isValidDate = function ($date) {
+            $dt = \DateTime::createFromFormat('Y-m-d', (string)$date);
+            return $dt && $dt->format('Y-m-d') === $date;
+        };
+
+        if ($startDate === '' || $endDate === '' || !$isValidDate($startDate) || !$isValidDate($endDate)) {
+            return [];
+        }
+        if ($startDate > $endDate) {
+            $tmp = $startDate;
+            $startDate = $endDate;
+            $endDate = $tmp;
+        }
+
+        return [$startDate, $endDate];
+    }
+
+    /**
+     * 通用：时间筛选优先级 month_keys > at_time > timebucket > month。
+     */
+    private function applyMonthShortcutTimeFilter($query, string $dateField, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    {
+        $monthRanges = $this->parseMonthKeysToRanges($month_keys);
         if (!empty($monthRanges)) {
-            $query->where(function ($monthOrQuery) use ($monthRanges) {
+            $query->where(function ($monthOrQuery) use ($monthRanges, $dateField) {
                 foreach ($monthRanges as $idx => $range) {
                     $method = $idx === 0 ? 'where' : 'whereOr';
-                    $monthOrQuery->{$method}(function ($monthQuery) use ($range) {
-                        $monthQuery->where('o.order_time', '>=', $range['start']);
-                        $monthQuery->where('o.order_time', '<=', $range['end']);
+                    $monthOrQuery->{$method}(function ($monthQuery) use ($range, $dateField) {
+                        $monthQuery->where($dateField, '>=', $range['start']);
+                        $monthQuery->where($dateField, '<=', $range['end']);
                     });
                 }
             });
             return $query;
         }
 
-        // 自定义时间范围优先：YYYY-MM-DD,YYYY-MM-DD
-        if ($at_time !== '' && strpos($at_time, ',') !== false) {
-            $dateParts = explode(',', $at_time);
-            if (count($dateParts) === 2) {
-                $startDate = trim((string)$dateParts[0]);
-                $endDate   = trim((string)$dateParts[1]);
-
-                $isValidDate = function ($date) {
-                    $dt = \DateTime::createFromFormat('Y-m-d', (string)$date);
-                    return $dt && $dt->format('Y-m-d') === $date;
-                };
-
-                if ($isValidDate($startDate) && $isValidDate($endDate)) {
-                    if ($startDate > $endDate) {
-                        $tmp = $startDate;
-                        $startDate = $endDate;
-                        $endDate = $tmp;
-                    }
-                    $query->where('o.order_time', '>=', $startDate . ' 00:00:00');
-                    $query->where('o.order_time', '<=', $endDate . ' 23:59:59');
-                    return $query;
-                }
-            }
+        $dateRange = $this->parseCustomDateRange($at_time);
+        if (!empty($dateRange)) {
+            $query->where($dateField, '>=', $dateRange[0] . ' 00:00:00');
+            $query->where($dateField, '<=', $dateRange[1] . ' 23:59:59');
+            return $query;
         }
 
         $bucket = strtolower(trim((string)$timebucket));
         if ($bucket === '' || $bucket === 'custom') {
             $bucket = 'month';
         }
-
-        $now = time();
-        switch ($bucket) {
-            case 'today':
-                $start = date('Y-m-d 00:00:00', $now);
-                $end   = date('Y-m-d 23:59:59', $now);
-                break;
-            case 'yesterday':
-                $ts    = strtotime('-1 day', $now);
-                $start = date('Y-m-d 00:00:00', $ts);
-                $end   = date('Y-m-d 23:59:59', $ts);
-                break;
-            case 'week':
-                $start = date('Y-m-d 00:00:00', strtotime('monday this week', $now));
-                $end   = date('Y-m-d 23:59:59', strtotime('sunday this week', $now));
-                break;
-            case 'year':
-                $start = date('Y-01-01 00:00:00', $now);
-                $end   = date('Y-12-31 23:59:59', $now);
-                break;
-            case 'month':
-            default:
-                $start = date('Y-m-01 00:00:00', $now);
-                $end   = date('Y-m-t 23:59:59', $now);
-                break;
-        }
-
-        $query->where('o.order_time', '>=', $start);
-        $query->where('o.order_time', '<=', $end);
+        $timeWhere = $this->buildTimeWhere($bucket, $dateField);
+        $query->where([$timeWhere]);
         return $query;
+    }
+
+    /**
+     * 订单产品汇总：专用时间过滤（避免通用 where 结构在 join/alias 场景下歧义）
+     */
+    private function parseOrderProductSummaryMonthKeys(string $month_keys = ''): array
+    {
+        return $this->parseMonthKeysToRanges($month_keys);
+    }
+
+    private function applyOrderProductSummaryTimeFilter($query, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    {
+        return $this->applyMonthShortcutTimeFilter($query, 'o.order_time', $timebucket, $at_time, $month_keys);
     }
 
     // ===== [开始] 订单产品汇总第一屏利润/销量排序改造 =====
@@ -3461,25 +3446,35 @@ private function exportToExcel($data)
      * - 否则使用 timebucket
      * - 若二者都为空，默认 month
      */
-    private function resolveInquirySummaryTimeParams(string $timebucket = '', string $at_time = ''): array
+    private function resolveInquirySummaryTimeParams(string $timebucket = '', string $at_time = '', string $month_keys = ''): array
     {
-        if ($at_time !== '' && strpos($at_time, ',') !== false) {
-            $date_parts = explode(',', $at_time);
-            if (count($date_parts) === 2) {
-                $start_date = trim($date_parts[0]);
-                $end_date   = trim($date_parts[1]);
-                if ($start_date !== '' && $end_date !== '') {
-                    return [
-                        'is_custom' => true,
-                        'start_date' => $start_date,
-                        'end_date' => $end_date,
-                        'timebucket' => '',
-                    ];
-                }
-            }
+        $month_ranges = $this->parseMonthKeysToRanges($month_keys);
+        if (!empty($month_ranges)) {
+            return [
+                'is_month_keys' => true,
+                'month_ranges' => $month_ranges,
+                'is_custom' => false,
+                'start_date' => '',
+                'end_date' => '',
+                'timebucket' => '',
+            ];
+        }
+
+        $date_range = $this->parseCustomDateRange($at_time);
+        if (!empty($date_range)) {
+            return [
+                'is_month_keys' => false,
+                'month_ranges' => [],
+                'is_custom' => true,
+                'start_date' => $date_range[0],
+                'end_date' => $date_range[1],
+                'timebucket' => '',
+            ];
         }
 
         return [
+            'is_month_keys' => false,
+            'month_ranges' => [],
             'is_custom' => false,
             'start_date' => '',
             'end_date' => '',
@@ -3490,10 +3485,29 @@ private function exportToExcel($data)
     /**
      * 业务询盘汇总三连屏：构建与团队业绩表同时间解析规则的 leads 时间条件。
      */
-    private function buildInquirySummaryLeadsWhere(string $timebucket = '', string $at_time = ''): array
+    private function buildInquirySummaryLeadsWhere(string $timebucket = '', string $at_time = '', string $month_keys = ''): array
     {
         $l_where_sub = [['status', '=', 1]];
-        $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time);
+        $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time, $month_keys);
+
+        if (!empty($time_params['is_month_keys'])) {
+            $monthRanges = $time_params['month_ranges'] ?? [];
+            $l_where_sub[] = function ($query) use ($monthRanges) {
+                foreach ($monthRanges as $idx => $range) {
+                    $method = $idx === 0 ? 'where' : 'whereOr';
+                    $query->{$method}(function ($orQ) use ($range) {
+                        $orQ->where(function ($q) use ($range) {
+                            $q->where('at_time', '>=', $range['start'])
+                                ->where('at_time', '<=', $range['end']);
+                        })->whereOr(function ($q) use ($range) {
+                            $q->where('to_kh_time', '>=', $range['start'])
+                                ->where('to_kh_time', '<=', $range['end']);
+                        });
+                    });
+                }
+            };
+            return $l_where_sub;
+        }
 
         if ($time_params['is_custom']) {
             $start_time = $time_params['start_date'] . ' 00:00:00';
@@ -3667,11 +3681,13 @@ private function exportToExcel($data)
      * 业务询盘汇总三连屏：复用客户列表真实口径基础查询。
      * 口径来源：application/admin/model/Client.php::buildClientSearchAllBaseQuery()
      */
-    private function buildInquirySummaryClientBaseQuery(string $timebucket = '', string $at_time = '', bool $excludeRepeatSource = true)
+    private function buildInquirySummaryClientBaseQuery(string $timebucket = '', string $at_time = '', bool $excludeRepeatSource = true, string $month_keys = '')
     {
         $keyword = [];
-        $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time);
-        if ($time_params['is_custom']) {
+        $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time, $month_keys);
+        if (!empty($time_params['is_month_keys'])) {
+            $keyword['timebucket'] = '';
+        } elseif ($time_params['is_custom']) {
             $keyword['timebucket'] = [
                 ['at_time', '>=', $time_params['start_date'] . ' 00:00:00'],
                 ['at_time', '<=', $time_params['end_date'] . ' 23:59:59'],
@@ -3682,6 +3698,18 @@ private function exportToExcel($data)
 
         // 关键：返单过滤必须放在 crm_leads 原始层，不能放在最终子查询别名 l 上。
         $clientBaseQuery = model('Client')->buildClientSearchAllBaseQuery($keyword);
+        if (!empty($time_params['is_month_keys'])) {
+            $monthRanges = $time_params['month_ranges'] ?? [];
+            $clientBaseQuery->where(function ($monthOrQuery) use ($monthRanges) {
+                foreach ($monthRanges as $idx => $range) {
+                    $method = $idx === 0 ? 'where' : 'whereOr';
+                    $monthOrQuery->{$method}(function ($monthQuery) use ($range) {
+                        $monthQuery->where('l.at_time', '>=', $range['start'])
+                            ->where('l.at_time', '<=', $range['end']);
+                    });
+                }
+            });
+        }
         if ($excludeRepeatSource) {
             $this->applyInquirySummaryExcludeRepeatLead($clientBaseQuery, 'l');
         }
@@ -3780,6 +3808,7 @@ private function exportToExcel($data)
         try {
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
 
             // 新增：排除团队/排除业务员（影响统计口径，不只是展示隐藏）
             $excludedTeams = $this->getExcludedInquiryTeamNames();
@@ -3789,7 +3818,7 @@ private function exportToExcel($data)
             $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
 
             // 基础数据集：严格复用客户列表口径（crm_leads + at_time + pr_user 可见范围）
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
             $baseTotal = (int)(clone $baseQuery)->count();
 
             \think\facade\Log::info('[InquirySummaryDebug] params=' . json_encode([
@@ -3931,6 +3960,7 @@ private function exportToExcel($data)
             $team_name = trim((string)Request::param('team_name', ''));
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
 
             if ($team_name === '') {
                 return json([
@@ -3956,7 +3986,7 @@ private function exportToExcel($data)
             $excludedUsers = $this->getExcludedInquiryUsernames();
 
             // 同一套基础数据集（与客户列表一致）
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
             $query = (clone $baseQuery)
                 ->leftJoin('admin a', 'l.pr_user = a.username');
 
@@ -4016,6 +4046,7 @@ private function exportToExcel($data)
             $username = trim((string)Request::param('username', ''));
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
 
             if ($username === '') {
                 return json([
@@ -4038,7 +4069,7 @@ private function exportToExcel($data)
             }
 
             // 权限口径：以客户列表可见负责人范围为准
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
             $rows = (clone $baseQuery)
                 ->where('l.pr_user', '=', $username)
                 ->group('l.inquiry_id')
@@ -4302,8 +4333,9 @@ private function exportToExcel($data)
         try {
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
 
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
 
             $bucketExpr = 'CASE WHEN l.inquiry_id IS NULL OR l.inquiry_id = 0 OR TRIM(IFNULL(CAST(l.inquiry_id AS CHAR), \'\')) = \'\' THEN 0 ELSE CAST(l.inquiry_id AS UNSIGNED) END';
 
@@ -4375,8 +4407,9 @@ private function exportToExcel($data)
             $inquiry_id = (int)Request::param('inquiry_id', 0);
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
 
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
 
             $staffRows = $this->fetchOperationStaffRowsForInquirySummary($inquiry_id);
@@ -4447,8 +4480,9 @@ private function exportToExcel($data)
             $username = trim((string)Request::param('username', ''));
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
 
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
 
             $validPortMap = $this->getInquiryPortNameMapForSummary($inquiry_id);
@@ -4521,8 +4555,9 @@ private function exportToExcel($data)
             $inquiry_id = (int)Request::param('inquiry_id', 0);
             $timebucket = Request::param('timebucket', '');
             $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
 
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false);
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
 
             $leadsColumns = $this->getInquirySummaryLeadsColumns();
