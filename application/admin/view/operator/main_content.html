@@ -168,46 +168,36 @@
         padding: 2px 6px;
         border-radius: 4px;
     }
-    #orderProductSummarySplitLayout .order-product-month-shortcut-wrap {
+    .month-quick-select {
         width: 100%;
         display: flex;
         align-items: center;
         gap: 8px;
         flex-wrap: wrap;
     }
-    #orderProductSummarySplitLayout .order-product-month-shortcut-label {
+    .month-quick-select-label {
         margin: 0;
         white-space: nowrap;
-        color: #0f766e;
         font-weight: 600;
     }
-    #orderProductSummarySplitLayout .order-product-month-shortcut-buttons {
+    .month-quick-select-buttons {
         display: flex;
         flex-wrap: wrap;
-        gap: 6px;
     }
-    #orderProductSummarySplitLayout .order-product-month-btn {
-        min-width: 48px;
-        height: 30px;
-        padding: 0 10px;
-        border: 1px solid #99f6e4;
+    .month-quick-select button {
+        margin: 4px;
+        padding: 6px 12px;
         border-radius: 6px;
-        background: #f0fdfa;
-        color: #0f766e;
-        font-size: 12px;
-        line-height: 28px;
+        border: 1px solid #dcdfe6;
+        background: #fff;
+        color: #606266;
         cursor: pointer;
         transition: all .15s ease;
     }
-    #orderProductSummarySplitLayout .order-product-month-btn:hover {
-        border-color: #14b8a6;
-        background: #ccfbf1;
-    }
-    #orderProductSummarySplitLayout .order-product-month-btn.is-active {
-        border-color: #0f766e;
-        background: linear-gradient(135deg, #14b8a6, #0f766e);
+    .month-quick-select button.active {
+        background: #409eff;
         color: #fff;
-        box-shadow: 0 1px 2px rgba(15, 118, 110, .25);
+        border-color: #409eff;
     }
 
     /* ========== 运营询盘汇总三连屏主题（仅 #operationInquirySummarySplitLayout） ========== */
@@ -737,6 +727,7 @@
                 <span>至</span>
                 <input type="date" id="performanceEndDate" class="form-control" style="width: 150px;">
             </div>
+            <div id="performanceMonthShortcutWrap"></div>
             <button type="button" class="btn btn-primary btn-sm" id="performanceFilterBtn" style="margin-left: auto;">
                 <i class="bi bi-search"></i> 筛选
             </button>
@@ -896,6 +887,7 @@
                     <span>至</span>
                     <input type="date" id="inquirySummaryEndDate" class="form-control" style="width: 150px;">
                 </div>
+                <div id="inquirySummaryMonthShortcutWrap"></div>
                 <button type="button" class="btn btn-primary btn-sm" id="inquirySummaryFilterBtn" style="margin-left: auto;">
                     <i class="bi bi-search"></i> 筛选
                 </button>
@@ -974,23 +966,7 @@
                     <span>至</span>
                     <input type="date" id="orderProductSummaryEndDate" class="form-control" style="width: 150px;">
                 </div>
-                <div id="orderProductSummaryMonthShortcutWrap" class="order-product-month-shortcut-wrap">
-                    <label class="order-product-month-shortcut-label">月份快捷：</label>
-                    <div class="order-product-month-shortcut-buttons">
-                        <button type="button" class="order-product-month-btn" data-month="1">1月</button>
-                        <button type="button" class="order-product-month-btn" data-month="2">2月</button>
-                        <button type="button" class="order-product-month-btn" data-month="3">3月</button>
-                        <button type="button" class="order-product-month-btn" data-month="4">4月</button>
-                        <button type="button" class="order-product-month-btn" data-month="5">5月</button>
-                        <button type="button" class="order-product-month-btn" data-month="6">6月</button>
-                        <button type="button" class="order-product-month-btn" data-month="7">7月</button>
-                        <button type="button" class="order-product-month-btn" data-month="8">8月</button>
-                        <button type="button" class="order-product-month-btn" data-month="9">9月</button>
-                        <button type="button" class="order-product-month-btn" data-month="10">10月</button>
-                        <button type="button" class="order-product-month-btn" data-month="11">11月</button>
-                        <button type="button" class="order-product-month-btn" data-month="12">12月</button>
-                    </div>
-                </div>
+                <div id="orderProductSummaryMonthShortcutWrap"></div>
                 <button type="button" class="btn btn-primary btn-sm" id="orderProductSummaryFilterBtn" style="margin-left: auto;">
                     <i class="bi bi-search"></i> 筛选
                 </button>
@@ -1069,6 +1045,7 @@
                     <span>至</span>
                     <input type="date" id="operationInquirySummaryEndDate" class="form-control" style="width: 150px;">
                 </div>
+                <div id="operationInquirySummaryMonthShortcutWrap"></div>
                 <button type="button" class="btn btn-sm op-inquiry-btn-filter" id="operationInquirySummaryFilterBtn">
                     <i class="bi bi-search"></i> 筛选
                 </button>
@@ -1119,11 +1096,138 @@
 </div>
 
 
+<template id="monthQuickSelectTemplate">
+    <div class="month-quick-select">
+        <label class="month-quick-select-label">月份快捷：</label>
+        <div class="month-quick-select-buttons">
+            <button type="button" class="month-quick-select-btn" data-month="1">1月</button>
+            <button type="button" class="month-quick-select-btn" data-month="2">2月</button>
+            <button type="button" class="month-quick-select-btn" data-month="3">3月</button>
+            <button type="button" class="month-quick-select-btn" data-month="4">4月</button>
+            <button type="button" class="month-quick-select-btn" data-month="5">5月</button>
+            <button type="button" class="month-quick-select-btn" data-month="6">6月</button>
+            <button type="button" class="month-quick-select-btn" data-month="7">7月</button>
+            <button type="button" class="month-quick-select-btn" data-month="8">8月</button>
+            <button type="button" class="month-quick-select-btn" data-month="9">9月</button>
+            <button type="button" class="month-quick-select-btn" data-month="10">10月</button>
+            <button type="button" class="month-quick-select-btn" data-month="11">11月</button>
+            <button type="button" class="month-quick-select-btn" data-month="12">12月</button>
+        </div>
+    </div>
+</template>
+
 <script>
     // 团队名称标准化：空/NULL/空格 => "未分组"
     function normalizeTeamName(teamName) {
         teamName = $.trim(teamName || '');
         return teamName ? teamName : '未分组';
+    }
+
+    var monthQuickStateMap = {};
+
+    function renderMonthQuickSelect($wrap) {
+        if (!$wrap || !$wrap.length) return;
+        if ($wrap.find('.month-quick-select').length) return;
+        var tpl = $('#monthQuickSelectTemplate').html() || '';
+        if (tpl) {
+            $wrap.html(tpl);
+        }
+    }
+
+    function initMonthQuickSelect(opts) {
+        var options = opts || {};
+        var key = options.key;
+        var wrapSelector = options.wrapSelector;
+        if (!key || !wrapSelector) return;
+
+        if (!monthQuickStateMap[key]) {
+            monthQuickStateMap[key] = {selectedMonths: []};
+        }
+
+        $(wrapSelector).each(function() {
+            renderMonthQuickSelect($(this));
+        });
+
+        $(document)
+            .off('click.monthQuickSelect.' + key, wrapSelector + ' .month-quick-select-btn')
+            .on('click.monthQuickSelect.' + key, wrapSelector + ' .month-quick-select-btn', function() {
+                var state = monthQuickStateMap[key] || {selectedMonths: []};
+                var month = parseInt(($(this).attr('data-month') || '').trim(), 10);
+                if (isNaN(month) || month < 1 || month > 12) return;
+
+                var idx = state.selectedMonths.indexOf(month);
+                if (idx > -1) {
+                    state.selectedMonths.splice(idx, 1);
+                } else {
+                    state.selectedMonths.push(month);
+                }
+                state.selectedMonths.sort(function(a, b) { return a - b; });
+                monthQuickStateMap[key] = state;
+
+                syncMonthQuickSelectState(key, wrapSelector);
+
+                if (state.selectedMonths.length) {
+                    if (options.startDateSelector) $(options.startDateSelector).val('');
+                    if (options.endDateSelector) $(options.endDateSelector).val('');
+                    if (options.customRangeSelector) $(options.customRangeSelector).css('display', 'none');
+                    if (options.timeFilterSelector && ($(options.timeFilterSelector).val() || '').trim() === 'custom') {
+                        $(options.timeFilterSelector).val('month');
+                    }
+                }
+            });
+    }
+
+    function syncMonthQuickSelectState(key, wrapSelector) {
+        var state = monthQuickStateMap[key] || {selectedMonths: []};
+        var selectedMap = {};
+        $.each(state.selectedMonths, function(_, month) {
+            selectedMap[month] = true;
+        });
+        $(wrapSelector + ' .month-quick-select-btn').each(function() {
+            var month = parseInt(($(this).attr('data-month') || '').trim(), 10);
+            $(this).toggleClass('active', !!selectedMap[month]);
+        });
+    }
+
+    function clearMonthQuickSelect(key, wrapSelector) {
+        if (!monthQuickStateMap[key]) {
+            monthQuickStateMap[key] = {selectedMonths: []};
+        }
+        monthQuickStateMap[key].selectedMonths = [];
+        syncMonthQuickSelectState(key, wrapSelector);
+    }
+
+    function getMonthRange(key) {
+        var state = monthQuickStateMap[key] || {selectedMonths: []};
+        var selectedMonths = (state.selectedMonths || []).slice();
+        if (!selectedMonths.length) return null;
+
+        selectedMonths = selectedMonths.filter(function(m) {
+            return m >= 1 && m <= 12;
+        }).sort(function(a, b) {
+            return a - b;
+        });
+        if (!selectedMonths.length) return null;
+
+        var year = (new Date()).getFullYear();
+        var startMonth = selectedMonths[0];
+        var endMonth = selectedMonths[selectedMonths.length - 1];
+        var start = new Date(year, startMonth - 1, 1);
+        var end = new Date(year, endMonth, 0);
+
+        function fmt(d) {
+            var yyyy = d.getFullYear();
+            var mm = String(d.getMonth() + 1);
+            var dd = String(d.getDate());
+            if (mm.length < 2) mm = '0' + mm;
+            if (dd.length < 2) dd = '0' + dd;
+            return yyyy + '-' + mm + '-' + dd;
+        }
+
+        return {
+            start: fmt(start),
+            end: fmt(end)
+        };
     }
 
     function initFoldCard() {
@@ -1145,6 +1249,47 @@
     }
     // 页面初始化时运行一次
     $(document).ready(function() {
+        initMonthQuickSelect({
+            key: 'performance',
+            wrapSelector: '#performanceMonthShortcutWrap',
+            timeFilterSelector: '#performanceTimeFilter',
+            startDateSelector: '#performanceStartDate',
+            endDateSelector: '#performanceEndDate',
+            customRangeSelector: '#performanceCustomTimeRange'
+        });
+        initMonthQuickSelect({
+            key: 'teamPerformance',
+            wrapSelector: '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap',
+            timeFilterSelector: '#teamPerformanceTimeFilter, #teamPane #teamPerformanceTimeFilter',
+            startDateSelector: '#teamPerformanceStartDate, #teamPane #teamPerformanceStartDate',
+            endDateSelector: '#teamPerformanceEndDate, #teamPane #teamPerformanceEndDate',
+            customRangeSelector: '#teamPerformanceCustomTimeRange, #teamPane #teamPerformanceCustomTimeRange'
+        });
+        initMonthQuickSelect({
+            key: 'inquirySummary',
+            wrapSelector: '#inquirySummaryMonthShortcutWrap',
+            timeFilterSelector: '#inquirySummaryTimeFilter',
+            startDateSelector: '#inquirySummaryStartDate',
+            endDateSelector: '#inquirySummaryEndDate',
+            customRangeSelector: '#inquirySummaryCustomTimeRange'
+        });
+        initMonthQuickSelect({
+            key: 'orderProductSummary',
+            wrapSelector: '#orderProductSummaryMonthShortcutWrap',
+            timeFilterSelector: '#orderProductSummaryTimeFilter',
+            startDateSelector: '#orderProductSummaryStartDate',
+            endDateSelector: '#orderProductSummaryEndDate',
+            customRangeSelector: '#orderProductSummaryCustomTimeRange'
+        });
+        initMonthQuickSelect({
+            key: 'operationInquirySummary',
+            wrapSelector: '#operationInquirySummaryMonthShortcutWrap',
+            timeFilterSelector: '#operationInquirySummaryTimeFilter',
+            startDateSelector: '#operationInquirySummaryStartDate',
+            endDateSelector: '#operationInquirySummaryEndDate',
+            customRangeSelector: '#operationInquirySummaryCustomTimeRange'
+        });
+
         // 延迟执行，确保 DOM 完全加载
         setTimeout(function() {
             initFoldCard();
@@ -1161,6 +1306,14 @@
 
     function init(){
         initFoldCard();
+        initMonthQuickSelect({
+            key: 'teamPerformance',
+            wrapSelector: '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap',
+            timeFilterSelector: '#teamPerformanceTimeFilter, #teamPane #teamPerformanceTimeFilter',
+            startDateSelector: '#teamPerformanceStartDate, #teamPane #teamPerformanceStartDate',
+            endDateSelector: '#teamPerformanceEndDate, #teamPane #teamPerformanceEndDate',
+            customRangeSelector: '#teamPerformanceCustomTimeRange, #teamPane #teamPerformanceCustomTimeRange'
+        });
         if (typeof ExportSelectTables !== 'undefined') {
             ExportSelectTables.addCheckboxes();
         }
@@ -1277,6 +1430,11 @@
         var timeFilter = ($('#inquirySummaryTimeFilter').val() || 'month').trim();
         var timebucket = '';
         var at_time = '';
+        var range = getMonthRange('inquirySummary');
+
+        if (range) {
+            return {timebucket: '', at_time: range.start + ' - ' + range.end};
+        }
 
         if (timeFilter === 'custom') {
             var startDate = ($('#inquirySummaryStartDate').val() || '').trim();
@@ -1353,6 +1511,7 @@
         $('#inquirySummaryStartDate').val('');
         $('#inquirySummaryEndDate').val('');
         $('#inquirySummaryCustomTimeRange').css('display', 'none');
+        clearMonthQuickSelect('inquirySummary', '#inquirySummaryMonthShortcutWrap');
 
         // 清空已缓存的时间条件
         window.InquirySplit.lastTimebucket = '';
@@ -1375,11 +1534,15 @@
         // 下拉切换：仅 custom 时显示日期范围（对齐团队业绩表）
         $('#inquirySummaryTimeFilter').off('change.inquirySummaryTimeFilter').on('change.inquirySummaryTimeFilter', function () {
             var val = ($(this).val() || '').trim();
+            clearMonthQuickSelect('inquirySummary', '#inquirySummaryMonthShortcutWrap');
             if (val === 'custom') {
                 $('#inquirySummaryCustomTimeRange').css('display', 'flex');
             } else {
                 $('#inquirySummaryCustomTimeRange').css('display', 'none');
             }
+        });
+        $('#inquirySummaryStartDate, #inquirySummaryEndDate').off('change.inquirySummaryDate').on('change.inquirySummaryDate', function() {
+            clearMonthQuickSelect('inquirySummary', '#inquirySummaryMonthShortcutWrap');
         });
 
         // 筛选按钮
@@ -1736,42 +1899,17 @@
         $btn.prop('disabled', false).html(originalText);
     });
 
-    function getOrderProductSummaryMonthKeys() {
-        var year = (new Date()).getFullYear();
-        var monthNums = [];
-        $('#orderProductSummaryMonthShortcutWrap .order-product-month-btn.is-active').each(function() {
-            var raw = ($(this).attr('data-month') || '').trim();
-            var monthNum = parseInt(raw, 10);
-            if (!isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
-                monthNums.push(monthNum);
-            }
-        });
-        if (!monthNums.length) return '';
-        monthNums.sort(function(a, b) { return a - b; });
-        var keys = [];
-        var seen = {};
-        $.each(monthNums, function(_, monthNum) {
-            var mm = monthNum < 10 ? ('0' + monthNum) : String(monthNum);
-            var key = year + '-' + mm;
-            if (!seen[key]) {
-                seen[key] = true;
-                keys.push(key);
-            }
-        });
-        return keys.join(',');
-    }
-
     function clearOrderProductSummaryMonthShortcutSelection() {
-        $('#orderProductSummaryMonthShortcutWrap .order-product-month-btn').removeClass('is-active');
+        clearMonthQuickSelect('orderProductSummary', '#orderProductSummaryMonthShortcutWrap');
     }
 
     function getOrderProductSummaryTimeParams() {
         var timeFilter = ($('#orderProductSummaryTimeFilter').val() || 'month').trim();
         var timebucket = '';
         var at_time = '';
-        var month_keys = getOrderProductSummaryMonthKeys();
-        if (month_keys) {
-            return {timebucket: '', at_time: '', month_keys: month_keys};
+        var range = getMonthRange('orderProductSummary');
+        if (range) {
+            return {timebucket: '', at_time: range.start + ' - ' + range.end, month_keys: ''};
         }
         if (timeFilter === 'custom') {
             var startDate = ($('#orderProductSummaryStartDate').val() || '').trim();
@@ -2478,22 +2616,10 @@
                 $('#orderProductSummaryCustomTimeRange').css('display', 'none');
             }
         });
-        $('#orderProductSummaryMonthShortcutWrap').off('click.orderProductMonthBtn', '.order-product-month-btn').on('click.orderProductMonthBtn', '.order-product-month-btn', function () {
-            $(this).toggleClass('is-active');
-            var monthKeys = getOrderProductSummaryMonthKeys();
-            if (monthKeys) {
-                $('#orderProductSummaryStartDate').val('');
-                $('#orderProductSummaryEndDate').val('');
-                $('#orderProductSummaryCustomTimeRange').css('display', 'none');
-                if (($('#orderProductSummaryTimeFilter').val() || '').trim() === 'custom') {
-                    $('#orderProductSummaryTimeFilter').val('month');
-                }
-            }
-        });
         $('#orderProductSummaryStartDate, #orderProductSummaryEndDate')
             .off('change.orderProductCustomDateInput')
             .on('change.orderProductCustomDateInput', function () {
-                clearOrderProductSummaryMonthShortcutSelection();
+                clearMonthQuickSelect('orderProductSummary', '#orderProductSummaryMonthShortcutWrap');
             });
 
         $('#orderProductSummaryFilterBtn').off('click.orderProductFilterBtn').on('click.orderProductFilterBtn', function () {
@@ -2635,6 +2761,10 @@
         var timeFilter = ($('#operationInquirySummaryTimeFilter').val() || 'month').trim();
         var timebucket = '';
         var at_time = '';
+        var range = getMonthRange('operationInquirySummary');
+        if (range) {
+            return {timebucket: '', at_time: range.start + ' - ' + range.end};
+        }
         if (timeFilter === 'custom') {
             var startDate = ($('#operationInquirySummaryStartDate').val() || '').trim();
             var endDate = ($('#operationInquirySummaryEndDate').val() || '').trim();
@@ -2706,6 +2836,7 @@
         $('#operationInquirySummaryStartDate').val('');
         $('#operationInquirySummaryEndDate').val('');
         $('#operationInquirySummaryCustomTimeRange').css('display', 'none');
+        clearMonthQuickSelect('operationInquirySummary', '#operationInquirySummaryMonthShortcutWrap');
         window.OperatorInquirySummarySplit.lastTimebucket = '';
         window.OperatorInquirySummarySplit.lastAtTime = '';
         window.OperatorInquirySummarySplit.lastInquiryId = null;
@@ -2723,11 +2854,15 @@
     function bindOperationInquirySummaryTimeFilterEvents() {
         $('#operationInquirySummaryTimeFilter').off('change.opInquiryTime').on('change.opInquiryTime', function () {
             var val = ($(this).val() || '').trim();
+            clearMonthQuickSelect('operationInquirySummary', '#operationInquirySummaryMonthShortcutWrap');
             if (val === 'custom') {
                 $('#operationInquirySummaryCustomTimeRange').css('display', 'flex');
             } else {
                 $('#operationInquirySummaryCustomTimeRange').css('display', 'none');
             }
+        });
+        $('#operationInquirySummaryStartDate, #operationInquirySummaryEndDate').off('change.opInquiryDate').on('change.opInquiryDate', function() {
+            clearMonthQuickSelect('operationInquirySummary', '#operationInquirySummaryMonthShortcutWrap');
         });
         $('#operationInquirySummaryFilterBtn').off('click.opInquiryFilter').on('click.opInquiryFilter', function () {
             operationInquirySummaryApplyTimeFilterAndLinkage();
@@ -3646,6 +3781,11 @@
         var timeFilter = $timeFilter.val() || 'month';
         var timebucket = '';
         var at_time = '';
+        var range = getMonthRange('teamPerformance');
+
+        if (range) {
+            return {timebucket: '', at_time: range.start + ' - ' + range.end};
+        }
         
         if (timeFilter === 'custom') {
             // 自定义时间：优先读取teamPane内的start/end（:visible），其次弹窗
@@ -3678,6 +3818,15 @@
 
     // 绑定团队业绩表的筛选/重置事件
     function bindTeamPerformanceEvents() {
+        initMonthQuickSelect({
+            key: 'teamPerformance',
+            wrapSelector: '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap',
+            timeFilterSelector: '#teamPerformanceTimeFilter, #teamPane #teamPerformanceTimeFilter',
+            startDateSelector: '#teamPerformanceStartDate, #teamPane #teamPerformanceStartDate',
+            endDateSelector: '#teamPerformanceEndDate, #teamPane #teamPerformanceEndDate',
+            customRangeSelector: '#teamPerformanceCustomTimeRange, #teamPane #teamPerformanceCustomTimeRange'
+        });
+
         // 初始化行点击事件（使用事件委托）
         if (typeof initTeamRowClick === 'function') {
             initTeamRowClick();
@@ -3687,12 +3836,18 @@
         $('#teamPerformanceTimeFilter, #teamPane #teamPerformanceTimeFilter').off('change').on('change', function() {
             var value = $(this).val();
             var $customRange = $('#teamPerformanceCustomTimeRange, #teamPane #teamPerformanceCustomTimeRange');
+            clearMonthQuickSelect('teamPerformance', '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap');
             if (value === 'custom') {
                 $customRange.css('display', 'flex');
             } else {
                 $customRange.css('display', 'none');
             }
         });
+        $('#teamPerformanceStartDate, #teamPane #teamPerformanceStartDate, #teamPerformanceEndDate, #teamPane #teamPerformanceEndDate')
+            .off('change.teamPerformanceDate')
+            .on('change.teamPerformanceDate', function() {
+                clearMonthQuickSelect('teamPerformance', '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap');
+            });
 
         // 筛选按钮点击（支持弹窗和分栏布局）
         $('#teamPerformanceFilterBtn, #teamPane #teamPerformanceFilterBtn').off('click').on('click', function() {
@@ -3709,6 +3864,7 @@
             $('#teamPerformanceStartDate, #teamPane #teamPerformanceStartDate').val('');
             $('#teamPerformanceEndDate, #teamPane #teamPerformanceEndDate').val('');
             $('#teamPerformanceCustomTimeRange, #teamPane #teamPerformanceCustomTimeRange').css('display', 'none');
+            clearMonthQuickSelect('teamPerformance', '#teamPerformanceMonthShortcutWrap, #teamPane #teamPerformanceMonthShortcutWrap');
             
             loadTeamPerformanceData('month', '');
         });
@@ -4336,11 +4492,15 @@
         // 时间筛选下拉框变化
         $('#performanceTimeFilter').off('change').on('change', function() {
             var value = $(this).val();
+            clearMonthQuickSelect('performance', '#performanceMonthShortcutWrap');
             if (value === 'custom') {
                 $('#performanceCustomTimeRange').css('display', 'flex');
             } else {
                 $('#performanceCustomTimeRange').css('display', 'none');
             }
+        });
+        $('#performanceStartDate, #performanceEndDate').off('change.performanceDate').on('change.performanceDate', function() {
+            clearMonthQuickSelect('performance', '#performanceMonthShortcutWrap');
         });
         
         // 筛选按钮点击
@@ -4367,6 +4527,12 @@
         var timeFilter = $('#performanceTimeFilter').val();
         var startDate = $('#performanceStartDate').val();
         var endDate = $('#performanceEndDate').val();
+        var range = getMonthRange('performance');
+
+        if (range) {
+            loadPerformanceData(selectedUser, '', range.start + ' - ' + range.end);
+            return;
+        }
         
         // 如果选择了自定义时间或时间筛选改变，需要重新请求数据
         if (timeFilter === 'custom') {
@@ -4421,6 +4587,7 @@
         $('#performanceCustomTimeRange').css('display', 'none');
         $('#performanceStartDate').val('');
         $('#performanceEndDate').val('');
+        clearMonthQuickSelect('performance', '#performanceMonthShortcutWrap');
         
         // 重新加载数据（使用默认时间）
         loadPerformanceData('', 'month', '');

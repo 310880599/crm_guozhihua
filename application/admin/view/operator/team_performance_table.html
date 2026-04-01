@@ -48,6 +48,7 @@
                 <span>至</span>
                 <input type="date" id="teamPerformanceEndDate" class="form-control" style="width: 150px;">
             </div>
+            <div id="teamPerformanceMonthShortcutWrap"></div>
             <button type="button" class="btn btn-primary btn-sm" id="teamPerformanceFilterBtn" style="margin-left: auto;">
                 <i class="bi bi-search"></i> 筛选
             </button>
@@ -113,39 +114,12 @@ function initTeamRowClick() {
             return;
         }
         
-        // 读取当前的时间筛选值（优先读取teamPane可见控件，其次弹窗可见控件）
-        var $timeFilter = $('#teamPane #teamPerformanceTimeFilter:visible');
-        if ($timeFilter.length === 0) {
-            $timeFilter = $('#teamPerformanceTimeFilter:visible');
-        }
-        var timeFilter = $timeFilter.val() || 'month';
-        var timebucket = '';
-        var at_time = '';
-        
-        // 如果是自定义时间，读取起止日期（优先读取teamPane可见控件，其次弹窗）
-        if (timeFilter === 'custom') {
-            var $startDate = $('#teamPane #teamPerformanceStartDate:visible');
-            var $endDate = $('#teamPane #teamPerformanceEndDate:visible');
-            if ($startDate.length === 0) {
-                $startDate = $('#teamPerformanceStartDate:visible');
-            }
-            if ($endDate.length === 0) {
-                $endDate = $('#teamPerformanceEndDate:visible');
-            }
-            
-            var startDate = $startDate.val();
-            var endDate = $endDate.val();
-            if (startDate && endDate) {
-                at_time = startDate + ',' + endDate;
-                timebucket = ''; // 自定义时间时，timebucket 置空
-            } else {
-                layer.msg('请先选择自定义时间范围', {icon: 2});
-                return;
-            }
-        } else {
-            timebucket = timeFilter;
-            at_time = '';
-        }
+        var timeParams = typeof getTeamTimeParams === 'function'
+            ? getTeamTimeParams()
+            : {timebucket: 'month', at_time: ''};
+        if (!timeParams) return;
+        var timebucket = timeParams.timebucket || '';
+        var at_time = timeParams.at_time || '';
         
         console.log('[team click] 时间参数:', {timebucket: timebucket, at_time: at_time});
         
