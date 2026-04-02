@@ -4377,6 +4377,102 @@ private function exportToExcel($data)
     }
 
     /**
+     * 第二屏顶部：团队来源汇总（复用第一屏团队询盘统计口径）。
+     */
+    public function getInquiryTeamSourceSummaryData()
+    {
+        try {
+            $team_name = trim((string)Request::param('team_name', ''));
+            $timebucket = Request::param('timebucket', '');
+            $at_time = Request::param('at_time', '');
+            $month_keys = trim((string)Request::param('month_keys', ''));
+
+            if ($team_name === '') {
+                return json([
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'data' => [],
+                    'summary' => [
+                        'team_name' => '',
+                        'total_count' => 0,
+                    ],
+                ]);
+            }
+
+            $excludedTeams = $this->getExcludedInquiryTeamNames();
+            $excludedUsers = $this->getExcludedInquiryUsernames();
+            if (!empty($excludedTeams) && in_array($team_name, $excludedTeams, true)) {
+                return json([
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'data' => [],
+                    'summary' => [
+                        'team_name' => $team_name,
+                        'total_count' => 0,
+                    ],
+                ]);
+            }
+
+            $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+            $inquiryNameExpr = "CASE WHEN ci.inquiry_name IS NULL OR TRIM(ci.inquiry_name) = '' THEN '未知来源' ELSE TRIM(ci.inquiry_name) END";
+
+            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
+            $query = (clone $baseQuery)
+                ->leftJoin('admin a', 'l.pr_user = a.username')
+                ->leftJoin('crm_inquiry ci', 'l.inquiry_id = ci.id');
+
+            $query->whereRaw("{$normalizedTeamExpr} = :team_name", ['team_name' => $team_name]);
+            $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
+
+            $rows = $query
+                ->group('l.inquiry_id,' . $inquiryNameExpr)
+                ->field([
+                    'l.inquiry_id',
+                    $inquiryNameExpr . ' as inquiry_name',
+                    'count(*) as yw_num',
+                ])
+                ->order('yw_num desc')
+                ->order('inquiry_name asc')
+                ->select();
+
+            $result = [];
+            $total = 0;
+            foreach ($rows as $idx => $row) {
+                $count = (int)($row['yw_num'] ?? 0);
+                $total += $count;
+                $iid = (int)($row['inquiry_id'] ?? 0);
+                $result[] = [
+                    'inquiry_id' => $iid,
+                    'inquiry_name' => trim((string)($row['inquiry_name'] ?? '')) !== '' ? (string)$row['inquiry_name'] : '未知来源',
+                    'yw_num' => $count,
+                    'rank' => $idx + 1,
+                ];
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $result,
+                'summary' => [
+                    'team_name' => $team_name,
+                    'total_count' => $total,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[InquirySummary] getInquiryTeamSourceSummaryData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '团队来源汇总获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => [
+                    'team_name' => trim((string)Request::param('team_name', '')),
+                    'total_count' => 0,
+                ],
+            ]);
+        }
+    }
+
+    /**
      * 临时调试接口：对比“客户列表真实总数”与“询盘汇总基础集总数”，并给出 id 差异样本（最多20条）
      * 仅管理员可访问（aid=1 / group_id=1 / username=admin）
      */

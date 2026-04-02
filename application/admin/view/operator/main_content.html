@@ -159,6 +159,64 @@
         padding: 2px 6px;
         border-radius: 4px;
     }
+    .inquiry-team-source-summary-box {
+        margin: 12px 20px 0;
+        padding: 10px 12px;
+        border: 1px solid #e9d5ff;
+        border-radius: 10px;
+        background: #ffffff;
+        box-shadow: 0 1px 2px rgba(124, 58, 237, 0.06);
+        flex-shrink: 0;
+    }
+    .inquiry-team-source-summary-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+    .inquiry-team-source-summary-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #5b21b6;
+    }
+    .inquiry-team-source-summary-total {
+        font-size: 13px;
+        color: #6b7280;
+    }
+    .inquiry-team-source-summary-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .inquiry-team-source-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 100%;
+        padding: 4px 8px;
+        background: #faf5ff;
+        border: 1px solid #e9d5ff;
+        border-radius: 999px;
+        font-size: 12px;
+        color: #4c1d95;
+        line-height: 1.2;
+    }
+    .inquiry-team-source-tag .name {
+        max-width: 160px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .inquiry-team-source-tag .count {
+        font-weight: 700;
+        color: #6d28d9;
+    }
+    .inquiry-team-source-summary-empty {
+        color: #9ca3af;
+        font-size: 13px;
+        padding: 4px 0;
+    }
     /* 运营询盘汇总三连屏：选中高亮（珊瑚橙体系，限定在运营容器内） */
     #operationInquirySummarySplitLayout .op-inq-source-clickable.is-active,
     #operationInquirySummarySplitLayout .op-inq-staff-clickable.is-active {
@@ -997,6 +1055,13 @@
                     <button class="btn btn-sm btn-light" id="inquirySplitMidCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
                 </div>
             </div>
+            <div id="inquiryTeamSourceSummaryBox" class="inquiry-team-source-summary-box">
+                <div class="inquiry-team-source-summary-header">
+                    <span class="inquiry-team-source-summary-title">团队来源汇总</span>
+                    <span class="inquiry-team-source-summary-total">合计：总询盘数 0</span>
+                </div>
+                <div class="inquiry-team-source-summary-empty">请选择团队查看来源分布</div>
+            </div>
             <div id="inquiryMemberPane" style="flex: 1; overflow-y: auto; padding: 20px;">
                 <div class="empty" style="text-align: center; padding: 60px 20px; color: #6c757d;">
                     <i class="bi bi-inbox" style="font-size: 48px; margin-bottom: 15px; display: block;"></i>
@@ -1678,6 +1743,7 @@
             if (!prevTeamName || !teamExists) {
                 self.lastTeamName = '';
                 self.lastUsername = '';
+                renderInquiryTeamSourceSummary('', [], {total_count: 0}, '请选择团队查看来源分布');
                 renderInquiryEmpty($('#inquiryMemberPane'), '请选择团队查看个人询盘汇总');
                 renderInquiryEmpty($('#inquiryChannelPane'), '请点击业务员名称查看渠道分类明细');
                 updateInquiryPaneSummary('#inquiryMemberPaneSummary', null);
@@ -1685,8 +1751,10 @@
                 return null;
             }
 
-            // 第二屏：团队下个人询盘汇总
-            return self.loadMemberSummary(prevTeamName).then(function (memberRes) {
+            // 第二屏：团队来源汇总 + 团队下个人询盘汇总
+            return self.loadTeamSourceSummary(prevTeamName).then(function () {
+                return self.loadMemberSummary(prevTeamName);
+            }).then(function (memberRes) {
                 var usernameExists = false;
                 if (prevUsername) {
                     usernameExists = memberRes && Array.isArray(memberRes.data) && memberRes.data.some(function (item) {
@@ -1725,6 +1793,7 @@
         window.InquirySplit.lastUsername = '';
         $('#inquiryMemberPaneTitle').text('👥 个人询盘汇总');
         $('#inquiryChannelPaneTitle').text('📋 个人询盘渠道分类明细');
+        renderInquiryTeamSourceSummary('', [], {total_count: 0}, '请选择团队查看来源分布');
         renderInquiryEmpty($('#inquiryMemberPane'), '请选择团队查看个人询盘汇总');
         renderInquiryEmpty($('#inquiryChannelPane'), '请点击业务员名称查看渠道分类明细');
         updateInquiryPaneSummary('#inquiryMemberPaneSummary', null);
@@ -1811,6 +1880,33 @@
         }
         html += '</tbody></table></div></div>';
         $('#inquiryMemberPane').html(html);
+    }
+
+    function renderInquiryTeamSourceSummary(teamName, data, summary, emptyText) {
+        var rawTeam = $.trim(teamName || (summary && summary.team_name) || '');
+        var normalizedTeam = rawTeam ? normalizeTeamName(rawTeam) : '';
+        var total = summary && summary.total_count ? Number(summary.total_count) : 0;
+        if (!isFinite(total)) total = 0;
+        var titleText = normalizedTeam ? ('团队来源汇总（' + normalizedTeam + '）') : '团队来源汇总';
+        var html = '<div class="inquiry-team-source-summary-header">'
+            + '<span class="inquiry-team-source-summary-title">' + titleText + '</span>'
+            + '<span class="inquiry-team-source-summary-total">合计：总询盘数 ' + total + '</span>'
+            + '</div>';
+
+        if (data && data.length) {
+            html += '<div class="inquiry-team-source-summary-tags">';
+            $.each(data, function(_, item) {
+                var name = $.trim((item && item.inquiry_name) ? String(item.inquiry_name) : '');
+                var count = Number(item && item.yw_num ? item.yw_num : 0);
+                if (!isFinite(count)) count = 0;
+                if (!name) name = '未知来源';
+                html += '<span class="inquiry-team-source-tag"><span class="name">' + name + '</span><span class="count">' + count + '</span></span>';
+            });
+            html += '</div>';
+        } else {
+            html += '<div class="inquiry-team-source-summary-empty">' + (emptyText || '暂无来源分布数据') + '</div>';
+        }
+        $('#inquiryTeamSourceSummaryBox').html(html);
     }
 
     function renderInquiryChannelPane(username, data) {
@@ -1927,6 +2023,38 @@
                 });
         },
 
+        loadTeamSourceSummary: function(teamName) {
+            var self = this;
+            var params = getInquirySummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTeamName = teamName;
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            renderInquiryTeamSourceSummary(teamName, [], {team_name: teamName, total_count: 0}, '加载中...');
+            return $.ajax({
+                url: '{:url("Operator/getInquiryTeamSourceSummaryData")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {team_name: teamName, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''},
+            }).then(function(res) {
+                    if (res.code === 0 || res.code === 200) {
+                        renderInquiryTeamSourceSummary(teamName, res.data || [], res.summary || {team_name: teamName, total_count: 0}, '暂无来源分布数据');
+                    } else {
+                        var bizMsg = res.msg || '获取团队来源汇总失败';
+                        renderInquiryTeamSourceSummary(teamName, [], {team_name: teamName, total_count: 0}, bizMsg);
+                        layer.msg(bizMsg, {icon: 2});
+                    }
+                    return res;
+                }, function(xhr, status) {
+                    var msg = buildInquiryAjaxErrorMessage(xhr, status, '获取团队来源汇总失败');
+                    renderInquiryTeamSourceSummary(teamName, [], {team_name: teamName, total_count: 0}, msg);
+                    layer.msg(msg, {icon: 2, time: 4000});
+                    return null;
+                });
+        },
+
         loadChannelSummary: function(username) {
             var self = this;
             var params = getInquirySummaryTimeParams();
@@ -1968,6 +2096,8 @@
                 $('#inquiryTeamPane .inquiry-team-clickable').removeClass('is-active');
                 $(this).addClass('is-active');
                 var teamName = ($(this).text() || '').trim();
+                self.lastTeamName = teamName;
+                self.loadTeamSourceSummary(teamName);
                 self.loadMemberSummary(teamName);
                 renderInquiryEmpty($('#inquiryChannelPane'), '请点击业务员名称查看渠道分类明细');
                 updateInquiryPaneSummary('#inquiryChannelPaneSummary', null);
@@ -2069,6 +2199,7 @@
                 layer.msg('请先选择团队', {icon: 2});
                 return;
             }
+            window.InquirySplit.loadTeamSourceSummary(window.InquirySplit.lastTeamName);
             window.InquirySplit.loadMemberSummary(window.InquirySplit.lastTeamName);
         });
         $('#inquirySplitRightRefresh').off('click').on('click', function() {
@@ -2091,6 +2222,7 @@
         inquirySummaryResetTimeFilterUI();
         $('#inquiryMemberPaneTitle').text('👥 个人询盘汇总');
         $('#inquiryChannelPaneTitle').text('📋 个人询盘渠道分类明细');
+        renderInquiryTeamSourceSummary('', [], {total_count: 0}, '请选择团队查看来源分布');
         renderInquiryEmpty($('#inquiryMemberPane'), '请选择团队查看个人询盘汇总');
         renderInquiryEmpty($('#inquiryChannelPane'), '请点击业务员名称查看渠道分类明细');
         updateInquiryPaneSummary('#inquiryMemberPaneSummary', null);
