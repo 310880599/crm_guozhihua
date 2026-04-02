@@ -3586,6 +3586,340 @@ private function exportToExcel($data)
     }
 
     /**
+     * 询盘产品汇总：统一团队名称口径（空值归并“未分组”）
+     */
+    private function getInquiryProductSummaryTeamExpr(): string
+    {
+        return "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+    }
+
+    /**
+     * 询盘产品汇总：产品名称口径
+     * - crm_leads.product_name 为数字ID时，优先映射 crm_products.product_name
+     * - 映射不到回退原值
+     */
+    private function getInquiryProductSummaryProductExpr(): string
+    {
+        return "CASE " .
+            "WHEN TRIM(IFNULL(l.product_name, '')) = '' THEN '' " .
+            "WHEN TRIM(IFNULL(l.product_name, '')) REGEXP '^[0-9]+$' " .
+            "     AND p.id IS NOT NULL " .
+            "     AND TRIM(IFNULL(p.product_name, '')) <> '' " .
+            "THEN TRIM(p.product_name) " .
+            "ELSE TRIM(l.product_name) END";
+    }
+
+    /**
+     * 询盘产品汇总：基础数据集（严格复用客户列表口径 + 返单排除）
+     */
+    private function buildInquiryProductSummaryBaseQuery(string $timebucket = '', string $at_time = '', string $month_keys = '')
+    {
+        $query = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys)
+            ->leftJoin('admin a', 'l.pr_user = a.username')
+            ->leftJoin('crm_products p', "TRIM(IFNULL(l.product_name, '')) REGEXP '^[0-9]+$' AND p.id = CAST(TRIM(l.product_name) AS UNSIGNED)");
+
+        $query->whereRaw("TRIM(IFNULL(l.product_name, '')) <> ''");
+        return $query;
+    }
+
+    /**
+     * 询盘产品汇总：按团队过滤（支持“未分组”）
+     */
+    private function applyInquiryProductSummaryTeamFilter($query, string $teamName)
+    {
+        $teamName = $this->normalizeOrderProductTeamName($teamName);
+        $teamExpr = $this->getInquiryProductSummaryTeamExpr();
+        $query->whereRaw($teamExpr . " = :team_name", ['team_name' => $teamName]);
+        return $query;
+    }
+
+    /**
+     * 第一屏：公司产品咨询数量排行 + 第二屏团队列表
+     */
+    public function getInquiryProductSummaryData()
+    {
+        $timebucket = Request::param('timebucket', '');
+        $at_time    = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
+
+        try {
+            $teamExpr = $this->getInquiryProductSummaryTeamExpr();
+            $productExpr = $this->getInquiryProductSummaryProductExpr();
+            $baseQuery = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
+
+            $productRows = (clone $baseQuery)
+                ->field($productExpr . " as product_name, COUNT(DISTINCT l.id) as inquiry_count")
+                ->group($productExpr)
+                ->order('inquiry_count desc, product_name asc')
+                ->select();
+
+            $products = [];
+            $totalInquiryCount = 0;
+            $rank = 1;
+            foreach ((array)$productRows as $row) {
+                $count = (int)($row['inquiry_count'] ?? 0);
+                $totalInquiryCount += $count;
+                $products[] = [
+                    'rank' => $rank++,
+                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'inquiry_count' => $count,
+                ];
+            }
+
+            $teamRows = (clone $baseQuery)
+                ->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''")
+                ->field($teamExpr . " as team_name, COUNT(DISTINCT l.id) as inquiry_count, COUNT(DISTINCT NULLIF(TRIM(l.pr_user), '')) as member_count")
+                ->group($teamExpr)
+                ->order('inquiry_count desc, team_name asc')
+                ->select();
+
+            $teams = [];
+            $teamRank = 1;
+            foreach ((array)$teamRows as $row) {
+                $teamName = $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? ''));
+                $teams[] = [
+                    'rank' => $teamRank++,
+                    'team_name' => $teamName,
+                    'inquiry_count' => (int)($row['inquiry_count'] ?? 0),
+                    'member_count' => (int)($row['member_count'] ?? 0),
+                ];
+            }
+
+            $memberRows = (clone $baseQuery)
+                ->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''")
+                ->field("TRIM(l.pr_user) as username")
+                ->group("TRIM(l.pr_user)")
+                ->select();
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [
+                    'products' => $products,
+                    'teams' => $teams,
+                ],
+                'summary' => [
+                    'company' => [
+                        'total_product_count' => count($products),
+                        'total_inquiry_count' => $totalInquiryCount,
+                    ],
+                    'team' => [
+                        'team_count' => count($teams),
+                        'member_count' => count((array)$memberRows),
+                    ],
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[InquiryProductSummary] getInquiryProductSummaryData failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '询盘产品汇总获取失败：' . $e->getMessage(),
+                'data' => ['products' => [], 'teams' => []],
+                'summary' => [
+                    'company' => ['total_product_count' => 0, 'total_inquiry_count' => 0],
+                    'team' => ['team_count' => 0, 'member_count' => 0],
+                ],
+            ]);
+        }
+    }
+
+    /**
+     * 第二屏：指定团队成员列表（按咨询数量排序）
+     */
+    public function getInquiryProductTeamMembers()
+    {
+        $team_name = trim((string)Request::param('team_name', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
+
+        if ($team_name === '') {
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['member_count' => 0, 'total_inquiry_count' => 0],
+            ]);
+        }
+
+        $team_name = $this->normalizeOrderProductTeamName($team_name);
+
+        try {
+            $query = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
+            $this->applyInquiryProductSummaryTeamFilter($query, $team_name);
+            $query->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''");
+
+            $rows = $query
+                ->field("TRIM(l.pr_user) as username, COUNT(DISTINCT l.id) as inquiry_count")
+                ->group("TRIM(l.pr_user)")
+                ->order('inquiry_count desc, username asc')
+                ->select();
+
+            $data = [];
+            $rank = 1;
+            $totalInquiryCount = 0;
+            foreach ((array)$rows as $row) {
+                $count = (int)($row['inquiry_count'] ?? 0);
+                $totalInquiryCount += $count;
+                $data[] = [
+                    'rank' => $rank++,
+                    'username' => trim((string)($row['username'] ?? '')),
+                    'inquiry_count' => $count,
+                ];
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $data,
+                'summary' => [
+                    'member_count' => count($data),
+                    'total_inquiry_count' => $totalInquiryCount,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[InquiryProductSummary] getInquiryProductTeamMembers failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '团队成员获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['member_count' => 0, 'total_inquiry_count' => 0],
+            ]);
+        }
+    }
+
+    /**
+     * 第三屏：指定团队产品咨询数量排行
+     */
+    public function getInquiryProductTeamProducts()
+    {
+        $team_name = trim((string)Request::param('team_name', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
+
+        if ($team_name === '') {
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [],
+                'summary' => ['team_product_count' => 0, 'total_product_count' => 0, 'total_inquiry_count' => 0],
+            ]);
+        }
+
+        $team_name = $this->normalizeOrderProductTeamName($team_name);
+
+        try {
+            $query = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
+            $this->applyInquiryProductSummaryTeamFilter($query, $team_name);
+            $query->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''");
+            $productExpr = $this->getInquiryProductSummaryProductExpr();
+
+            $rows = $query
+                ->field($productExpr . " as product_name, COUNT(DISTINCT l.id) as inquiry_count")
+                ->group($productExpr)
+                ->order('inquiry_count desc, product_name asc')
+                ->select();
+
+            $data = [];
+            $rank = 1;
+            $totalInquiryCount = 0;
+            foreach ((array)$rows as $row) {
+                $count = (int)($row['inquiry_count'] ?? 0);
+                $totalInquiryCount += $count;
+                $data[] = [
+                    'rank' => $rank++,
+                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'inquiry_count' => $count,
+                ];
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $data,
+                'summary' => [
+                    'team_product_count' => count($data),
+                    'total_product_count' => count($data),
+                    'total_inquiry_count' => $totalInquiryCount,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[InquiryProductSummary] getInquiryProductTeamProducts failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '团队产品排行获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['team_product_count' => 0, 'total_product_count' => 0, 'total_inquiry_count' => 0],
+            ]);
+        }
+    }
+
+    /**
+     * 第三屏：指定成员产品咨询数量排行
+     */
+    public function getInquiryProductUserProducts()
+    {
+        $username = trim((string)Request::param('username', ''));
+        $timebucket = Request::param('timebucket', '');
+        $at_time = Request::param('at_time', '');
+        $month_keys = trim((string)Request::param('month_keys', ''));
+
+        if ($username === '') {
+            return json([
+                'code' => 422,
+                'msg' => '请先选择成员',
+                'data' => [],
+                'summary' => ['user_product_count' => 0, 'total_product_count' => 0, 'total_inquiry_count' => 0],
+            ]);
+        }
+
+        try {
+            $query = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
+            $query->where('l.pr_user', '=', $username);
+            $productExpr = $this->getInquiryProductSummaryProductExpr();
+
+            $rows = $query
+                ->field($productExpr . " as product_name, COUNT(DISTINCT l.id) as inquiry_count")
+                ->group($productExpr)
+                ->order('inquiry_count desc, product_name asc')
+                ->select();
+
+            $data = [];
+            $rank = 1;
+            $totalInquiryCount = 0;
+            foreach ((array)$rows as $row) {
+                $count = (int)($row['inquiry_count'] ?? 0);
+                $totalInquiryCount += $count;
+                $data[] = [
+                    'rank' => $rank++,
+                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'inquiry_count' => $count,
+                ];
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => $data,
+                'summary' => [
+                    'user_product_count' => count($data),
+                    'total_product_count' => count($data),
+                    'total_inquiry_count' => $totalInquiryCount,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[InquiryProductSummary] getInquiryProductUserProducts failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '成员产品排行获取失败：' . $e->getMessage(),
+                'data' => [],
+                'summary' => ['user_product_count' => 0, 'total_product_count' => 0, 'total_inquiry_count' => 0],
+            ]);
+        }
+    }
+
+    /**
      * 统一解析时间参数：与 buildPerformanceOrderWhere 保持同一规则。
      * - 自定义格式：at_time = "YYYY-MM-DD,YYYY-MM-DD"（优先）
      * - 否则使用 timebucket
