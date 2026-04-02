@@ -3610,11 +3610,30 @@ private function exportToExcel($data)
     }
 
     /**
+     * 询盘产品汇总：统一产品排行查询写法（四个接口共用）
+     */
+    private function applyInquiryProductSummaryProductAgg($query)
+    {
+        $productExpr = $this->getInquiryProductSummaryProductExpr();
+        return $query
+            ->field($productExpr . " as product_name, COUNT(DISTINCT l.id) as inquiry_count")
+            ->group($productExpr)
+            ->order('inquiry_count desc, product_name asc');
+    }
+
+    /**
      * 询盘产品汇总：基础数据集（严格复用客户列表口径 + 返单排除）
      */
     private function buildInquiryProductSummaryBaseQuery(string $timebucket = '', string $at_time = '', string $month_keys = '')
     {
-        $query = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys)
+        // buildInquirySummaryClientBaseQuery() 产出的 l 是“子查询别名”，只包含 id/pr_user/...，
+        // 不能直接在其上读取 l.product_name；这里必须先拿 id 再回连真实 crm_leads(l)。
+        $baseIdSql = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys)
+            ->field('l.id')
+            ->buildSql();
+
+        $query = Db::table([$baseIdSql => 'lb'])
+            ->join('crm_leads l', 'lb.id = l.id')
             ->leftJoin('admin a', 'l.pr_user = a.username')
             ->leftJoin('crm_products p', "TRIM(IFNULL(l.product_name, '')) REGEXP '^[0-9]+$' AND p.id = CAST(TRIM(l.product_name) AS UNSIGNED)");
 
@@ -3644,13 +3663,9 @@ private function exportToExcel($data)
 
         try {
             $teamExpr = $this->getInquiryProductSummaryTeamExpr();
-            $productExpr = $this->getInquiryProductSummaryProductExpr();
             $baseQuery = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
 
-            $productRows = (clone $baseQuery)
-                ->field($productExpr . " as product_name, COUNT(DISTINCT l.id) as inquiry_count")
-                ->group($productExpr)
-                ->order('inquiry_count desc, product_name asc')
+            $productRows = $this->applyInquiryProductSummaryProductAgg(clone $baseQuery)
                 ->select();
 
             $products = [];
@@ -3813,12 +3828,8 @@ private function exportToExcel($data)
             $query = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
             $this->applyInquiryProductSummaryTeamFilter($query, $team_name);
             $query->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''");
-            $productExpr = $this->getInquiryProductSummaryProductExpr();
 
-            $rows = $query
-                ->field($productExpr . " as product_name, COUNT(DISTINCT l.id) as inquiry_count")
-                ->group($productExpr)
-                ->order('inquiry_count desc, product_name asc')
+            $rows = $this->applyInquiryProductSummaryProductAgg($query)
                 ->select();
 
             $data = [];
@@ -3877,12 +3888,8 @@ private function exportToExcel($data)
         try {
             $query = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
             $query->where('l.pr_user', '=', $username);
-            $productExpr = $this->getInquiryProductSummaryProductExpr();
 
-            $rows = $query
-                ->field($productExpr . " as product_name, COUNT(DISTINCT l.id) as inquiry_count")
-                ->group($productExpr)
-                ->order('inquiry_count desc, product_name asc')
+            $rows = $this->applyInquiryProductSummaryProductAgg($query)
                 ->select();
 
             $data = [];
