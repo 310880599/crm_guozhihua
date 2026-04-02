@@ -31,10 +31,10 @@
         </div>
 
         <!-- 时间筛选栏 -->
-        <div class="filter-bar" style="padding: 15px; border-bottom: 1px solid #e9ecef; display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <label style="margin: 0; white-space: nowrap;">时间筛选：</label>
-                <select id="teamPerformanceTimeFilter" class="form-select" style="width: 150px;">
+        <div class="filter-bar split-first-filter-bar" id="teamPerformanceTimeFilterBar">
+            <div class="split-first-filter-main">
+                <label class="split-first-time-label">时间筛选：</label>
+                <select id="teamPerformanceTimeFilter" class="form-select split-first-time-filter">
                     <option value="today">今天</option>
                     <option value="yesterday">昨天</option>
                     <option value="week">本周</option>
@@ -42,19 +42,19 @@
                     <option value="year">本年</option>
                     <option value="custom">自定义</option>
                 </select>
+                <div id="teamPerformanceCustomTimeRange" style="display: none; gap: 8px; align-items: center;">
+                    <input type="date" id="teamPerformanceStartDate" class="form-control" style="width: 150px;">
+                    <span>至</span>
+                    <input type="date" id="teamPerformanceEndDate" class="form-control" style="width: 150px;">
+                </div>
+                <button type="button" class="btn btn-primary btn-sm split-first-filter-btn" id="teamPerformanceFilterBtn">
+                    <i class="bi bi-search"></i> 筛选
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm split-first-reset-btn" id="teamPerformanceResetBtn">
+                    <i class="bi bi-arrow-counterclockwise"></i> 重置
+                </button>
             </div>
-            <div id="teamPerformanceCustomTimeRange" style="display: none; gap: 8px; align-items: center;">
-                <input type="date" id="teamPerformanceStartDate" class="form-control" style="width: 150px;">
-                <span>至</span>
-                <input type="date" id="teamPerformanceEndDate" class="form-control" style="width: 150px;">
-            </div>
-            <div id="teamPerformanceMonthShortcutWrap"></div>
-            <button type="button" class="btn btn-primary btn-sm" id="teamPerformanceFilterBtn" style="margin-left: auto;">
-                <i class="bi bi-search"></i> 筛选
-            </button>
-            <button type="button" class="btn btn-secondary btn-sm" id="teamPerformanceResetBtn">
-                <i class="bi bi-arrow-counterclockwise"></i> 重置
-            </button>
+            <div id="teamPerformanceMonthShortcutWrap" class="split-first-month-shortcut"></div>
         </div>
 
         <!-- 表格区 -->
