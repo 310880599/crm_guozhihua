@@ -866,7 +866,7 @@
 <div id="teamPerformanceSplitLayout" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #f6f8fb; z-index: 20000001;">
     <div class="split-wrap" style="display: flex; height: 100%; width: 100%; overflow: hidden;">
         <!-- 左列：团队列表 -->
-        <div class="split-left" style="width: 30%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
+        <div class="split-left" style="width: 36%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
             <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #4f7cff, #6fa1ff); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
                 <span style="font-size: 16px; font-weight: 600;">🧩 团队列表</span>
                 <div>
@@ -890,7 +890,7 @@
         </div>
         
         <!-- 中列：成员排名 -->
-        <div class="split-mid" style="width: 35%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
+        <div class="split-mid" style="width: 29%; background: #ffffff; border-right: 1px solid #e9ecef; display: flex; flex-direction: column; overflow: hidden;">
             <div class="pane-header" style="padding: 15px; background: linear-gradient(90deg, #4f7cff, #6fa1ff); color: #fff; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
                 <span style="font-size: 16px; font-weight: 600;" id="memberPaneTitle">👥 成员业绩排名</span>
                 <div>
@@ -4402,6 +4402,12 @@
 
             // 显示分栏布局
             $('#teamPerformanceSplitLayout').show();
+            // 每次打开时恢复团队三连屏默认比例，避免保留上次折叠/最大化状态
+            var $teamLayout = $('#teamPerformanceSplitLayout');
+            $teamLayout.find('.split-left, .split-mid, .split-right').removeClass('hidden collapsed maximized');
+            $teamLayout.find('.split-left').css('width', '36%');
+            $teamLayout.find('.split-mid').css('width', '29%');
+            $teamLayout.find('.split-right').css('width', '35%');
             
             // 将团队列表内容渲染到左列
             renderTeamListToPane();
@@ -4436,6 +4442,18 @@
 
     // 绑定分栏布局控制事件
     function bindSplitLayoutEvents() {
+        var $layout = $('#teamPerformanceSplitLayout');
+        var TEAM_SPLIT_DEFAULT_WIDTHS = { left: '36%', mid: '29%', right: '35%' };
+        var TEAM_SPLIT_COLLAPSED_WIDTH = '64px';
+
+        function getPanels() {
+            return {
+                $left: $layout.find('.split-left').first(),
+                $mid: $layout.find('.split-mid').first(),
+                $right: $layout.find('.split-right').first()
+            };
+        }
+
         // 关闭分栏布局（点击遮罩或ESC键）
         $(document).off('keydown.splitLayout').on('keydown.splitLayout', function(e) {
             if (e.keyCode === 27) { // ESC键
@@ -4445,13 +4463,14 @@
 
         // 左列最大化/恢复
         $('#splitLeftMaximize').off('click').on('click', function() {
-            var $left = $('.split-left');
-            var $mid = $('.split-mid');
-            var $right = $('.split-right');
+            var panels = getPanels();
+            var $left = panels.$left;
+            var $mid = panels.$mid;
+            var $right = panels.$right;
             if ($left.hasClass('maximized')) {
-                $left.removeClass('maximized').css('width', '30%');
-                $mid.removeClass('hidden').css('width', '35%');
-                $right.css('width', '35%');
+                $left.removeClass('maximized').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.left);
+                $mid.removeClass('hidden').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.mid);
+                $right.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.right);
             } else {
                 $left.addClass('maximized').css('width', '100%');
                 $mid.addClass('hidden').css('width', '0');
@@ -4461,29 +4480,31 @@
 
         // 左列收起/展开
         $('#splitLeftCollapse').off('click').on('click', function() {
-            var $left = $('.split-left');
-            var $mid = $('.split-mid');
-            var $right = $('.split-right');
+            var panels = getPanels();
+            var $left = panels.$left;
+            var $mid = panels.$mid;
+            var $right = panels.$right;
             if ($left.hasClass('collapsed')) {
-                $left.removeClass('collapsed').css('width', '30%');
-                $mid.css('width', '35%');
-                $right.css('width', '35%');
+                $left.removeClass('collapsed').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.left);
+                $mid.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.mid);
+                $right.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.right);
             } else {
-                $left.addClass('collapsed').css('width', '64px');
-                $mid.css('width', 'calc((100% - 64px) / 2)');
-                $right.css('width', 'calc((100% - 64px) / 2)');
+                $left.addClass('collapsed').css('width', TEAM_SPLIT_COLLAPSED_WIDTH);
+                $mid.css('width', 'calc((100% - 64px) * 0.453125)');
+                $right.css('width', 'calc((100% - 64px) * 0.546875)');
             }
         });
 
         // 中列最大化/恢复
         $('#splitMidMaximize').off('click').on('click', function() {
-            var $left = $('.split-left');
-            var $mid = $('.split-mid');
-            var $right = $('.split-right');
+            var panels = getPanels();
+            var $left = panels.$left;
+            var $mid = panels.$mid;
+            var $right = panels.$right;
             if ($mid.hasClass('maximized')) {
-                $mid.removeClass('maximized').css('width', '35%');
-                $right.css('width', '35%');
-                $left.removeClass('hidden').css('width', '30%');
+                $mid.removeClass('maximized').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.mid);
+                $right.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.right);
+                $left.removeClass('hidden').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.left);
             } else {
                 $mid.addClass('maximized').css('width', '100%');
                 $right.css('width', '0');
@@ -4493,28 +4514,31 @@
 
         // 中列收起/展开
         $('#splitMidCollapse').off('click').on('click', function() {
-            var $mid = $('.split-mid');
-            var $right = $('.split-right');
+            var panels = getPanels();
+            var $left = panels.$left;
+            var $mid = panels.$mid;
+            var $right = panels.$right;
             if ($mid.hasClass('collapsed')) {
-                $mid.removeClass('collapsed').css('width', '35%');
-                $right.css('width', '35%');
-                $('.split-left').css('width', '30%');
+                $mid.removeClass('collapsed').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.mid);
+                $right.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.right);
+                $left.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.left);
             } else {
-                $mid.addClass('collapsed').css('width', '64px');
-                $right.css('width', 'calc(70% - 64px)');
-                $('.split-left').css('width', '30%');
+                $mid.addClass('collapsed').css('width', TEAM_SPLIT_COLLAPSED_WIDTH);
+                $left.css('width', 'calc((100% - 64px) * 0.507042)');
+                $right.css('width', 'calc((100% - 64px) * 0.492958)');
             }
         });
         
         // 右列最大化/恢复
         $('#splitRightMaximize').off('click').on('click', function() {
-            var $right = $('.split-right');
-            var $left = $('.split-left');
-            var $mid = $('.split-mid');
+            var panels = getPanels();
+            var $right = panels.$right;
+            var $left = panels.$left;
+            var $mid = panels.$mid;
             if ($right.hasClass('maximized')) {
-                $right.removeClass('maximized').css('width', '35%');
-                $left.removeClass('hidden').css('width', '30%');
-                $mid.css('width', '35%');
+                $right.removeClass('maximized').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.right);
+                $left.removeClass('hidden').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.left);
+                $mid.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.mid);
             } else {
                 $right.addClass('maximized').css('width', '100%');
                 $left.addClass('hidden').css('width', '0');
@@ -4524,22 +4548,24 @@
         
         // 右列收起/展开
         $('#splitRightCollapse').off('click').on('click', function() {
-            var $right = $('.split-right');
-            var $mid = $('.split-mid');
+            var panels = getPanels();
+            var $left = panels.$left;
+            var $right = panels.$right;
+            var $mid = panels.$mid;
             if ($right.hasClass('collapsed')) {
-                $right.removeClass('collapsed').css('width', '35%');
-                $mid.css('width', '35%');
-                $('.split-left').css('width', '30%');
+                $right.removeClass('collapsed').css('width', TEAM_SPLIT_DEFAULT_WIDTHS.right);
+                $mid.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.mid);
+                $left.css('width', TEAM_SPLIT_DEFAULT_WIDTHS.left);
             } else {
-                $right.addClass('collapsed').css('width', '64px');
-                $mid.css('width', 'calc(70% - 64px)');
-                $('.split-left').css('width', '30%');
+                $right.addClass('collapsed').css('width', TEAM_SPLIT_COLLAPSED_WIDTH);
+                $left.css('width', 'calc((100% - 64px) * 0.553846)');
+                $mid.css('width', 'calc((100% - 64px) * 0.446154)');
             }
         });
         
         // 右列刷新按钮
         $('#splitRightRefresh').off('click').on('click', function() {
-            var $activeMember = $('.member-name-clickable.is-active');
+            var $activeMember = $layout.find('.member-name-clickable.is-active');
             if ($activeMember.length > 0) {
                 // 获取业务员名称：优先读取原始属性并进行解码
                 var raw = $activeMember.attr('data-username') || $activeMember.text().trim();
