@@ -896,6 +896,9 @@
             <button type="button" class="btn btn-secondary btn-sm" id="performanceResetBtn">
                 <i class="bi bi-arrow-counterclockwise"></i> 重置
             </button>
+            <button type="button" class="btn btn-success btn-sm" id="performanceExportBtn">
+                <i class="bi bi-download"></i> 导出
+            </button>
         </div>
         <div class="wukong-table-card-body">
             <div style="overflow-x: auto;">
@@ -1145,6 +1148,9 @@
                     <button type="button" class="btn btn-secondary btn-sm split-first-reset-btn" id="orderProductSummaryResetBtn">
                         <i class="bi bi-arrow-counterclockwise"></i> 重置
                     </button>
+                    <button type="button" class="btn btn-success btn-sm" id="orderProductSummaryExportBtn">
+                        <i class="bi bi-download"></i> 导出
+                    </button>
                 </div>
                 <div id="orderProductSummaryMonthShortcutWrap" class="split-first-month-shortcut"></div>
             </div>
@@ -1224,6 +1230,9 @@
                     <button type="button" class="btn btn-secondary btn-sm" id="inquiryProductSummaryResetBtn">
                         <i class="bi bi-arrow-counterclockwise"></i> 重置
                     </button>
+                    <button type="button" class="btn btn-success btn-sm" id="inquiryProductSummaryExportBtn">
+                        <i class="bi bi-download"></i> 导出
+                    </button>
                 </div>
                 <div id="inquiryProductSummaryMonthShortcutWrap" class="inquiry-product-month-shortcut"></div>
             </div>
@@ -1302,6 +1311,9 @@
                     </button>
                     <button type="button" class="btn btn-sm op-inquiry-btn-reset split-first-reset-btn" id="operationInquirySummaryResetBtn">
                         <i class="bi bi-arrow-counterclockwise"></i> 重置
+                    </button>
+                    <button type="button" class="btn btn-success btn-sm" id="operationInquirySummaryExportBtn">
+                        <i class="bi bi-download"></i> 导出
                     </button>
                 </div>
                 <div id="operationInquirySummaryMonthShortcutWrap" class="split-first-month-shortcut"></div>
@@ -1868,6 +1880,77 @@
         }, 0);
     }
 
+    function buildExportFallbackName(prefix) {
+        var now = new Date();
+        var pad = function(num) {
+            num = parseInt(num, 10) || 0;
+            return num < 10 ? '0' + num : String(num);
+        };
+        var ts = now.getFullYear()
+            + pad(now.getMonth() + 1)
+            + pad(now.getDate())
+            + '_'
+            + pad(now.getHours())
+            + pad(now.getMinutes())
+            + pad(now.getSeconds());
+        return (prefix || '导出') + '_' + ts + '.xlsx';
+    }
+
+    function submitExportRequest(opts) {
+        var options = opts || {};
+        var $btn = $(options.buttonSelector || '');
+        if (!$btn.length) return;
+        if ($btn.data('exporting') === 1) return;
+
+        var postData = options.data || {};
+        var originalHtml = $btn.html();
+        var exportingHtml = options.exportingHtml || '<i class="bi bi-hourglass-split"></i> 导出中';
+        var loadingText = options.loadingText || '正在导出，请稍候...';
+        var successText = options.successText || '导出成功';
+        var fallbackName = options.fallbackName || buildExportFallbackName('导出');
+
+        $btn.data('exporting', 1).prop('disabled', true).html(exportingHtml);
+        var loadingIndex = layer.msg(loadingText, {icon: 16, shade: 0.2, time: 0});
+
+        fetch(options.url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: $.param(postData),
+            credentials: 'same-origin'
+        }).then(function(response) {
+            var contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (contentType.indexOf('application/json') !== -1) {
+                return response.json().then(function(jsonRes) {
+                    throw new Error((jsonRes && jsonRes.msg) ? jsonRes.msg : '导出失败，请稍后重试');
+                });
+            }
+            if (!response.ok) {
+                throw new Error('导出失败，请稍后重试');
+            }
+            return response.blob().then(function(blob) {
+                return {
+                    blob: blob,
+                    disposition: response.headers.get('content-disposition') || ''
+                };
+            });
+        }).then(function(result) {
+            if (!result || !result.blob || result.blob.size <= 0) {
+                throw new Error('导出失败：生成文件为空');
+            }
+            var fileName = parseDownloadFilenameFromDisposition(result.disposition, fallbackName);
+            triggerInquirySummaryExcelDownload(result.blob, fileName);
+            layer.msg(successText, {icon: 1});
+        }).catch(function(err) {
+            layer.msg((err && err.message) ? err.message : '导出失败，请稍后重试', {icon: 2, time: 4000});
+        }).finally(function() {
+            layer.close(loadingIndex);
+            $btn.data('exporting', 0).prop('disabled', false).html(originalHtml);
+        });
+    }
+
     function exportInquirySummaryExcel() {
         var timeParams = getInquirySummaryTimeParams();
         if (!timeParams) {
@@ -1933,6 +2016,98 @@
         }).finally(function() {
             layer.close(loadingIndex);
             $btn.data('exporting', 0).prop('disabled', false).html(originalHtml);
+        });
+    }
+
+    function exportPerformanceExcel() {
+        var timeParams = getPerformanceTimeParams();
+        if (!timeParams) return;
+        var selectedUser = ($('#performanceUserFilter').val() || '').trim();
+        submitExportRequest({
+            buttonSelector: '#performanceExportBtn',
+            url: '{:url("Operator/exportBusinessPerformance")}',
+            data: {
+                timebucket: timeParams.timebucket || '',
+                at_time: timeParams.at_time || '',
+                month_keys: timeParams.month_keys || '',
+                username: selectedUser
+            },
+            fallbackName: buildExportFallbackName('业务人员业绩表')
+        });
+    }
+
+    function exportTeamPerformanceExcel() {
+        var timeParams = getTeamTimeParams();
+        if (!timeParams) return;
+        var teamName = (window.TeamSplit && window.TeamSplit.lastTeamName) ? $.trim(window.TeamSplit.lastTeamName) : '';
+        var username = (window.TeamSplit && window.TeamSplit.lastMemberName) ? $.trim(window.TeamSplit.lastMemberName) : '';
+        submitExportRequest({
+            buttonSelector: '#teamPerformanceExportBtn:visible, #teamPane #teamPerformanceExportBtn:visible',
+            url: '{:url("Operator/exportTeamPerformanceSummary")}',
+            data: {
+                timebucket: timeParams.timebucket || '',
+                at_time: timeParams.at_time || '',
+                month_keys: timeParams.month_keys || '',
+                team_name: teamName,
+                username: username
+            },
+            fallbackName: buildExportFallbackName('团队业绩表')
+        });
+    }
+
+    function exportOrderProductSummaryExcel() {
+        var timeParams = getOrderProductSummaryTimeParams();
+        if (!timeParams) return;
+        var split = window.OrderProductSummarySplit || {};
+        submitExportRequest({
+            buttonSelector: '#orderProductSummaryExportBtn',
+            url: '{:url("Operator/exportOrderProductSummary")}',
+            data: {
+                timebucket: timeParams.timebucket || '',
+                at_time: timeParams.at_time || '',
+                month_keys: timeParams.month_keys || '',
+                team_name: $.trim(split.lastTeamName || ''),
+                username: $.trim(split.lastUsername || '')
+            },
+            fallbackName: buildExportFallbackName('订单产品汇总表')
+        });
+    }
+
+    function exportInquiryProductSummaryExcel() {
+        var timeParams = getInquiryProductSummaryTimeParams();
+        if (!timeParams) return;
+        var split = window.InquiryProductSummarySplit || {};
+        submitExportRequest({
+            buttonSelector: '#inquiryProductSummaryExportBtn',
+            url: '{:url("Operator/exportInquiryProductSummary")}',
+            data: {
+                timebucket: timeParams.timebucket || '',
+                at_time: timeParams.at_time || '',
+                month_keys: timeParams.month_keys || '',
+                team_name: $.trim(split.lastTeamName || ''),
+                username: $.trim(split.lastUsername || '')
+            },
+            fallbackName: buildExportFallbackName('询盘产品汇总表')
+        });
+    }
+
+    function exportOperationInquirySummaryExcel() {
+        var timeParams = getOperationInquirySummaryTimeParams();
+        if (!timeParams) return;
+        var split = window.OperatorInquirySummarySplit || {};
+        var inquiryId = parseInt(split.lastInquiryId, 10);
+        if (isNaN(inquiryId)) inquiryId = 0;
+        submitExportRequest({
+            buttonSelector: '#operationInquirySummaryExportBtn',
+            url: '{:url("Operator/exportOperationInquirySummary")}',
+            data: {
+                timebucket: timeParams.timebucket || '',
+                at_time: timeParams.at_time || '',
+                month_keys: timeParams.month_keys || '',
+                inquiry_id: inquiryId,
+                username: $.trim(split.lastUsername || '')
+            },
+            fallbackName: buildExportFallbackName('运营询盘汇总表')
         });
     }
 
@@ -3107,6 +3282,10 @@
             orderProductSummaryResetTimeFilterUI();
             loadOrderProductSummaryData();
         });
+
+        $('#orderProductSummaryExportBtn').off('click.orderProductExportBtn').on('click.orderProductExportBtn', function () {
+            exportOrderProductSummaryExcel();
+        });
     }
 
     function bindOrderProductSplitLayoutEvents() {
@@ -3874,6 +4053,10 @@
             inquiryProductSummaryResetTimeFilterUI();
             loadInquiryProductSummaryData();
         });
+
+        $('#inquiryProductSummaryExportBtn').off('click.inquiryProductExportBtn').on('click.inquiryProductExportBtn', function () {
+            exportInquiryProductSummaryExcel();
+        });
     }
 
     function bindInquiryProductSplitLayoutEvents() {
@@ -4115,6 +4298,9 @@
         $('#operationInquirySummaryResetBtn').off('click.opInquiryReset').on('click.opInquiryReset', function () {
             operationInquirySummaryResetTimeFilterUI();
             window.OperatorInquirySummarySplit.loadSourceSummary();
+        });
+        $('#operationInquirySummaryExportBtn').off('click.opInquiryExport').on('click.opInquiryExport', function () {
+            exportOperationInquirySummaryExcel();
         });
     }
 
@@ -5166,6 +5352,10 @@
             }
             loadTeamPerformanceData(timeParams.timebucket, timeParams.at_time, timeParams.month_keys || '');
         });
+
+        $('#teamPerformanceExportBtn, #teamPane #teamPerformanceExportBtn').off('click.teamPerformanceExport').on('click.teamPerformanceExport', function() {
+            exportTeamPerformanceExcel();
+        });
     }
 
     // ==========【新增结束：团队业绩表 - 点击按钮加载数据并弹窗】==========
@@ -5807,6 +5997,10 @@
         // 重置按钮点击
         $('#performanceResetBtn').off('click').on('click', function() {
             resetPerformanceFilter();
+        });
+
+        $('#performanceExportBtn').off('click.performanceExport').on('click.performanceExport', function() {
+            exportPerformanceExcel();
         });
         
         // 回车键触发筛选

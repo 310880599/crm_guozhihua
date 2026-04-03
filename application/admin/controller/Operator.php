@@ -4865,6 +4865,305 @@ private function exportToExcel($data)
     }
 
     /**
+     * 导出：业务人员业绩表（多 Sheet）。
+     */
+    public function exportBusinessPerformance()
+    {
+        try {
+            if (!$this->isSpreadsheetExportReady()) {
+                return json([
+                    'code' => 500,
+                    'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出',
+                ]);
+            }
+
+            $timebucket = trim((string)Request::param('timebucket', ''));
+            $at_time = trim((string)Request::param('at_time', ''));
+            $month_keys = trim((string)Request::param('month_keys', ''));
+            $username = trim((string)Request::param('username', ''));
+
+            $exportData = $this->collectBusinessPerformanceExportData($timebucket, $at_time, $month_keys, $username);
+            $totalRows = count($exportData['summary_rows']) + count($exportData['detail_rows']) + count($exportData['raw_rows']);
+            if ($totalRows <= 0) {
+                return json([
+                    'code' => 404,
+                    'msg' => '当前筛选条件下暂无可导出数据',
+                ]);
+            }
+
+            $spreadsheet = $this->buildMultiSheetSpreadsheet([
+                [
+                    'title' => '业务员业绩汇总',
+                    'headers' => ['排名', '业务员', '团队', '订单数', '利润', '总金额', '利润率(%)'],
+                    'rows' => $exportData['summary_rows'],
+                ],
+                [
+                    'title' => '业务员明细数据',
+                    'headers' => ['业务员', '团队', '订单数', '利润', '总金额', '利润率(%)'],
+                    'rows' => $exportData['detail_rows'],
+                ],
+                [
+                    'title' => '原始订单明细',
+                    'headers' => ['订单ID', '订单号', '下单时间', '客户名称', '业务员', '团队', '订单金额', '利润', '审核状态'],
+                    'rows' => $exportData['raw_rows'],
+                ],
+            ]);
+
+            $this->outputSpreadsheet($spreadsheet, '业务人员业绩表', 'business_performance');
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[BusinessPerformance] exportBusinessPerformance failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '导出失败：' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 导出：团队业绩表（多 Sheet）。
+     */
+    public function exportTeamPerformanceSummary()
+    {
+        try {
+            if (!$this->isSpreadsheetExportReady()) {
+                return json([
+                    'code' => 500,
+                    'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出',
+                ]);
+            }
+
+            $timebucket = trim((string)Request::param('timebucket', ''));
+            $at_time = trim((string)Request::param('at_time', ''));
+            $month_keys = trim((string)Request::param('month_keys', ''));
+            $team_name = trim((string)Request::param('team_name', ''));
+            $username = trim((string)Request::param('username', ''));
+
+            $exportData = $this->collectTeamPerformanceExportData($timebucket, $at_time, $month_keys, $team_name, $username);
+            $totalRows = count($exportData['team_rows']) + count($exportData['member_rows']) + count($exportData['detail_rows']) + count($exportData['raw_rows']);
+            if ($totalRows <= 0) {
+                return json([
+                    'code' => 404,
+                    'msg' => '当前筛选条件下暂无可导出数据',
+                ]);
+            }
+
+            $spreadsheet = $this->buildMultiSheetSpreadsheet([
+                [
+                    'title' => '团队业绩汇总',
+                    'headers' => ['排名', '团队名称', '订单数', '总利润', '总金额', '利润率(%)'],
+                    'rows' => $exportData['team_rows'],
+                ],
+                [
+                    'title' => '团队成员业绩汇总',
+                    'headers' => ['团队名称', '排名', '成员', '订单数', '总利润', '总金额', '利润率(%)'],
+                    'rows' => $exportData['member_rows'],
+                ],
+                [
+                    'title' => '个人业绩明细',
+                    'headers' => ['团队', '成员', '订单数', '总利润', '总金额', '利润率(%)', '最近下单时间'],
+                    'rows' => $exportData['detail_rows'],
+                ],
+                [
+                    'title' => '原始订单明细',
+                    'headers' => ['订单ID', '订单号', '下单时间', '客户名称', '业务员', '团队', '订单金额', '利润', '审核状态'],
+                    'rows' => $exportData['raw_rows'],
+                ],
+            ]);
+
+            $this->outputSpreadsheet($spreadsheet, '团队业绩表', 'team_performance');
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[TeamPerformance] exportTeamPerformanceSummary failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '导出失败：' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 导出：运营询盘汇总表（多 Sheet）。
+     */
+    public function exportOperationInquirySummary()
+    {
+        try {
+            if (!$this->isSpreadsheetExportReady()) {
+                return json([
+                    'code' => 500,
+                    'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出',
+                ]);
+            }
+
+            $timebucket = trim((string)Request::param('timebucket', ''));
+            $at_time = trim((string)Request::param('at_time', ''));
+            $month_keys = trim((string)Request::param('month_keys', ''));
+            $inquiry_id = (int)Request::param('inquiry_id', 0);
+            $username = trim((string)Request::param('username', ''));
+
+            $exportData = $this->collectOperationInquiryExportData($timebucket, $at_time, $month_keys, $inquiry_id, $username);
+            $totalRows = count($exportData['source_rows']) + count($exportData['staff_rows']) + count($exportData['port_rows']) + count($exportData['raw_rows']);
+            if ($totalRows <= 0) {
+                return json([
+                    'code' => 404,
+                    'msg' => '当前筛选条件下暂无可导出数据',
+                ]);
+            }
+
+            $spreadsheet = $this->buildMultiSheetSpreadsheet([
+                [
+                    'title' => '来源汇总',
+                    'headers' => ['排名', '询盘来源ID', '询盘来源', '询盘数量'],
+                    'rows' => $exportData['source_rows'],
+                ],
+                [
+                    'title' => '运营人员汇总',
+                    'headers' => ['询盘来源', '排名', '运营人员', '询盘数量'],
+                    'rows' => $exportData['staff_rows'],
+                ],
+                [
+                    'title' => '运营端口明细',
+                    'headers' => ['询盘来源', '运营人员', '排名', '运营端口', '询盘数量'],
+                    'rows' => $exportData['port_rows'],
+                ],
+                [
+                    'title' => '原始客户询盘明细',
+                    'headers' => ['客户ID', '客户名称', '手机号/电话', '负责人', '团队', '询盘来源', '运营端口', '录入时间', '转客户时间'],
+                    'rows' => $exportData['raw_rows'],
+                ],
+            ]);
+
+            $this->outputSpreadsheet($spreadsheet, '运营询盘汇总表', 'operation_inquiry_summary');
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OperationInquirySummary] exportOperationInquirySummary failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '导出失败：' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 导出：订单产品汇总表（多 Sheet）。
+     */
+    public function exportOrderProductSummary()
+    {
+        try {
+            if (!$this->isSpreadsheetExportReady()) {
+                return json([
+                    'code' => 500,
+                    'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出',
+                ]);
+            }
+
+            $timebucket = trim((string)Request::param('timebucket', ''));
+            $at_time = trim((string)Request::param('at_time', ''));
+            $month_keys = trim((string)Request::param('month_keys', ''));
+            $team_name = trim((string)Request::param('team_name', ''));
+            $username = trim((string)Request::param('username', ''));
+
+            $exportData = $this->collectOrderProductExportData($timebucket, $at_time, $month_keys, $team_name, $username);
+            $totalRows = count($exportData['company_rows']) + count($exportData['team_rows']) + count($exportData['user_rows']) + count($exportData['raw_rows']);
+            if ($totalRows <= 0) {
+                return json([
+                    'code' => 404,
+                    'msg' => '当前筛选条件下暂无可导出数据',
+                ]);
+            }
+
+            $spreadsheet = $this->buildMultiSheetSpreadsheet([
+                [
+                    'title' => '公司产品汇总',
+                    'headers' => ['排名', '产品名称', '总利润', '总销量'],
+                    'rows' => $exportData['company_rows'],
+                ],
+                [
+                    'title' => '团队产品汇总',
+                    'headers' => ['排名', '团队名称', '总利润', '总销量', '成员数'],
+                    'rows' => $exportData['team_rows'],
+                ],
+                [
+                    'title' => '个人产品汇总',
+                    'headers' => ['团队', '成员', '产品名称', '订单数', '总利润', '总销量'],
+                    'rows' => $exportData['user_rows'],
+                ],
+                [
+                    'title' => '原始订单产品明细',
+                    'headers' => ['订单ID', '订单号', '下单时间', '业务员', '团队', '产品名称', '销量', '利润'],
+                    'rows' => $exportData['raw_rows'],
+                ],
+            ]);
+
+            $this->outputSpreadsheet($spreadsheet, '订单产品汇总表', 'order_product_summary');
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[OrderProductSummary] exportOrderProductSummary failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '导出失败：' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 导出：询盘产品汇总表（多 Sheet）。
+     */
+    public function exportInquiryProductSummary()
+    {
+        try {
+            if (!$this->isSpreadsheetExportReady()) {
+                return json([
+                    'code' => 500,
+                    'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出',
+                ]);
+            }
+
+            $timebucket = trim((string)Request::param('timebucket', ''));
+            $at_time = trim((string)Request::param('at_time', ''));
+            $month_keys = trim((string)Request::param('month_keys', ''));
+            $team_name = trim((string)Request::param('team_name', ''));
+            $username = trim((string)Request::param('username', ''));
+
+            $exportData = $this->collectInquiryProductExportData($timebucket, $at_time, $month_keys, $team_name, $username);
+            $totalRows = count($exportData['company_rows']) + count($exportData['team_rows']) + count($exportData['user_rows']) + count($exportData['raw_rows']);
+            if ($totalRows <= 0) {
+                return json([
+                    'code' => 404,
+                    'msg' => '当前筛选条件下暂无可导出数据',
+                ]);
+            }
+
+            $spreadsheet = $this->buildMultiSheetSpreadsheet([
+                [
+                    'title' => '公司询盘产品汇总',
+                    'headers' => ['排名', '产品名称', '询盘数量'],
+                    'rows' => $exportData['company_rows'],
+                ],
+                [
+                    'title' => '团队询盘产品汇总',
+                    'headers' => ['排名', '团队名称', '产品名称', '询盘数量'],
+                    'rows' => $exportData['team_rows'],
+                ],
+                [
+                    'title' => '个人询盘产品汇总',
+                    'headers' => ['团队', '成员', '产品名称', '询盘数量'],
+                    'rows' => $exportData['user_rows'],
+                ],
+                [
+                    'title' => '原始询盘明细',
+                    'headers' => ['客户ID', '客户名称', '负责人', '团队', '产品名称', '询盘来源', '运营端口ID', '录入时间', '转客户时间'],
+                    'rows' => $exportData['raw_rows'],
+                ],
+            ]);
+
+            $this->outputSpreadsheet($spreadsheet, '询盘产品汇总表', 'inquiry_product_summary');
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[InquiryProductSummary] exportInquiryProductSummary failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '导出失败：' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
      * 组装导出数据：团队汇总、成员汇总、渠道明细、原始明细、团队来源汇总。
      */
     private function collectInquirySummaryExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = ''): array
@@ -5090,6 +5389,14 @@ private function exportToExcel($data)
      */
     private function fillInquirySummaryExportSheet($sheet, array $headers, array $rows): void
     {
+        $this->fillExportSheet($sheet, $headers, $rows);
+    }
+
+    /**
+     * 通用 Sheet 写入（首行为表头）。
+     */
+    private function fillExportSheet($sheet, array $headers, array $rows): void
+    {
         foreach ($headers as $colIdx => $header) {
             $sheet->setCellValueByColumnAndRow($colIdx + 1, 1, (string)$header);
         }
@@ -5113,6 +5420,785 @@ private function exportToExcel($data)
             $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i);
             $sheet->getColumnDimension($colLetter)->setAutoSize(true);
         }
+    }
+
+    /**
+     * 检查 PhpSpreadsheet 依赖。
+     */
+    private function isSpreadsheetExportReady(): bool
+    {
+        return class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')
+            && class_exists('\PhpOffice\PhpSpreadsheet\Writer\Xlsx');
+    }
+
+    /**
+     * 统一按多 Sheet 结构创建 Spreadsheet。
+     *
+     * @param array $sheets
+     */
+    private function buildMultiSheetSpreadsheet(array $sheets)
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheetIndex = 0;
+        foreach ($sheets as $sheetDef) {
+            $sheet = $sheetIndex === 0 ? $spreadsheet->getActiveSheet() : $spreadsheet->createSheet();
+            $title = isset($sheetDef['title']) ? trim((string)$sheetDef['title']) : ('Sheet' . ($sheetIndex + 1));
+            if ($title === '') {
+                $title = 'Sheet' . ($sheetIndex + 1);
+            }
+            $sheet->setTitle(mb_substr($title, 0, 31));
+            $headers = isset($sheetDef['headers']) && is_array($sheetDef['headers']) ? $sheetDef['headers'] : [];
+            $rows = isset($sheetDef['rows']) && is_array($sheetDef['rows']) ? $sheetDef['rows'] : [];
+            $this->fillExportSheet($sheet, $headers, $rows);
+            $sheetIndex++;
+        }
+        $spreadsheet->setActiveSheetIndex(0);
+        return $spreadsheet;
+    }
+
+    /**
+     * 统一输出 Excel 下载流。
+     */
+    private function outputSpreadsheet($spreadsheet, string $displayNamePrefix, string $asciiPrefix = 'export'): void
+    {
+        $fileName = $displayNamePrefix . '_' . date('Ymd_His') . '.xlsx';
+        $safeAsciiPrefix = preg_replace('/[^a-zA-Z0-9_]+/', '_', $asciiPrefix);
+        $safeAsciiPrefix = trim((string)$safeAsciiPrefix, '_');
+        if ($safeAsciiPrefix === '') {
+            $safeAsciiPrefix = 'export';
+        }
+        $asciiFileName = $safeAsciiPrefix . '_' . date('Ymd_His') . '.xlsx';
+        $encodedFileName = rawurlencode($fileName);
+
+        while (ob_get_level() > 0) {
+            @ob_end_clean();
+        }
+
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header("Content-Disposition: attachment; filename=\"{$asciiFileName}\"; filename*=UTF-8''{$encodedFileName}");
+        header('Cache-Control: max-age=0');
+        header('Pragma: public');
+
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+        $writer->save('php://output');
+        exit;
+    }
+
+    /**
+     * 组装导出数据：业务人员业绩表。
+     */
+    private function collectBusinessPerformanceExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $username = ''): array
+    {
+        $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $username, $month_keys);
+        $teamNameSeparator = '||#||';
+
+        $orderStatsQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($orderStatsQuery, $where);
+        $orderStats = $orderStatsQuery
+            ->fieldRaw(
+                "IFNULL(NULLIF(TRIM(pr_user),''), '__PR_EMPTY__') AS pr_bucket, "
+                . 'COUNT(id) AS order_count, SUM(profit) AS total_profit, SUM(money) AS total_money, '
+                . "SUBSTRING_INDEX("
+                . "GROUP_CONCAT(NULLIF(TRIM(team_name), '') ORDER BY order_time DESC, id DESC SEPARATOR '{$teamNameSeparator}')"
+                . ", '{$teamNameSeparator}', 1"
+                . ") AS snap_team_name"
+            )
+            ->group('pr_bucket')
+            ->select();
+
+        $currentAdmin = Admin::getMyInfo();
+        $adminMap = [];
+        $adminQuery = Db::table('admin')->field('username,team_name');
+        if (!empty($currentAdmin['org'])) {
+            $adminQuery->where($this->getOrgWhere($currentAdmin['org']));
+        }
+        foreach ((array)$adminQuery->select() as $ar) {
+            $uname = trim((string)($ar['username'] ?? ''));
+            if ($uname !== '') {
+                $adminMap[$uname] = $ar;
+            }
+        }
+
+        $businessUsersQuery = Db::table('admin')
+            ->where($this->getOrgWhere($currentAdmin['org']))
+            ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
+            ->where('is_open', '=', 1)
+            ->where('username', '<>', '')
+            ->whereNotNull('username');
+        if ($username !== '') {
+            $businessUsersQuery->where('username', '=', $username);
+        }
+        $businessUsers = $businessUsersQuery
+            ->field('username')
+            ->limit(500)
+            ->select();
+
+        $excludeUsernames = array_values(array_filter(array_unique(array_map(function ($name) {
+            return trim((string)$name);
+        }, ['范文清', '郭志华', '郭志华2', '付淑雅', '叶诗龙']))));
+        $excludeMap = array_fill_keys($excludeUsernames, true);
+
+        $aggMap = [];
+        foreach ((array)$orderStats as $stat) {
+            $bucket = (string)($stat['pr_bucket'] ?? '');
+            if ($bucket === '') {
+                continue;
+            }
+            $isEmptyPr = ($bucket === '__PR_EMPTY__');
+            $displayUsername = $isEmptyPr ? '未知业务员' : $bucket;
+            $aggMap[$bucket] = [
+                'username' => $displayUsername,
+                'order_count' => (int)($stat['order_count'] ?? 0),
+                'total_profit' => round((float)($stat['total_profit'] ?? 0), 2),
+                'total_money' => round((float)($stat['total_money'] ?? 0), 2),
+                'snap_team_name' => trim((string)($stat['snap_team_name'] ?? '')),
+            ];
+        }
+
+        foreach ((array)$businessUsers as $u) {
+            $un = trim((string)($u['username'] ?? ''));
+            if ($un === '' || isset($aggMap[$un])) {
+                continue;
+            }
+            $aggMap[$un] = [
+                'username' => $un,
+                'order_count' => 0,
+                'total_profit' => 0.0,
+                'total_money' => 0.0,
+                'snap_team_name' => '',
+            ];
+        }
+
+        $rows = [];
+        foreach ($aggMap as $bucket => $row) {
+            $displayUsername = trim((string)($row['username'] ?? ''));
+            if ($displayUsername !== '' && isset($excludeMap[$displayUsername])) {
+                continue;
+            }
+            $totalProfit = (float)($row['total_profit'] ?? 0);
+            $totalMoney = (float)($row['total_money'] ?? 0);
+            $rate = $totalMoney > 0 ? round(($totalProfit / $totalMoney) * 100, 2) : 0.0;
+
+            $teamName = trim((string)($row['snap_team_name'] ?? ''));
+            if ($teamName === '' && $bucket !== '__PR_EMPTY__' && isset($adminMap[$bucket])) {
+                $teamName = trim((string)($adminMap[$bucket]['team_name'] ?? ''));
+            }
+            if ($teamName === '') {
+                $teamName = '未分组';
+            }
+
+            $rows[] = [
+                'username' => $displayUsername,
+                'team_name' => $teamName,
+                'order_count' => (int)($row['order_count'] ?? 0),
+                'total_profit' => $totalProfit,
+                'total_money' => $totalMoney,
+                'profit_rate' => $rate,
+            ];
+        }
+        usort($rows, function ($a, $b) {
+            return ((float)$b['total_profit']) <=> ((float)$a['total_profit']);
+        });
+
+        $summaryRows = [];
+        $detailRows = [];
+        foreach ($rows as $idx => $r) {
+            $summaryRows[] = [
+                $idx + 1,
+                (string)$r['username'],
+                (string)$r['team_name'],
+                (int)$r['order_count'],
+                number_format((float)$r['total_profit'], 2, '.', ''),
+                number_format((float)$r['total_money'], 2, '.', ''),
+                number_format((float)$r['profit_rate'], 2, '.', ''),
+            ];
+            $detailRows[] = [
+                (string)$r['username'],
+                (string)$r['team_name'],
+                (int)$r['order_count'],
+                number_format((float)$r['total_profit'], 2, '.', ''),
+                number_format((float)$r['total_money'], 2, '.', ''),
+                number_format((float)$r['profit_rate'], 2, '.', ''),
+            ];
+        }
+
+        $rawQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($rawQuery, $where);
+        $rawOrderRows = $rawQuery
+            ->field('id,order_no,order_time,cname,pr_user,team_name,money,profit,check_status')
+            ->order('order_time desc,id desc')
+            ->limit(20000)
+            ->select();
+        $rawRows = [];
+        foreach ((array)$rawOrderRows as $r) {
+            $rawRows[] = [
+                (int)($r['id'] ?? 0),
+                (string)($r['order_no'] ?? ''),
+                (string)($r['order_time'] ?? ''),
+                (string)($r['cname'] ?? ''),
+                (string)($r['pr_user'] ?? ''),
+                trim((string)($r['team_name'] ?? '')) !== '' ? (string)$r['team_name'] : '未分组',
+                number_format((float)($r['money'] ?? 0), 2, '.', ''),
+                number_format((float)($r['profit'] ?? 0), 2, '.', ''),
+                (int)($r['check_status'] ?? 0),
+            ];
+        }
+
+        return [
+            'summary_rows' => $summaryRows,
+            'detail_rows' => $detailRows,
+            'raw_rows' => $rawRows,
+        ];
+    }
+
+    /**
+     * 组装导出数据：团队业绩表。
+     */
+    private function collectTeamPerformanceExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
+    {
+        $currentAdmin = Admin::getMyInfo();
+        $orgUsernames = $this->getOrgUsernames($currentAdmin['org'] ?? '');
+        if (empty($orgUsernames)) {
+            return ['team_rows' => [], 'member_rows' => [], 'detail_rows' => [], 'raw_rows' => []];
+        }
+
+        $teamName = trim((string)$team_name);
+        $username = trim((string)$username);
+        $teamExpr = "IFNULL(NULLIF(TRIM(team_name), ''), '未分组')";
+        $baseQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
+            ->whereIn('pr_user', $orgUsernames);
+        if ($teamName !== '') {
+            $normTeam = $teamName === '未分组' ? '未分组' : $teamName;
+            $baseQuery->whereRaw($teamExpr . " = :team_name", ['team_name' => $normTeam]);
+        }
+        if ($username !== '') {
+            $baseQuery->where('pr_user', '=', $username);
+        }
+
+        $teamRowsRaw = (clone $baseQuery)
+            ->field($teamExpr . " as team_name, COUNT(id) as order_count, SUM(profit) as total_profit, SUM(money) as total_money")
+            ->group($teamExpr)
+            ->order('total_profit desc, team_name asc')
+            ->select();
+        $teamRows = [];
+        foreach ((array)$teamRowsRaw as $idx => $row) {
+            $profit = (float)($row['total_profit'] ?? 0);
+            $money = (float)($row['total_money'] ?? 0);
+            $rate = $money > 0 ? round(($profit / $money) * 100, 2) : 0.0;
+            $teamRows[] = [
+                $idx + 1,
+                (string)($row['team_name'] ?? '未分组'),
+                (int)($row['order_count'] ?? 0),
+                number_format($profit, 2, '.', ''),
+                number_format($money, 2, '.', ''),
+                number_format($rate, 2, '.', ''),
+            ];
+        }
+
+        $memberRowsRaw = (clone $baseQuery)
+            ->whereRaw("TRIM(IFNULL(pr_user, '')) <> ''")
+            ->field($teamExpr . " as team_name, TRIM(pr_user) as username, COUNT(id) as order_count, SUM(profit) as total_profit, SUM(money) as total_money")
+            ->group($teamExpr . ',TRIM(pr_user)')
+            ->order('team_name asc, total_profit desc, username asc')
+            ->select();
+        $memberRows = [];
+        $memberDetailRows = [];
+        $rankByTeam = [];
+        foreach ((array)$memberRowsRaw as $row) {
+            $team = (string)($row['team_name'] ?? '未分组');
+            if (!isset($rankByTeam[$team])) {
+                $rankByTeam[$team] = 0;
+            }
+            $rankByTeam[$team]++;
+            $profit = (float)($row['total_profit'] ?? 0);
+            $money = (float)($row['total_money'] ?? 0);
+            $rate = $money > 0 ? round(($profit / $money) * 100, 2) : 0.0;
+            $memberRows[] = [
+                $team,
+                $rankByTeam[$team],
+                (string)($row['username'] ?? ''),
+                (int)($row['order_count'] ?? 0),
+                number_format($profit, 2, '.', ''),
+                number_format($money, 2, '.', ''),
+                number_format($rate, 2, '.', ''),
+            ];
+        }
+
+        $detailRaw = (clone $baseQuery)
+            ->whereRaw("TRIM(IFNULL(pr_user, '')) <> ''")
+            ->field($teamExpr . " as team_name, TRIM(pr_user) as username, COUNT(id) as order_count, SUM(profit) as total_profit, SUM(money) as total_money, MAX(order_time) as latest_order_time")
+            ->group($teamExpr . ',TRIM(pr_user)')
+            ->order('team_name asc, total_profit desc, username asc')
+            ->select();
+        foreach ((array)$detailRaw as $row) {
+            $profit = (float)($row['total_profit'] ?? 0);
+            $money = (float)($row['total_money'] ?? 0);
+            $rate = $money > 0 ? round(($profit / $money) * 100, 2) : 0.0;
+            $memberDetailRows[] = [
+                (string)($row['team_name'] ?? '未分组'),
+                (string)($row['username'] ?? ''),
+                (int)($row['order_count'] ?? 0),
+                number_format($profit, 2, '.', ''),
+                number_format($money, 2, '.', ''),
+                number_format($rate, 2, '.', ''),
+                (string)($row['latest_order_time'] ?? ''),
+            ];
+        }
+
+        $rawOrderRows = (clone $baseQuery)
+            ->fieldRaw("id,order_no,order_time,cname,TRIM(pr_user) as pr_user,{$teamExpr} as team_name,money,profit,check_status")
+            ->order('order_time desc,id desc')
+            ->limit(20000)
+            ->select();
+        $rawRows = [];
+        foreach ((array)$rawOrderRows as $row) {
+            $rawRows[] = [
+                (int)($row['id'] ?? 0),
+                (string)($row['order_no'] ?? ''),
+                (string)($row['order_time'] ?? ''),
+                (string)($row['cname'] ?? ''),
+                (string)($row['pr_user'] ?? ''),
+                (string)($row['team_name'] ?? '未分组'),
+                number_format((float)($row['money'] ?? 0), 2, '.', ''),
+                number_format((float)($row['profit'] ?? 0), 2, '.', ''),
+                (int)($row['check_status'] ?? 0),
+            ];
+        }
+
+        return [
+            'team_rows' => $teamRows,
+            'member_rows' => $memberRows,
+            'detail_rows' => $memberDetailRows,
+            'raw_rows' => $rawRows,
+        ];
+    }
+
+    /**
+     * 组装导出数据：运营询盘汇总表。
+     */
+    private function collectOperationInquiryExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', int $inquiry_id = 0, string $username = ''): array
+    {
+        $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
+        if ($inquiry_id > 0) {
+            $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
+        }
+
+        $sourceRowsRaw = (clone $baseQuery)
+            ->field("CASE WHEN l.inquiry_id IS NULL OR l.inquiry_id = 0 OR TRIM(IFNULL(CAST(l.inquiry_id AS CHAR), '')) = '' THEN 0 ELSE CAST(l.inquiry_id AS UNSIGNED) END AS inquiry_bucket, COUNT(*) AS yw_num")
+            ->group("CASE WHEN l.inquiry_id IS NULL OR l.inquiry_id = 0 OR TRIM(IFNULL(CAST(l.inquiry_id AS CHAR), '')) = '' THEN 0 ELSE CAST(l.inquiry_id AS UNSIGNED) END")
+            ->order('yw_num', 'desc')
+            ->order('inquiry_bucket', 'asc')
+            ->select();
+        $bucketIds = [];
+        foreach ((array)$sourceRowsRaw as $row) {
+            $iid = (int)($row['inquiry_bucket'] ?? 0);
+            if ($iid > 0) {
+                $bucketIds[$iid] = $iid;
+            }
+        }
+        $inquiryMap = [];
+        if (!empty($bucketIds)) {
+            $inquiryMap = Db::table('crm_inquiry')->where('id', 'in', array_values($bucketIds))->column('inquiry_name', 'id');
+        }
+        $sourceRows = [];
+        foreach ((array)$sourceRowsRaw as $idx => $row) {
+            $iid = (int)($row['inquiry_bucket'] ?? 0);
+            $sourceRows[] = [
+                $idx + 1,
+                $iid,
+                $iid > 0 ? (string)($inquiryMap[$iid] ?? ('ID:' . $iid)) : '未知来源',
+                (int)($row['yw_num'] ?? 0),
+            ];
+        }
+
+        $sourceNameMap = [];
+        foreach ($sourceRows as $sr) {
+            $sourceNameMap[(int)$sr[1]] = (string)$sr[2];
+        }
+        if ($inquiry_id > 0 && !isset($sourceNameMap[$inquiry_id])) {
+            $sourceNameMap[$inquiry_id] = '来源ID:' . $inquiry_id;
+        }
+
+        $staffRows = [];
+        $portRows = [];
+        if ($inquiry_id > 0) {
+            $staffRes = $this->collectOperationStaffRowsForExport($inquiry_id, $timebucket, $at_time, $month_keys, $username);
+            $staffRows = $staffRes['staff_rows'];
+            $portRows = $this->collectOperationPortRowsForExport($inquiry_id, $timebucket, $at_time, $month_keys, $username, $sourceNameMap[$inquiry_id] ?? '未知来源');
+        } else {
+            foreach ($sourceNameMap as $iid => $name) {
+                $staffRes = $this->collectOperationStaffRowsForExport((int)$iid, $timebucket, $at_time, $month_keys, $username);
+                foreach ($staffRes['staff_rows'] as $srow) {
+                    $staffRows[] = $srow;
+                }
+                $portPartRows = $this->collectOperationPortRowsForExport((int)$iid, $timebucket, $at_time, $month_keys, $username, $name);
+                foreach ($portPartRows as $prow) {
+                    $portRows[] = $prow;
+                }
+            }
+        }
+
+        $contactSubSql = Db::table('crm_contacts')
+            ->where('is_delete', '=', 0)
+            ->field("leads_id, GROUP_CONCAT(CONCAT(IFNULL(contact_extra,''),IFNULL(contact_value,'')) SEPARATOR ' / ') as contact_text")
+            ->group('leads_id')
+            ->buildSql();
+        $detailQuery = (clone $baseQuery)
+            ->leftJoin('crm_leads cl', 'cl.id = l.id')
+            ->leftJoin('admin a', 'l.pr_user = a.username')
+            ->leftJoin('crm_inquiry ci', 'l.inquiry_id = ci.id')
+            ->leftJoin('crm_inquiry_port cp', 'l.port_id = cp.id')
+            ->leftJoin([$contactSubSql => 'ct'], 'ct.leads_id = l.id');
+        if ($inquiry_id > 0) {
+            $this->applyOperatorInquiryLeadsSourceBucket($detailQuery, $inquiry_id);
+        }
+        if ($username !== '') {
+            $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
+            if ($op === null) {
+                return [
+                    'source_rows' => $sourceRows,
+                    'staff_rows' => $staffRows,
+                    'port_rows' => $portRows,
+                    'raw_rows' => [],
+                ];
+            }
+            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+            if (empty($portIds)) {
+                return [
+                    'source_rows' => $sourceRows,
+                    'staff_rows' => $staffRows,
+                    'port_rows' => $portRows,
+                    'raw_rows' => [],
+                ];
+            }
+            $detailQuery->whereRaw($this->buildLeadPortIntersectAdminPortsWhere($portIds));
+        }
+        $rawRowsRaw = $detailQuery
+            ->field([
+                'l.id as lead_id',
+                "IFNULL(cl.kh_name, '') as kh_name",
+                "IFNULL(ct.contact_text, '') as contact_text",
+                "IFNULL(l.pr_user, '') as username",
+                "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END as team_name",
+                "IFNULL(ci.inquiry_name, '未知来源') as inquiry_name",
+                "IFNULL(cp.port_name, '') as port_name",
+                "IFNULL(cl.at_time, '') as at_time",
+                "IFNULL(cl.to_kh_time, '') as to_kh_time",
+            ])
+            ->order('l.id desc')
+            ->limit(20000)
+            ->select();
+        $rawRows = [];
+        foreach ((array)$rawRowsRaw as $row) {
+            $rawRows[] = [
+                (int)($row['lead_id'] ?? 0),
+                (string)($row['kh_name'] ?? ''),
+                (string)($row['contact_text'] ?? ''),
+                (string)($row['username'] ?? ''),
+                (string)($row['team_name'] ?? '未分组'),
+                (string)($row['inquiry_name'] ?? '未知来源'),
+                (string)($row['port_name'] ?? ''),
+                (string)($row['at_time'] ?? ''),
+                (string)($row['to_kh_time'] ?? ''),
+            ];
+        }
+
+        return [
+            'source_rows' => $sourceRows,
+            'staff_rows' => $staffRows,
+            'port_rows' => $portRows,
+            'raw_rows' => $rawRows,
+        ];
+    }
+
+    private function collectOperationStaffRowsForExport(int $inquiryId, string $timebucket = '', string $at_time = '', string $month_keys = '', string $username = ''): array
+    {
+        $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
+        $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryId);
+        $staffRowsRaw = $this->fetchOperationStaffRowsForInquirySummary($inquiryId);
+        $sourceName = $this->resolveOperationInquiryNameById($inquiryId);
+        $rows = [];
+        foreach ((array)$staffRowsRaw as $row) {
+            $uname = trim((string)($row['username'] ?? ''));
+            if ($uname === '') {
+                continue;
+            }
+            if ($username !== '' && $uname !== $username) {
+                continue;
+            }
+            $ports = $this->parseCsvPortIdsForOperatorInquiry($row['port_id'] ?? '');
+            $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($ports);
+            $cnt = (int)(clone $baseQuery)->whereRaw($portWhere)->count('l.id');
+            $rows[] = [
+                'source_name' => $sourceName,
+                'username' => $uname,
+                'yw_num' => $cnt,
+            ];
+        }
+        usort($rows, function ($a, $b) {
+            if ((int)$a['yw_num'] !== (int)$b['yw_num']) {
+                return (int)$b['yw_num'] <=> (int)$a['yw_num'];
+            }
+            return strcmp((string)$a['username'], (string)$b['username']);
+        });
+        $out = [];
+        foreach ($rows as $idx => $row) {
+            $out[] = [
+                (string)$row['source_name'],
+                $idx + 1,
+                (string)$row['username'],
+                (int)$row['yw_num'],
+            ];
+        }
+        return ['staff_rows' => $out];
+    }
+
+    private function collectOperationPortRowsForExport(int $inquiryId, string $timebucket = '', string $at_time = '', string $month_keys = '', string $username = '', string $sourceName = ''): array
+    {
+        $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
+        $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryId);
+        $validPortMap = $this->getInquiryPortNameMapForSummary($inquiryId);
+        $leadScopeQuery = clone $baseQuery;
+        $displayUsername = '';
+
+        if ($username !== '') {
+            $op = $this->findOperationStaffForPortSummary($username, $inquiryId);
+            if ($op === null) {
+                return [];
+            }
+            $displayUsername = $username;
+            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+            if (empty($portIds)) {
+                return [];
+            }
+            $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($portIds);
+            $leadScopeQuery->whereRaw($portWhere);
+        }
+
+        $leadRows = $leadScopeQuery->field('l.id,l.port_id')->select();
+        $leadRowsArr = is_array($leadRows)
+            ? $leadRows
+            : ((is_object($leadRows) && method_exists($leadRows, 'toArray')) ? $leadRows->toArray() : iterator_to_array($leadRows));
+        $summary = $this->buildOperationInquiryPortSummaryFromLeadRows($leadRowsArr, $validPortMap, '未分配端口');
+
+        $rows = [];
+        foreach ((array)($summary['data'] ?? []) as $row) {
+            $rows[] = [
+                (string)$sourceName,
+                (string)$displayUsername,
+                (int)($row['rank'] ?? 0),
+                (string)($row['port_name'] ?? ''),
+                (int)($row['yw_num'] ?? 0),
+            ];
+        }
+        return $rows;
+    }
+
+    private function resolveOperationInquiryNameById(int $inquiryId): string
+    {
+        if ($inquiryId <= 0) {
+            return '未知来源';
+        }
+        $name = Db::table('crm_inquiry')->where('id', '=', $inquiryId)->value('inquiry_name');
+        $name = trim((string)$name);
+        return $name !== '' ? $name : ('来源ID:' . $inquiryId);
+    }
+
+    /**
+     * 组装导出数据：订单产品汇总表。
+     */
+    private function collectOrderProductExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
+    {
+        $currentAdmin = Admin::getMyInfo();
+        $orgUsernames = $this->getOrgUsernames($currentAdmin['org'] ?? '');
+        if (empty($orgUsernames)) {
+            return ['company_rows' => [], 'team_rows' => [], 'user_rows' => [], 'raw_rows' => []];
+        }
+        $teamExpr = $this->getOrderProductSummaryTeamExpr();
+
+        $baseQuery = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
+        if (trim($team_name) !== '') {
+            $this->applyOrderProductSummaryTeamFilter($baseQuery, trim($team_name));
+        }
+        if (trim($username) !== '') {
+            $baseQuery->where('o.pr_user', '=', trim($username));
+        }
+
+        $companyRowsRaw = (clone $baseQuery)
+            ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
+            ->group('oi.product_name')
+            ->order('total_profit desc, sale_qty desc, oi.product_name asc')
+            ->select();
+        $companyRows = [];
+        foreach ((array)$companyRowsRaw as $idx => $row) {
+            $companyRows[] = [
+                $idx + 1,
+                (string)($row['product_name'] ?? ''),
+                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
+                (float)($row['sale_qty'] ?? 0),
+            ];
+        }
+
+        $teamRowsRaw = (clone $baseQuery)
+            ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
+            ->field($teamExpr . " as team_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
+            ->group($teamExpr)
+            ->order('total_profit desc, sale_qty desc, team_name asc')
+            ->select();
+        $teamRows = [];
+        foreach ((array)$teamRowsRaw as $idx => $row) {
+            $teamRows[] = [
+                $idx + 1,
+                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
+                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
+                (float)($row['sale_qty'] ?? 0),
+                (int)($row['member_count'] ?? 0),
+            ];
+        }
+
+        $userRowsRaw = (clone $baseQuery)
+            ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
+            ->field($teamExpr . " as team_name, TRIM(o.pr_user) as username, oi.product_name, COUNT(DISTINCT o.id) as order_count, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
+            ->group($teamExpr . ",TRIM(o.pr_user),oi.product_name")
+            ->order('team_name asc, username asc, total_profit desc, sale_qty desc')
+            ->select();
+        $userRows = [];
+        foreach ((array)$userRowsRaw as $row) {
+            $userRows[] = [
+                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
+                (string)($row['username'] ?? ''),
+                (string)($row['product_name'] ?? ''),
+                (int)($row['order_count'] ?? 0),
+                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
+                (float)($row['sale_qty'] ?? 0),
+            ];
+        }
+
+        $rawRowsRaw = (clone $baseQuery)
+            ->field($teamExpr . " as team_name, o.id as order_id, o.order_no, o.order_time, TRIM(o.pr_user) as username, oi.product_name, IFNULL(oi.qty,0) as sale_qty, IFNULL(oi.sub_profit,0) as total_profit")
+            ->order('o.id desc')
+            ->limit(20000)
+            ->select();
+        $rawRows = [];
+        foreach ((array)$rawRowsRaw as $row) {
+            $rawRows[] = [
+                (int)($row['order_id'] ?? 0),
+                (string)($row['order_no'] ?? ''),
+                (string)($row['order_time'] ?? ''),
+                (string)($row['username'] ?? ''),
+                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
+                (string)($row['product_name'] ?? ''),
+                (float)($row['sale_qty'] ?? 0),
+                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
+            ];
+        }
+
+        return [
+            'company_rows' => $companyRows,
+            'team_rows' => $teamRows,
+            'user_rows' => $userRows,
+            'raw_rows' => $rawRows,
+        ];
+    }
+
+    /**
+     * 组装导出数据：询盘产品汇总表。
+     */
+    private function collectInquiryProductExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
+    {
+        $teamExpr = $this->getInquiryProductSummaryTeamExpr();
+        $productExpr = $this->getInquiryProductSummaryProductExpr();
+        $baseQuery = $this->buildInquiryProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
+        if (trim($team_name) !== '') {
+            $this->applyInquiryProductSummaryTeamFilter($baseQuery, trim($team_name));
+        }
+        if (trim($username) !== '') {
+            $baseQuery->where('l.pr_user', '=', trim($username));
+        }
+
+        $companyRowsRaw = $this->applyInquiryProductSummaryProductAgg(clone $baseQuery)->select();
+        $companyRows = [];
+        foreach ((array)$companyRowsRaw as $idx => $row) {
+            $companyRows[] = [
+                $idx + 1,
+                (string)($row['product_name'] ?? ''),
+                (int)($row['inquiry_count'] ?? 0),
+            ];
+        }
+
+        $teamRowsRaw = (clone $baseQuery)
+            ->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''")
+            ->field($teamExpr . " as team_name, {$productExpr} as product_name, COUNT(DISTINCT l.id) as inquiry_count")
+            ->group($teamExpr . "," . $productExpr)
+            ->order('team_name asc, inquiry_count desc, product_name asc')
+            ->select();
+        $teamRows = [];
+        foreach ((array)$teamRowsRaw as $idx => $row) {
+            $teamRows[] = [
+                $idx + 1,
+                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
+                (string)($row['product_name'] ?? ''),
+                (int)($row['inquiry_count'] ?? 0),
+            ];
+        }
+
+        $userRowsRaw = (clone $baseQuery)
+            ->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''")
+            ->field($teamExpr . " as team_name, TRIM(l.pr_user) as username, {$productExpr} as product_name, COUNT(DISTINCT l.id) as inquiry_count")
+            ->group($teamExpr . ",TRIM(l.pr_user)," . $productExpr)
+            ->order('team_name asc, username asc, inquiry_count desc, product_name asc')
+            ->select();
+        $userRows = [];
+        foreach ((array)$userRowsRaw as $row) {
+            $userRows[] = [
+                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
+                (string)($row['username'] ?? ''),
+                (string)($row['product_name'] ?? ''),
+                (int)($row['inquiry_count'] ?? 0),
+            ];
+        }
+
+        $leadColumns = $this->getInquirySummaryLeadsColumns();
+        $hasKhName = in_array('kh_name', $leadColumns, true);
+        $hasAtTime = in_array('at_time', $leadColumns, true);
+        $hasToKhTime = in_array('to_kh_time', $leadColumns, true);
+        $rawRowsRaw = (clone $baseQuery)
+            ->leftJoin('crm_inquiry ci', 'l.inquiry_id = ci.id')
+            ->field([
+                'l.id as lead_id',
+                $teamExpr . ' as team_name',
+                "TRIM(IFNULL(l.pr_user, '')) as username",
+                $productExpr . ' as product_name',
+                "IFNULL(ci.inquiry_name, '未知来源') as inquiry_name",
+                "TRIM(IFNULL(l.port_id, '')) as port_ids",
+                $hasKhName ? "IFNULL(l.kh_name, '') as kh_name" : "'' as kh_name",
+                $hasAtTime ? "IFNULL(l.at_time, '') as at_time" : "'' as at_time",
+                $hasToKhTime ? "IFNULL(l.to_kh_time, '') as to_kh_time" : "'' as to_kh_time",
+            ])
+            ->order('l.id desc')
+            ->limit(20000)
+            ->select();
+        $rawRows = [];
+        foreach ((array)$rawRowsRaw as $row) {
+            $rawRows[] = [
+                (int)($row['lead_id'] ?? 0),
+                (string)($row['kh_name'] ?? ''),
+                (string)($row['username'] ?? ''),
+                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
+                (string)($row['product_name'] ?? ''),
+                (string)($row['inquiry_name'] ?? '未知来源'),
+                (string)($row['port_ids'] ?? ''),
+                (string)($row['at_time'] ?? ''),
+                (string)($row['to_kh_time'] ?? ''),
+            ];
+        }
+
+        return [
+            'company_rows' => $companyRows,
+            'team_rows' => $teamRows,
+            'user_rows' => $userRows,
+            'raw_rows' => $rawRows,
+        ];
     }
 
     // ===========================
