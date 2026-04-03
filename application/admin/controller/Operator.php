@@ -5073,7 +5073,8 @@ private function exportToExcel($data)
             ];
         }
 
-        $teamSourceSummary = $this->buildInquiryTeamSourceSummaryRows($timebucket, $at_time, $month_keys, $team_name);
+        // 第5个sheet“团队来源汇总”固定导出当前时间范围内所有团队的数据，不受当前选中团队过滤影响。
+        $teamSourceSummary = $this->buildInquiryTeamSourceSummaryRows($timebucket, $at_time, $month_keys, '');
 
         return [
             'team_rows' => $teamRows,
