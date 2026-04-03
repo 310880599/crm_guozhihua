@@ -1883,10 +1883,16 @@
         $btn.data('exporting', 1).prop('disabled', true).html('<i class="bi bi-hourglass-split"></i> 导出中');
         var loadingIndex = layer.msg('正在导出，请稍候...', {icon: 16, shade: 0.2, time: 0});
 
+        var selectedTeamName = '';
+        if (window.InquirySplit && typeof window.InquirySplit.lastTeamName === 'string') {
+            selectedTeamName = $.trim(window.InquirySplit.lastTeamName || '');
+        }
+
         var postBody = $.param({
             timebucket: timeParams.timebucket || '',
             at_time: timeParams.at_time || '',
-            month_keys: timeParams.month_keys || ''
+            month_keys: timeParams.month_keys || '',
+            team_name: selectedTeamName
         });
         var fallbackName = buildInquirySummaryExportFallbackName();
 

@@ -4377,6 +4377,86 @@ private function exportToExcel($data)
     }
 
     /**
+     * 统一构建“团队来源汇总”数据（第二屏展示 + 导出第5个sheet共用）。
+     * - 传 team_name 时仅返回该团队
+     * - 不传 team_name 时返回全部团队
+     */
+    private function buildInquiryTeamSourceSummaryRows(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = ''): array
+    {
+        $team_name = trim($team_name);
+        $excludedTeams = $this->getExcludedInquiryTeamNames();
+        $excludedUsers = $this->getExcludedInquiryUsernames();
+
+        if ($team_name !== '' && !empty($excludedTeams) && in_array($team_name, $excludedTeams, true)) {
+            return [
+                'rows' => [],
+                'summary' => [
+                    'team_name' => $team_name,
+                    'total_count' => 0,
+                ],
+            ];
+        }
+
+        $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+        $inquiryNameExpr = "CASE WHEN ci.inquiry_name IS NULL OR TRIM(ci.inquiry_name) = '' THEN '未知来源' ELSE TRIM(ci.inquiry_name) END";
+
+        $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
+        $query = (clone $baseQuery)
+            ->leftJoin('admin a', 'l.pr_user = a.username')
+            ->leftJoin('crm_inquiry ci', 'l.inquiry_id = ci.id');
+
+        $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
+        if ($team_name !== '') {
+            $query->whereRaw("{$normalizedTeamExpr} = :team_name", ['team_name' => $team_name]);
+        }
+
+        $rows = $query
+            ->group($normalizedTeamExpr . ',l.inquiry_id,' . $inquiryNameExpr)
+            ->field([
+                $normalizedTeamExpr . ' as team_name',
+                'l.inquiry_id',
+                $inquiryNameExpr . ' as inquiry_name',
+                'count(*) as yw_num',
+            ])
+            ->order('team_name asc')
+            ->order('yw_num desc')
+            ->order('inquiry_name asc')
+            ->select();
+
+        $result = [];
+        $total = 0;
+        $rankByTeam = [];
+        foreach ($rows as $row) {
+            $teamName = trim((string)($row['team_name'] ?? ''));
+            if ($teamName === '') {
+                $teamName = '未分组';
+            }
+            if (!isset($rankByTeam[$teamName])) {
+                $rankByTeam[$teamName] = 0;
+            }
+            $rankByTeam[$teamName]++;
+
+            $count = (int)($row['yw_num'] ?? 0);
+            $total += $count;
+            $result[] = [
+                'team_name' => $teamName,
+                'inquiry_id' => (int)($row['inquiry_id'] ?? 0),
+                'inquiry_name' => trim((string)($row['inquiry_name'] ?? '')) !== '' ? (string)$row['inquiry_name'] : '未知来源',
+                'yw_num' => $count,
+                'rank' => $rankByTeam[$teamName],
+            ];
+        }
+
+        return [
+            'rows' => $result,
+            'summary' => [
+                'team_name' => $team_name,
+                'total_count' => $total,
+            ],
+        ];
+    }
+
+    /**
      * 第二屏顶部：团队来源汇总（复用第一屏团队询盘统计口径）。
      */
     public function getInquiryTeamSourceSummaryData()
@@ -4399,64 +4479,12 @@ private function exportToExcel($data)
                 ]);
             }
 
-            $excludedTeams = $this->getExcludedInquiryTeamNames();
-            $excludedUsers = $this->getExcludedInquiryUsernames();
-            if (!empty($excludedTeams) && in_array($team_name, $excludedTeams, true)) {
-                return json([
-                    'code' => 0,
-                    'msg' => '获取成功',
-                    'data' => [],
-                    'summary' => [
-                        'team_name' => $team_name,
-                        'total_count' => 0,
-                    ],
-                ]);
-            }
-
-            $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
-            $inquiryNameExpr = "CASE WHEN ci.inquiry_name IS NULL OR TRIM(ci.inquiry_name) = '' THEN '未知来源' ELSE TRIM(ci.inquiry_name) END";
-
-            $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
-            $query = (clone $baseQuery)
-                ->leftJoin('admin a', 'l.pr_user = a.username')
-                ->leftJoin('crm_inquiry ci', 'l.inquiry_id = ci.id');
-
-            $query->whereRaw("{$normalizedTeamExpr} = :team_name", ['team_name' => $team_name]);
-            $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
-
-            $rows = $query
-                ->group('l.inquiry_id,' . $inquiryNameExpr)
-                ->field([
-                    'l.inquiry_id',
-                    $inquiryNameExpr . ' as inquiry_name',
-                    'count(*) as yw_num',
-                ])
-                ->order('yw_num desc')
-                ->order('inquiry_name asc')
-                ->select();
-
-            $result = [];
-            $total = 0;
-            foreach ($rows as $idx => $row) {
-                $count = (int)($row['yw_num'] ?? 0);
-                $total += $count;
-                $iid = (int)($row['inquiry_id'] ?? 0);
-                $result[] = [
-                    'inquiry_id' => $iid,
-                    'inquiry_name' => trim((string)($row['inquiry_name'] ?? '')) !== '' ? (string)$row['inquiry_name'] : '未知来源',
-                    'yw_num' => $count,
-                    'rank' => $idx + 1,
-                ];
-            }
-
+            $sourceSummary = $this->buildInquiryTeamSourceSummaryRows($timebucket, $at_time, $month_keys, $team_name);
             return json([
                 'code' => 0,
                 'msg' => '获取成功',
-                'data' => $result,
-                'summary' => [
-                    'team_name' => $team_name,
-                    'total_count' => $total,
-                ],
+                'data' => $sourceSummary['rows'],
+                'summary' => $sourceSummary['summary'],
             ]);
         } catch (\Throwable $e) {
             \think\facade\Log::error('[InquirySummary] getInquiryTeamSourceSummaryData failed: ' . $e->getMessage());
@@ -4726,9 +4754,10 @@ private function exportToExcel($data)
             $timebucket = trim((string)Request::param('timebucket', ''));
             $at_time = trim((string)Request::param('at_time', ''));
             $month_keys = trim((string)Request::param('month_keys', ''));
+            $team_name = trim((string)Request::param('team_name', ''));
 
-            $exportData = $this->collectInquirySummaryExportData($timebucket, $at_time, $month_keys);
-            $totalRows = count($exportData['team_rows']) + count($exportData['member_rows']) + count($exportData['channel_rows']) + count($exportData['raw_rows']);
+            $exportData = $this->collectInquirySummaryExportData($timebucket, $at_time, $month_keys, $team_name);
+            $totalRows = count($exportData['team_rows']) + count($exportData['member_rows']) + count($exportData['channel_rows']) + count($exportData['raw_rows']) + count($exportData['team_source_rows']);
             if ($totalRows <= 0) {
                 return json([
                     'code' => 404,
@@ -4796,6 +4825,18 @@ private function exportToExcel($data)
             }
             $this->fillInquirySummaryExportSheet($rawSheet, ['客户ID', '客户名称', '手机号/电话', '负责人/业务员', '团队名称', '询盘来源', '运营端口', '产品名称', '录入时间', '转客户时间'], $rawMatrix);
 
+            $teamSourceSheet = $spreadsheet->createSheet();
+            $teamSourceSheet->setTitle('团队来源汇总');
+            $teamSourceMatrix = [];
+            foreach ($exportData['team_source_rows'] as $row) {
+                $teamSourceMatrix[] = [
+                    (string)($row['team_name'] ?? ''),
+                    (string)($row['inquiry_name'] ?? '未知来源'),
+                    (int)($row['yw_num'] ?? 0),
+                ];
+            }
+            $this->fillInquirySummaryExportSheet($teamSourceSheet, ['团队名称', '渠道名称', '询盘数量'], $teamSourceMatrix);
+
             $spreadsheet->setActiveSheetIndex(0);
 
             $fileName = '团队询盘汇总_' . date('Ymd_His') . '.xlsx';
@@ -4824,9 +4865,9 @@ private function exportToExcel($data)
     }
 
     /**
-     * 组装导出数据：团队汇总、成员汇总、渠道明细、原始明细。
+     * 组装导出数据：团队汇总、成员汇总、渠道明细、原始明细、团队来源汇总。
      */
-    private function collectInquirySummaryExportData(string $timebucket = '', string $at_time = '', string $month_keys = ''): array
+    private function collectInquirySummaryExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = ''): array
     {
         $excludedTeams = $this->getExcludedInquiryTeamNames();
         $excludedUsers = $this->getExcludedInquiryUsernames();
@@ -5032,11 +5073,14 @@ private function exportToExcel($data)
             ];
         }
 
+        $teamSourceSummary = $this->buildInquiryTeamSourceSummaryRows($timebucket, $at_time, $month_keys, $team_name);
+
         return [
             'team_rows' => $teamRows,
             'member_rows' => $memberRows,
             'channel_rows' => $channelRows,
             'raw_rows' => $rawRows,
+            'team_source_rows' => $teamSourceSummary['rows'],
         ];
     }
 
