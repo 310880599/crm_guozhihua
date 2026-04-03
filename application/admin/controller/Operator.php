@@ -4710,6 +4710,366 @@ private function exportToExcel($data)
         }
     }
 
+    /**
+     * 导出：团队询盘汇总三连屏完整数据（多 Sheet）。
+     */
+    public function exportInquirySummary()
+    {
+        try {
+            if (!class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet') || !class_exists('\PhpOffice\PhpSpreadsheet\Writer\Xlsx')) {
+                return json([
+                    'code' => 500,
+                    'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出',
+                ]);
+            }
+
+            $timebucket = trim((string)Request::param('timebucket', ''));
+            $at_time = trim((string)Request::param('at_time', ''));
+            $month_keys = trim((string)Request::param('month_keys', ''));
+
+            $exportData = $this->collectInquirySummaryExportData($timebucket, $at_time, $month_keys);
+            $totalRows = count($exportData['team_rows']) + count($exportData['member_rows']) + count($exportData['channel_rows']) + count($exportData['raw_rows']);
+            if ($totalRows <= 0) {
+                return json([
+                    'code' => 404,
+                    'msg' => '当前筛选条件下暂无可导出数据',
+                ]);
+            }
+
+            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+
+            $teamSheet = $spreadsheet->getActiveSheet();
+            $teamSheet->setTitle('团队询盘汇总');
+            $teamMatrix = [];
+            foreach ($exportData['team_rows'] as $row) {
+                $teamMatrix[] = [
+                    (int)($row['rank'] ?? 0),
+                    (string)($row['team_name'] ?? ''),
+                    (int)($row['yw_num'] ?? 0),
+                ];
+            }
+            $this->fillInquirySummaryExportSheet($teamSheet, ['排名', '团队名称', '询盘数量'], $teamMatrix);
+
+            $memberSheet = $spreadsheet->createSheet();
+            $memberSheet->setTitle('成员询盘汇总');
+            $memberMatrix = [];
+            foreach ($exportData['member_rows'] as $row) {
+                $memberMatrix[] = [
+                    (string)($row['team_name'] ?? ''),
+                    (int)($row['rank'] ?? 0),
+                    (string)($row['username'] ?? ''),
+                    (int)($row['yw_num'] ?? 0),
+                ];
+            }
+            $this->fillInquirySummaryExportSheet($memberSheet, ['团队名称', '排名', '业务员名称', '询盘数量'], $memberMatrix);
+
+            $channelSheet = $spreadsheet->createSheet();
+            $channelSheet->setTitle('渠道分类明细');
+            $channelMatrix = [];
+            foreach ($exportData['channel_rows'] as $row) {
+                $channelMatrix[] = [
+                    (string)($row['team_name'] ?? ''),
+                    (string)($row['username'] ?? ''),
+                    (int)($row['rank'] ?? 0),
+                    (string)($row['channel_name'] ?? ''),
+                    (int)($row['yw_num'] ?? 0),
+                ];
+            }
+            $this->fillInquirySummaryExportSheet($channelSheet, ['团队名称', '业务员名称', '排名', '渠道名称', '询盘数量'], $channelMatrix);
+
+            $rawSheet = $spreadsheet->createSheet();
+            $rawSheet->setTitle('原始明细数据');
+            $rawMatrix = [];
+            foreach ($exportData['raw_rows'] as $row) {
+                $rawMatrix[] = [
+                    (int)($row['lead_id'] ?? 0),
+                    (string)($row['kh_name'] ?? ''),
+                    (string)($row['contact_text'] ?? ''),
+                    (string)($row['username'] ?? ''),
+                    (string)($row['team_name'] ?? ''),
+                    (string)($row['channel_name'] ?? ''),
+                    (string)($row['port_name'] ?? ''),
+                    (string)($row['product_name'] ?? ''),
+                    (string)($row['at_time'] ?? ''),
+                    (string)($row['to_kh_time'] ?? ''),
+                ];
+            }
+            $this->fillInquirySummaryExportSheet($rawSheet, ['客户ID', '客户名称', '手机号/电话', '负责人/业务员', '团队名称', '询盘来源', '运营端口', '产品名称', '录入时间', '转客户时间'], $rawMatrix);
+
+            $spreadsheet->setActiveSheetIndex(0);
+
+            $fileName = '团队询盘汇总_' . date('Ymd_His') . '.xlsx';
+            $asciiFileName = 'inquiry_summary_' . date('Ymd_His') . '.xlsx';
+            $encodedFileName = rawurlencode($fileName);
+
+            while (ob_get_level() > 0) {
+                @ob_end_clean();
+            }
+
+            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            header("Content-Disposition: attachment; filename=\"{$asciiFileName}\"; filename*=UTF-8''{$encodedFileName}");
+            header('Cache-Control: max-age=0');
+            header('Pragma: public');
+
+            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+            $writer->save('php://output');
+            exit;
+        } catch (\Throwable $e) {
+            \think\facade\Log::error('[InquirySummary] exportInquirySummary failed: ' . $e->getMessage());
+            return json([
+                'code' => 500,
+                'msg' => '导出失败：' . $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 组装导出数据：团队汇总、成员汇总、渠道明细、原始明细。
+     */
+    private function collectInquirySummaryExportData(string $timebucket = '', string $at_time = '', string $month_keys = ''): array
+    {
+        $excludedTeams = $this->getExcludedInquiryTeamNames();
+        $excludedUsers = $this->getExcludedInquiryUsernames();
+        $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+
+        $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
+        $baseJoinAdmin = (clone $baseQuery)->leftJoin('admin a', 'l.pr_user = a.username');
+        $this->applyInquirySummaryExcludes($baseJoinAdmin, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
+
+        $teamRowsRaw = (clone $baseJoinAdmin)
+            ->group($normalizedTeamExpr)
+            ->field($normalizedTeamExpr . ' as team_name,count(*) as yw_num')
+            ->order('yw_num desc')
+            ->order('team_name asc')
+            ->select();
+        $teamRows = [];
+        foreach ($teamRowsRaw as $idx => $row) {
+            $teamRows[] = [
+                'rank' => $idx + 1,
+                'team_name' => trim((string)($row['team_name'] ?? '')) !== '' ? (string)$row['team_name'] : '未分组',
+                'yw_num' => (int)($row['yw_num'] ?? 0),
+            ];
+        }
+
+        $memberRowsRaw = (clone $baseJoinAdmin)
+            ->group($normalizedTeamExpr . ',l.pr_user')
+            ->field($normalizedTeamExpr . ' as team_name,l.pr_user as username,count(distinct l.id) as yw_num')
+            ->order('team_name asc')
+            ->order('yw_num desc')
+            ->order('username asc')
+            ->select();
+        $memberRows = [];
+        $memberRankByTeam = [];
+        foreach ($memberRowsRaw as $row) {
+            $teamName = trim((string)($row['team_name'] ?? ''));
+            if ($teamName === '') {
+                $teamName = '未分组';
+            }
+            if (!isset($memberRankByTeam[$teamName])) {
+                $memberRankByTeam[$teamName] = 0;
+            }
+            $memberRankByTeam[$teamName]++;
+            $memberRows[] = [
+                'team_name' => $teamName,
+                'rank' => $memberRankByTeam[$teamName],
+                'username' => (string)($row['username'] ?? ''),
+                'yw_num' => (int)($row['yw_num'] ?? 0),
+            ];
+        }
+
+        $channelGroupRows = (clone $baseJoinAdmin)
+            ->group($normalizedTeamExpr . ',l.pr_user,l.inquiry_id')
+            ->field($normalizedTeamExpr . ' as team_name,l.pr_user as username,l.inquiry_id,count(distinct l.id) as yw_num')
+            ->order('team_name asc')
+            ->order('username asc')
+            ->order('yw_num desc')
+            ->order('l.inquiry_id asc')
+            ->select();
+        $inquiryIds = [];
+        foreach ($channelGroupRows as $row) {
+            $iid = (int)($row['inquiry_id'] ?? 0);
+            if ($iid > 0) {
+                $inquiryIds[$iid] = $iid;
+            }
+        }
+        $inquiryMap = [];
+        if (!empty($inquiryIds)) {
+            $inquiryMap = Db::table('crm_inquiry')->where('id', 'in', array_values($inquiryIds))->column('inquiry_name', 'id');
+        }
+        $channelRows = [];
+        $channelRankByMember = [];
+        foreach ($channelGroupRows as $row) {
+            $teamName = trim((string)($row['team_name'] ?? ''));
+            if ($teamName === '') {
+                $teamName = '未分组';
+            }
+            $username = (string)($row['username'] ?? '');
+            $iid = (int)($row['inquiry_id'] ?? 0);
+            if ($iid > 0 && !empty($inquiryMap[$iid])) {
+                $channelName = (string)$inquiryMap[$iid];
+            } elseif ($iid <= 0) {
+                $channelName = '未分类';
+            } else {
+                $channelName = '其他';
+            }
+
+            $rankKey = $teamName . '||' . $username;
+            if (!isset($channelRankByMember[$rankKey])) {
+                $channelRankByMember[$rankKey] = 0;
+            }
+            $channelRankByMember[$rankKey]++;
+
+            $channelRows[] = [
+                'team_name' => $teamName,
+                'username' => $username,
+                'rank' => $channelRankByMember[$rankKey],
+                'channel_name' => $channelName,
+                'yw_num' => (int)($row['yw_num'] ?? 0),
+            ];
+        }
+
+        $leadColumns = $this->getInquirySummaryLeadsColumns();
+        $hasKhName = in_array('kh_name', $leadColumns, true);
+        $hasAtTime = in_array('at_time', $leadColumns, true);
+        $hasToKhTime = in_array('to_kh_time', $leadColumns, true);
+        $hasSource = in_array('source', $leadColumns, true);
+        $hasXsSource = in_array('xs_source', $leadColumns, true);
+        $hasProductName = in_array('product_name', $leadColumns, true);
+        $hasMobile = in_array('mobile', $leadColumns, true);
+        $hasPhone = in_array('phone', $leadColumns, true);
+        $hasTel = in_array('tel', $leadColumns, true);
+
+        $contactSubSql = Db::table('crm_contacts')
+            ->where('is_delete', '=', 0)
+            ->field("leads_id, GROUP_CONCAT(CONCAT(IFNULL(contact_extra,''),IFNULL(contact_value,'')) SEPARATOR ' / ') as contact_text")
+            ->group('leads_id')
+            ->buildSql();
+
+        $detailQuery = (clone $baseJoinAdmin)
+            ->leftJoin('crm_leads cl', 'cl.id = l.id')
+            ->leftJoin('crm_inquiry ci', 'l.inquiry_id = ci.id')
+            ->leftJoin('crm_inquiry_port cp', 'l.port_id = cp.id')
+            ->leftJoin([$contactSubSql => 'ct'], 'ct.leads_id = l.id');
+
+        if ($hasProductName) {
+            $detailQuery->leftJoin('crm_products p', 'cl.product_name = p.id');
+        }
+
+        $detailFields = [
+            'l.id as lead_id',
+            $normalizedTeamExpr . ' as team_name',
+            'l.pr_user as username',
+            "IFNULL(ci.inquiry_name, '') as inquiry_name",
+            "IFNULL(cp.port_name, '') as port_name",
+            "IFNULL(ct.contact_text, '') as contact_text",
+            $hasKhName ? 'cl.kh_name as kh_name' : "'' as kh_name",
+            $hasAtTime ? 'cl.at_time as at_time' : "'' as at_time",
+            $hasToKhTime ? 'cl.to_kh_time as to_kh_time' : "'' as to_kh_time",
+            $hasSource ? 'cl.source as source' : "'' as source",
+            $hasXsSource ? 'cl.xs_source as xs_source' : "'' as xs_source",
+            $hasMobile ? 'cl.mobile as mobile' : "'' as mobile",
+            $hasPhone ? 'cl.phone as phone' : "'' as phone",
+            $hasTel ? 'cl.tel as tel' : "'' as tel",
+        ];
+        if ($hasProductName) {
+            $detailFields[] = 'cl.product_name as product_raw';
+            $detailFields[] = "IFNULL(p.product_name, '') as product_name";
+        } else {
+            $detailFields[] = "'' as product_raw";
+            $detailFields[] = "'' as product_name";
+        }
+
+        $rawRowsRaw = $detailQuery
+            ->field($detailFields)
+            ->order('l.id desc')
+            ->select();
+
+        $rawRows = [];
+        foreach ($rawRowsRaw as $row) {
+            $teamName = trim((string)($row['team_name'] ?? ''));
+            if ($teamName === '') {
+                $teamName = '未分组';
+            }
+
+            $channelName = trim((string)($row['inquiry_name'] ?? ''));
+            if ($channelName === '') {
+                $channelName = trim((string)($row['source'] ?? ''));
+            }
+            if ($channelName === '') {
+                $channelName = trim((string)($row['xs_source'] ?? ''));
+            }
+            if ($channelName === '') {
+                $channelName = '未分类';
+            }
+
+            $contact = trim((string)($row['contact_text'] ?? ''));
+            if ($contact === '') {
+                $contact = trim((string)($row['mobile'] ?? ''));
+            }
+            if ($contact === '') {
+                $contact = trim((string)($row['phone'] ?? ''));
+            }
+            if ($contact === '') {
+                $contact = trim((string)($row['tel'] ?? ''));
+            }
+
+            $productName = trim((string)($row['product_name'] ?? ''));
+            if ($productName === '') {
+                $productName = trim((string)($row['product_raw'] ?? ''));
+            }
+
+            $rawRows[] = [
+                'lead_id' => (int)($row['lead_id'] ?? 0),
+                'kh_name' => (string)($row['kh_name'] ?? ''),
+                'contact_text' => $contact,
+                'username' => (string)($row['username'] ?? ''),
+                'team_name' => $teamName,
+                'channel_name' => $channelName,
+                'port_name' => (string)($row['port_name'] ?? ''),
+                'product_name' => $productName,
+                'at_time' => (string)($row['at_time'] ?? ''),
+                'to_kh_time' => (string)($row['to_kh_time'] ?? ''),
+            ];
+        }
+
+        return [
+            'team_rows' => $teamRows,
+            'member_rows' => $memberRows,
+            'channel_rows' => $channelRows,
+            'raw_rows' => $rawRows,
+        ];
+    }
+
+    /**
+     * 写入导出 Sheet（首行为表头）。
+     */
+    private function fillInquirySummaryExportSheet($sheet, array $headers, array $rows): void
+    {
+        foreach ($headers as $colIdx => $header) {
+            $sheet->setCellValueByColumnAndRow($colIdx + 1, 1, (string)$header);
+        }
+
+        $rowNum = 2;
+        foreach ($rows as $row) {
+            $colNum = 1;
+            foreach ((array)$row as $cellVal) {
+                if (is_int($cellVal) || is_float($cellVal)) {
+                    $sheet->setCellValueByColumnAndRow($colNum, $rowNum, $cellVal);
+                } else {
+                    $sheet->setCellValueByColumnAndRow($colNum, $rowNum, (string)$cellVal);
+                }
+                $colNum++;
+            }
+            $rowNum++;
+        }
+
+        $colCount = count($headers);
+        for ($i = 1; $i <= $colCount; $i++) {
+            $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($i);
+            $sheet->getColumnDimension($colLetter)->setAutoSize(true);
+        }
+    }
+
     // ===========================
     // 运营询盘汇总表三连屏（operationInquirySummary）
     // ===========================
