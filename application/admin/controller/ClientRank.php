@@ -128,6 +128,8 @@ class ClientRank extends Common
                 'is_deleted'   => 0,
                 'deleted_time' => null,
                 'deleted_by'   => null,
+                // crm_client_rank.add_time 为 NOT NULL，新增时必须显式写入
+                'add_time'     => $now,
                 'create_time'  => $now,
                 'update_time'  => $now,
             ]);
@@ -437,6 +439,8 @@ class ClientRank extends Common
                         'is_deleted'   => 0,
                         'deleted_time' => null,
                         'deleted_by'   => null,
+                        // 导入新增同样需要补齐 add_time，避免数据库 1364 错误
+                        'add_time'     => $now,
                         'create_time'  => $now,
                         'update_time'  => $now,
                     ]);

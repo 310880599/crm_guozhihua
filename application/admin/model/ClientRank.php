@@ -14,4 +14,12 @@ class ClientRank extends Model
     protected $createTime = 'create_time';
     protected $updateTime = 'update_time';
     protected $dateFormat = false;  // 不让 TP 在取出时自动格式化
+
+    // 兜底保障：即使调用方遗漏 add_time，模型新增时也补当前时间戳
+    protected $insert = ['add_time'];
+
+    protected function setAddTimeAttr($value)
+    {
+        return empty($value) ? time() : (int)$value;
+    }
 }

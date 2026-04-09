@@ -159,7 +159,8 @@ layui.use(['table','form','util','jquery'], function () {
             layer.open({
                 type: 2,
                 title: '添加客户级别',
-                area: ['700px', '460px'],
+                // 高度改为视口百分比，配合 add.html 内部滚动，保证底部按钮可见
+                area: ['700px', '80%'],
                 shadeClose: true,
                 content: ["{:url('ClientRank/add')}", 'no']
             });
