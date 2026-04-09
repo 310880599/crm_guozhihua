@@ -22,6 +22,18 @@
             border-radius: 10px;
         }
         .layui-form-label { white-space: nowrap; }
+        .client-rank-search .layui-form-label {
+            width: 110px;
+            padding-left: 0;
+            padding-right: 8px;
+            box-sizing: border-box;
+        }
+        .client-rank-search .layui-input-inline {
+            width: 190px;
+        }
+        .client-rank-search .layui-inline {
+            margin-right: 12px;
+        }
     </style>
 </head>
 <body class="layui-layout-body">
@@ -30,9 +42,9 @@
         <legend>高级查询</legend>
         <div class="layui-card" style="box-shadow:none;margin-top:10px;">
             <div class="layui-form layui-card-header layuiadmin-card-header-auto" style="border-bottom:transparent;height:auto;">
-                <div class="layui-form-item" style="text-align:left;padding-left:20px;">
+                <div class="layui-form-item client-rank-search" style="text-align:left;padding-left:20px;">
                     <div class="layui-inline">
-                        <label class="layui-form-label" style="margin-left:5px">客户级别名称：</label>
+                        <label class="layui-form-label">客户级别名称：</label>
                         <div class="layui-input-inline">
                             <input type="text" id="rank_name" name="rank_name" placeholder="请输入客户级别名称" class="layui-input">
                         </div>
