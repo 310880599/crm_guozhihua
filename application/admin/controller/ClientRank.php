@@ -14,7 +14,6 @@ class ClientRank extends Common
         parent::initialize();
         $currentAdmin = Admin::getMyInfo();
         if ($currentAdmin['group_id'] != 1
-            && $currentAdmin['group_id'] != 15
             && $currentAdmin['username'] != 'admin') {
             $this->error('您无权限访问该模块');
         }
