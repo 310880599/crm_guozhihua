@@ -199,7 +199,7 @@ class Client extends Common
         }
 
         // ----- 以下为原样保留的页面下拉数据 -----
-        $khRankList   = Db::table('crm_client_rank')->select();
+        $khRankList   = $this->getClientRankOptions();
         $inquiryList = Db::table('crm_inquiry')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
 
@@ -278,6 +278,7 @@ class Client extends Common
                                     : (string)$row['product_name'];
         }
         unset($row);    
+        $this->appendKhRankDisplayForRows($rows);
         return [
             'code'  => 0,
             'msg'   => '获取成功!',
@@ -421,11 +422,12 @@ class Client extends Common
             }
             unset($row);
 
+            $this->appendKhRankDisplayForRows($rows);
             return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
         }
 
         // 页面渲染所需下拉数据
-        $khRankList = Db::table('crm_client_rank')->select();
+        $khRankList = $this->getClientRankOptions();
         $inquiryList  = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
         $khStatusList = Db::table('crm_client_status')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
@@ -665,11 +667,12 @@ class Client extends Common
             }
             unset($row);
 
+            $this->appendKhRankDisplayForRows($rows);
             return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
         }
 
         // 页面渲染所需下拉数据
-        $khRankList  = Db::table('crm_client_rank')->select();
+        $khRankList  = $this->getClientRankOptions();
         $inquiryList = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
         $khStatusList = Db::table('crm_client_status')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
@@ -1264,7 +1267,7 @@ class Client extends Common
         }
 
         // 非 POST 请求时，渲染页面所需下拉数据（保持不变）
-        $khRankList   = Db::table('crm_client_rank')->select();
+        $khRankList   = $this->getClientRankOptions();
         $inquiryList  = Db::table('crm_inquiry')->select();    // **新增：所属渠道列表**  
         $xsSourceList = Db::table('crm_clues_source')->select();
         $yyList       = $this->getYyList();
@@ -1276,6 +1279,134 @@ class Client extends Common
 
 
         return $this->fetch('jointclient/index');
+    }
+
+    /**
+     * 获取客户级别下拉数据（按 sort、id 升序）
+     * @return array
+     */
+    private function getClientRankOptions()
+    {
+        return Db::table('crm_client_rank')
+            ->field('id,rank_name,rank_code,sort')
+            ->order('sort asc,id asc')
+            ->select();
+    }
+
+    /**
+     * 将 kh_rank（可能是ID/旧名称/空）标准化为可回显的 rank_id
+     * @param mixed $rawKhRank
+     * @param array $rankList
+     * @return string
+     */
+    private function normalizeKhRankToId($rawKhRank, array $rankList = [])
+    {
+        $raw = trim((string)$rawKhRank);
+        if ($raw === '') {
+            return '';
+        }
+
+        if (empty($rankList)) {
+            $rankList = $this->getClientRankOptions();
+        }
+
+        $idMap = [];
+        $nameMap = [];
+        foreach ($rankList as $rankRow) {
+            $id = (string)($rankRow['id'] ?? '');
+            $name = trim((string)($rankRow['rank_name'] ?? ''));
+            if ($id !== '') {
+                $idMap[$id] = $id;
+            }
+            if ($name !== '') {
+                $nameMap[$name] = $id;
+            }
+        }
+
+        if (preg_match('/^\d+$/', $raw) && isset($idMap[$raw])) {
+            return $idMap[$raw];
+        }
+
+        return $nameMap[$raw] ?? '';
+    }
+
+    /**
+     * 保存时校验并规范 kh_rank
+     * @param mixed $rawKhRank
+     * @return array [bool, string, string, string] [是否通过, 错误信息, 入库值, 展示名]
+     */
+    private function validateKhRankForSave($rawKhRank)
+    {
+        $raw = trim((string)$rawKhRank);
+        if ($raw === '') {
+            return [true, '', '', ''];
+        }
+
+        if (!preg_match('/^\d+$/', $raw)) {
+            return [false, '客户级别参数不合法，请重新选择', '', ''];
+        }
+
+        $rankId = (int)$raw;
+        if ($rankId <= 0) {
+            return [false, '客户级别参数不合法，请重新选择', '', ''];
+        }
+
+        $rankRow = Db::table('crm_client_rank')
+            ->where('id', $rankId)
+            ->field('id,rank_name')
+            ->find();
+        if (empty($rankRow)) {
+            return [false, '客户级别不存在或已失效，请重新选择', '', ''];
+        }
+
+        return [true, '', (string)$rankId, trim((string)$rankRow['rank_name'])];
+    }
+
+    /**
+     * 解析客户级别展示名称（兼容新ID与旧名称）
+     * @param mixed $rawKhRank
+     * @param array $rankNameMap id => rank_name
+     * @return string
+     */
+    private function resolveKhRankDisplayName($rawKhRank, array $rankNameMap = [])
+    {
+        $raw = trim((string)$rawKhRank);
+        if ($raw === '') {
+            return '';
+        }
+
+        if (preg_match('/^\d+$/', $raw)) {
+            if (isset($rankNameMap[$raw]) && trim((string)$rankNameMap[$raw]) !== '') {
+                return trim((string)$rankNameMap[$raw]);
+            }
+            return $raw;
+        }
+        return $raw;
+    }
+
+    /**
+     * 批量补齐客户级别展示字段（并覆盖 kh_rank 显示值）
+     * @param array $rows
+     * @return void
+     */
+    private function appendKhRankDisplayForRows(&$rows)
+    {
+        if (empty($rows) || !is_array($rows)) {
+            return;
+        }
+
+        $rankMap = Db::table('crm_client_rank')->column('rank_name', 'id');
+        $rankNameMap = [];
+        foreach ($rankMap as $id => $name) {
+            $rankNameMap[(string)$id] = trim((string)$name);
+        }
+
+        foreach ($rows as &$row) {
+            $rankName = $this->resolveKhRankDisplayName($row['kh_rank'] ?? '', $rankNameMap);
+            $row['kh_rank_name'] = $rankName;
+            $row['kh_rank'] = $rankName;
+        }
+        unset($row);
     }
 
     // ====== 新增 enrichLeadsRows 开始 ======
@@ -1372,6 +1503,9 @@ class Client extends Common
         }
         unset($row);
 
+        // E. 客户级别展示兼容：新ID映射名称，旧名称原样显示
+        $this->appendKhRankDisplayForRows($rows);
+
         // 协同人ID映射为用户名
         $adminMap = [];
         if (!empty($uidSet)) {
@@ -1427,7 +1561,7 @@ class Client extends Common
             ];
         }
         // 非 AJAX 请求时，获取下拉选项数据并渲染页面
-        $khRankList   = Db::table('crm_client_rank')->select();
+        $khRankList   = $this->getClientRankOptions();
         $khStatusList = Db::table('crm_client_status')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
         $inquiryList  = Db::table('crm_inquiry')->select();            // 所属渠道列表
@@ -2463,6 +2597,12 @@ class Client extends Common
             
             $data['oper_user']    = Request::param('oper_user');
             $data['remark']       = Request::param('remark', '');
+            list($rankOk, $rankErrMsg, $khRankStore, $khRankName) = $this->validateKhRankForSave(Request::param('kh_rank', ''));
+            if (!$rankOk) {
+                $this->redisUnLock();
+                return fail($rankErrMsg);
+            }
+            $data['kh_rank'] = $khRankStore;
             $inquiryId = Request::param('inquiry_id');
             $portIdsRaw = Request::param('port_id/a');
             if ($portIdsRaw === null) {
@@ -2607,6 +2747,7 @@ class Client extends Common
                     [
                         '运营人员' => $data['oper_user'],
                         '联系方式' => ['主电话' => $mainPhones, '辅助电话' => $auxPhone],
+                        '客户级别' => $khRankName,
                         '协同人'  => $jpIds
                     ]
                 );
@@ -2712,9 +2853,11 @@ class Client extends Common
 
         $channelList = Db::table('crm_inquiry')->where('status', 0)->select();
         $portList    = Db::table('crm_inquiry_port')->where('status', 0)->select();
+        $clientRankList = $this->getClientRankOptions();
 
         $this->assign('channelList', $channelList);
         $this->assign('portList', $portList);
+        $this->assign('clientRankList', $clientRankList);
 
         return $this->fetch('client/add');
     }  
@@ -2796,6 +2939,12 @@ class Client extends Common
             $data['oper_user']    = \think\facade\Request::param('oper_user');      // 运营人员ID（与你的 add 保持一致）
             $data['remark']       = \think\facade\Request::param('remark', '');
             $data['ut_time']      = date("Y-m-d H:i:s");
+            list($rankOk, $rankErrMsg, $khRankStore, $khRankName) = $this->validateKhRankForSave(Request::param('kh_rank', ''));
+            if (!$rankOk) {
+                $this->redisUnLock();
+                return fail($rankErrMsg);
+            }
+            $data['kh_rank'] = $khRankStore;
             $inquiryId = Request::param('inquiry_id');
             $portIdsRaw = Request::param('port_id/a');
             if ($portIdsRaw === null) {
@@ -3013,6 +3162,7 @@ class Client extends Common
                     [
                         '运营人员' => $data['oper_user'],
                         '联系方式' => ['主电话' => $mainPhones, '辅助电话' => $auxPhone],
+                        '客户级别' => $khRankName,
                         '协同人'  => $jpIds
                     ]
                 );
@@ -3201,6 +3351,10 @@ class Client extends Common
         // GET 加载老数据
         $result = Db::table('crm_leads')->where('id', $id)->find();
         $this->assign('result', $result);
+        $clientRankList = $this->getClientRankOptions();
+        $khRankValue = $this->normalizeKhRankToId($result['kh_rank'] ?? '', $clientRankList);
+        $this->assign('clientRankList', $clientRankList);
+        $this->assign('khRankValue', $khRankValue);
 
         // 端口多选回显
         $selectedPorts = $result ? explode(',', $result['port_id']) : [];
@@ -3460,24 +3614,17 @@ class Client extends Common
     {
         if (Request::isAjax()) {
             $data  = Request::param();
-            // 获取原状态
+            // 获取原级别
             $oldstatus = Db::table('crm_client_rank')->where(['id' => $data['id']])->find();
-            $oldstatusname = $oldstatus['rank_name'];
-            $ischange = false;
-            if ($oldstatusname == $data['rank_name']) {
+            $oldstatusname = $oldstatus['rank_name'] ?? '';
+            if ($oldstatusname == ($data['rank_name'] ?? '')) {
                 $msg = ['code' => 500, 'msg' => '没有变化无需修改', 'data' => []];
                 return json($msg);
-            } else {
-                $ischange = true;
             }
 
             $result = Db::table('crm_client_rank')->where(['id' => $data['id']])->update($data);
             if ($result) {
-                // 状态修改后 客户编辑的原来状态都必须修改
-                if ($ischange) {
-                    // 所有的客户状态全部膝盖
-                    $result2 = Db::table('crm_leads')->where(['kh_rank' => $oldstatusname])->update(['kh_rank' => $data['rank_name']]);
-                }
+                // 兼容改造后 crm_leads.kh_rank 统一存级别ID，不再随名称变更批量更新
                 $msg = ['code' => 0, 'msg' => '编辑成功！', 'data' => []];
                 return json($msg);
             } else {
@@ -3494,14 +3641,9 @@ class Client extends Common
     public function rankDel()
     {
         $id = Request::param('id');
-        // 获取原状态
-        $oldstatus = Db::table('crm_client_rank')->where(['id' => $data['id']])->find();
-        $oldstatusname = $oldstatus['rank_name'];
-
         $result = Db::table('crm_client_rank')->where('id', $id)->delete();
         if ($result) {
-            // 所有的客户状态全部膝盖
-            $result2 = Db::table('crm_leads')->where(['kh_rank' => $oldstatusname])->update(['kh_rank' => '']);
+            // 兼容改造后 crm_leads.kh_rank 统一存级别ID，不再级联清空客户数据
             $msg = ['code' => 0, 'msg' => '删除成功！', 'data' => []];
             return json($msg);
         } else {
@@ -3689,6 +3831,9 @@ class Client extends Common
             $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
         }
         $list = model('client')->getClientSearchList($page, $limit, $keyword);
+        if (!empty($list) && !empty($list['data']) && is_array($list['data'])) {
+            $this->enrichLeadsRows($list['data']);
+        }
         return $result = ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
     }
 
@@ -3887,6 +4032,7 @@ class Client extends Common
         }
         unset($row);
 
+        $this->appendKhRankDisplayForRows($rows);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
     }
 
@@ -4089,6 +4235,7 @@ class Client extends Common
         }
         unset($row);
 
+        $this->appendKhRankDisplayForRows($rows);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
     }
 
@@ -4223,6 +4370,7 @@ class Client extends Common
         }
         unset($row);
 
+        $this->appendKhRankDisplayForRows($rows);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
     }
 
@@ -4316,16 +4464,13 @@ class Client extends Common
         }
         $client['kh_status_name'] = $statusName;
 
-        // 获取客户级别名称（如果 kh_rank 是 ID）
-        $khRankValue = $client['kh_rank'];
-        $rankName = $khRankValue;
-        if (is_numeric($khRankValue)) {
-            $rankInfo = Db::table('crm_client_rank')->where('id', $khRankValue)->find();
-            if ($rankInfo) {
-                $rankName = $rankInfo['rank_name'];
-            }
+        // 获取客户级别名称（兼容：新数据存ID，旧数据存名称）
+        $rankMap = Db::table('crm_client_rank')->column('rank_name', 'id');
+        $rankNameMap = [];
+        foreach ($rankMap as $rankId => $rankName) {
+            $rankNameMap[(string)$rankId] = trim((string)$rankName);
         }
-        $client['kh_rank_name'] = $rankName;
+        $client['kh_rank_name'] = $this->resolveKhRankDisplayName($client['kh_rank'] ?? '', $rankNameMap);
 
         // 获取询盘来源名称（如果 inquiry_id 是 ID）  // 新增代码
         $inquiryValue = $client['inquiry_id'];

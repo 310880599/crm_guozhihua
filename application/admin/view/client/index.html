@@ -529,7 +529,7 @@
                                 <select name="kh_rank" id="kh_rank">
                                     <option value="">请选择客户级别</option>
                                     {volist name="khRankList" id="vo"}
-                                    <option value="{$vo.rank_name}">{$vo.rank_name}</option>
+                                    <option value="{$vo.id}">{if condition="!empty($vo.rank_code)"}{$vo.rank_code} - {/if}{$vo.rank_name}</option>
                                     {/volist}
                                 </select>
                             </div>
@@ -947,7 +947,7 @@
                             $('#follow-contact').text(clientData.kh_contact);
                             $('#follow-area').text(clientData.xs_area);
                             $('#follow-source').text(clientData.kh_status);
-                            $('#follow-rank').text(clientData.kh_rank);
+                            $('#follow-rank').text(clientData.kh_rank_name || clientData.kh_rank || '');
                             $('#follow-user').text(clientData.pr_user);
                             $('#follow-create-time').text(clientData.at_time);
                             $('#follow-last-time').text(clientData.last_up_time || '暂无');

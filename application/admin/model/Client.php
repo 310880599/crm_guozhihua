@@ -12,6 +12,50 @@ class Client extends Model
 {
     protected $table = 'crm_leads';
 
+    /**
+     * 客户级别筛选兼容条件：
+     * - 新数据：kh_rank 存 crm_client_rank.id
+     * - 旧数据：kh_rank 存 crm_client_rank.rank_name
+     *
+     * @param mixed  $selectedRankId 前端提交的客户级别ID
+     * @param string $field           查询字段（支持别名，如 l.kh_rank）
+     * @return array
+     */
+    private function buildKhRankCompatWhere($selectedRankId, $field = 'kh_rank')
+    {
+        $rankId = trim((string)$selectedRankId);
+        if ($rankId === '') {
+            return [];
+        }
+
+        $rankIdInt = (int)$rankId;
+        if ($rankIdInt <= 0) {
+            // 非法ID直接构造必不成立条件，避免误查全表
+            return [[$field, '=', -1]];
+        }
+
+        $values = [(string)$rankIdInt];
+        $rankRow = Db::table('crm_client_rank')
+            ->where('id', $rankIdInt)
+            ->field('id,rank_name')
+            ->find();
+        if (!empty($rankRow) && isset($rankRow['rank_name'])) {
+            $rankName = trim((string)$rankRow['rank_name']);
+            if ($rankName !== '') {
+                $values[] = $rankName;
+            }
+        }
+
+        $values = array_values(array_unique(array_filter($values, function ($v) {
+            return trim((string)$v) !== '';
+        })));
+
+        if (count($values) === 1) {
+            return [[$field, '=', $values[0]]];
+        }
+        return [[$field, 'in', $values]];
+    }
+
 
     public function contacts()
     {
@@ -46,8 +90,7 @@ class Client extends Model
             $mapAtTime[] = $keyword['timebucket'];
         }
         if ($keyword['kh_rank'] != '') {
-
-            $mapKhRank =  ['kh_rank' => $keyword['kh_rank']];
+            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
         }
 
         if ($keyword['kh_status'] != '') {
@@ -161,7 +204,7 @@ class Client extends Model
             $mapAtTime[] = $keyword['timebucket'];
         }
         if ($keyword['kh_rank'] !== '' && $keyword['kh_rank'] !== null) {
-            $mapKhRank = ['kh_rank' => $keyword['kh_rank']];
+            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
         }
         if ($keyword['kh_status'] !== '' && $keyword['kh_status'] !== null) {
             $mapKhStatus = ['kh_status' => $keyword['kh_status']];
@@ -238,8 +281,7 @@ class Client extends Model
         }
 
         if ($keyword['kh_rank'] != '') {
-
-            $mapKhRank =  ['kh_rank' => $keyword['kh_rank']];
+            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
         }
 
         if ($keyword['kh_status'] != '') {
@@ -349,7 +391,7 @@ class Client extends Model
         }
 
         if ($keyword['kh_rank'] != '') {
-            $mapKhRank = ['kh_rank' => $keyword['kh_rank']];
+            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
         }
 
         if ($keyword['kh_status'] != '') {
@@ -498,8 +540,7 @@ class Client extends Model
         }
 
         if ($keyword['kh_rank'] != '') {
-
-            $mapKhRank =  ['kh_rank' => $keyword['kh_rank']];
+            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
         }
 
         if ($keyword['kh_status'] != '') {
@@ -578,7 +619,7 @@ class Client extends Model
         $mapPort     = []; // 运营端口
 
         if (!empty($keyword['timebucket'])) $mapAtTime[] = $keyword['timebucket'];
-        if ($keyword['kh_rank']   !== '' && $keyword['kh_rank']   !== null) $mapKhRank   = ['kh_rank'   => $keyword['kh_rank']];
+        if ($keyword['kh_rank']   !== '' && $keyword['kh_rank']   !== null) $mapKhRank   = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'l.kh_rank');
         if ($keyword['kh_status'] !== '' && $keyword['kh_status'] !== null) $mapKhStatus = ['kh_status' => $keyword['kh_status']];
         if (!empty($keyword['phone']))  $mapPhone = $this->getContactSearchAll($keyword['phone'], 'l');
         if (!empty($keyword['kh_name'])) $mapKhName = [['kh_name', 'like', '%' . $keyword['kh_name'] . '%']];

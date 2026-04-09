@@ -165,6 +165,18 @@
                     <div id="collaboratorSelect"></div>
                 </div>
             </div>
+            <!-- 客户级别（可搜索单选下拉，非必填） -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">客户级别</label>
+                <div class="layui-input-4">
+                    <select name="kh_rank" id="kh_rank" lay-search>
+                        <option value="">请选择客户级别</option>
+                        {volist name="clientRankList" id="vo"}
+                        <option value="{$vo.id}">{if condition="!empty($vo.rank_code)"}{$vo.rank_code} - {/if}{$vo.rank_name}</option>
+                        {/volist}
+                    </select>
+                </div>
+            </div>
             <!-- 其他信息 -->
             <div class="layui-form-item">
                 <label class="layui-form-label">其他信息</label>
