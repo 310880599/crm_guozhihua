@@ -193,8 +193,10 @@ class ClientRank extends Common
                     'sort'        => $sort,
                     'update_time' => time(),
                 ]);
-
-            return $res ? json(['code' => 0, 'msg' => '修改成功！']) : json(['code' => -200, 'msg' => '修改失败！']);
+            if ($res === false) {
+                return json(['code' => -200, 'msg' => '修改失败！']);
+            }
+            return json(['code' => 0, 'msg' => '修改成功！']);
         }
 
         $this->assign('entry', $entry);

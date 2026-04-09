@@ -3,6 +3,36 @@
 <head>
     {include file="common/head"/}
     <style>
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+        .client-rank-edit-body {
+            margin: 0;
+            background: #fff;
+        }
+        .client-rank-edit-form {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            padding: 15px 20px 12px 20px;
+        }
+        .client-rank-form-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 6px;
+            box-sizing: border-box;
+        }
+        .client-rank-form-actions {
+            margin-bottom: 0;
+            padding-top: 10px;
+            padding-bottom: 4px;
+            border-top: 1px solid #f2f2f2;
+            background: #fff;
+        }
         .layui-btn-secondary {
             background-color: #f5f5f5 !important;
             border-color: #d2d2d2 !important;
@@ -15,47 +45,49 @@
         }
     </style>
 </head>
-<body>
-<form class="layui-form" style="padding:15px 20px 0 20px;">
-    <div class="layui-form-item">
-        <label class="layui-form-label">客户级别名称</label>
-        <div class="layui-input-block">
-            <input type="text" name="rank_name" value="{$entry.rank_name|default=''}" required lay-verify="required" autocomplete="off" class="layui-input">
+<body class="client-rank-edit-body">
+<form class="layui-form client-rank-edit-form">
+    <div class="client-rank-form-scroll">
+        <div class="layui-form-item">
+            <label class="layui-form-label">客户级别名称</label>
+            <div class="layui-input-block">
+                <input type="text" name="rank_name" value="{$entry.rank_name|default=''}" required lay-verify="required" autocomplete="off" class="layui-input">
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">级别编码</label>
+            <div class="layui-input-block">
+                <input type="text" name="rank_code" value="{$entry.rank_code|default=''}" required lay-verify="required" autocomplete="off" class="layui-input">
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">级别说明</label>
+            <div class="layui-input-block">
+                <textarea name="description" placeholder="请输入级别说明（可选）" class="layui-textarea">{$entry.description|default=''}</textarea>
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">排序</label>
+            <div class="layui-input-block">
+                <input type="number" name="sort" value="{$entry.sort|default='0'}" autocomplete="off" class="layui-input">
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">创建人</label>
+            <div class="layui-input-block">
+                <input type="text" value="{$entry.creator|default=''}" disabled class="layui-input layui-bg-gray">
+            </div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">创建时间</label>
+            <div class="layui-input-block">
+                <input type="text"
+                       value="{if isset($entry.create_time) && $entry.create_time}{$entry.create_time|date='Y-m-d H:i:s'}{/if}"
+                       disabled class="layui-input layui-bg-gray">
+            </div>
         </div>
     </div>
-    <div class="layui-form-item">
-        <label class="layui-form-label">级别编码</label>
-        <div class="layui-input-block">
-            <input type="text" name="rank_code" value="{$entry.rank_code|default=''}" required lay-verify="required" autocomplete="off" class="layui-input">
-        </div>
-    </div>
-    <div class="layui-form-item">
-        <label class="layui-form-label">级别说明</label>
-        <div class="layui-input-block">
-            <textarea name="description" placeholder="请输入级别说明（可选）" class="layui-textarea">{$entry.description|default=''}</textarea>
-        </div>
-    </div>
-    <div class="layui-form-item">
-        <label class="layui-form-label">排序</label>
-        <div class="layui-input-block">
-            <input type="number" name="sort" value="{$entry.sort|default='0'}" autocomplete="off" class="layui-input">
-        </div>
-    </div>
-    <div class="layui-form-item">
-        <label class="layui-form-label">创建人</label>
-        <div class="layui-input-block">
-            <input type="text" value="{$entry.creator|default=''}" disabled class="layui-input layui-bg-gray">
-        </div>
-    </div>
-    <div class="layui-form-item">
-        <label class="layui-form-label">创建时间</label>
-        <div class="layui-input-block">
-            <input type="text"
-                   value="{if isset($entry.create_time) && $entry.create_time}{$entry.create_time|date='Y-m-d H:i:s'}{/if}"
-                   disabled class="layui-input layui-bg-gray">
-        </div>
-    </div>
-    <div class="layui-form-item">
+    <div class="layui-form-item client-rank-form-actions">
         <div class="layui-input-block">
             <button type="submit" class="layui-btn" lay-submit lay-filter="formSubmit">保存修改</button>
             <button type="button" class="layui-btn layui-btn-secondary" onclick="var i = parent.layer.getFrameIndex(window.name); parent.layer.close(i);">取消</button>

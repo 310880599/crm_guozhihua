@@ -147,7 +147,8 @@ layui.use(['table','form','util','jquery'], function () {
             layer.open({
                 type: 2,
                 title: '编辑客户级别',
-                area: ['700px', '460px'],
+                area: ['700px', '80%'],
+                maxmin: true,
                 shadeClose: false,
                 content: ["{:url('ClientRank/edit')}?id=" + data.id, 'no']
             });
