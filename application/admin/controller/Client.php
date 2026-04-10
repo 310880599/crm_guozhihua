@@ -1284,19 +1284,67 @@ class Client extends Common
     }
 
     /**
-     * 获取客户级别下拉数据（按 sort、id 升序）
-     * @return array
+     * 获取未删除的客户级别下拉数据（按 sort、id 升序）
+     * 用途：添加客户、各页面高级查询、编辑客户的正常候选项
      */
     private function getClientRankOptions()
     {
         return Db::table('crm_client_rank')
+            ->where('is_deleted', 0)
             ->field('id,rank_name,rank_code,sort')
             ->order('sort asc,id asc')
             ->select();
     }
 
     /**
+     * 编辑客户专用：获取客户级别下拉列表
+     * 如果当前客户绑定的是已删除级别，额外补入该条并标注"（已删除）"
+     * @param mixed $currentKhRank 当前客户的 kh_rank 值
+     * @return array 每项含 id, rank_name, rank_name_display
+     */
+    private function getClientRankOptionsForEdit($currentKhRank)
+    {
+        $activeList = Db::table('crm_client_rank')
+            ->where('is_deleted', 0)
+            ->field('id,rank_name,rank_code,sort,is_deleted')
+            ->order('sort asc,id asc')
+            ->select();
+
+        $result = [];
+        foreach ($activeList as $row) {
+            $row['rank_name_display'] = $row['rank_name'];
+            $result[] = $row;
+        }
+
+        $raw = trim((string)$currentKhRank);
+        if ($raw !== '' && preg_match('/^\d+$/', $raw)) {
+            $rankId = (int)$raw;
+            $alreadyInList = false;
+            foreach ($result as $r) {
+                if ((int)$r['id'] === $rankId) {
+                    $alreadyInList = true;
+                    break;
+                }
+            }
+            if (!$alreadyInList && $rankId > 0) {
+                $deletedRow = Db::table('crm_client_rank')
+                    ->where('id', $rankId)
+                    ->where('is_deleted', 1)
+                    ->field('id,rank_name,rank_code,sort,is_deleted')
+                    ->find();
+                if ($deletedRow) {
+                    $deletedRow['rank_name_display'] = $deletedRow['rank_name'] . '（已删除）';
+                    $result[] = $deletedRow;
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * 将 kh_rank（可能是ID/旧名称/空）标准化为可回显的 rank_id
+     * 查询全量（含已删除），确保历史数据也能正确回显
      * @param mixed $rawKhRank
      * @param array $rankList
      * @return string
@@ -1309,7 +1357,9 @@ class Client extends Common
         }
 
         if (empty($rankList)) {
-            $rankList = $this->getClientRankOptions();
+            $rankList = Db::table('crm_client_rank')
+                ->field('id,rank_name')
+                ->select();
         }
 
         $idMap = [];
@@ -1333,11 +1383,12 @@ class Client extends Common
     }
 
     /**
-     * 保存时校验并规范 kh_rank
-     * @param mixed $rawKhRank
+     * 保存时校验并规范 kh_rank（兼容软删除）
+     * @param mixed  $rawKhRank    前端提交的 kh_rank
+     * @param string $oldKhRank    编辑时数据库中的原始 kh_rank（新增时传空字符串）
      * @return array [bool, string, string, string] [是否通过, 错误信息, 入库值, 展示名]
      */
-    private function validateKhRankForSave($rawKhRank)
+    private function validateKhRankForSave($rawKhRank, $oldKhRank = '')
     {
         $raw = trim((string)$rawKhRank);
         if ($raw === '') {
@@ -1355,9 +1406,17 @@ class Client extends Common
 
         $rankRow = Db::table('crm_client_rank')
             ->where('id', $rankId)
-            ->field('id,rank_name')
+            ->field('id,rank_name,is_deleted')
             ->find();
         if (empty($rankRow)) {
+            return [false, '客户级别不存在或已失效，请重新选择', '', ''];
+        }
+
+        if ((int)$rankRow['is_deleted'] === 1) {
+            $oldRaw = trim((string)$oldKhRank);
+            if ($oldRaw === (string)$rankId) {
+                return [true, '', (string)$rankId, trim((string)$rankRow['rank_name'])];
+            }
             return [false, '客户级别不存在或已失效，请重新选择', '', ''];
         }
 
@@ -2942,7 +3001,9 @@ class Client extends Common
             $data['oper_user']    = \think\facade\Request::param('oper_user');      // 运营人员ID（与你的 add 保持一致）
             $data['remark']       = \think\facade\Request::param('remark', '');
             $data['ut_time']      = date("Y-m-d H:i:s");
-            list($rankOk, $rankErrMsg, $khRankStore, $khRankName) = $this->validateKhRankForSave(Request::param('kh_rank', ''));
+            $oldKhRankRow = Db::table('crm_leads')->where('id', $id)->field('kh_rank')->find();
+            $oldKhRank = $oldKhRankRow ? trim((string)$oldKhRankRow['kh_rank']) : '';
+            list($rankOk, $rankErrMsg, $khRankStore, $khRankName) = $this->validateKhRankForSave(Request::param('kh_rank', ''), $oldKhRank);
             if (!$rankOk) {
                 $this->redisUnLock();
                 return fail($rankErrMsg);
@@ -3354,7 +3415,7 @@ class Client extends Common
         // GET 加载老数据
         $result = Db::table('crm_leads')->where('id', $id)->find();
         $this->assign('result', $result);
-        $clientRankList = $this->getClientRankOptions();
+        $clientRankList = $this->getClientRankOptionsForEdit($result['kh_rank'] ?? '');
         $khRankValue = $this->normalizeKhRankToId($result['kh_rank'] ?? '', $clientRankList);
         $this->assign('clientRankList', $clientRankList);
         $this->assign('khRankValue', $khRankValue);
@@ -3640,18 +3701,32 @@ class Client extends Common
         $this->assign('result', $result);
         return $this->fetch('client/rank_list_edit');
     }
-    //删除客户级别
+    //删除客户级别（软删除）
     public function rankDel()
     {
         $id = Request::param('id');
-        $result = Db::table('crm_client_rank')->where('id', $id)->delete();
+        if (empty($id)) {
+            return json(['code' => 500, 'msg' => '参数错误', 'data' => []]);
+        }
+
+        $row = Db::table('crm_client_rank')->where('id', $id)->find();
+        if (empty($row)) {
+            return json(['code' => 500, 'msg' => '记录不存在', 'data' => []]);
+        }
+        if ((int)($row['is_deleted'] ?? 0) === 1) {
+            return json(['code' => 500, 'msg' => '该客户级别已处于删除状态，无需重复操作', 'data' => []]);
+        }
+
+        $result = Db::table('crm_client_rank')->where('id', $id)->update([
+            'is_deleted'   => 1,
+            'deleted_time' => date('Y-m-d H:i:s'),
+            'deleted_by'   => session('aid'),
+            'update_time'  => time(),
+        ]);
         if ($result) {
-            // 兼容改造后 crm_leads.kh_rank 统一存级别ID，不再级联清空客户数据
-            $msg = ['code' => 0, 'msg' => '删除成功！', 'data' => []];
-            return json($msg);
+            return json(['code' => 0, 'msg' => '删除成功！', 'data' => []]);
         } else {
-            $msg = ['code' => 500, 'msg' => '删除失败！', 'data' => []];
-            return json($msg);
+            return json(['code' => 500, 'msg' => '删除失败！', 'data' => []]);
         }
     }
 
