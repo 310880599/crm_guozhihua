@@ -1256,6 +1256,8 @@ class Client extends Common
             }
             unset($row);
 
+            $this->appendKhRankDisplayForRows($rows);
+
             // 返回数据列表
             return [
                 'code'  => 0,
@@ -1403,6 +1405,7 @@ class Client extends Common
 
         foreach ($rows as &$row) {
             $rankName = $this->resolveKhRankDisplayName($row['kh_rank'] ?? '', $rankNameMap);
+            $row['kh_rank_text'] = $rankName;
             $row['kh_rank_name'] = $rankName;
             $row['kh_rank'] = $rankName;
         }
