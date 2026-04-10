@@ -3843,6 +3843,7 @@ class Client extends Common
         $page    = input('page/d', 1);
         $limit   = input('limit/d', config('pageSize'));
         $keyword = input('keyword/a', []); // 强制为数组
+        $keyword['kh_rank'] = isset($keyword['kh_rank']) ? trim((string)$keyword['kh_rank']) : '';
 
         // 处理时间范围筛选（与原有 buildTimeWhere 兼容）
         if (!empty($keyword['timebucket'])) {

@@ -89,8 +89,9 @@ class Client extends Model
         if (!empty($keyword['timebucket'])) {
             $mapAtTime[] = $keyword['timebucket'];
         }
-        if ($keyword['kh_rank'] != '') {
-            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
+        $selectedKhRank = isset($keyword['kh_rank']) ? trim((string)$keyword['kh_rank']) : '';
+        if ($selectedKhRank !== '') {
+            $mapKhRank = $this->buildKhRankCompatWhere($selectedKhRank, 'kh_rank');
         }
 
         if ($keyword['kh_status'] != '') {
@@ -280,8 +281,9 @@ class Client extends Model
             $mapAtTime[] = $keyword['timebucket'];
         }
 
-        if ($keyword['kh_rank'] != '') {
-            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
+        $selectedKhRank = isset($keyword['kh_rank']) ? trim((string)$keyword['kh_rank']) : '';
+        if ($selectedKhRank !== '') {
+            $mapKhRank = $this->buildKhRankCompatWhere($selectedKhRank, 'kh_rank');
         }
 
         if ($keyword['kh_status'] != '') {
