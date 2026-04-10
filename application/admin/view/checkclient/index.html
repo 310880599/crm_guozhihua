@@ -1337,6 +1337,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
          { field: 'joint_person_names', title: '协同人', width: 120 },
          { field: 'issuccess', title: '成交状态', width: 120, templet: function(res){ return res.issuccess == 1 ? '已成交' : '未成交'; } },
          { field: 'pr_user', title: '负责人', width: 120 },
+         { field: 'kh_rank_text', title: '客户级别', width: 120 },
          { field: 'at_time', title: '创建时间', width: 120, sort: true },
          { field: 'ut_time', title: '更新于', width: 120, sort: true },
          { field: 'original_creation_time', title: '原来创建时间', width: 120, hide: false,
@@ -1379,6 +1380,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             port_name: 120,
             joint_person_names: 120,
             pr_user: 100,
+            kh_rank_text: 120,
             issuccess: 90,
             original_creation_time: 150,
             original_modification_time: 150
