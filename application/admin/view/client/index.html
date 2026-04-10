@@ -529,7 +529,7 @@
                                 <select name="kh_rank" id="kh_rank">
                                     <option value="">请选择客户级别</option>
                                     {volist name="khRankList" id="vo"}
-                                    <option value="{$vo.id}">{if condition="!empty($vo.rank_code)"}{$vo.rank_code} - {/if}{$vo.rank_name}</option>
+                                    <option value="{$vo.id}">{$vo.rank_name}</option>
                                     {/volist}
                                 </select>
                             </div>
