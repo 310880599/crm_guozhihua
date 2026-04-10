@@ -4389,11 +4389,11 @@ class Client extends Common
         $limit = input('limit') ? input('limit') : config('pageSize');
         $keyword = Request::param('keyword');
         $list = model('client')->getChengjiaoClientSearchList($page, $limit, $keyword);
-        // 对查询结果进行数据加工，确保返回字段与 successCliList() 一致
-        if (!empty($list) && !empty($list['data']) && is_array($list['data'])) {
-            $this->enrichLeadsRows($list['data']);
+        if (empty($list) || empty($list['data'])) {
+            return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
         }
-        return $result = ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
+        $this->enrichLeadsRows($list['data']);
+        return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
     }
     // ====== 修改 chengjiaoClientSearch 结束 ======
 
