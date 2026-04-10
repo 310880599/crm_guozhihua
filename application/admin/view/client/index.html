@@ -838,6 +838,13 @@
                     { field: 'aux_phone', title: '辅助电话', width: 180 },
                     { field: 'pr_user', title: '负责人', width:180 },
                     {
+                        field: 'kh_rank_text', title: '客户级别', width: 120, templet: function(d) {
+                            var v = d.kh_rank_text || d.kh_rank_name || d.kh_rank || '';
+                            if (/^\d+$/.test(v)) return '';
+                            return v;
+                        }
+                    },
+                    {
                         field: 'issuccess', title: '成交状态', templet: function (res) {
                             return res.issuccess == 1 ? '已成交' : '未成交';
                         }, width:180
