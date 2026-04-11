@@ -637,15 +637,82 @@
     #follow-rank-display,
     #follow-rank-editor { vertical-align: middle; }
     .follow-rank-select {
-        height: 24px;
-        line-height: 24px;
-        padding: 0 6px;
+        height: 26px;
+        line-height: 26px;
+        padding: 0 8px;
         font-size: 13px;
-        border: 1px solid #d2d2d2;
-        border-radius: 2px;
+        border: 1px solid #d2d6de;
+        border-radius: 4px;
         outline: none;
         vertical-align: middle;
         max-width: 160px;
+        background: #fff;
+        color: #555;
+        transition: border-color .2s;
+    }
+    .follow-rank-select:focus {
+        border-color: #4285f4;
+    }
+
+    /* 客户级别按钮基础样式 */
+    #follow-rank-row .follow-rank-btn {
+        display: inline-block;
+        height: 26px;
+        line-height: 24px;
+        padding: 0 12px;
+        font-size: 12px;
+        font-weight: 400;
+        border-radius: 4px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        vertical-align: middle;
+        transition: all .25s ease;
+        box-sizing: border-box;
+        letter-spacing: .3px;
+    }
+
+    /* 修改按钮 - 轻量风格 */
+    #follow-rank-row .follow-rank-btn-edit {
+        color: #4285f4;
+        background: #f0f5ff;
+        border-color: #bad3fb;
+        margin-left: 6px;
+    }
+    #follow-rank-row .follow-rank-btn-edit:hover {
+        color: #fff;
+        background: #4285f4;
+        border-color: #4285f4;
+        box-shadow: 0 2px 6px rgba(66,133,244,.3);
+        transform: translateY(-1px);
+    }
+
+    /* 保存按钮 - 主按钮 */
+    #follow-rank-row .follow-rank-btn-save {
+        color: #fff;
+        background: #4285f4;
+        border-color: #4285f4;
+        margin-left: 6px;
+    }
+    #follow-rank-row .follow-rank-btn-save:hover {
+        background: #3367d6;
+        border-color: #3367d6;
+        box-shadow: 0 2px 6px rgba(51,103,214,.35);
+        transform: translateY(-1px);
+    }
+
+    /* 取消按钮 - 次按钮 */
+    #follow-rank-row .follow-rank-btn-cancel {
+        color: #7b8a9e;
+        background: #f5f7fa;
+        border-color: #d2d6de;
+        margin-left: 4px;
+    }
+    #follow-rank-row .follow-rank-btn-cancel:hover {
+        color: #4a5568;
+        background: #ebeef2;
+        border-color: #b8bfca;
+        box-shadow: 0 1px 4px rgba(0,0,0,.08);
+        transform: translateY(-1px);
     }
 
     .timeline-item {
@@ -1153,12 +1220,12 @@
                     <span class="info-label">客户级别:</span>
                     <span id="follow-rank-display">
                         <span id="follow-rank"></span>
-                        <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="follow-rank-edit-btn" style="margin-left:6px;height:22px;line-height:22px;padding:0 8px;font-size:12px;">修改</button>
+                        <button type="button" class="follow-rank-btn follow-rank-btn-edit" id="follow-rank-edit-btn">修改</button>
                     </span>
                     <span id="follow-rank-editor" style="display:none;">
                         <select id="follow-rank-select" class="follow-rank-select"></select>
-                        <button type="button" class="layui-btn layui-btn-xs" id="follow-rank-save-btn" style="height:22px;line-height:22px;padding:0 8px;font-size:12px;margin-left:4px;">保存</button>
-                        <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="follow-rank-cancel-btn" style="height:22px;line-height:22px;padding:0 8px;font-size:12px;margin-left:2px;">取消</button>
+                        <button type="button" class="follow-rank-btn follow-rank-btn-save" id="follow-rank-save-btn">保存</button>
+                        <button type="button" class="follow-rank-btn follow-rank-btn-cancel" id="follow-rank-cancel-btn">取消</button>
                     </span>
                 </div>
                 <div class="info-item">
