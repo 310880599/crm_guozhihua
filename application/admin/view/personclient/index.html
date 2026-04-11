@@ -632,7 +632,22 @@
         color: #333;
         font-size: 14px;
     }
-    
+
+    #follow-rank-row { white-space: nowrap; }
+    #follow-rank-display,
+    #follow-rank-editor { vertical-align: middle; }
+    .follow-rank-select {
+        height: 24px;
+        line-height: 24px;
+        padding: 0 6px;
+        font-size: 13px;
+        border: 1px solid #d2d2d2;
+        border-radius: 2px;
+        outline: none;
+        vertical-align: middle;
+        max-width: 160px;
+    }
+
     .timeline-item {
         margin-bottom: 20px;
         padding: 12px;
@@ -1134,9 +1149,17 @@
                     <span class="info-label">运营端口:</span>
                     <span id="follow-source-port"></span>
                 </div>
-                <div class="info-item">
+                <div class="info-item" id="follow-rank-row">
                     <span class="info-label">客户级别:</span>
-                    <span id="follow-rank"></span>
+                    <span id="follow-rank-display">
+                        <span id="follow-rank"></span>
+                        <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="follow-rank-edit-btn" style="margin-left:6px;height:22px;line-height:22px;padding:0 8px;font-size:12px;">修改</button>
+                    </span>
+                    <span id="follow-rank-editor" style="display:none;">
+                        <select id="follow-rank-select" class="follow-rank-select"></select>
+                        <button type="button" class="layui-btn layui-btn-xs" id="follow-rank-save-btn" style="height:22px;line-height:22px;padding:0 8px;font-size:12px;margin-left:4px;">保存</button>
+                        <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="follow-rank-cancel-btn" style="height:22px;line-height:22px;padding:0 8px;font-size:12px;margin-left:2px;">取消</button>
+                    </span>
                 </div>
                 <div class="info-item">
                     <span class="info-label">负责人:</span>
@@ -2260,7 +2283,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                     $('#follow-area').text(clientData.xs_area || '');
                     $('#follow-source').text(clientData.inquiry_name || clientData.inquiry_id || '');        // 所属渠道
                     $('#follow-source-port').text(clientData.port_name || clientData.port_id || '暂无');    // 运营端口
-                    $('#follow-rank').text(clientData.kh_rank_name || clientData.kh_rank || '');
+                    var rankDisplayText = clientData.kh_rank_name || clientData.kh_rank || '';
+                    $('#follow-rank').text(rankDisplayText);
+                    $('#follow-rank-display').show();
+                    $('#follow-rank-editor').hide();
+                    $('#follow-rank-row').data('clientId', clientData.id)
+                        .data('khRank', clientData.kh_rank || '')
+                        .data('rankDisplayText', rankDisplayText);
                     $('#follow-user').text(clientData.pr_user || '');
                     $('#follow-joint-person').text(clientData.joint_person_names || '暂无');
                     $('#follow-create-time').text(clientData.at_time || '');
@@ -2405,7 +2434,89 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     });
 
+    // ========== 跟进弹窗 - 客户级别就地编辑 ==========
+    $(document).on('click', '#follow-rank-edit-btn', function() {
+        var $row = $('#follow-rank-row');
+        var clientId = $row.data('clientId');
+        if (!clientId) return;
 
+        var $select = $('#follow-rank-select');
+        $select.empty().append('<option value="">加载中...</option>');
+        $('#follow-rank-display').hide();
+        $('#follow-rank-editor').show();
+
+        $.ajax({
+            url: "{:url('Client/getFollowRankOptions')}",
+            method: 'GET',
+            data: { id: clientId },
+            success: function(res) {
+                if (res.code === 0 && res.data) {
+                    $select.empty().append('<option value="">请选择</option>');
+                    var currentKhRank = $row.data('khRank') + '';
+                    $.each(res.data, function(i, item) {
+                        var display = item.rank_name_display || item.rank_name;
+                        var selected = '';
+                        if (currentKhRank === (item.id + '')) {
+                            selected = ' selected';
+                        }
+                        $select.append('<option value="' + item.id + '"' + selected + '>' + display + '</option>');
+                    });
+                } else {
+                    layer.msg(res.msg || '获取级别选项失败');
+                    $('#follow-rank-display').show();
+                    $('#follow-rank-editor').hide();
+                }
+            },
+            error: function() {
+                layer.msg('网络错误，获取级别选项失败');
+                $('#follow-rank-display').show();
+                $('#follow-rank-editor').hide();
+            }
+        });
+    });
+
+    $(document).on('click', '#follow-rank-cancel-btn', function() {
+        $('#follow-rank-editor').hide();
+        $('#follow-rank-display').show();
+    });
+
+    $(document).on('click', '#follow-rank-save-btn', function() {
+        var $row = $('#follow-rank-row');
+        var clientId = $row.data('clientId');
+        var newRankId = $('#follow-rank-select').val();
+        if (!newRankId) {
+            layer.msg('请选择客户级别');
+            return;
+        }
+
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('保存中');
+
+        $.ajax({
+            url: "{:url('Client/updateClientRankInFollow')}",
+            method: 'POST',
+            data: { id: clientId, kh_rank: newRankId },
+            success: function(res) {
+                $btn.prop('disabled', false).text('保存');
+                if (res.code === 0 && res.data) {
+                    layer.msg('客户级别修改成功');
+                    var newName = res.data.kh_rank_name || '';
+                    $('#follow-rank').text(newName);
+                    $row.data('khRank', res.data.kh_rank || '')
+                        .data('rankDisplayText', newName);
+                    $('#follow-rank-editor').hide();
+                    $('#follow-rank-display').show();
+                    reloadKeepColWidth();
+                } else {
+                    layer.msg(res.msg || '保存失败');
+                }
+            },
+            error: function() {
+                $btn.prop('disabled', false).text('保存');
+                layer.msg('网络错误，保存失败');
+            }
+        });
+    });
 
     // ========== 列宽拖拽保存（更稳：用 colgroup + mouseup 兜底）==========
     var lastSnapshot = {}; // 全局变量：保存上一次的列宽快照

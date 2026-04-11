@@ -4684,6 +4684,108 @@ class Client extends Common
         ]);
     }
 
+    /**
+     * 跟进弹窗 - 获取客户级别下拉候选项（AJAX）
+     * 复用 getClientRankOptionsForEdit，兼容已删除级别
+     */
+    public function getFollowRankOptions()
+    {
+        $clientId = Request::param('id');
+        if (!$clientId) {
+            return json(['code' => 1, 'msg' => '缺少客户ID']);
+        }
+
+        $client = Db::table('crm_leads')->where('id', $clientId)->field('id,kh_rank')->find();
+        if (!$client) {
+            return json(['code' => 1, 'msg' => '客户不存在']);
+        }
+
+        $currentKhRank = trim((string)($client['kh_rank'] ?? ''));
+        $normalizedId = $this->normalizeKhRankToId($currentKhRank);
+        $options = $this->getClientRankOptionsForEdit($normalizedId);
+
+        return json(['code' => 0, 'data' => $options]);
+    }
+
+    /**
+     * 跟进弹窗 - 就地修改客户级别（AJAX）
+     * 职责单一：仅修改 kh_rank，不涉及跟进记录
+     */
+    public function updateClientRankInFollow()
+    {
+        if (!request()->isPost()) {
+            return fail('请求方式不正确');
+        }
+
+        $clientId = Request::param('id');
+        $rawKhRank = Request::param('kh_rank', '');
+
+        if (!$clientId) {
+            return fail('缺少客户ID');
+        }
+        if (trim((string)$rawKhRank) === '') {
+            return fail('请选择客户级别');
+        }
+
+        $client = Db::table('crm_leads')->where('id', $clientId)->find();
+        if (!$client) {
+            return fail('客户不存在');
+        }
+
+        $currentUsername = trim((string)Session::get('username'));
+        $currentAid = (int)Session::get('aid');
+
+        if ($currentAid !== 1) {
+            $isOwner = (trim((string)$client['pr_user']) === $currentUsername);
+            $isJointPerson = false;
+            if (!empty($client['joint_person'])) {
+                $jp = $client['joint_person'];
+                $jpIds = [];
+                if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
+                    $tmp = json_decode($jp, true);
+                    if (is_array($tmp)) $jpIds = $tmp;
+                } else {
+                    $jpIds = array_values(array_filter(explode(',', $jp)));
+                }
+                $isJointPerson = in_array((string)$currentAid, array_map('strval', $jpIds));
+            }
+            if (!$isOwner && !$isJointPerson) {
+                return fail('您没有权限修改该客户的级别');
+            }
+        }
+
+        $oldKhRank = trim((string)($client['kh_rank'] ?? ''));
+
+        list($rankOk, $rankErrMsg, $khRankStore, $khRankName) = $this->validateKhRankForSave($rawKhRank, $oldKhRank);
+        if (!$rankOk) {
+            return fail($rankErrMsg);
+        }
+
+        $oldRankDisplayName = '';
+        if ($oldKhRank !== '') {
+            $rankMap = Db::table('crm_client_rank')->column('rank_name', 'id');
+            $rankNameMap = [];
+            foreach ($rankMap as $rId => $rName) {
+                $rankNameMap[(string)$rId] = trim((string)$rName);
+            }
+            $oldRankDisplayName = $this->resolveKhRankDisplayName($oldKhRank, $rankNameMap);
+        }
+
+        Db::table('crm_leads')->where('id', $clientId)->update([
+            'kh_rank' => $khRankStore,
+            'ut_time' => date('Y-m-d H:i:s'),
+        ]);
+
+        $oldDisplay = $oldRankDisplayName ?: '空';
+        $newDisplay = $khRankName ?: '空';
+        self::addOperLog($clientId, '编辑', "客户级别：{$oldDisplay} -> {$newDisplay}");
+
+        return success([
+            'kh_rank'      => $khRankStore,
+            'kh_rank_name' => $khRankName,
+        ], '客户级别修改成功');
+    }
+
     // ✅新增：全部跟进 - 分页获取客户跟进记录
     public function getClientCommentsPage()
     {
