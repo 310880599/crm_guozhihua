@@ -138,7 +138,7 @@ function initTeamRowClick() {
             }
         } else {
             // 不在分栏布局中（可能是旧代码或弹窗模式）：保持原有逻辑，打开弹窗
-            var url = '{:url("Operator/teamMemberPerformancePage")}?team_name=' + encodeURIComponent(teamName);
+            var url = '{:url("DataStatistics/teamMemberPerformancePage")}?team_name=' + encodeURIComponent(teamName);
             if (timebucket) {
                 url += '&timebucket=' + encodeURIComponent(timebucket);
             }

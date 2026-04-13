@@ -1,0 +1,1015 @@
+{include file="common/head"/}
+<style>
+    html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    #inquiryProductSummarySplitLayout {
+        display: flex;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: #f6f8fb;
+        z-index: 1000;
+    }
+    .split-wrap { display: flex; height: 100%; width: 100%; overflow: hidden; }
+    .split-left, .split-mid, .split-right { transition: width 0.3s ease; overflow: hidden; }
+    .split-left.hidden, .split-mid.hidden, .split-right.hidden { display: none !important; }
+    .split-left.collapsed, .split-mid.collapsed, .split-right.collapsed { width: 64px !important; border: none !important; }
+    .split-left.maximized, .split-mid.maximized, .split-right.maximized { width: 100% !important; }
+    #inquiryProductSummarySplitLayout .inquiry-product-team-clickable.is-active,
+    #inquiryProductSummarySplitLayout .inquiry-product-user-clickable.is-active {
+        background-color: #dbeafe;
+        color: #1d4ed8 !important;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+    .split-first-filter-bar {
+        padding: 8px 15px 6px;
+        gap: 6px;
+        margin-bottom: 0;
+        align-items: flex-start;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        flex-wrap: wrap;
+        flex-shrink: 0;
+    }
+    .split-first-filter-bar .split-first-filter-main {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .split-first-filter-bar .split-first-time-label { margin: 0; white-space: nowrap; }
+    .split-first-filter-bar .split-first-time-filter { width: auto; min-width: 80px; }
+    .split-first-month-shortcut { width: 100%; }
+    .month-quick-select { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .month-quick-select-label { margin: 0; white-space: nowrap; font-weight: 600; }
+    .month-quick-select-buttons { display: flex; flex-wrap: nowrap; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; align-items: center; }
+    .month-quick-select-btn {
+        margin: 0; padding: 2px 8px; min-width: auto; border-radius: 4px; font-size: 12px;
+        line-height: 1.2; flex: 0 0 auto; border: 1px solid #dcdfe6; background: #fff; color: #606266; cursor: pointer;
+    }
+    .month-quick-select-btn.active { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+    .wukong-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .wukong-table th, .wukong-table td { padding: 8px 10px; border: 1px solid #e9ecef; }
+    .wukong-table thead th { background: #f8f9fa; font-weight: 600; }
+    .wukong-table tbody tr:hover { background: #eff6ff; }
+</style>
+
+<div id="inquiryProductSummarySplitLayout">
+    <div class="split-wrap inquiry-product-split-wrap" style="display:flex;height:100%;width:100%;overflow:hidden;">
+        <div class="split-left inquiry-product-split-left" style="width:30%;background:#ffffff;border-right:1px solid #e9ecef;display:flex;flex-direction:column;overflow:hidden;">
+            <div class="pane-header" style="padding:15px;background:linear-gradient(90deg,#1d4ed8,#3b82f6);color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                <span style="font-size:16px;font-weight:600;">📦 公司产品咨询数量排行</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitLeftMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitLeftCollapse" title="收起/展开"><i class="bi bi-chevron-left"></i></button>
+                    <a class="btn btn-sm btn-light" href="{:url('DataStatistics/index')}" title="返回" style="margin-left:8px;"><i class="bi bi-arrow-left"></i> 返回</a>
+                </div>
+            </div>
+            <div class="filter-bar split-first-filter-bar" id="inquiryProductSummaryTimeFilterBar">
+                <div class="split-first-filter-main">
+                    <label class="split-first-time-label">时间筛选：</label>
+                    <select id="inquiryProductSummaryTimeFilter" class="form-select split-first-time-filter">
+                        <option value="today">今天</option>
+                        <option value="yesterday">昨天</option>
+                        <option value="week">本周</option>
+                        <option value="month" selected>本月</option>
+                        <option value="year">本年</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                    <div id="inquiryProductSummaryCustomTimeRange" style="display:none;gap:8px;align-items:center;">
+                        <input type="date" id="inquiryProductSummaryStartDate" class="form-control" style="width:150px;">
+                        <span>至</span>
+                        <input type="date" id="inquiryProductSummaryEndDate" class="form-control" style="width:150px;">
+                    </div>
+                    <button type="button" class="btn btn-primary btn-sm split-first-filter-btn" id="inquiryProductSummaryFilterBtn">
+                        <i class="bi bi-search"></i> 筛选
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm split-first-reset-btn" id="inquiryProductSummaryResetBtn">
+                        <i class="bi bi-arrow-counterclockwise"></i> 重置
+                    </button>
+                    <button type="button" class="btn btn-success btn-sm" id="inquiryProductSummaryExportBtn">
+                        <i class="bi bi-download"></i> 导出
+                    </button>
+                </div>
+                <div id="inquiryProductSummaryMonthShortcutWrap" class="split-first-month-shortcut"></div>
+            </div>
+            <div id="inquiryProductCompanyPane" style="flex:1;overflow-y:auto;padding:12px 20px 16px;"></div>
+            <div id="inquiryProductCompanyPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总咨询数量 0</div>
+        </div>
+
+        <div class="split-mid inquiry-product-split-mid" style="width:35%;background:#ffffff;border-right:1px solid #e9ecef;display:flex;flex-direction:column;overflow:hidden;">
+            <div class="pane-header" style="padding:15px;background:linear-gradient(90deg,#1d4ed8,#3b82f6);color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                <span style="font-size:16px;font-weight:600;" id="inquiryProductTeamPaneTitle">👥 团队成员列表</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitMidRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitMidMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitMidCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+            <div id="inquiryProductTeamPane" style="flex:1;overflow-y:auto;padding:20px;">
+                <div class="empty" style="text-align:center;padding:60px 20px;color:#6c757d;">
+                    <i class="bi bi-inbox" style="font-size:48px;margin-bottom:15px;display:block;"></i>
+                    <p style="font-size:16px;margin:0;">请选择团队展开成员列表</p>
+                </div>
+            </div>
+            <div id="inquiryProductTeamPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：团队数 0 ｜ 成员数 0</div>
+        </div>
+
+        <div class="split-right inquiry-product-split-right" style="width:35%;background:#ffffff;display:flex;flex-direction:column;overflow:hidden;">
+            <div class="pane-header" style="padding:15px;background:linear-gradient(90deg,#1d4ed8,#3b82f6);color:#fff;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+                <span style="font-size:16px;font-weight:600;" id="inquiryProductUserPaneTitle">📦 产品咨询数量排行</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitRightRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitRightMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="inquiryProductSplitRightCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+            <div id="inquiryProductUserPane" style="flex:1;overflow-y:auto;padding:20px;">
+                <div class="empty" style="text-align:center;padding:60px 20px;color:#6c757d;">
+                    <i class="bi bi-inbox" style="font-size:48px;margin-bottom:15px;display:block;"></i>
+                    <p style="font-size:16px;margin:0;">请点击团队或成员查看产品咨询数量排行</p>
+                </div>
+            </div>
+            <div id="inquiryProductUserPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">合计：产品种类 0 ｜ 总咨询数量 0</div>
+        </div>
+    </div>
+</div>
+
+<template id="monthQuickSelectTemplate">
+    <div class="month-quick-select">
+        <label class="month-quick-select-label">月份快捷：</label>
+        <div class="month-quick-select-buttons">
+            <button type="button" class="month-quick-select-btn" data-month="1">1</button>
+            <button type="button" class="month-quick-select-btn" data-month="2">2</button>
+            <button type="button" class="month-quick-select-btn" data-month="3">3</button>
+            <button type="button" class="month-quick-select-btn" data-month="4">4</button>
+            <button type="button" class="month-quick-select-btn" data-month="5">5</button>
+            <button type="button" class="month-quick-select-btn" data-month="6">6</button>
+            <button type="button" class="month-quick-select-btn" data-month="7">7</button>
+            <button type="button" class="month-quick-select-btn" data-month="8">8</button>
+            <button type="button" class="month-quick-select-btn" data-month="9">9</button>
+            <button type="button" class="month-quick-select-btn" data-month="10">10</button>
+            <button type="button" class="month-quick-select-btn" data-month="11">11</button>
+            <button type="button" class="month-quick-select-btn" data-month="12">12</button>
+        </div>
+    </div>
+</template>
+
+<script>
+(function () {
+    // ---- 月份快捷选择 ----
+    var monthQuickStateMap = {};
+
+    function renderMonthQuickSelect($wrap) {
+        if (!$wrap || !$wrap.length) return;
+        if ($wrap.find('.month-quick-select').length) return;
+        var tpl = $('#monthQuickSelectTemplate').html() || '';
+        if (tpl) { $wrap.html(tpl); }
+    }
+
+    function initMonthQuickSelect(opts) {
+        var options = opts || {};
+        var key = options.key;
+        var wrapSelector = options.wrapSelector;
+        if (!key || !wrapSelector) return;
+        if (!monthQuickStateMap[key]) { monthQuickStateMap[key] = {selectedMonths: []}; }
+        $(wrapSelector).each(function () { renderMonthQuickSelect($(this)); });
+        $(document)
+            .off('click.monthQuickSelect.' + key, wrapSelector + ' .month-quick-select-btn')
+            .on('click.monthQuickSelect.' + key, wrapSelector + ' .month-quick-select-btn', function () {
+                var state = monthQuickStateMap[key] || {selectedMonths: []};
+                var month = parseInt(($(this).attr('data-month') || '').trim(), 10);
+                if (isNaN(month) || month < 1 || month > 12) return;
+                var idx = state.selectedMonths.indexOf(month);
+                if (idx > -1) { state.selectedMonths.splice(idx, 1); } else { state.selectedMonths.push(month); }
+                state.selectedMonths.sort(function (a, b) { return a - b; });
+                monthQuickStateMap[key] = state;
+                syncMonthQuickSelectState(key, wrapSelector);
+                if (state.selectedMonths.length) {
+                    if (options.startDateSelector) $(options.startDateSelector).val('');
+                    if (options.endDateSelector) $(options.endDateSelector).val('');
+                    if (options.customRangeSelector) $(options.customRangeSelector).css('display', 'none');
+                    if (options.timeFilterSelector && ($(options.timeFilterSelector).val() || '').trim() === 'custom') {
+                        $(options.timeFilterSelector).val('month');
+                    }
+                }
+            });
+    }
+
+    function syncMonthQuickSelectState(key, wrapSelector) {
+        var state = monthQuickStateMap[key] || {selectedMonths: []};
+        var selectedMap = {};
+        $.each(state.selectedMonths, function (_, month) { selectedMap[month] = true; });
+        $(wrapSelector + ' .month-quick-select-btn').each(function () {
+            var month = parseInt(($(this).attr('data-month') || '').trim(), 10);
+            $(this).toggleClass('active', !!selectedMap[month]);
+        });
+    }
+
+    function clearMonthQuickSelect(key, wrapSelector) {
+        if (!monthQuickStateMap[key]) { monthQuickStateMap[key] = {selectedMonths: []}; }
+        monthQuickStateMap[key].selectedMonths = [];
+        syncMonthQuickSelectState(key, wrapSelector);
+    }
+
+    function getMonthKeys(key) {
+        var state = monthQuickStateMap[key] || {selectedMonths: []};
+        var selectedMonths = (state.selectedMonths || []).slice();
+        if (!selectedMonths.length) return '';
+        var year = new Date().getFullYear();
+        return selectedMonths.map(function (m) {
+            return year + '-' + (m < 10 ? '0' + m : String(m));
+        }).join(',');
+    }
+
+    // ---- 工具函数 ----
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function normalizeTeamName(teamName) {
+        teamName = $.trim(teamName || '');
+        return teamName ? teamName : '未分组';
+    }
+
+    function buildAjaxErrorMessage(xhr, status, fallbackMsg) {
+        if (status === 'timeout') { return '请求超时（30秒），请稍后重试'; }
+        var jsonMsg = xhr && xhr.responseJSON && xhr.responseJSON.msg ? String(xhr.responseJSON.msg).trim() : '';
+        if (jsonMsg) { return jsonMsg; }
+        var textMsg = xhr && xhr.responseText ? String(xhr.responseText).replace(/\s+/g, ' ').trim() : '';
+        if (textMsg) { return (fallbackMsg || '请求失败') + '：' + textMsg.substr(0, 160); }
+        return fallbackMsg || '请求失败，请稍后重试';
+    }
+
+    // ---- 时间参数 ----
+    function clearInquiryProductSummaryMonthShortcutSelection() {
+        clearMonthQuickSelect('inquiryProductSummary', '#inquiryProductSummaryMonthShortcutWrap');
+    }
+
+    function getInquiryProductSummaryTimeParams() {
+        var timeFilter = ($('#inquiryProductSummaryTimeFilter').val() || 'month').trim();
+        var month_keys = getMonthKeys('inquiryProductSummary');
+        if (month_keys) { return {timebucket: '', at_time: '', month_keys: month_keys}; }
+        if (timeFilter === 'custom') {
+            var startDate = ($('#inquiryProductSummaryStartDate').val() || '').trim();
+            var endDate = ($('#inquiryProductSummaryEndDate').val() || '').trim();
+            if (startDate && endDate) {
+                return {timebucket: '', at_time: startDate + ',' + endDate, month_keys: ''};
+            } else {
+                layer.msg('请选择开始日期和结束日期', {icon: 2});
+                return null;
+            }
+        }
+        return {timebucket: timeFilter || 'month', at_time: '', month_keys: ''};
+    }
+
+    // ---- 汇总栏 ----
+    function updateInquiryProductPaneSummary(selector, summary) {
+        if (selector === '#inquiryProductCompanyPaneSummary') {
+            var kinds = summary && summary.total_product_count ? summary.total_product_count : 0;
+            var cnt   = summary && summary.total_inquiry_count !== undefined ? summary.total_inquiry_count : 0;
+            $(selector).html('合计：产品种类 ' + kinds + ' ｜ 总咨询数量 ' + cnt);
+            return;
+        }
+        if (selector === '#inquiryProductTeamPaneSummary') {
+            var teamCount   = summary && summary.team_count ? summary.team_count : 0;
+            var memberCount = summary && summary.member_count ? summary.member_count : 0;
+            $(selector).html('合计：团队数 ' + teamCount + ' ｜ 成员数 ' + memberCount);
+            return;
+        }
+        var productKinds = 0;
+        if (summary) {
+            if (summary.total_product_count !== undefined && summary.total_product_count !== null) productKinds = summary.total_product_count;
+            else if (summary.team_product_count !== undefined) productKinds = summary.team_product_count;
+            else if (summary.user_product_count !== undefined) productKinds = summary.user_product_count;
+        }
+        var inquiryCount = summary && summary.total_inquiry_count !== undefined ? summary.total_inquiry_count : 0;
+        $(selector).html('合计：产品种类 ' + productKinds + ' ｜ 总咨询数量 ' + inquiryCount);
+    }
+
+    function renderInquiryProductEmpty($container, text) {
+        $container.html('<div class="empty" style="text-align:center;padding:60px 20px;color:#6c757d;"><i class="bi bi-inbox" style="font-size:48px;margin-bottom:15px;display:block;"></i><p style="font-size:16px;margin:0;">' + text + '</p></div>');
+    }
+
+    // ---- 排序指示器 ----
+    function getInquiryProductSortIndicator(field, currentSortField, currentSortOrder) {
+        var split = window.InquiryProductSummarySplit = window.InquiryProductSummarySplit || {};
+        var activeSortField = currentSortField || split.companySortField || 'inquiry_count';
+        var activeSortOrder = currentSortOrder || split.companySortOrder || 'desc';
+        if (activeSortField !== field) return '<span style="opacity:.45;margin-left:4px;">↕</span>';
+        return activeSortOrder === 'asc' ? '<span style="margin-left:4px;">↑</span>' : '<span style="margin-left:4px;">↓</span>';
+    }
+
+    function sortInquiryProductRows(data, sortField, sortOrder) {
+        var rows = Array.isArray(data) ? data.slice() : [];
+        rows.sort(function (a, b) {
+            var orderSign = sortOrder === 'asc' ? 1 : -1;
+            var aPrimary = parseFloat(String(a && a.inquiry_count || 0)) || 0;
+            var bPrimary = parseFloat(String(b && b.inquiry_count || 0)) || 0;
+            if (aPrimary !== bPrimary) return (aPrimary - bPrimary) * orderSign;
+            var aName = $.trim((a && a.product_name) ? String(a.product_name) : '');
+            var bName = $.trim((b && b.product_name) ? String(b.product_name) : '');
+            return aName.localeCompare(bName, 'zh-CN');
+        });
+        return rows;
+    }
+
+    // ---- 第一屏：公司产品排行 ----
+    function renderInquiryProductCompanyPane(data) {
+        var split = window.InquiryProductSummarySplit = window.InquiryProductSummarySplit || {};
+        if (Array.isArray(data)) { split.companyProductsRaw = data.slice(); }
+        split.companySortField = split.companySortField || 'inquiry_count';
+        split.companySortOrder = split.companySortOrder || 'desc';
+        var rows = sortInquiryProductRows(split.companyProductsRaw || [], split.companySortField, split.companySortOrder);
+        var html = '<div style="background:#ffffff;border-radius:8px;overflow:hidden;">'
+            + '<div style="padding:20px;overflow-x:auto;">'
+            + '<table class="wukong-table" style="width:100%;">'
+            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th>'
+            + '<th style="text-align:right;"><a href="javascript:void(0);" class="inquiry-product-company-sort" data-sort-field="inquiry_count" style="color:inherit;text-decoration:none;">咨询数量' + getInquiryProductSortIndicator('inquiry_count') + '</a></th>'
+            + '</tr></thead><tbody>';
+        if (rows && rows.length) {
+            $.each(rows, function (i, item) {
+                html += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(item.product_name || '') + '</td>'
+                    + '<td style="text-align:right;">' + (item.inquiry_count || 0) + '</td></tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">暂无产品咨询数据</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#inquiryProductCompanyPane').html(html);
+
+        $('#inquiryProductCompanyPane').off('click.inquiryProductCompanySort', '.inquiry-product-company-sort')
+            .on('click.inquiryProductCompanySort', '.inquiry-product-company-sort', function () {
+                var field = ($(this).attr('data-sort-field') || '').trim();
+                if (!field) return;
+                if (split.companySortField === field) {
+                    split.companySortOrder = split.companySortOrder === 'desc' ? 'asc' : 'desc';
+                } else {
+                    split.companySortField = field;
+                    split.companySortOrder = 'desc';
+                }
+                renderInquiryProductCompanyPane();
+            });
+    }
+
+    // ---- 第二屏：团队列表 ----
+    function renderInquiryProductTeamPane(data) {
+        if (!data || !data.length) {
+            renderInquiryProductEmpty($('#inquiryProductTeamPane'), '当前时间范围暂无团队数据');
+            return;
+        }
+        var html = '<div style="background:#fff;border-radius:8px;overflow:hidden;">';
+        $.each(data, function (i, item) {
+            var teamName = normalizeTeamName(item.team_name || '');
+            var teamEncoded = encodeURIComponent(teamName);
+            html += '<div class="inquiry-product-team-block" data-team-encoded="' + teamEncoded + '" style="border-bottom:1px solid #eef2f7;">'
+                + '<div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;">'
+                + '<a href="javascript:void(0);" class="inquiry-product-team-clickable" data-team-encoded="' + teamEncoded + '" style="font-weight:600;color:#1d4ed8;text-decoration:none;">'
+                + '<i class="bi bi-caret-right-fill inquiry-product-team-arrow" style="margin-right:6px;"></i>'
+                + escapeHtml(teamName)
+                + '</a>'
+                + '<span class="text-muted" style="font-size:12px;">咨询数量 ' + (item.inquiry_count || 0) + ' ｜ 成员 ' + (item.member_count || 0) + '</span>'
+                + '</div>'
+                + '<div class="inquiry-product-team-members" data-team-encoded="' + teamEncoded + '" style="display:none;padding:0 16px 12px 34px;"></div>'
+                + '</div>';
+        });
+        html += '</div>';
+        $('#inquiryProductTeamPane').html(html);
+    }
+
+    function renderInquiryProductTeamMembers(teamName, data) {
+        var targetEncoded = encodeURIComponent(normalizeTeamName(teamName || ''));
+        var $container = $('#inquiryProductTeamPane .inquiry-product-team-members[data-team-encoded="' + targetEncoded + '"]');
+        if (!$container.length) return;
+        var html = '';
+        if (data && data.length) {
+            html += '<div style="padding-top:6px;"></div>';
+            $.each(data, function (i, item) {
+                var username = (item.username || '').trim();
+                html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #e5e7eb;">'
+                    + '<a href="javascript:void(0);" class="inquiry-product-user-clickable" data-username="' + encodeURIComponent(username) + '" style="color:#1d4ed8;font-weight:600;text-decoration:none;">'
+                    + '<span style="display:inline-block;width:22px;color:#6b7280;">' + (item.rank || (i + 1)) + '.</span>' + escapeHtml(username) + '</a>'
+                    + '<span class="text-muted" style="font-size:12px;">咨询数量 ' + (item.inquiry_count || 0) + '</span>'
+                    + '</div>';
+            });
+        } else {
+            html = '<div class="text-muted" style="padding:8px 0;">该团队暂无成员咨询数据</div>';
+        }
+        $container.html(html).show();
+    }
+
+    // ---- 第三屏：产品排行 ----
+    function resetInquiryProductDetailSortState() {
+        var split = window.InquiryProductSummarySplit = window.InquiryProductSummarySplit || {};
+        split.userSortField = 'inquiry_count';
+        split.userSortOrder = 'desc';
+    }
+
+    function renderInquiryProductDetailPane(roleLabel, roleName, data) {
+        var split = window.InquiryProductSummarySplit = window.InquiryProductSummarySplit || {};
+        if (Array.isArray(data)) { split.userProductsRaw = data.slice(); }
+        split.userSortField = split.userSortField || 'inquiry_count';
+        split.userSortOrder = split.userSortOrder || 'desc';
+        var rows = sortInquiryProductRows(split.userProductsRaw || [], split.userSortField, split.userSortOrder);
+
+        var html = '<div style="background:#ffffff;border-radius:8px;overflow:hidden;">'
+            + '<div style="padding:15px 20px;border-bottom:1px solid #e9ecef;background:#f8f9fa;">' + escapeHtml(roleLabel) + '：<strong>' + escapeHtml(roleName) + '</strong></div>'
+            + '<div style="padding:20px;overflow-x:auto;">'
+            + '<table class="wukong-table" style="width:100%;">'
+            + '<thead><tr><th style="width:80px;">排名</th><th>产品名称</th>'
+            + '<th style="text-align:right;"><a href="javascript:void(0);" class="inquiry-product-detail-sort" data-sort-field="inquiry_count" style="color:inherit;text-decoration:none;">咨询数量' + getInquiryProductSortIndicator('inquiry_count', split.userSortField, split.userSortOrder) + '</a></th>'
+            + '</tr></thead><tbody>';
+        if (rows && rows.length) {
+            $.each(rows, function (i, item) {
+                html += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(item.product_name || '') + '</td>'
+                    + '<td style="text-align:right;">' + (item.inquiry_count || 0) + '</td></tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">暂无产品咨询排行数据</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#inquiryProductUserPane').html(html);
+
+        $('#inquiryProductUserPane').off('click.inquiryProductDetailSort', '.inquiry-product-detail-sort')
+            .on('click.inquiryProductDetailSort', '.inquiry-product-detail-sort', function () {
+                var field = ($(this).attr('data-sort-field') || '').trim();
+                if (!field) return;
+                if (split.userSortField === field) {
+                    split.userSortOrder = split.userSortOrder === 'desc' ? 'asc' : 'desc';
+                } else {
+                    split.userSortField = field;
+                    split.userSortOrder = 'desc';
+                }
+                renderInquiryProductDetailPane(roleLabel, roleName);
+            });
+    }
+
+    function getInquiryProductTeamLinkByName(teamName) {
+        var found = null;
+        $('#inquiryProductTeamPane .inquiry-product-team-clickable').each(function () {
+            var raw = $(this).attr('data-team-encoded') || '';
+            var current = raw;
+            try { current = decodeURIComponent(raw); } catch (e) {}
+            if ($.trim(current || '') === $.trim(teamName || '')) { found = $(this); return false; }
+        });
+        return found;
+    }
+
+    function getInquiryProductUserLinkByName(username) {
+        var found = null;
+        $('#inquiryProductTeamPane .inquiry-product-user-clickable').each(function () {
+            var raw = $(this).attr('data-username') || '';
+            var current = raw;
+            try { current = decodeURIComponent(raw); } catch (e) {}
+            if ($.trim(current || '') === $.trim(username || '')) { found = $(this); return false; }
+        });
+        return found;
+    }
+
+    // ---- 主对象 ----
+    window.InquiryProductSummarySplit = window.InquiryProductSummarySplit || {
+        lastTeamName: '',
+        lastUsername: '',
+        lastViewMode: '',
+        lastTimebucket: '',
+        lastAtTime: '',
+        lastMonthKeys: '',
+        companySortField: 'inquiry_count',
+        companySortOrder: 'desc',
+        companyProductsRaw: [],
+        userSortField: 'inquiry_count',
+        userSortOrder: 'desc',
+        userProductsRaw: [],
+        teamRows: [],
+        teamMembersCache: {},
+
+        loadSummary: function () {
+            var self = this;
+            var params = getInquiryProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            return $.ajax({
+                url: '{:url("DataStatistics/getInquiryProductSummaryData")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: params,
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    var payload = res.data || {};
+                    self.companySortField = self.companySortField || 'inquiry_count';
+                    self.companySortOrder = self.companySortOrder || 'desc';
+                    self.teamRows = payload.teams || [];
+                    self.teamMembersCache = {};
+                    renderInquiryProductCompanyPane(payload.products || []);
+                    renderInquiryProductTeamPane(payload.teams || []);
+                    updateInquiryProductPaneSummary('#inquiryProductCompanyPaneSummary', (res.summary || {}).company || {});
+                    updateInquiryProductPaneSummary('#inquiryProductTeamPaneSummary', (res.summary || {}).team || {});
+                    self.bindTeamClick();
+                } else {
+                    var bizMsg = res.msg || '获取询盘产品汇总失败';
+                    renderInquiryProductEmpty($('#inquiryProductCompanyPane'), bizMsg);
+                    renderInquiryProductEmpty($('#inquiryProductTeamPane'), bizMsg);
+                    updateInquiryProductPaneSummary('#inquiryProductCompanyPaneSummary', null);
+                    updateInquiryProductPaneSummary('#inquiryProductTeamPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildAjaxErrorMessage(xhr, status, '获取询盘产品汇总失败');
+                renderInquiryProductEmpty($('#inquiryProductCompanyPane'), msg);
+                renderInquiryProductEmpty($('#inquiryProductTeamPane'), msg);
+                updateInquiryProductPaneSummary('#inquiryProductCompanyPaneSummary', null);
+                updateInquiryProductPaneSummary('#inquiryProductTeamPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadTeamMembers: function (teamName, forceReload) {
+            var self = this;
+            var normalizedTeamName = normalizeTeamName(teamName || '');
+            var params = getInquiryProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTeamName = normalizedTeamName;
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            $('#inquiryProductTeamPaneTitle').text('👥 团队：' + normalizedTeamName + ' - 成员列表');
+
+            if (!forceReload && self.teamMembersCache[normalizedTeamName]) {
+                renderInquiryProductTeamMembers(normalizedTeamName, self.teamMembersCache[normalizedTeamName]);
+                self.bindUserClick();
+                return $.Deferred().resolve({
+                    code: 0,
+                    data: self.teamMembersCache[normalizedTeamName],
+                    summary: {member_count: self.teamMembersCache[normalizedTeamName].length}
+                }).promise();
+            }
+
+            return $.ajax({
+                url: '{:url("DataStatistics/getInquiryProductTeamMembers")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys},
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    var rows = res.data || [];
+                    self.teamMembersCache[normalizedTeamName] = rows;
+                    renderInquiryProductTeamMembers(normalizedTeamName, rows);
+                    self.bindUserClick();
+                } else {
+                    var bizMsg = res.msg || '获取团队成员失败';
+                    renderInquiryProductTeamMembers(normalizedTeamName, []);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildAjaxErrorMessage(xhr, status, '获取团队成员失败');
+                renderInquiryProductTeamMembers(normalizedTeamName, []);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadTeamProducts: function (teamName) {
+            var self = this;
+            var normalizedTeamName = normalizeTeamName(teamName || '');
+            var params = getInquiryProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTeamName = normalizedTeamName;
+            self.lastUsername = '';
+            self.lastViewMode = 'team';
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            resetInquiryProductDetailSortState();
+            self.userProductsRaw = [];
+            $('#inquiryProductUserPaneTitle').text('👥 ' + normalizedTeamName + ' 团队产品咨询数量排行');
+            return $.ajax({
+                url: '{:url("DataStatistics/getInquiryProductTeamProducts")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {team_name: normalizedTeamName, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys},
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderInquiryProductDetailPane('团队', normalizedTeamName, res.data || []);
+                    updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', res.summary || {});
+                } else {
+                    var bizMsg = res.msg || '获取团队产品咨询排行失败';
+                    renderInquiryProductEmpty($('#inquiryProductUserPane'), bizMsg);
+                    updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildAjaxErrorMessage(xhr, status, '获取团队产品咨询排行失败');
+                renderInquiryProductEmpty($('#inquiryProductUserPane'), msg);
+                updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadUserProducts: function (username) {
+            var self = this;
+            var params = getInquiryProductSummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastUsername = (username || '').trim();
+            self.lastViewMode = 'user';
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            resetInquiryProductDetailSortState();
+            self.userProductsRaw = [];
+            $('#inquiryProductUserPaneTitle').text('👤 ' + self.lastUsername + ' 名下产品咨询数量排行');
+            return $.ajax({
+                url: '{:url("DataStatistics/getInquiryProductUserProducts")}',
+                type: 'POST',
+                dataType: 'json',
+                timeout: 30000,
+                data: {username: self.lastUsername, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys},
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderInquiryProductDetailPane('成员', self.lastUsername + ' 名下', res.data || []);
+                    updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', res.summary || {});
+                } else {
+                    var bizMsg = res.msg || '获取成员产品咨询排行失败';
+                    renderInquiryProductEmpty($('#inquiryProductUserPane'), bizMsg);
+                    updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildAjaxErrorMessage(xhr, status, '获取成员产品咨询排行失败');
+                renderInquiryProductEmpty($('#inquiryProductUserPane'), msg);
+                updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        bindTeamClick: function () {
+            var self = this;
+            $('#inquiryProductTeamPane').off('click', '.inquiry-product-team-clickable').on('click', '.inquiry-product-team-clickable', function () {
+                var $link = $(this);
+                var $block = $link.closest('.inquiry-product-team-block');
+                var $members = $block.find('.inquiry-product-team-members');
+                var raw = $link.attr('data-team-encoded') || '';
+                var teamName = raw;
+                try { teamName = decodeURIComponent(raw); } catch (e) {}
+                teamName = normalizeTeamName(teamName);
+
+                var isSameActive = $link.hasClass('is-active');
+                var isExpanded = $members.is(':visible');
+                if (isSameActive && isExpanded) {
+                    $members.hide();
+                    $link.removeClass('is-active');
+                    $link.find('.inquiry-product-team-arrow').removeClass('bi-caret-down-fill').addClass('bi-caret-right-fill');
+                    self.lastTeamName = '';
+                    self.lastUsername = '';
+                    self.lastViewMode = '';
+                    resetInquiryProductDetailSortState();
+                    self.userProductsRaw = [];
+                    $('#inquiryProductTeamPaneTitle').text('👥 团队成员列表');
+                    $('#inquiryProductUserPaneTitle').text('📦 产品咨询数量排行');
+                    renderInquiryProductEmpty($('#inquiryProductUserPane'), '请点击团队或成员查看产品咨询数量排行');
+                    updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+                    $('#inquiryProductTeamPane .inquiry-product-user-clickable').removeClass('is-active');
+                    return;
+                }
+
+                $('#inquiryProductTeamPane .inquiry-product-team-clickable').removeClass('is-active');
+                $('#inquiryProductTeamPane .inquiry-product-team-members').hide();
+                $('#inquiryProductTeamPane .inquiry-product-team-arrow').removeClass('bi-caret-down-fill').addClass('bi-caret-right-fill');
+                $link.addClass('is-active');
+                $members.html('<div class="text-muted" style="padding:8px 0;">加载中...</div>').show();
+                $link.find('.inquiry-product-team-arrow').removeClass('bi-caret-right-fill').addClass('bi-caret-down-fill');
+
+                self.lastUsername = '';
+                $('#inquiryProductTeamPane .inquiry-product-user-clickable').removeClass('is-active');
+                $('#inquiryProductUserPaneTitle').text('👥 ' + teamName + ' 团队产品咨询数量排行');
+                renderInquiryProductEmpty($('#inquiryProductUserPane'), '加载中...');
+                updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+                self.loadTeamMembers(teamName, false);
+                self.loadTeamProducts(teamName);
+            });
+        },
+
+        bindUserClick: function () {
+            var self = this;
+            $('#inquiryProductTeamPane').off('click', '.inquiry-product-user-clickable').on('click', '.inquiry-product-user-clickable', function () {
+                $('#inquiryProductTeamPane .inquiry-product-user-clickable').removeClass('is-active');
+                $(this).addClass('is-active');
+                var $teamBlock = $(this).closest('.inquiry-product-team-block');
+                var teamRaw = $teamBlock.find('.inquiry-product-team-clickable').attr('data-team-encoded') || '';
+                var teamName = teamRaw;
+                try { teamName = decodeURIComponent(teamRaw); } catch (e) {}
+                self.lastTeamName = normalizeTeamName(teamName || '');
+                var raw = $(this).attr('data-username') || $(this).text().trim();
+                var username = raw;
+                try { username = decodeURIComponent(raw); } catch (e) {}
+                self.loadUserProducts((username || '').trim());
+            });
+        }
+    };
+
+    function loadInquiryProductSummaryData() {
+        return window.InquiryProductSummarySplit.loadSummary();
+    }
+
+    function inquiryProductSummaryResetTimeFilterUI() {
+        $('#inquiryProductSummaryTimeFilter').val('month');
+        $('#inquiryProductSummaryStartDate').val('');
+        $('#inquiryProductSummaryEndDate').val('');
+        $('#inquiryProductSummaryCustomTimeRange').css('display', 'none');
+        clearInquiryProductSummaryMonthShortcutSelection();
+
+        var s = window.InquiryProductSummarySplit;
+        s.lastTimebucket = '';
+        s.lastAtTime = '';
+        s.lastMonthKeys = '';
+        s.lastTeamName = '';
+        s.lastUsername = '';
+        s.lastViewMode = '';
+        s.companySortField = 'inquiry_count';
+        s.companySortOrder = 'desc';
+        s.companyProductsRaw = [];
+        s.userSortField = 'inquiry_count';
+        s.userSortOrder = 'desc';
+        s.userProductsRaw = [];
+        s.teamMembersCache = {};
+        $('#inquiryProductTeamPaneTitle').text('👥 团队成员列表');
+        $('#inquiryProductUserPaneTitle').text('📦 产品咨询数量排行');
+        renderInquiryProductEmpty($('#inquiryProductUserPane'), '请点击团队或成员查看产品咨询数量排行');
+        updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+        $('#inquiryProductTeamPane .inquiry-product-team-clickable').removeClass('is-active');
+        $('#inquiryProductTeamPane .inquiry-product-user-clickable').removeClass('is-active');
+    }
+
+    function inquiryProductSummaryApplyTimeFilterAndLinkage() {
+        var self = window.InquiryProductSummarySplit;
+        var prevTeam     = (self.lastTeamName || '').trim();
+        var prevUser     = (self.lastUsername || '').trim();
+        var prevViewMode = (self.lastViewMode || '').trim();
+        var timeParams   = getInquiryProductSummaryTimeParams();
+        if (!timeParams) return;
+
+        return loadInquiryProductSummaryData().then(function (res) {
+            var teamRows = res && res.data && Array.isArray(res.data.teams) ? res.data.teams : [];
+            var teamExists = false;
+            if (prevTeam) {
+                teamExists = teamRows.some(function (item) {
+                    return normalizeTeamName(item.team_name || '') === prevTeam;
+                });
+            }
+            if (!prevTeam || !teamExists) {
+                self.lastTeamName = '';
+                self.lastUsername = '';
+                self.lastViewMode = '';
+                resetInquiryProductDetailSortState();
+                self.userProductsRaw = [];
+                $('#inquiryProductTeamPaneTitle').text('👥 团队成员列表');
+                $('#inquiryProductUserPaneTitle').text('📦 产品咨询数量排行');
+                renderInquiryProductEmpty($('#inquiryProductUserPane'), '请点击团队或成员查看产品咨询数量排行');
+                updateInquiryProductPaneSummary('#inquiryProductUserPaneSummary', null);
+                return null;
+            }
+
+            var $teamLink = getInquiryProductTeamLinkByName(prevTeam);
+            if (!$teamLink || !$teamLink.length) { return null; }
+
+            $('#inquiryProductTeamPane .inquiry-product-team-clickable').removeClass('is-active');
+            $('#inquiryProductTeamPane .inquiry-product-team-members').hide();
+            $('#inquiryProductTeamPane .inquiry-product-team-arrow').removeClass('bi-caret-down-fill').addClass('bi-caret-right-fill');
+            $teamLink.addClass('is-active');
+            $teamLink.find('.inquiry-product-team-arrow').removeClass('bi-caret-right-fill').addClass('bi-caret-down-fill');
+            var $block = $teamLink.closest('.inquiry-product-team-block');
+            $block.find('.inquiry-product-team-members').html('<div class="text-muted" style="padding:8px 0;">加载中...</div>').show();
+
+            return self.loadTeamMembers(prevTeam, true).then(function (memberRes) {
+                var rows = memberRes && memberRes.data ? memberRes.data : [];
+                var userExists = false;
+                if (prevUser) {
+                    userExists = rows.some(function (item) {
+                        return $.trim(item.username || '') === prevUser;
+                    });
+                }
+                if (prevUser && userExists) {
+                    var $userLink = getInquiryProductUserLinkByName(prevUser);
+                    if ($userLink && $userLink.length) {
+                        $('#inquiryProductTeamPane .inquiry-product-user-clickable').removeClass('is-active');
+                        $userLink.addClass('is-active');
+                    }
+                    if (prevViewMode === 'user') { return self.loadUserProducts(prevUser); }
+                }
+                self.lastUsername = '';
+                $('#inquiryProductTeamPane .inquiry-product-user-clickable').removeClass('is-active');
+                return self.loadTeamProducts(prevTeam);
+            });
+        });
+    }
+
+    function bindInquiryProductSummaryEvents() {
+        $('#inquiryProductSummaryTimeFilter').off('change.inquiryProductTime').on('change.inquiryProductTime', function () {
+            var val = ($(this).val() || '').trim();
+            clearInquiryProductSummaryMonthShortcutSelection();
+            if (val === 'custom') {
+                $('#inquiryProductSummaryCustomTimeRange').css('display', 'flex');
+            } else {
+                $('#inquiryProductSummaryCustomTimeRange').css('display', 'none');
+            }
+        });
+        $('#inquiryProductSummaryStartDate, #inquiryProductSummaryEndDate')
+            .off('change.inquiryProductDate')
+            .on('change.inquiryProductDate', function () {
+                clearInquiryProductSummaryMonthShortcutSelection();
+            });
+        $('#inquiryProductSummaryFilterBtn').off('click.inquiryProductFilterBtn').on('click.inquiryProductFilterBtn', function () {
+            inquiryProductSummaryApplyTimeFilterAndLinkage();
+        });
+        $('#inquiryProductSummaryResetBtn').off('click.inquiryProductResetBtn').on('click.inquiryProductResetBtn', function () {
+            inquiryProductSummaryResetTimeFilterUI();
+            loadInquiryProductSummaryData();
+        });
+        $('#inquiryProductSummaryExportBtn').off('click.inquiryProductExportBtn').on('click.inquiryProductExportBtn', function () {
+            exportInquiryProductSummaryExcel();
+        });
+    }
+
+    function bindInquiryProductSplitLayoutEvents() {
+        var $layout = $('#inquiryProductSummarySplitLayout');
+        var $left   = $layout.find('.inquiry-product-split-left');
+        var $mid    = $layout.find('.inquiry-product-split-mid');
+        var $right  = $layout.find('.inquiry-product-split-right');
+
+        $('#inquiryProductSplitLeftMaximize').off('click').on('click', function () {
+            if ($left.hasClass('maximized')) {
+                $left.removeClass('maximized').css('width', '30%');
+                $mid.removeClass('hidden').css('width', '35%');
+                $right.removeClass('hidden').css('width', '35%');
+            } else {
+                $left.addClass('maximized').css('width', '100%');
+                $mid.addClass('hidden').css('width', '0');
+                $right.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#inquiryProductSplitLeftCollapse').off('click').on('click', function () {
+            if ($left.hasClass('collapsed')) {
+                $left.removeClass('collapsed').css('width', '30%');
+                $mid.css('width', '35%');
+                $right.css('width', '35%');
+            } else {
+                $left.addClass('collapsed').css('width', '64px');
+                $mid.css('width', 'calc((100% - 64px) / 2)');
+                $right.css('width', 'calc((100% - 64px) / 2)');
+            }
+        });
+        $('#inquiryProductSplitMidMaximize').off('click').on('click', function () {
+            if ($mid.hasClass('maximized')) {
+                $mid.removeClass('maximized').css('width', '35%');
+                $left.removeClass('hidden').css('width', '30%');
+                $right.removeClass('hidden').css('width', '35%');
+            } else {
+                $mid.addClass('maximized').css('width', '100%');
+                $left.addClass('hidden').css('width', '0');
+                $right.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#inquiryProductSplitMidCollapse').off('click').on('click', function () {
+            if ($mid.hasClass('collapsed')) {
+                $mid.removeClass('collapsed').css('width', '35%');
+                $right.css('width', '35%');
+                $left.css('width', '30%');
+            } else {
+                $mid.addClass('collapsed').css('width', '64px');
+                $right.css('width', 'calc(70% - 64px)');
+                $left.css('width', '30%');
+            }
+        });
+        $('#inquiryProductSplitRightMaximize').off('click').on('click', function () {
+            if ($right.hasClass('maximized')) {
+                $right.removeClass('maximized').css('width', '35%');
+                $left.removeClass('hidden').css('width', '30%');
+                $mid.removeClass('hidden').css('width', '35%');
+            } else {
+                $right.addClass('maximized').css('width', '100%');
+                $left.addClass('hidden').css('width', '0');
+                $mid.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#inquiryProductSplitRightCollapse').off('click').on('click', function () {
+            if ($right.hasClass('collapsed')) {
+                $right.removeClass('collapsed').css('width', '35%');
+                $mid.css('width', '35%');
+                $left.css('width', '30%');
+            } else {
+                $right.addClass('collapsed').css('width', '64px');
+                $mid.css('width', 'calc(70% - 64px)');
+                $left.css('width', '30%');
+            }
+        });
+
+        $('#inquiryProductSplitMidRefresh').off('click').on('click', function () {
+            if (!window.InquiryProductSummarySplit.lastTeamName) {
+                layer.msg('请先选择团队', {icon: 2});
+                return;
+            }
+            window.InquiryProductSummarySplit.loadTeamMembers(window.InquiryProductSummarySplit.lastTeamName, true);
+        });
+        $('#inquiryProductSplitRightRefresh').off('click').on('click', function () {
+            var self = window.InquiryProductSummarySplit;
+            if (self.lastViewMode === 'user') {
+                if (!self.lastUsername) { layer.msg('请先选择成员', {icon: 2}); return; }
+                resetInquiryProductDetailSortState();
+                self.userProductsRaw = [];
+                self.loadUserProducts(self.lastUsername);
+                return;
+            }
+            if (self.lastTeamName) {
+                resetInquiryProductDetailSortState();
+                self.userProductsRaw = [];
+                self.loadTeamProducts(self.lastTeamName);
+                return;
+            }
+            layer.msg('请先选择团队', {icon: 2});
+        });
+    }
+
+    function exportInquiryProductSummaryExcel() {
+        var params = getInquiryProductSummaryTimeParams();
+        if (!params) return;
+        var split = window.InquiryProductSummarySplit;
+        var $btn = $('#inquiryProductSummaryExportBtn');
+        if ($btn.data('exporting') === 1) return;
+        var originalHtml = $btn.html();
+        $btn.data('exporting', 1).prop('disabled', true).html('<i class="bi bi-hourglass-split"></i> 导出中');
+        var loadingIndex = layer.msg('正在导出，请稍候...', {icon: 16, shade: 0.2, time: 0});
+        var postData = {
+            timebucket: params.timebucket || '',
+            at_time: params.at_time || '',
+            month_keys: params.month_keys || '',
+            team_name: $.trim(split.lastTeamName || ''),
+            username: $.trim(split.lastUsername || '')
+        };
+        fetch('{:url("DataStatistics/exportInquiryProductSummary")}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest'},
+            body: $.param(postData),
+            credentials: 'same-origin'
+        }).then(function (response) {
+            var contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (contentType.indexOf('application/json') !== -1) {
+                return response.json().then(function (jsonRes) {
+                    throw new Error((jsonRes && jsonRes.msg) ? jsonRes.msg : '导出失败，请稍后重试');
+                });
+            }
+            if (!response.ok) { throw new Error('导出失败，请稍后重试'); }
+            return response.blob().then(function (blob) {
+                return {blob: blob, disposition: response.headers.get('content-disposition') || ''};
+            });
+        }).then(function (result) {
+            if (!result || !result.blob || result.blob.size <= 0) { throw new Error('导出失败：生成文件为空'); }
+            var disposition = result.disposition || '';
+            var fileName = '询盘产品汇总表.xlsx';
+            var match = disposition.match(/filename\*=UTF-8''([^;]+)/i) || disposition.match(/filename="?([^";]+)"?/i);
+            if (match && match[1]) {
+                try { fileName = decodeURIComponent(match[1]); } catch (e) { fileName = match[1]; }
+            }
+            var url = window.URL.createObjectURL(result.blob);
+            var a = document.createElement('a');
+            a.href = url; a.download = fileName; a.style.display = 'none';
+            document.body.appendChild(a); a.click();
+            setTimeout(function () { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
+            layer.msg('导出成功', {icon: 1});
+        }).catch(function (err) {
+            layer.msg((err && err.message) ? err.message : '导出失败，请稍后重试', {icon: 2, time: 4000});
+        }).finally(function () {
+            layer.close(loadingIndex);
+            $btn.data('exporting', 0).prop('disabled', false).html(originalHtml);
+        });
+    }
+
+    $(document).ready(function () {
+        initMonthQuickSelect({
+            key: 'inquiryProductSummary',
+            wrapSelector: '#inquiryProductSummaryMonthShortcutWrap',
+            timeFilterSelector: '#inquiryProductSummaryTimeFilter',
+            startDateSelector: '#inquiryProductSummaryStartDate',
+            endDateSelector: '#inquiryProductSummaryEndDate',
+            customRangeSelector: '#inquiryProductSummaryCustomTimeRange'
+        });
+
+        bindInquiryProductSummaryEvents();
+        bindInquiryProductSplitLayoutEvents();
+        loadInquiryProductSummaryData();
+    });
+}());
+</script>
+{include file="common/foot"/}

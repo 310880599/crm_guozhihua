@@ -1645,7 +1645,7 @@
         
         // 调用后端接口获取业绩数据
         $.ajax({
-            url: '{:url("Operator/getPerformanceData")}',
+            url: '{:url("DataStatistics/getPerformanceData")}',
             type: 'POST',
             data: {
                 timebucket: timebucket,
@@ -2025,7 +2025,7 @@
         var selectedUser = ($('#performanceUserFilter').val() || '').trim();
         submitExportRequest({
             buttonSelector: '#performanceExportBtn',
-            url: '{:url("Operator/exportBusinessPerformance")}',
+            url: '{:url("DataStatistics/exportBusinessPerformance")}',
             data: {
                 timebucket: timeParams.timebucket || '',
                 at_time: timeParams.at_time || '',
@@ -2043,7 +2043,7 @@
         var username = (window.TeamSplit && window.TeamSplit.lastMemberName) ? $.trim(window.TeamSplit.lastMemberName) : '';
         submitExportRequest({
             buttonSelector: '#teamPerformanceExportBtn:visible, #teamPane #teamPerformanceExportBtn:visible',
-            url: '{:url("Operator/exportTeamPerformanceSummary")}',
+            url: '{:url("DataStatistics/exportTeamPerformanceSummary")}',
             data: {
                 timebucket: timeParams.timebucket || '',
                 at_time: timeParams.at_time || '',
@@ -5090,7 +5090,7 @@
         }
 
         $.ajax({
-            url: '{:url("Operator/getTeamPerformanceData")}',
+            url: '{:url("DataStatistics/getTeamPerformanceData")}',
             type: 'POST',
             data: {
                 timebucket: timebucket || '',
@@ -5408,7 +5408,7 @@
 
             // 调用接口获取数据
             $.ajax({
-                url: '{:url("Operator/getTeamMemberPerformanceData")}',
+                url: '{:url("DataStatistics/getTeamMemberPerformanceData")}',
                 type: 'POST',
                 data: {
                     team_name: teamName,
@@ -5623,7 +5623,7 @@
             
             // 调用接口获取数据
             $.ajax({
-                url: '{:url("Operator/getMemberPerformanceDetail")}',
+                url: '{:url("DataStatistics/getMemberPerformanceDetail")}',
                 type: 'POST',
                 data: {
                     username: username,
@@ -6113,7 +6113,7 @@
         });
         
         $.ajax({
-            url: '{:url("Operator/getPerformanceData")}',
+            url: '{:url("DataStatistics/getPerformanceData")}',
             type: 'POST',
             data: {
                 username: username,

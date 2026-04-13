@@ -1,0 +1,919 @@
+{include file="common/head"/}
+<style>
+    html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+    #operationInquirySummarySplitLayout {
+        display: flex;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: #fffdfb;
+        z-index: 1000;
+        --op-inq-accent: #ea580c;
+        --op-inq-accent-mid: #f97316;
+        --op-inq-accent-soft: #fff7ed;
+        --op-inq-accent-text: #9a3412;
+        --op-inq-accent-link: #c2410c;
+        --op-inq-edge: rgba(234, 88, 12, 0.22);
+    }
+    .split-wrap { display: flex; height: 100%; width: 100%; overflow: hidden; }
+    .split-left, .split-mid, .split-right { transition: width 0.3s ease; overflow: hidden; }
+    .split-left.hidden, .split-mid.hidden, .split-right.hidden { display: none !important; }
+    .split-left.collapsed, .split-mid.collapsed, .split-right.collapsed { width: 64px !important; border: none !important; }
+    .split-left.maximized, .split-mid.maximized, .split-right.maximized { width: 100% !important; }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-header {
+        padding: 15px;
+        background: linear-gradient(90deg, var(--op-inq-accent), var(--op-inq-accent-mid));
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-shrink: 0;
+        box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-header .btn.btn-light {
+        background: rgba(255,255,255,0.92);
+        border: 1px solid rgba(255,255,255,0.35);
+        color: #7c2d12;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-header .btn.btn-light:hover {
+        background: #fff; color: #9a3412; filter: none; transform: none;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-split-left,
+    #operationInquirySummarySplitLayout .op-inquiry-split-mid {
+        border-right: 1px solid var(--op-inq-edge) !important;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-filter-bar {
+        padding: 8px 15px 6px;
+        border-bottom: 1px solid var(--op-inq-edge);
+        display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; flex-shrink: 0;
+        background: linear-gradient(180deg, var(--op-inq-accent-soft), #fff);
+    }
+    #operationInquirySummarySplitLayout .split-first-filter-main {
+        width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    }
+    #operationInquirySummarySplitLayout .split-first-time-label { margin: 0; white-space: nowrap; }
+    #operationInquirySummarySplitLayout .split-first-time-filter { width: 150px; }
+    #operationInquirySummarySplitLayout .split-first-filter-btn,
+    #operationInquirySummarySplitLayout .split-first-reset-btn { padding: 0.25rem 0.6rem; line-height: 1.3; }
+    #operationInquirySummarySplitLayout .split-first-month-shortcut { width: 100%; margin-top: 2px; }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-filter {
+        background: linear-gradient(135deg, var(--op-inq-accent), var(--op-inq-accent-mid));
+        border: none; color: #fff;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-filter:hover { filter: brightness(1.05); color: #fff; }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-reset {
+        background: #fff; border: 1px solid var(--op-inq-edge); color: var(--op-inq-accent-text);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-btn-reset:hover {
+        background: var(--op-inq-accent-soft); color: #7c2d12;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-pane-summary {
+        padding: 10px 20px;
+        border-top: 1px solid var(--op-inq-edge);
+        background: linear-gradient(180deg, #fffefb, #fff7ed);
+        flex-shrink: 0; font-weight: 600; color: var(--op-inq-accent-text);
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-empty-state {
+        text-align: center; padding: 60px 20px; color: #78716c;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-empty-icon {
+        font-size: 48px; margin-bottom: 15px; display: block; color: #fb923c; opacity: 0.85;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-empty-text { font-size: 16px; margin: 0; color: #57534e; }
+    #operationInquirySummarySplitLayout .op-inq-source-clickable,
+    #operationInquirySummarySplitLayout .op-inq-staff-clickable {
+        color: var(--op-inq-accent-link) !important; font-weight: 600; text-decoration: none;
+    }
+    #operationInquirySummarySplitLayout .op-inq-source-clickable:hover,
+    #operationInquirySummarySplitLayout .op-inq-staff-clickable:hover {
+        color: var(--op-inq-accent) !important; text-decoration: underline;
+    }
+    #operationInquirySummarySplitLayout .op-inq-source-clickable.is-active,
+    #operationInquirySummarySplitLayout .op-inq-staff-clickable.is-active {
+        background-color: #ffedd5; color: #9a3412 !important; padding: 2px 6px; border-radius: 4px;
+    }
+    #operationInquirySummarySplitLayout .op-inquiry-subhead {
+        padding: 15px 20px;
+        border-bottom: 1px solid var(--op-inq-edge);
+        background: var(--op-inq-accent-soft);
+        color: #44403c;
+    }
+    .month-quick-select { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .month-quick-select-label { margin: 0; white-space: nowrap; font-weight: 600; }
+    .month-quick-select-buttons { display: flex; flex-wrap: nowrap; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; align-items: center; }
+    .month-quick-select-btn {
+        margin: 0; padding: 2px 8px; min-width: auto; border-radius: 4px; font-size: 12px;
+        line-height: 1.2; flex: 0 0 auto; border: 1px solid #dcdfe6; background: #fff; color: #606266; cursor: pointer;
+    }
+    .month-quick-select-btn.active { background: #ea580c; color: #fff; border-color: #ea580c; }
+</style>
+
+<div id="operationInquirySummarySplitLayout">
+    <div class="split-wrap op-inquiry-split-wrap">
+        <div class="split-left op-inquiry-split-left" style="width:30%;background:#fff;display:flex;flex-direction:column;overflow:hidden;">
+            <div class="pane-header op-inquiry-pane-header">
+                <span style="font-size:16px;font-weight:600;">📊 询盘来源汇总</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="opInqSplitLeftMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="opInqSplitLeftCollapse" title="收起/展开"><i class="bi bi-chevron-left"></i></button>
+                    <a class="btn btn-sm btn-light" href="{:url('DataStatistics/index')}" title="返回" style="margin-left:8px;"><i class="bi bi-arrow-left"></i> 返回</a>
+                </div>
+            </div>
+            <div class="op-inquiry-filter-bar split-first-filter-bar" id="operationInquirySummaryTimeFilterBar">
+                <div class="split-first-filter-main">
+                    <label class="split-first-time-label">时间筛选：</label>
+                    <select id="operationInquirySummaryTimeFilter" class="form-select split-first-time-filter">
+                        <option value="today">今天</option>
+                        <option value="yesterday">昨天</option>
+                        <option value="week">本周</option>
+                        <option value="month" selected>本月</option>
+                        <option value="year">本年</option>
+                        <option value="custom">自定义</option>
+                    </select>
+                    <div id="operationInquirySummaryCustomTimeRange" style="display:none;gap:8px;align-items:center;">
+                        <input type="date" id="operationInquirySummaryStartDate" class="form-control" style="width:150px;">
+                        <span>至</span>
+                        <input type="date" id="operationInquirySummaryEndDate" class="form-control" style="width:150px;">
+                    </div>
+                    <button type="button" class="btn btn-sm op-inquiry-btn-filter split-first-filter-btn" id="operationInquirySummaryFilterBtn">
+                        <i class="bi bi-search"></i> 筛选
+                    </button>
+                    <button type="button" class="btn btn-sm op-inquiry-btn-reset split-first-reset-btn" id="operationInquirySummaryResetBtn">
+                        <i class="bi bi-arrow-counterclockwise"></i> 重置
+                    </button>
+                    <button type="button" class="btn btn-success btn-sm" id="operationInquirySummaryExportBtn">
+                        <i class="bi bi-download"></i> 导出
+                    </button>
+                </div>
+                <div id="operationInquirySummaryMonthShortcutWrap" class="split-first-month-shortcut"></div>
+            </div>
+            <div id="opInquirySourcePane" style="flex:1;overflow-y:auto;padding:12px 20px 16px;"></div>
+            <div id="opInquirySourcePaneSummary" class="op-inquiry-pane-summary">合计：总询盘数 0</div>
+        </div>
+
+        <div class="split-mid op-inquiry-split-mid" style="width:35%;background:#fff;display:flex;flex-direction:column;overflow:hidden;">
+            <div class="pane-header op-inquiry-pane-header">
+                <span style="font-size:16px;font-weight:600;" id="opInquiryStaffPaneTitle">👤 运营人员询盘汇总</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="opInqSplitMidRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
+                    <button class="btn btn-sm btn-light" id="opInqSplitMidMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="opInqSplitMidCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+            <div id="opInquiryStaffPane" style="flex:1;overflow-y:auto;padding:20px;">
+                <div class="op-inquiry-empty-state">
+                    <i class="bi bi-inbox op-inquiry-empty-icon"></i>
+                    <p class="op-inquiry-empty-text">请选择询盘来源查看运营人员汇总</p>
+                </div>
+            </div>
+            <div id="opInquiryStaffPaneSummary" class="op-inquiry-pane-summary">合计：总询盘数 0</div>
+        </div>
+
+        <div class="split-right op-inquiry-split-right" style="width:35%;background:#fff;display:flex;flex-direction:column;overflow:hidden;">
+            <div class="pane-header op-inquiry-pane-header">
+                <span style="font-size:16px;font-weight:600;" id="opInquiryPortPaneTitle">🔌 运营端口询盘明细</span>
+                <div>
+                    <button class="btn btn-sm btn-light" id="opInqSplitRightRefresh" title="刷新"><i class="bi bi-arrow-repeat"></i> 刷新</button>
+                    <button class="btn btn-sm btn-light" id="opInqSplitRightMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
+                    <button class="btn btn-sm btn-light" id="opInqSplitRightCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+            <div id="opInquiryPortPane" style="flex:1;overflow-y:auto;padding:20px;">
+                <div class="op-inquiry-empty-state">
+                    <i class="bi bi-inbox op-inquiry-empty-icon"></i>
+                    <p class="op-inquiry-empty-text">请点击运营人员查看端口明细</p>
+                </div>
+            </div>
+            <div id="opInquiryPortPaneSummary" class="op-inquiry-pane-summary">合计：总询盘数 0</div>
+        </div>
+    </div>
+</div>
+
+<template id="monthQuickSelectTemplate">
+    <div class="month-quick-select">
+        <label class="month-quick-select-label">月份快捷：</label>
+        <div class="month-quick-select-buttons">
+            <button type="button" class="month-quick-select-btn" data-month="1">1</button>
+            <button type="button" class="month-quick-select-btn" data-month="2">2</button>
+            <button type="button" class="month-quick-select-btn" data-month="3">3</button>
+            <button type="button" class="month-quick-select-btn" data-month="4">4</button>
+            <button type="button" class="month-quick-select-btn" data-month="5">5</button>
+            <button type="button" class="month-quick-select-btn" data-month="6">6</button>
+            <button type="button" class="month-quick-select-btn" data-month="7">7</button>
+            <button type="button" class="month-quick-select-btn" data-month="8">8</button>
+            <button type="button" class="month-quick-select-btn" data-month="9">9</button>
+            <button type="button" class="month-quick-select-btn" data-month="10">10</button>
+            <button type="button" class="month-quick-select-btn" data-month="11">11</button>
+            <button type="button" class="month-quick-select-btn" data-month="12">12</button>
+        </div>
+    </div>
+</template>
+
+<script>
+(function () {
+    // ---- 月份快捷选择 ----
+    var monthQuickStateMap = {};
+
+    function renderMonthQuickSelect($wrap) {
+        if (!$wrap || !$wrap.length) return;
+        if ($wrap.find('.month-quick-select').length) return;
+        var tpl = $('#monthQuickSelectTemplate').html() || '';
+        if (tpl) { $wrap.html(tpl); }
+    }
+
+    function initMonthQuickSelect(opts) {
+        var options = opts || {};
+        var key = options.key;
+        var wrapSelector = options.wrapSelector;
+        if (!key || !wrapSelector) return;
+        if (!monthQuickStateMap[key]) { monthQuickStateMap[key] = {selectedMonths: []}; }
+        $(wrapSelector).each(function () { renderMonthQuickSelect($(this)); });
+        $(document)
+            .off('click.monthQuickSelect.' + key, wrapSelector + ' .month-quick-select-btn')
+            .on('click.monthQuickSelect.' + key, wrapSelector + ' .month-quick-select-btn', function () {
+                var state = monthQuickStateMap[key] || {selectedMonths: []};
+                var month = parseInt(($(this).attr('data-month') || '').trim(), 10);
+                if (isNaN(month) || month < 1 || month > 12) return;
+                var idx = state.selectedMonths.indexOf(month);
+                if (idx > -1) { state.selectedMonths.splice(idx, 1); } else { state.selectedMonths.push(month); }
+                state.selectedMonths.sort(function (a, b) { return a - b; });
+                monthQuickStateMap[key] = state;
+                syncMonthQuickSelectState(key, wrapSelector);
+                if (state.selectedMonths.length) {
+                    if (options.startDateSelector) $(options.startDateSelector).val('');
+                    if (options.endDateSelector) $(options.endDateSelector).val('');
+                    if (options.customRangeSelector) $(options.customRangeSelector).css('display', 'none');
+                    if (options.timeFilterSelector && ($(options.timeFilterSelector).val() || '').trim() === 'custom') {
+                        $(options.timeFilterSelector).val('month');
+                    }
+                }
+            });
+    }
+
+    function syncMonthQuickSelectState(key, wrapSelector) {
+        var state = monthQuickStateMap[key] || {selectedMonths: []};
+        var selectedMap = {};
+        $.each(state.selectedMonths, function (_, month) { selectedMap[month] = true; });
+        $(wrapSelector + ' .month-quick-select-btn').each(function () {
+            var month = parseInt(($(this).attr('data-month') || '').trim(), 10);
+            $(this).toggleClass('active', !!selectedMap[month]);
+        });
+    }
+
+    function clearMonthQuickSelect(key, wrapSelector) {
+        if (!monthQuickStateMap[key]) { monthQuickStateMap[key] = {selectedMonths: []}; }
+        monthQuickStateMap[key].selectedMonths = [];
+        syncMonthQuickSelectState(key, wrapSelector);
+    }
+
+    function getMonthKeys(key) {
+        var state = monthQuickStateMap[key] || {selectedMonths: []};
+        var selectedMonths = (state.selectedMonths || []).slice();
+        if (!selectedMonths.length) return '';
+        var year = new Date().getFullYear();
+        return selectedMonths.map(function (m) {
+            return year + '-' + (m < 10 ? '0' + m : String(m));
+        }).join(',');
+    }
+
+    // ---- 时间参数 ----
+    function getOperationInquirySummaryTimeParams() {
+        var timeFilter = ($('#operationInquirySummaryTimeFilter').val() || 'month').trim();
+        var month_keys = getMonthKeys('operationInquirySummary');
+        if (month_keys) {
+            return {timebucket: '', at_time: '', month_keys: month_keys};
+        }
+        if (timeFilter === 'custom') {
+            var startDate = ($('#operationInquirySummaryStartDate').val() || '').trim();
+            var endDate = ($('#operationInquirySummaryEndDate').val() || '').trim();
+            if (startDate && endDate) {
+                return {timebucket: '', at_time: startDate + ',' + endDate, month_keys: ''};
+            } else {
+                layer.msg('请选择开始日期和结束日期', {icon: 2});
+                return null;
+            }
+        }
+        return {timebucket: timeFilter || 'month', at_time: '', month_keys: ''};
+    }
+
+    // ---- 工具函数 ----
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function isOpInquiryUnknownSource(inquiryId, inquiryName) {
+        var iid = parseInt(inquiryId, 10);
+        if (isNaN(iid)) iid = 0;
+        return iid <= 0 || (inquiryName || '').trim() === '未知来源';
+    }
+
+    function updateOpInquiryPaneSummary(selector, summary) {
+        var total = summary && summary.total_count ? summary.total_count : 0;
+        $(selector).html('合计：总询盘数 ' + total);
+    }
+
+    function renderOpInquiryEmpty($container, text) {
+        $container.html('<div class="op-inquiry-empty-state"><i class="bi bi-inbox op-inquiry-empty-icon"></i><p class="op-inquiry-empty-text">' + escapeHtml(text) + '</p></div>');
+    }
+
+    function buildOpInquiryAjaxErrorMessage(xhr, status, fallbackMsg) {
+        if (status === 'timeout') return '请求超时（30秒），请稍后重试';
+        var jsonMsg = xhr && xhr.responseJSON && xhr.responseJSON.msg ? String(xhr.responseJSON.msg).trim() : '';
+        if (jsonMsg) return jsonMsg;
+        var textMsg = xhr && xhr.responseText ? String(xhr.responseText).replace(/\s+/g, ' ').trim() : '';
+        if (textMsg) return (fallbackMsg || '请求失败') + '：' + textMsg.substr(0, 160);
+        return fallbackMsg || '请求失败，请稍后重试';
+    }
+
+    // ---- 渲染函数 ----
+    function renderOpInquirySourcePane(data) {
+        var html = '<div style="background:#fff;border-radius:8px;overflow:hidden;"><div style="padding:20px;overflow-x:auto;">'
+            + '<table class="wukong-table" style="width:100%;"><thead><tr>'
+            + '<th style="width:80px;">排名</th><th>询盘来源</th><th style="text-align:right;">询盘数量</th>'
+            + '</tr></thead><tbody>';
+        if (data && data.length) {
+            $.each(data, function (i, item) {
+                var iid = parseInt(item.inquiry_id, 10);
+                if (isNaN(iid)) iid = 0;
+                var name = item.inquiry_name != null ? String(item.inquiry_name) : '未知来源';
+                html += '<tr>'
+                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td><a href="javascript:void(0);" class="op-inq-source-clickable" data-inquiry-id="' + iid + '">' + escapeHtml(name) + '</a></td>'
+                    + '<td style="text-align:right;">' + (item.yw_num || 0) + '</td>'
+                    + '</tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">暂无数据</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#opInquirySourcePane').html(html);
+    }
+
+    function renderOpInquiryStaffPane(inquiryId, inquiryName, data) {
+        var html = '<div style="background:#fff;border-radius:8px;overflow:hidden;">'
+            + '<div class="op-inquiry-subhead">询盘来源：<strong>' + escapeHtml(inquiryName || '') + '</strong></div>'
+            + '<div style="padding:20px;overflow-x:auto;">'
+            + '<table class="wukong-table" style="width:100%;"><thead><tr>'
+            + '<th style="width:80px;">排名</th><th>运营人员</th><th style="text-align:right;">询盘数量</th>'
+            + '</tr></thead><tbody>';
+        if (data && data.length) {
+            $.each(data, function (i, item) {
+                var username = (item.username || '').trim();
+                html += '<tr>'
+                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td><a href="javascript:void(0);" class="op-inq-staff-clickable" data-username="' + encodeURIComponent(username) + '">' + escapeHtml(username) + '</a></td>'
+                    + '<td style="text-align:right;">' + (item.yw_num || 0) + '</td>'
+                    + '</tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">该来源下暂无运营人员，已在右侧直接展示端口明细</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#opInquiryStaffPane').html(html);
+    }
+
+    function renderOpInquiryPortPane(username, data, inquiryNameForSource) {
+        var uname = (username || '').trim();
+        var isSourceOnly = !uname;
+        var subheadLine = isSourceOnly
+            ? ('询盘来源：<strong>' + escapeHtml(inquiryNameForSource || '') + '</strong>（按来源统计全部端口）')
+            : ('运营人员：<strong>' + escapeHtml(uname) + '</strong>');
+        var html = '<div style="background:#fff;border-radius:8px;overflow:hidden;">'
+            + '<div class="op-inquiry-subhead">' + subheadLine + '</div>'
+            + '<div style="padding:20px;overflow-x:auto;">'
+            + '<table class="wukong-table" style="width:100%;"><thead><tr>'
+            + '<th style="width:80px;">排名</th><th>运营端口</th><th style="text-align:right;">询盘数量</th>'
+            + '</tr></thead><tbody>';
+        if (data && data.length) {
+            $.each(data, function (i, item) {
+                html += '<tr>'
+                    + '<td>' + (item.rank || (i + 1)) + '</td>'
+                    + '<td>' + escapeHtml(item.port_name || '') + '</td>'
+                    + '<td style="text-align:right;">' + (item.yw_num || 0) + '</td>'
+                    + '</tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">暂无端口配置或暂无匹配询盘</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#opInquiryPortPane').html(html);
+    }
+
+    function renderOpInquiryUnknownDetailPane(payload, inquiryNameForSource) {
+        var rows = payload && payload.data ? payload.data : [];
+        var reasonStats = payload && payload.reason_stats ? payload.reason_stats : [];
+        var summary = payload && payload.summary ? payload.summary : {};
+        var total = parseInt((summary && summary.total_count) || 0, 10);
+        if (isNaN(total)) total = 0;
+
+        var statTexts = [];
+        if (reasonStats && reasonStats.length) {
+            $.each(reasonStats, function (_, item) {
+                statTexts.push((item.reason_type || '其他异常') + '：' + (item.count || 0));
+            });
+        }
+
+        var html = '<div style="background:#fff;border-radius:8px;overflow:hidden;">'
+            + '<div class="op-inquiry-subhead">'
+            + '询盘来源：<strong>' + escapeHtml(inquiryNameForSource || '未知来源') + '</strong>'
+            + '；当前未知来源总数：<strong>' + total + '</strong>'
+            + (statTexts.length ? ('；其中 ' + escapeHtml(statTexts.join('，'))) : '')
+            + '</div>'
+            + '<div style="padding:20px;overflow-x:auto;">'
+            + '<table class="wukong-table" style="width:100%;"><thead><tr>'
+            + '<th style="width:80px;">排名</th><th>异常原因</th><th style="text-align:right;">数量</th>'
+            + '</tr></thead><tbody>';
+
+        var rankedRows = [];
+        $.each(rows || [], function (_, item) {
+            var cnt = parseInt(item.count, 10);
+            if (!isNaN(cnt) && cnt > 0) { rankedRows.push(item); }
+        });
+        rankedRows.sort(function (a, b) { return (parseInt(b.count, 10) || 0) - (parseInt(a.count, 10) || 0); });
+
+        if (rankedRows.length) {
+            $.each(rankedRows, function (i, item) {
+                html += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(item.reason_type || '') + '</td><td style="text-align:right;">' + (item.count || 0) + '</td></tr>';
+            });
+        } else {
+            html += '<tr><td colspan="3" class="text-center text-muted">该时间范围内暂无未知来源异常数据</td></tr>';
+        }
+        html += '</tbody></table></div></div>';
+        $('#opInquiryPortPane').html(html);
+    }
+
+    // ---- 核心 split 对象 ----
+    var OperatorInquirySummarySplit = {
+        lastInquiryId: null,
+        lastInquiryName: '',
+        lastUsername: '',
+        lastTimebucket: '',
+        lastAtTime: '',
+        lastMonthKeys: '',
+
+        loadSourceSummary: function () {
+            var self = this;
+            var params = getOperationInquirySummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            return $.ajax({
+                url: '{:url("DataStatistics/getOperationInquirySummarySourceData")}',
+                type: 'POST', dataType: 'json', timeout: 30000, data: params
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderOpInquirySourcePane(res.data || []);
+                    updateOpInquiryPaneSummary('#opInquirySourcePaneSummary', res.summary || {});
+                    self.bindSourceClick();
+                } else {
+                    var bizMsg = res.msg || '获取来源汇总失败';
+                    renderOpInquiryEmpty($('#opInquirySourcePane'), bizMsg);
+                    updateOpInquiryPaneSummary('#opInquirySourcePaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildOpInquiryAjaxErrorMessage(xhr, status, '获取来源汇总失败');
+                renderOpInquiryEmpty($('#opInquirySourcePane'), msg);
+                updateOpInquiryPaneSummary('#opInquirySourcePaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadStaffSummary: function (inquiryId) {
+            var self = this;
+            var params = getOperationInquirySummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastInquiryId = inquiryId;
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            var name = self.lastInquiryName || '';
+            $('#opInquiryStaffPaneTitle').text('👤 ' + (name ? (name + ' - ') : '') + '运营人员询盘汇总');
+            return $.ajax({
+                url: '{:url("DataStatistics/getOperationInquirySummaryStaffData")}',
+                type: 'POST', dataType: 'json', timeout: 30000,
+                data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''}
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    var rows = res.data || [];
+                    if (rows.length === 0) {
+                        if (isOpInquiryUnknownSource(inquiryId, name)) {
+                            renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧展示未知来源异常明细');
+                        } else {
+                            renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧直接展示端口明细');
+                        }
+                        updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', {total_count: 0});
+                        self.lastUsername = '';
+                        self.bindStaffClick();
+                        return self.loadPortSummary(inquiryId, '');
+                    }
+                    renderOpInquiryStaffPane(inquiryId, name, rows);
+                    updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', res.summary || {});
+                    self.bindStaffClick();
+                } else {
+                    var bizMsg = res.msg || '获取运营人员汇总失败';
+                    renderOpInquiryEmpty($('#opInquiryStaffPane'), bizMsg);
+                    updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildOpInquiryAjaxErrorMessage(xhr, status, '获取运营人员汇总失败');
+                renderOpInquiryEmpty($('#opInquiryStaffPane'), msg);
+                updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadUnknownSourceDetail: function (inquiryId) {
+            var self = this;
+            var params = getOperationInquirySummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            var src = (self.lastInquiryName || '').trim() || '未知来源';
+            $('#opInquiryPortPaneTitle').text('🔎 ' + src + ' - 异常明细');
+            return $.ajax({
+                url: '{:url("DataStatistics/getOperationInquiryUnknownSourceDetailData")}',
+                type: 'POST', dataType: 'json', timeout: 30000,
+                data: {inquiry_id: inquiryId, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''}
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderOpInquiryUnknownDetailPane(res || {}, self.lastInquiryName || '未知来源');
+                    updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', res.summary || {});
+                } else {
+                    var bizMsg = res.msg || '获取未知来源异常明细失败';
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), bizMsg);
+                    updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildOpInquiryAjaxErrorMessage(xhr, status, '获取未知来源异常明细失败');
+                renderOpInquiryEmpty($('#opInquiryPortPane'), msg);
+                updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        loadPortSummary: function (inquiryId, username) {
+            var self = this;
+            var params = getOperationInquirySummaryTimeParams();
+            if (!params) return $.Deferred().resolve(null).promise();
+            var uname = (username === undefined || username === null) ? '' : String(username).trim();
+            self.lastUsername = uname;
+            self.lastTimebucket = params.timebucket;
+            self.lastAtTime = params.at_time;
+            self.lastMonthKeys = params.month_keys || '';
+            if (isOpInquiryUnknownSource(inquiryId, self.lastInquiryName)) {
+                return self.loadUnknownSourceDetail(inquiryId);
+            }
+            if (uname) {
+                $('#opInquiryPortPaneTitle').text('🔌 ' + uname + ' - 运营端口询盘明细');
+            } else {
+                var src = (self.lastInquiryName || '').trim() || '该来源';
+                $('#opInquiryPortPaneTitle').text('🔌 ' + src + ' - 运营端口询盘明细');
+            }
+            return $.ajax({
+                url: '{:url("DataStatistics/getOperationInquirySummaryPortData")}',
+                type: 'POST', dataType: 'json', timeout: 30000,
+                data: {inquiry_id: inquiryId, username: uname, timebucket: params.timebucket, at_time: params.at_time, month_keys: params.month_keys || ''}
+            }).then(function (res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderOpInquiryPortPane(uname, res.data || [], self.lastInquiryName);
+                    updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', res.summary || {});
+                } else {
+                    var bizMsg = res.msg || '获取端口汇总失败';
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), bizMsg);
+                    updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                    layer.msg(bizMsg, {icon: 2});
+                }
+                return res;
+            }, function (xhr, status) {
+                var msg = buildOpInquiryAjaxErrorMessage(xhr, status, '获取端口汇总失败');
+                renderOpInquiryEmpty($('#opInquiryPortPane'), msg);
+                updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                layer.msg(msg, {icon: 2, time: 4000});
+                return null;
+            });
+        },
+
+        bindSourceClick: function () {
+            var self = this;
+            $('#opInquirySourcePane').off('click', '.op-inq-source-clickable').on('click', '.op-inq-source-clickable', function () {
+                $('#opInquirySourcePane .op-inq-source-clickable').removeClass('is-active');
+                $(this).addClass('is-active');
+                var iid = parseInt($(this).attr('data-inquiry-id'), 10);
+                if (isNaN(iid)) iid = 0;
+                self.lastInquiryName = ($(this).text() || '').trim();
+                self.lastUsername = '';
+                self.loadStaffSummary(iid);
+                if (isOpInquiryUnknownSource(iid, self.lastInquiryName)) {
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), '正在加载未知来源异常明细...');
+                } else {
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), '请点击运营人员查看端口明细');
+                }
+                updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+            });
+        },
+
+        bindStaffClick: function () {
+            var self = this;
+            $('#opInquiryStaffPane').off('click', '.op-inq-staff-clickable').on('click', '.op-inq-staff-clickable', function () {
+                $('#opInquiryStaffPane .op-inq-staff-clickable').removeClass('is-active');
+                $(this).addClass('is-active');
+                var raw = $(this).attr('data-username') || $(this).text().trim();
+                var username = raw;
+                try { username = decodeURIComponent(raw); } catch (e) {}
+                username = (username || '').trim();
+                if (isOpInquiryUnknownSource(self.lastInquiryId, self.lastInquiryName)) {
+                    self.loadUnknownSourceDetail(self.lastInquiryId);
+                } else {
+                    self.loadPortSummary(self.lastInquiryId, username);
+                }
+            });
+        }
+    };
+
+    // ---- 布局控制 ----
+    function bindSplitLayoutEvents() {
+        var $layout = $('#operationInquirySummarySplitLayout');
+        var $left = $layout.find('.op-inquiry-split-left');
+        var $mid = $layout.find('.op-inquiry-split-mid');
+        var $right = $layout.find('.op-inquiry-split-right');
+
+        $('#opInqSplitLeftMaximize').off('click').on('click', function () {
+            if ($left.hasClass('maximized')) {
+                $left.removeClass('maximized').css('width', '30%');
+                $mid.removeClass('hidden').css('width', '35%');
+                $right.removeClass('hidden').css('width', '35%');
+            } else {
+                $left.addClass('maximized').css('width', '100%');
+                $mid.addClass('hidden').css('width', '0');
+                $right.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#opInqSplitLeftCollapse').off('click').on('click', function () {
+            if ($left.hasClass('collapsed')) {
+                $left.removeClass('collapsed').css('width', '30%');
+                $mid.css('width', '35%');
+                $right.css('width', '35%');
+            } else {
+                $left.addClass('collapsed').css('width', '64px');
+                $mid.css('width', 'calc((100% - 64px) / 2)');
+                $right.css('width', 'calc((100% - 64px) / 2)');
+            }
+        });
+        $('#opInqSplitMidMaximize').off('click').on('click', function () {
+            if ($mid.hasClass('maximized')) {
+                $mid.removeClass('maximized').css('width', '35%');
+                $left.removeClass('hidden').css('width', '30%');
+                $right.removeClass('hidden').css('width', '35%');
+            } else {
+                $mid.addClass('maximized').css('width', '100%');
+                $left.addClass('hidden').css('width', '0');
+                $right.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#opInqSplitMidCollapse').off('click').on('click', function () {
+            if ($mid.hasClass('collapsed')) {
+                $mid.removeClass('collapsed').css('width', '35%');
+                $right.css('width', '35%');
+                $left.css('width', '30%');
+            } else {
+                $mid.addClass('collapsed').css('width', '64px');
+                $right.css('width', 'calc(70% - 64px)');
+                $left.css('width', '30%');
+            }
+        });
+        $('#opInqSplitRightMaximize').off('click').on('click', function () {
+            if ($right.hasClass('maximized')) {
+                $right.removeClass('maximized').css('width', '35%');
+                $left.removeClass('hidden').css('width', '30%');
+                $mid.removeClass('hidden').css('width', '35%');
+            } else {
+                $right.addClass('maximized').css('width', '100%');
+                $left.addClass('hidden').css('width', '0');
+                $mid.addClass('hidden').css('width', '0');
+            }
+        });
+        $('#opInqSplitRightCollapse').off('click').on('click', function () {
+            if ($right.hasClass('collapsed')) {
+                $right.removeClass('collapsed').css('width', '35%');
+                $mid.css('width', '35%');
+                $left.css('width', '30%');
+            } else {
+                $right.addClass('collapsed').css('width', '64px');
+                $mid.css('width', 'calc(70% - 64px)');
+                $left.css('width', '30%');
+            }
+        });
+        $('#opInqSplitMidRefresh').off('click').on('click', function () {
+            if (OperatorInquirySummarySplit.lastInquiryId === null || OperatorInquirySummarySplit.lastInquiryId === undefined) {
+                layer.msg('请先选择询盘来源', {icon: 2});
+                return;
+            }
+            OperatorInquirySummarySplit.loadStaffSummary(OperatorInquirySummarySplit.lastInquiryId);
+        });
+        $('#opInqSplitRightRefresh').off('click').on('click', function () {
+            if (OperatorInquirySummarySplit.lastInquiryId === null || OperatorInquirySummarySplit.lastInquiryId === undefined) {
+                layer.msg('请先选择询盘来源', {icon: 2});
+                return;
+            }
+            OperatorInquirySummarySplit.loadPortSummary(
+                OperatorInquirySummarySplit.lastInquiryId,
+                OperatorInquirySummarySplit.lastUsername || ''
+            );
+        });
+    }
+
+    // ---- 时间筛选事件 ----
+    function bindTimeFilterEvents() {
+        $('#operationInquirySummaryTimeFilter').off('change').on('change', function () {
+            var val = ($(this).val() || '').trim();
+            clearMonthQuickSelect('operationInquirySummary', '#operationInquirySummaryMonthShortcutWrap');
+            if (val === 'custom') {
+                $('#operationInquirySummaryCustomTimeRange').css('display', 'flex');
+            } else {
+                $('#operationInquirySummaryCustomTimeRange').css('display', 'none');
+            }
+        });
+        $('#operationInquirySummaryStartDate, #operationInquirySummaryEndDate').off('change').on('change', function () {
+            clearMonthQuickSelect('operationInquirySummary', '#operationInquirySummaryMonthShortcutWrap');
+        });
+        $('#operationInquirySummaryFilterBtn').off('click').on('click', function () {
+            applyFilterAndLinkage();
+        });
+        $('#operationInquirySummaryResetBtn').off('click').on('click', function () {
+            resetFilterUI();
+            OperatorInquirySummarySplit.loadSourceSummary();
+        });
+        $('#operationInquirySummaryExportBtn').off('click').on('click', function () {
+            exportExcel();
+        });
+    }
+
+    function applyFilterAndLinkage() {
+        var self = OperatorInquirySummarySplit;
+        var prevIid = self.lastInquiryId;
+        var prevUser = (self.lastUsername || '').trim();
+        var timeParams = getOperationInquirySummaryTimeParams();
+        if (!timeParams) return;
+        return self.loadSourceSummary().then(function (srcRes) {
+            var exists = false;
+            if (prevIid !== null && prevIid !== undefined) {
+                exists = srcRes && Array.isArray(srcRes.data) && srcRes.data.some(function (item) {
+                    return parseInt(item.inquiry_id, 10) === parseInt(prevIid, 10);
+                });
+            }
+            if (prevIid === null || prevIid === undefined || !exists) {
+                self.lastInquiryId = null;
+                self.lastUsername = '';
+                renderOpInquiryEmpty($('#opInquiryStaffPane'), '请选择询盘来源查看运营人员汇总');
+                renderOpInquiryEmpty($('#opInquiryPortPane'), '请点击运营人员查看端口明细');
+                updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', null);
+                updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                $('#opInquirySourcePane .op-inq-source-clickable').removeClass('is-active');
+                return null;
+            }
+            return self.loadStaffSummary(prevIid).then(function (staffRes) {
+                if (!staffRes || (staffRes.code !== 0 && staffRes.code !== 200)) { return null; }
+                var rows = staffRes.data || [];
+                if (rows.length === 0) {
+                    self.lastUsername = '';
+                    return self.loadPortSummary(prevIid, '');
+                }
+                var userOk = false;
+                if (prevUser) {
+                    userOk = rows.some(function (item) { return $.trim(item.username || '') === prevUser; });
+                }
+                if (prevUser && userOk) {
+                    return self.loadPortSummary(prevIid, prevUser);
+                }
+                self.lastUsername = '';
+                renderOpInquiryEmpty($('#opInquiryPortPane'), '请点击运营人员查看端口明细');
+                updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+                return null;
+            });
+        });
+    }
+
+    function resetFilterUI() {
+        $('#operationInquirySummaryTimeFilter').val('month');
+        $('#operationInquirySummaryStartDate').val('');
+        $('#operationInquirySummaryEndDate').val('');
+        $('#operationInquirySummaryCustomTimeRange').css('display', 'none');
+        clearMonthQuickSelect('operationInquirySummary', '#operationInquirySummaryMonthShortcutWrap');
+        OperatorInquirySummarySplit.lastTimebucket = '';
+        OperatorInquirySummarySplit.lastAtTime = '';
+        OperatorInquirySummarySplit.lastMonthKeys = '';
+        OperatorInquirySummarySplit.lastInquiryId = null;
+        OperatorInquirySummarySplit.lastUsername = '';
+        $('#opInquiryStaffPaneTitle').text('👤 运营人员询盘汇总');
+        $('#opInquiryPortPaneTitle').text('🔌 运营端口询盘明细');
+        renderOpInquiryEmpty($('#opInquiryStaffPane'), '请选择询盘来源查看运营人员汇总');
+        renderOpInquiryEmpty($('#opInquiryPortPane'), '请点击运营人员查看端口明细');
+        updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', null);
+        updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', null);
+        $('#opInquirySourcePane .op-inq-source-clickable').removeClass('is-active');
+        $('#opInquiryStaffPane .op-inq-staff-clickable').removeClass('is-active');
+    }
+
+    // ---- 导出 ----
+    function buildExportFallbackName(prefix) {
+        var now = new Date();
+        var pad = function (num) { num = parseInt(num, 10) || 0; return num < 10 ? '0' + num : String(num); };
+        var ts = now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + '_' + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+        return (prefix || '导出') + '_' + ts + '.xlsx';
+    }
+
+    function parseDownloadFilenameFromDisposition(disposition, fallback) {
+        if (!disposition) return fallback;
+        var match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (match) {
+            try { return decodeURIComponent(match[1]); } catch (e) {}
+        }
+        match = disposition.match(/filename="?([^";]+)"?/i);
+        if (match) { return match[1].trim(); }
+        return fallback;
+    }
+
+    function triggerDownload(blob, fileName) {
+        var url = window.URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = fileName; a.style.display = 'none';
+        document.body.appendChild(a); a.click();
+        setTimeout(function () { document.body.removeChild(a); window.URL.revokeObjectURL(url); }, 100);
+    }
+
+    function exportExcel() {
+        var timeParams = getOperationInquirySummaryTimeParams();
+        if (!timeParams) return;
+        var split = OperatorInquirySummarySplit;
+        var inquiryId = parseInt(split.lastInquiryId, 10);
+        if (isNaN(inquiryId)) inquiryId = 0;
+        var $btn = $('#operationInquirySummaryExportBtn');
+        if ($btn.data('exporting') === 1) return;
+        var originalHtml = $btn.html();
+        $btn.data('exporting', 1).prop('disabled', true).html('<i class="bi bi-hourglass-split"></i> 导出中');
+        var loadingIndex = layer.msg('正在导出，请稍候...', {icon: 16, shade: 0.2, time: 0});
+        var fallbackName = buildExportFallbackName('运营询盘汇总表');
+        var postData = {
+            timebucket: timeParams.timebucket || '',
+            at_time: timeParams.at_time || '',
+            month_keys: timeParams.month_keys || '',
+            inquiry_id: inquiryId,
+            username: $.trim(split.lastUsername || '')
+        };
+        fetch('{:url("DataStatistics/exportOperationInquirySummary")}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest'},
+            body: $.param(postData),
+            credentials: 'same-origin'
+        }).then(function (response) {
+            var contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (contentType.indexOf('application/json') !== -1) {
+                return response.json().then(function (jsonRes) {
+                    throw new Error((jsonRes && jsonRes.msg) ? jsonRes.msg : '导出失败，请稍后重试');
+                });
+            }
+            if (!response.ok) { throw new Error('导出失败，请稍后重试'); }
+            return response.blob().then(function (blob) {
+                return {blob: blob, disposition: response.headers.get('content-disposition') || ''};
+            });
+        }).then(function (result) {
+            if (!result || !result.blob || result.blob.size <= 0) { throw new Error('导出失败：生成文件为空'); }
+            var fileName = parseDownloadFilenameFromDisposition(result.disposition, fallbackName);
+            triggerDownload(result.blob, fileName);
+            layer.msg('导出成功', {icon: 1});
+        }).catch(function (err) {
+            layer.msg((err && err.message) ? err.message : '导出失败，请稍后重试', {icon: 2, time: 4000});
+        }).finally(function () {
+            layer.close(loadingIndex);
+            $btn.data('exporting', 0).prop('disabled', false).html(originalHtml);
+        });
+    }
+
+    // ---- 初始化 ----
+    $(function () {
+        initMonthQuickSelect({
+            key: 'operationInquirySummary',
+            wrapSelector: '#operationInquirySummaryMonthShortcutWrap',
+            startDateSelector: '#operationInquirySummaryStartDate',
+            endDateSelector: '#operationInquirySummaryEndDate',
+            customRangeSelector: '#operationInquirySummaryCustomTimeRange',
+            timeFilterSelector: '#operationInquirySummaryTimeFilter'
+        });
+        bindTimeFilterEvents();
+        bindSplitLayoutEvents();
+        OperatorInquirySummarySplit.loadSourceSummary();
+    });
+}());
+</script>
+{include file="common/foot"/}

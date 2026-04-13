@@ -1,0 +1,13 @@
+{include file="common/head"/}
+<div style="padding:30px;">
+    <h3>数据统计管理</h3>
+    <div style="margin-top:20px; display:flex; flex-wrap:wrap; gap:12px;">
+        <button type="button" class="btn btn-primary wukong-btn-per-user" onclick="window.location.href='{:url('DataStatistics/performanceTable')}'">查看业务人员业绩表</button>
+        <button type="button" class="btn btn-primary wukong-btn-per-team" onclick="window.location.href='{:url('DataStatistics/teamPerformanceTable')}'">查看团队业绩表</button>
+        <button type="button" class="btn btn-primary wukong-btn-inquiry-summary" onclick="window.location.href='{:url('DataStatistics/inquirySummaryTable')}'">查看业务询盘汇总表</button>
+        <button type="button" class="btn btn-primary wukong-btn-operation-inquiry-summary" onclick="window.location.href='{:url('DataStatistics/operationInquirySummaryTable')}'">查看运营询盘汇总表</button>
+        <button type="button" class="btn btn-primary wukong-btn-order-product-summary" onclick="window.location.href='{:url('DataStatistics/orderProductSummaryTable')}'">查看订单产品汇总表</button>
+        <button type="button" class="btn btn-primary wukong-btn-inquiry-product-summary" onclick="window.location.href='{:url('DataStatistics/inquiryProductSummaryTable')}'">查看询盘产品汇总表</button>
+    </div>
+</div>
+{include file="common/foot"/}

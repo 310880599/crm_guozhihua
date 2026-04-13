@@ -178,7 +178,7 @@
             $tbody.html('<tr><td colspan="4" class="text-center loading">加载中...</td></tr>');
 
             $.ajax({
-                url: '{:url("Operator/getTeamMemberPerformanceData")}',
+                url: '{:url("DataStatistics/getTeamMemberPerformanceData")}',
                 type: 'POST',
                 data: {
                     team_name: teamName,

@@ -1,0 +1,177 @@
+{include file="common/head"/}
+<style>
+    #perf-wrap { padding: 20px; }
+    #perf-filter { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:16px; }
+    #perf-filter select, #perf-filter input { height:34px; padding:0 8px; border:1px solid #ccc; border-radius:4px; font-size:13px; }
+    #perf-filter button { height:34px; padding:0 16px; border:none; border-radius:4px; cursor:pointer; font-size:13px; }
+    #btn-search { background:#4f7cff; color:#fff; }
+    #btn-back   { background:#6c757d; color:#fff; }
+    #perf-summary { display:flex; gap:20px; flex-wrap:wrap; margin-bottom:14px; }
+    .perf-summary-card { background:#fff; border:1px solid #dee2e6; border-radius:6px; padding:12px 20px; min-width:140px; text-align:center; }
+    .perf-summary-card .label { font-size:12px; color:#6c757d; margin-bottom:4px; }
+    .perf-summary-card .value { font-size:18px; font-weight:600; color:#212529; }
+    #perf-table-wrap { background:#fff; border-radius:6px; border:1px solid #dee2e6; overflow-x:auto; }
+    #perf-table { width:100%; border-collapse:collapse; font-size:13px; }
+    #perf-table thead th { background:#f8f9fa; padding:10px 12px; text-align:left; font-weight:600; color:#495057; border-bottom:2px solid #dee2e6; white-space:nowrap; }
+    #perf-table tbody td { padding:10px 12px; border-bottom:1px solid #f0f0f0; }
+    #perf-table tbody tr:hover { background:#f8f9fa; }
+    .text-right { text-align:right; }
+    .text-center { text-align:center; }
+    .profit-pos { color:#28a745; }
+    #perf-status { padding:30px; text-align:center; color:#6c757d; display:none; }
+    .custom-range-row { display:none; align-items:center; gap:6px; }
+    .custom-range-row.show { display:flex; }
+</style>
+
+<div id="perf-wrap">
+    <div style="display:flex; align-items:center; margin-bottom:16px; gap:12px;">
+        <button id="btn-back" onclick="history.back()">← 返回</button>
+        <h4 style="margin:0;">业务人员业绩表</h4>
+    </div>
+
+    <div id="perf-filter">
+        <select id="filter-timebucket" onchange="onTimebucketChange()">
+            <option value="month">本月</option>
+            <option value="last_month">上月</option>
+            <option value="week">本周</option>
+            <option value="year">本年</option>
+            <option value="custom">自定义</option>
+        </select>
+        <div class="custom-range-row" id="custom-range-row">
+            <input type="date" id="filter-date-start" />
+            <span>至</span>
+            <input type="date" id="filter-date-end" />
+        </div>
+        <input type="text" id="filter-username" placeholder="业务员姓名筛选" style="width:140px;" />
+        <button id="btn-search" onclick="loadData()">查询</button>
+    </div>
+
+    <div id="perf-summary">
+        <div class="perf-summary-card">
+            <div class="label">总利润</div>
+            <div class="value profit-pos" id="sum-profit">—</div>
+        </div>
+        <div class="perf-summary-card">
+            <div class="label">总金额</div>
+            <div class="value" id="sum-money">—</div>
+        </div>
+        <div class="perf-summary-card">
+            <div class="label">综合利润率</div>
+            <div class="value" id="sum-rate">—</div>
+        </div>
+    </div>
+
+    <div id="perf-table-wrap">
+        <div id="perf-status">加载中...</div>
+        <table id="perf-table">
+            <thead>
+                <tr>
+                    <th class="text-center">排名</th>
+                    <th>业务员</th>
+                    <th>团队</th>
+                    <th class="text-right">订单数</th>
+                    <th class="text-right">利润</th>
+                    <th class="text-right">总金额</th>
+                    <th class="text-right">利润率(%)</th>
+                </tr>
+            </thead>
+            <tbody id="perf-tbody">
+                <tr><td colspan="7" style="text-align:center;color:#6c757d;padding:30px;">请点击【查询】加载数据</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+function onTimebucketChange() {
+    var v = document.getElementById('filter-timebucket').value;
+    var row = document.getElementById('custom-range-row');
+    if (v === 'custom') {
+        row.classList.add('show');
+    } else {
+        row.classList.remove('show');
+    }
+}
+
+function loadData() {
+    var timebucket = document.getElementById('filter-timebucket').value;
+    var username   = document.getElementById('filter-username').value.trim();
+    var at_time    = '';
+
+    if (timebucket === 'custom') {
+        var ds = document.getElementById('filter-date-start').value;
+        var de = document.getElementById('filter-date-end').value;
+        if (!ds || !de) { alert('请选择自定义日期范围'); return; }
+        at_time = ds + ',' + de;
+        timebucket = '';
+    }
+
+    var tbody = document.getElementById('perf-tbody');
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#6c757d;">加载中...</td></tr>';
+    document.getElementById('sum-profit').textContent = '—';
+    document.getElementById('sum-money').textContent  = '—';
+    document.getElementById('sum-rate').textContent   = '—';
+
+    var params = 'timebucket=' + encodeURIComponent(timebucket)
+               + '&at_time='   + encodeURIComponent(at_time)
+               + '&username='  + encodeURIComponent(username);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '{:url("DataStatistics/getPerformanceData")}', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onreadystatechange = function() {
+        if (xhr.readyState !== 4) return;
+        if (xhr.status !== 200) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc3545;">请求失败（HTTP ' + xhr.status + '）</td></tr>';
+            return;
+        }
+        try {
+            var res = JSON.parse(xhr.responseText);
+            if (res.code !== 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc3545;">' + (res.msg || '获取失败') + '</td></tr>';
+                return;
+            }
+            renderTable(res.data || [], res.summary || {});
+        } catch(e) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc3545;">响应解析失败</td></tr>';
+        }
+    };
+    xhr.send(params);
+}
+
+function renderTable(rows, summary) {
+    document.getElementById('sum-profit').textContent = summary.total_profit !== undefined ? summary.total_profit : '—';
+    document.getElementById('sum-money').textContent  = summary.total_money  !== undefined ? summary.total_money  : '—';
+    document.getElementById('sum-rate').textContent   = summary.profit_rate  !== undefined ? (summary.profit_rate + '%') : '—';
+
+    var tbody = document.getElementById('perf-tbody');
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#6c757d;">暂无数据</td></tr>';
+        return;
+    }
+
+    var html = '';
+    for (var i = 0; i < rows.length; i++) {
+        var r = rows[i];
+        html += '<tr>'
+            + '<td class="text-center">' + (r.rank || (i+1)) + '</td>'
+            + '<td>' + esc(r.username) + '</td>'
+            + '<td>' + esc(r.team_name) + '</td>'
+            + '<td class="text-right">' + (r.order_count || 0) + '</td>'
+            + '<td class="text-right profit-pos">' + esc(r.profit) + '</td>'
+            + '<td class="text-right">' + esc(r.total_money) + '</td>'
+            + '<td class="text-right">' + esc(r.profit_rate) + '%</td>'
+            + '</tr>';
+    }
+    tbody.innerHTML = html;
+}
+
+function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// 自动加载本月数据
+loadData();
+</script>
+{include file="common/foot"/}
