@@ -7,10 +7,16 @@ use app\admin\model\Admin;
 
 class DataStatistics extends Common
 {
+    /**
+     * 权限边界约定：
+     * 1) 保留菜单层权限（本文件不实现）与 initialize() 模块访问权限判断；
+     * 2) 业务数据统一按公开统计口径查询，不做“按当前登录人数据范围收口”。
+     */
     public function initialize()
     {
         parent::initialize();
         $currentAdmin = Admin::getMyInfo();
+        // [权限边界-A] 模块访问权限：允许保留（本模块唯一后端访问权限判断）
         if ($currentAdmin['group_id'] != 1
             && $currentAdmin['group_id'] != 11
             && $currentAdmin['group_id'] != 12
@@ -73,8 +79,8 @@ class DataStatistics extends Common
 
         try {
 
-        // 需要从业绩表中排除的业务员（按姓名匹配）
-        // 后续只需要在这里增删名字即可控制显示范围
+        // 需要从业绩表中隐藏的业务员（仅影响表格展示行，不影响访问权限/接口权限）
+        // 后续只需要在这里增删名字即可控制“展示隐藏”范围
         $excludeUsernames = [
             // '张三',
             // '李四',
@@ -84,12 +90,13 @@ class DataStatistics extends Common
             '付淑雅',
             '叶诗龙'
         ];
-        // 清洗排除名单：去空格、去空值、去重
+        // 清洗隐藏名单：去空格、去空值、去重
         $excludeUsernames = array_values(array_unique(array_filter(array_map(function ($name) {
             return trim((string)$name);
         }, $excludeUsernames))));
-        $excludeMap = array_fill_keys($excludeUsernames, true);
+        $hiddenUsernameMap = array_fill_keys($excludeUsernames, true);
 
+        // 注意：$excludeUsernames 不参与 where 构建，仅在最终输出前过滤展示行
         $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username, $month_keys);
 
         // 1) summary：与订单列表 totalProfit/totalMoney 同源（对整批 where 求和，不受补零行影响）
@@ -119,12 +126,8 @@ class DataStatistics extends Common
             ->group('pr_bucket')
             ->select();
 
-        $current_admin = Admin::getMyInfo();
         $admin_map = [];
         $adminQuery = Db::table('admin')->field('username,team_name');
-        if (!empty($current_admin['org'])) {
-            $adminQuery->where($this->getOrgWhere($current_admin['org']));
-        }
         foreach ($adminQuery->select() as $ar) {
             if (!empty($ar['username'])) {
                 $admin_map[$ar['username']] = $ar;
@@ -133,7 +136,6 @@ class DataStatistics extends Common
 
         // 3) 补零：仅展示用（启用 + 业务组），不参与上面的 SUM
         $business_users_query = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
             ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
             ->where('is_open', '=', 1)
             ->where('username', '<>', '')
@@ -183,7 +185,7 @@ class DataStatistics extends Common
         foreach ($agg_map as $row) {
             $username = trim((string)($row['username'] ?? ''));
             // 统一在输出前过滤，确保有订单/补零人员都能正确排除
-            if ($username !== '' && isset($excludeMap[$username])) {
+            if ($username !== '' && isset($hiddenUsernameMap[$username])) {
                 continue;
             }
 
@@ -266,9 +268,7 @@ class DataStatistics extends Common
             $effective_timebucket = 'month';
         }
 
-        $current_admin = Admin::getMyInfo();
         $old_usernames = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
             ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
             ->where('is_open', '=', 1)
             ->where('username', '<>', '')
@@ -325,7 +325,7 @@ class DataStatistics extends Common
             'code' => 0,
             'msg' => '调试数据：only_new 为旧业绩表漏掉的订单（其利润合计应接近列表与旧表差额）',
             'criteria' => [
-                'new_where_note' => '对齐 Order::clientSearch 权限 + check_status=2 + order_time',
+                'new_where_note' => '统一公开口径：check_status=2 + order_time',
                 'old_where_note' => '历史口径：同时间 + pr_user in (启用且业务组 admin)',
             ],
             'counts' => [
@@ -411,7 +411,7 @@ class DataStatistics extends Common
      * 获取【团队】业绩数据
      * 统计口径：统一订单口径（crm_client_order，check_status=2，order_time）
      * 团队名称：只使用订单表 crm_client_order.team_name（订单快照团队）
-     * 人员范围：组织内全部 username（与订单列表一致，不限制 group_id）
+     * 人员范围：全量订单数据（不按当前登录人收口）
      */
     public function getTeamPerformanceData()
     {
@@ -421,20 +421,7 @@ class DataStatistics extends Common
         $emptySummary = ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00'];
 
         try {
-            $current_admin = Admin::getMyInfo();
-
-            $usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-            if (empty($usernames)) {
-                return json([
-                    'code' => 0,
-                    'msg' => '获取成功',
-                    'data' => [],
-                    'summary' => $emptySummary
-                ]);
-            }
-
             $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-                ->whereIn('pr_user', $usernames)
                 ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
                 ->group('team_name')
                 ->order('total_profit desc')
@@ -518,23 +505,8 @@ class DataStatistics extends Common
         $emptySummary = ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00'];
 
         try {
-            $current_admin = Admin::getMyInfo();
-
-            $org_usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-
             $is_ungrouped = ($team_name === '' || $team_name === '未分组');
-
-            if (empty($org_usernames)) {
-                return json([
-                    'code' => 200,
-                    'msg' => 'ok',
-                    'data' => [],
-                    'summary' => $emptySummary
-                ]);
-            }
-
-            $team_usernames_query = Db::name('admin')
-                ->whereIn('username', $org_usernames);
+            $team_usernames_query = Db::name('admin');
             if ($is_ungrouped) {
                 $team_usernames_query->where(function ($q) {
                     $q->whereNull('team_name')->whereOr('team_name', '=', '');
@@ -650,17 +622,6 @@ class DataStatistics extends Common
             ]);
         }
 
-        $current_admin = Admin::getMyInfo();
-
-        $org_usernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-        if (!empty($org_usernames) && !in_array($username, $org_usernames)) {
-            return json([
-                'code' => 403,
-                'msg'  => '无权限查看该成员数据',
-                'data' => []
-            ]);
-        }
-
         $extra  = ['pr_user' => $username];
         $orders = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '', $month_keys)
             ->field('id,order_time,cname,money,profit')
@@ -764,38 +725,12 @@ class DataStatistics extends Common
     private function buildOrderListAlignedOrderWhere(string $timebucket, string $at_time, string $filterPrUser = '', string $month_keys = ''): array
     {
         $where = [];
-        $user = Admin::getMyInfo();
-        $profileTeamName = trim((string)($user['team_name'] ?? ''));
-        if ($profileTeamName !== '') {
-            $where[] = ['team_name', '=', $profileTeamName];
-        }
         $where[] = ['check_status', '=', 2];
 
         // 时间优先级统一：month_keys > at_time > timebucket > month
         $where[] = function ($query) use ($timebucket, $at_time, $month_keys) {
             $this->applyMonthShortcutTimeFilterSafe($query, 'order_time', $timebucket, $at_time, $month_keys);
         };
-
-        // pr_user 范围：复制 Order::clientSearch() 中 admin + org 逻辑（不限制 is_open / group_id）
-        $org_where = [];
-        if (!empty($user['org'])) {
-            $org_where[] = $this->getOrgWhere($user['org']);
-        }
-        $team_name = $profileTeamName;
-        if ($team_name) {
-            $usernames = Db::table('admin')->where('team_name', $team_name)->where($org_where)->column('username');
-        } else {
-            if (!empty($org_where)) {
-                $usernames = Db::table('admin')->where($org_where)->column('username');
-            }
-        }
-        if (isset($usernames)) {
-            if (!$usernames) {
-                $where[] = ['pr_user', '=', time()];
-            } else {
-                $where[] = ['pr_user', 'in', $usernames];
-            }
-        }
 
         if ($filterPrUser !== '') {
             $where[] = ['pr_user', '=', $filterPrUser];
@@ -1145,45 +1080,14 @@ class DataStatistics extends Common
     }
 
     /**
-     * 获取当前组织内所有业务人员 username 列表（不含 group_id 白名单限制）
-     * 与订单列表口径一致：只按 org 过滤，不排除 group_id=17/18 等真实团队成员
-     */
-    private function getOrgUsernames($org): array
-    {
-        $query = Db::table('admin')
-            ->where('username', '<>', '')
-            ->whereNotNull('username')
-            ->field('username')
-            ->limit(2000);
-        if (!empty($org)) {
-            $query->where($this->getOrgWhere($org));
-        }
-        $rows = $query->select();
-        if (empty($rows)) {
-            return [];
-        }
-        $usernames = array_map(function ($username) {
-            return trim((string)$username);
-        }, array_column($rows, 'username'));
-        return array_values(array_unique(array_filter($usernames)));
-    }
-
-    /**
      * 组装导出数据：团队业绩表。
      */
     private function collectTeamPerformanceExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
     {
-        $currentAdmin  = Admin::getMyInfo();
-        $orgUsernames  = $this->getOrgUsernames($currentAdmin['org'] ?? '');
-        if (empty($orgUsernames)) {
-            return ['team_rows' => [], 'member_rows' => [], 'detail_rows' => [], 'raw_rows' => []];
-        }
-
         $teamName  = trim((string)$team_name);
         $username  = trim((string)$username);
         $teamExpr  = "IFNULL(NULLIF(TRIM(team_name), ''), '未分组')";
-        $baseQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-            ->whereIn('pr_user', $orgUsernames);
+        $baseQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
         if ($teamName !== '') {
             $normTeam = $teamName === '未分组' ? '未分组' : $teamName;
             $baseQuery->whereRaw($teamExpr . " = :team_name", ['team_name' => $normTeam]);
@@ -1304,9 +1208,6 @@ class DataStatistics extends Common
             $at_time = Request::param('at_time', '');
             $month_keys = trim((string)Request::param('month_keys', ''));
 
-            $excludedTeams = $this->getExcludedInquiryTeamNames();
-            $excludedUsers = $this->getExcludedInquiryUsernames();
-
             $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
 
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
@@ -1315,32 +1216,16 @@ class DataStatistics extends Common
             \think\facade\Log::info('[InquirySummaryDebug] params=' . json_encode([
                 'timebucket' => $timebucket,
                 'at_time' => $at_time,
-                'excludedTeams' => $excludedTeams,
-                'excludedUsers' => $excludedUsers,
+                'excludedTeams' => [],
+                'excludedUsers' => [],
             ], JSON_UNESCAPED_UNICODE));
             \think\facade\Log::info('[InquirySummaryDebug] base_total=' . $baseTotal);
 
             $query = (clone $baseQuery)->leftJoin('admin a', 'l.pr_user = a.username');
             $rawTotal = (int)(clone $query)->count();
             \think\facade\Log::info('[InquirySummaryDebug] raw_total_before_excludes=' . $rawTotal);
-
-            $afterExcludeTeamTotal = $rawTotal;
-            if (!empty($excludedTeams)) {
-                $qTeam = (clone $query);
-                $this->applyInquirySummaryExcludes($qTeam, $excludedTeams, [], $normalizedTeamExpr);
-                $afterExcludeTeamTotal = (int)$qTeam->count();
-            }
-            \think\facade\Log::info('[InquirySummaryDebug] after_exclude_team_total=' . $afterExcludeTeamTotal);
-
-            $afterExcludeUserTotal = $afterExcludeTeamTotal;
-            if (!empty($excludedUsers)) {
-                $qUser = (clone $query);
-                $this->applyInquirySummaryExcludes($qUser, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
-                $afterExcludeUserTotal = (int)$qUser->count();
-            }
-            \think\facade\Log::info('[InquirySummaryDebug] after_excludes_total=' . $afterExcludeUserTotal);
-
-            $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
+            \think\facade\Log::info('[InquirySummaryDebug] after_exclude_team_total=' . $rawTotal);
+            \think\facade\Log::info('[InquirySummaryDebug] after_excludes_total=' . $rawTotal);
 
             $rows = $query
                 ->group($normalizedTeamExpr)
@@ -1425,18 +1310,9 @@ class DataStatistics extends Common
 
     /**
      * 临时调试接口：对比"客户列表真实总数"与"询盘汇总基础集总数"，并给出 id 差异样本（最多20条）
-     * 仅管理员可访问（aid=1 / group_id=1 / username=admin）
      */
     public function debugInquirySummaryCompare()
     {
-        $user = Admin::getMyInfo();
-        $isAdmin = (int)session('aid') === 1
-            || (int)($user['group_id'] ?? 0) === 1
-            || (string)($user['username'] ?? '') === 'admin';
-        if (!$isAdmin) {
-            return json(['code' => 403, 'msg' => 'forbidden', 'data' => []]);
-        }
-
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
 
@@ -1502,18 +1378,6 @@ class DataStatistics extends Common
                 ]);
             }
 
-            $excludedTeams = $this->getExcludedInquiryTeamNames();
-            if (!empty($excludedTeams) && in_array($team_name, $excludedTeams, true)) {
-                return json([
-                    'code' => 0,
-                    'msg' => '获取成功',
-                    'data' => [],
-                    'summary' => ['total_count' => 0],
-                ]);
-            }
-
-            $excludedUsers = $this->getExcludedInquiryUsernames();
-
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
             $query = (clone $baseQuery)
                 ->leftJoin('admin a', 'l.pr_user = a.username');
@@ -1523,8 +1387,6 @@ class DataStatistics extends Common
             } else {
                 $query->whereRaw("TRIM(a.team_name) = :team_name", ['team_name' => $team_name]);
             }
-
-            $this->applyInquirySummaryExcludes($query, [], $excludedUsers);
 
             $rows = $query
                 ->group('l.pr_user')
@@ -1578,16 +1440,6 @@ class DataStatistics extends Common
                 return json([
                     'code' => 0,
                     'msg' => '获取成功',
-                    'data' => [],
-                    'summary' => ['total_count' => 0],
-                ]);
-            }
-
-            $excludedUsers = $this->getExcludedInquiryUsernames();
-            if (!empty($excludedUsers) && in_array($username, $excludedUsers, true)) {
-                return json([
-                    'code' => 403,
-                    'msg' => '无权限查看该成员数据',
                     'data' => [],
                     'summary' => ['total_count' => 0],
                 ]);
@@ -1960,48 +1812,28 @@ class DataStatistics extends Common
 
     /**
      * 业务询盘汇总三连屏：复用客户列表真实口径基础查询。
-     * 口径来源：application/admin/model/Client.php::buildClientSearchAllBaseQuery()
+     * 公开口径：直接基于 crm_leads 构建，不再继承登录人数据权限。
      */
     private function buildInquirySummaryClientBaseQuery(string $timebucket = '', string $at_time = '', bool $excludeRepeatSource = true, string $month_keys = '')
     {
-        $keyword = [];
-        $time_params = $this->resolveInquirySummaryTimeParams($timebucket, $at_time, $month_keys);
-        if (!empty($time_params['is_month_keys'])) {
-            $keyword['timebucket'] = '';
-        } elseif ($time_params['is_custom']) {
-            $keyword['timebucket'] = [
-                ['at_time', '>=', $time_params['start_date'] . ' 00:00:00'],
-                ['at_time', '<=', $time_params['end_date'] . ' 23:59:59'],
-            ];
-        } else {
-            $keyword['timebucket'] = $this->buildTimeWhere($time_params['timebucket'], 'at_time');
+        $clientBaseQuery = Db::table('crm_leads')->alias('l');
+        $leadColumns = $this->getInquirySummaryLeadsColumns();
+        if (in_array('is_delete', $leadColumns, true)) {
+            $clientBaseQuery->where('l.is_delete', '=', 0);
         }
-
-        $clientBaseQuery = model('Client')->buildClientSearchAllBaseQuery($keyword);
-        if (!empty($time_params['is_month_keys'])) {
-            $monthRanges = $time_params['month_ranges'] ?? [];
-            $clientBaseQuery->where(function ($monthOrQuery) use ($monthRanges) {
-                foreach ($monthRanges as $idx => $range) {
-                    $method = $idx === 0 ? 'where' : 'whereOr';
-                    $monthOrQuery->{$method}(function ($monthQuery) use ($range) {
-                        $monthQuery->where('l.at_time', '>=', $range['start'])
-                            ->where('l.at_time', '<=', $range['end']);
-                    });
-                }
-            });
-        }
+        $this->applyMonthShortcutTimeFilterSafe($clientBaseQuery, 'l.at_time', $timebucket, $at_time, $month_keys);
         if ($excludeRepeatSource) {
             $this->applyInquirySummaryExcludeRepeatLead($clientBaseQuery, 'l');
         }
 
         $finalIdQuerySql = (clone $clientBaseQuery)
             ->leftJoin('crm_contacts c', "c.leads_id = l.id AND c.is_delete = 0 AND c.contact_type IN (1,3)")
-            ->field([
+            ->field(array_merge([
                 'l.id',
                 'l.pr_user',
                 'l.inquiry_id',
                 'l.port_id',
-            ])
+            ], in_array('oper_user', $leadColumns, true) ? ['l.oper_user'] : []))
             ->group('l.id')
             ->buildSql();
 
@@ -2050,6 +1882,7 @@ class DataStatistics extends Common
      */
     private function applyInquirySummaryExcludes($query, array $excludedTeams = [], array $excludedUsers = [], string $normalizedTeamExpr = '')
     {
+        // 团队/成员排除用于固定业务口径筛选，不依赖当前登录人身份
         if (!empty($excludedTeams)) {
             if ($normalizedTeamExpr !== '') {
                 $escaped = array_map(function ($v) {
@@ -2073,18 +1906,6 @@ class DataStatistics extends Common
     private function buildInquiryTeamSourceSummaryRows(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = ''): array
     {
         $team_name = trim($team_name);
-        $excludedTeams = $this->getExcludedInquiryTeamNames();
-        $excludedUsers = $this->getExcludedInquiryUsernames();
-
-        if ($team_name !== '' && !empty($excludedTeams) && in_array($team_name, $excludedTeams, true)) {
-            return [
-                'rows' => [],
-                'summary' => [
-                    'team_name' => $team_name,
-                    'total_count' => 0,
-                ],
-            ];
-        }
 
         $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
         $inquiryNameExpr = "CASE WHEN ci.inquiry_name IS NULL OR TRIM(ci.inquiry_name) = '' THEN '未知来源' ELSE TRIM(ci.inquiry_name) END";
@@ -2093,8 +1914,6 @@ class DataStatistics extends Common
         $query = (clone $baseQuery)
             ->leftJoin('admin a', 'l.pr_user = a.username')
             ->leftJoin('crm_inquiry ci', 'l.inquiry_id = ci.id');
-
-        $this->applyInquirySummaryExcludes($query, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
         if ($team_name !== '') {
             $query->whereRaw("{$normalizedTeamExpr} = :team_name", ['team_name' => $team_name]);
         }
@@ -2150,13 +1969,10 @@ class DataStatistics extends Common
      */
     private function collectInquirySummaryExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = ''): array
     {
-        $excludedTeams = $this->getExcludedInquiryTeamNames();
-        $excludedUsers = $this->getExcludedInquiryUsernames();
         $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
 
         $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
         $baseJoinAdmin = (clone $baseQuery)->leftJoin('admin a', 'l.pr_user = a.username');
-        $this->applyInquirySummaryExcludes($baseJoinAdmin, $excludedTeams, $excludedUsers, $normalizedTeamExpr);
 
         $teamRowsRaw = (clone $baseJoinAdmin)
             ->group($normalizedTeamExpr)
@@ -2471,27 +2287,17 @@ class DataStatistics extends Common
 
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
-
-            $staffRows = $this->fetchOperationStaffRowsForInquirySummary($inquiry_id);
-            if (empty($staffRows)) {
-                return json([
-                    'code' => 0,
-                    'msg' => '获取成功',
-                    'data' => [],
-                    'summary' => ['total_count' => 0],
-                ]);
-            }
-
+            $staffExpr = $this->getOperationInquiryStaffNameExpr();
+            $staffRows = (clone $baseQuery)
+                ->field($staffExpr . ' as username, COUNT(*) as yw_num')
+                ->group($staffExpr)
+                ->order('yw_num desc, username asc')
+                ->select();
             $result = [];
             $total = 0;
             foreach ($staffRows as $op) {
                 $uname = trim((string)($op['username'] ?? ''));
-                if ($uname === '') {
-                    continue;
-                }
-                $ports = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
-                $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($ports);
-                $cnt = (int)(clone $baseQuery)->whereRaw($portWhere)->count('l.id');
+                $cnt = (int)($op['yw_num'] ?? 0);
                 $total += $cnt;
                 $result[] = [
                     'username' => $uname,
@@ -2541,36 +2347,13 @@ class DataStatistics extends Common
 
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
-
-            $validPortMap = $this->getInquiryPortNameMapForSummary($inquiry_id);
-            $leadScopeQuery = clone $baseQuery;
+            $staffExpr = $this->getOperationInquiryStaffNameExpr();
 
             if ($username !== '') {
-                $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
-                if ($op === null) {
-                    return json([
-                        'code' => 0,
-                        'msg' => '获取成功',
-                        'data' => [],
-                        'summary' => ['total_count' => 0],
-                    ]);
-                }
-
-                $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
-                if (empty($portIds)) {
-                    return json([
-                        'code' => 0,
-                        'msg' => '获取成功',
-                        'data' => [],
-                        'summary' => ['total_count' => 0],
-                    ]);
-                }
-
-                $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($portIds);
-                $leadScopeQuery->whereRaw($portWhere);
+                $baseQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
             }
 
-            $leadRows = $leadScopeQuery->field('l.id,l.port_id')->select();
+            $leadRows = $baseQuery->field('l.id,l.port_id')->select();
             if (is_array($leadRows)) {
                 $leadRowsArr = $leadRows;
             } elseif (is_object($leadRows) && method_exists($leadRows, 'toArray')) {
@@ -2578,6 +2361,7 @@ class DataStatistics extends Common
             } else {
                 $leadRowsArr = iterator_to_array($leadRows);
             }
+            $validPortMap = $this->getInquiryPortNameMapForSummary($inquiry_id);
             $portSummary = $this->buildOperationInquiryPortSummaryFromLeadRows($leadRowsArr, $validPortMap, '未分配端口');
 
             return json([
@@ -2673,9 +2457,7 @@ class DataStatistics extends Common
             }
 
             $staffInquiryMap = [];
-            $currentAdmin = Admin::getMyInfo();
             $staffRows = Db::table('admin')
-                ->where($this->getOrgWhere($currentAdmin['org']))
                 ->where('group_id', '=', $this->yygid)
                 ->where('is_open', '=', 1)
                 ->field('inquiry_id')
@@ -2836,23 +2618,14 @@ class DataStatistics extends Common
 
     private function fetchOperationStaffRowsForInquirySummary(int $inquiryIdToken): array
     {
-        $current_admin = Admin::getMyInfo();
-        $q = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
-            ->where('group_id', '=', $this->yygid)
-            ->where('is_open', '=', 1);
-
-        if ($inquiryIdToken <= 0) {
-            $q->where(function ($sub) {
-                $sub->whereNull('inquiry_id')
-                    ->whereOr('inquiry_id', '=', '')
-                    ->whereOr('inquiry_id', '=', 0);
-            });
-        } else {
-            $q->whereRaw('CAST(inquiry_id AS UNSIGNED) = ?', [$inquiryIdToken]);
-        }
-
-        return $q->field('username,port_id,inquiry_id')->order('username')->select();
+        $baseQuery = $this->buildInquirySummaryClientBaseQuery('', '', false, '');
+        $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryIdToken);
+        $staffExpr = $this->getOperationInquiryStaffNameExpr();
+        return (clone $baseQuery)
+            ->field($staffExpr . ' as username, COUNT(*) as yw_num')
+            ->group($staffExpr)
+            ->order('yw_num desc, username asc')
+            ->select();
     }
 
     private function applyOperatorInquiryLeadsSourceBucket($query, int $inquiryIdToken)
@@ -2865,56 +2638,27 @@ class DataStatistics extends Common
         return $query;
     }
 
-    private function buildLeadPortIntersectAdminPortsWhere(array $adminPortIds): string
+    private function getOperationInquiryStaffNameExpr(): string
     {
-        if (empty($adminPortIds)) {
-            return '1=0';
+        $leadColumns = $this->getInquirySummaryLeadsColumns();
+        if (in_array('oper_user', $leadColumns, true)) {
+            return "IFNULL(NULLIF(TRIM(l.oper_user), ''), '未分配运营')";
         }
-        $parts = [];
-        foreach ($adminPortIds as $pid) {
-            $pid = (int)$pid;
-            if ($pid <= 0) {
-                continue;
-            }
-            $parts[] = "FIND_IN_SET('{$pid}', l.port_id) > 0";
-        }
-        return empty($parts) ? '1=0' : '(' . implode(' OR ', $parts) . ')';
+        return "IFNULL(NULLIF(TRIM(l.pr_user), ''), '未分配运营')";
     }
 
     private function findOperationStaffForPortSummary(string $username, int $inquiryIdToken): ?array
     {
-        $username = trim($username);
-        if ($username === '') {
-            return null;
-        }
-        $current_admin = Admin::getMyInfo();
-        $row = Db::table('admin')
-            ->where($this->getOrgWhere($current_admin['org']))
-            ->where('username', '=', $username)
-            ->where('group_id', '=', $this->yygid)
-            ->where('is_open', '=', 1)
-            ->field('username,port_id,inquiry_id')
-            ->find();
-        if (empty($row)) {
-            return null;
-        }
-        if ($inquiryIdToken <= 0) {
-            $ok = ($row['inquiry_id'] === null || $row['inquiry_id'] === '' || (int)$row['inquiry_id'] === 0);
-        } else {
-            $ok = ((int)$row['inquiry_id'] === $inquiryIdToken) || ((string)(int)$row['inquiry_id'] === (string)$inquiryIdToken);
-        }
-        return $ok ? $row : null;
+        return null;
     }
 
     private function getInquiryPortNameMapForSummary(int $inquiryId): array
     {
-        if ($inquiryId <= 0) {
-            return [];
+        $query = Db::table('crm_inquiry_port');
+        if ($inquiryId > 0) {
+            $query->where('inquiry_id', '=', $inquiryId);
         }
-        $rows = Db::table('crm_inquiry_port')
-            ->where('inquiry_id', '=', $inquiryId)
-            ->field('id,port_name')
-            ->select();
+        $rows = $query->field('id,port_name')->select();
         $map = [];
         foreach ($rows as $row) {
             $pid = (int)($row['id'] ?? 0);
@@ -2995,6 +2739,7 @@ class DataStatistics extends Common
     private function collectOperationInquiryExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', int $inquiry_id = 0, string $username = ''): array
     {
         $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
+        $staffExpr = $this->getOperationInquiryStaffNameExpr();
         if ($inquiry_id > 0) {
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
         }
@@ -3069,25 +2814,7 @@ class DataStatistics extends Common
             $this->applyOperatorInquiryLeadsSourceBucket($detailQuery, $inquiry_id);
         }
         if ($username !== '') {
-            $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
-            if ($op === null) {
-                return [
-                    'source_rows' => $sourceRows,
-                    'staff_rows' => $staffRows,
-                    'port_rows' => $portRows,
-                    'raw_rows' => [],
-                ];
-            }
-            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
-            if (empty($portIds)) {
-                return [
-                    'source_rows' => $sourceRows,
-                    'staff_rows' => $staffRows,
-                    'port_rows' => $portRows,
-                    'raw_rows' => [],
-                ];
-            }
-            $detailQuery->whereRaw($this->buildLeadPortIntersectAdminPortsWhere($portIds));
+            $detailQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
         }
         $rawRowsRaw = $detailQuery
             ->field([
@@ -3131,24 +2858,22 @@ class DataStatistics extends Common
     {
         $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
         $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryId);
-        $staffRowsRaw = $this->fetchOperationStaffRowsForInquirySummary($inquiryId);
+        $staffExpr = $this->getOperationInquiryStaffNameExpr();
+        if ($username !== '') {
+            $baseQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
+        }
         $sourceName = $this->resolveOperationInquiryNameById($inquiryId);
+        $rowsRaw = (clone $baseQuery)
+            ->field($staffExpr . ' as username, COUNT(*) as yw_num')
+            ->group($staffExpr)
+            ->order('yw_num desc, username asc')
+            ->select();
         $rows = [];
-        foreach ((array)$staffRowsRaw as $row) {
-            $uname = trim((string)($row['username'] ?? ''));
-            if ($uname === '') {
-                continue;
-            }
-            if ($username !== '' && $uname !== $username) {
-                continue;
-            }
-            $ports = $this->parseCsvPortIdsForOperatorInquiry($row['port_id'] ?? '');
-            $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($ports);
-            $cnt = (int)(clone $baseQuery)->whereRaw($portWhere)->count('l.id');
+        foreach ((array)$rowsRaw as $row) {
             $rows[] = [
                 'source_name' => $sourceName,
-                'username' => $uname,
-                'yw_num' => $cnt,
+                'username' => (string)($row['username'] ?? ''),
+                'yw_num' => (int)($row['yw_num'] ?? 0),
             ];
         }
         usort($rows, function ($a, $b) {
@@ -3173,36 +2898,67 @@ class DataStatistics extends Common
     {
         $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
         $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryId);
+        $staffExpr = $this->getOperationInquiryStaffNameExpr();
         $validPortMap = $this->getInquiryPortNameMapForSummary($inquiryId);
-        $leadScopeQuery = clone $baseQuery;
-        $displayUsername = '';
-
         if ($username !== '') {
-            $op = $this->findOperationStaffForPortSummary($username, $inquiryId);
-            if ($op === null) {
-                return [];
-            }
-            $displayUsername = $username;
-            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
-            if (empty($portIds)) {
-                return [];
-            }
-            $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($portIds);
-            $leadScopeQuery->whereRaw($portWhere);
+            $baseQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
         }
 
-        $leadRows = $leadScopeQuery->field('l.id,l.port_id')->select();
+        $leadRows = $baseQuery
+            ->field($staffExpr . ' as username,l.port_id')
+            ->select();
         $leadRowsArr = is_array($leadRows)
             ? $leadRows
             : ((is_object($leadRows) && method_exists($leadRows, 'toArray')) ? $leadRows->toArray() : iterator_to_array($leadRows));
-        $summary = $this->buildOperationInquiryPortSummaryFromLeadRows($leadRowsArr, $validPortMap, '未分配端口');
-
+        $groupRows = [];
+        foreach ((array)$leadRowsArr as $row) {
+            $staffName = trim((string)($row['username'] ?? ''));
+            if ($staffName === '') {
+                $staffName = '未分配运营';
+            }
+            $leadPortIds = $this->parseCsvPortIdsForOperatorInquiry($row['port_id'] ?? '');
+            $bucketPortId = 0;
+            foreach ($leadPortIds as $pid) {
+                $pid = (int)$pid;
+                if ($pid > 0 && isset($validPortMap[$pid])) {
+                    $bucketPortId = $pid;
+                    break;
+                }
+            }
+            $bucketName = $bucketPortId > 0 ? ($validPortMap[$bucketPortId] ?? ('ID:' . $bucketPortId)) : '未分配端口';
+            $groupKey = $staffName . '||' . (string)$bucketPortId;
+            if (!isset($groupRows[$groupKey])) {
+                $groupRows[$groupKey] = [
+                    'username' => $staffName,
+                    'port_name' => $bucketName,
+                    'yw_num' => 0,
+                ];
+            }
+            $groupRows[$groupKey]['yw_num']++;
+        }
+        $summaryRows = array_values($groupRows);
+        usort($summaryRows, function ($a, $b) {
+            $userCmp = strcmp((string)$a['username'], (string)$b['username']);
+            if ($userCmp !== 0) {
+                return $userCmp;
+            }
+            if ((int)$a['yw_num'] !== (int)$b['yw_num']) {
+                return (int)$b['yw_num'] <=> (int)$a['yw_num'];
+            }
+            return strcmp((string)$a['port_name'], (string)$b['port_name']);
+        });
         $rows = [];
-        foreach ((array)($summary['data'] ?? []) as $row) {
+        $rankByUser = [];
+        foreach ($summaryRows as $row) {
+            $staffName = (string)($row['username'] ?? '');
+            if (!isset($rankByUser[$staffName])) {
+                $rankByUser[$staffName] = 0;
+            }
+            $rankByUser[$staffName]++;
             $rows[] = [
                 (string)$sourceName,
-                (string)$displayUsername,
-                (int)($row['rank'] ?? 0),
+                $staffName,
+                $rankByUser[$staffName],
                 (string)($row['port_name'] ?? ''),
                 (int)($row['yw_num'] ?? 0),
             ];
@@ -3247,6 +3003,7 @@ class DataStatistics extends Common
      */
     private function collectBusinessPerformanceExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $username = ''): array
     {
+        // 导出口径与页面口径一致：复用同一套公开 where 条件
         $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $username, $month_keys);
         $teamNameSeparator = '||#||';
 
@@ -3264,12 +3021,8 @@ class DataStatistics extends Common
             ->group('pr_bucket')
             ->select();
 
-        $currentAdmin = Admin::getMyInfo();
         $adminMap = [];
         $adminQuery = Db::table('admin')->field('username,team_name');
-        if (!empty($currentAdmin['org'])) {
-            $adminQuery->where($this->getOrgWhere($currentAdmin['org']));
-        }
         foreach ((array)$adminQuery->select() as $ar) {
             $uname = trim((string)($ar['username'] ?? ''));
             if ($uname !== '') {
@@ -3278,7 +3031,6 @@ class DataStatistics extends Common
         }
 
         $businessUsersQuery = Db::table('admin')
-            ->where($this->getOrgWhere($currentAdmin['org']))
             ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
             ->where('is_open', '=', 1)
             ->where('username', '<>', '')
@@ -3456,9 +3208,9 @@ class DataStatistics extends Common
     /**
      * 订单产品汇总：公司/个人产品销量聚合
      */
-    private function buildOrderProductSummaryProductSalesQuery(array $orgUsernames, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    private function buildOrderProductSummaryProductSalesQuery(string $timebucket = '', string $at_time = '', string $month_keys = '')
     {
-        return $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys)
+        return $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys)
             ->field('oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit')
             ->group('oi.product_name')
             ->order('total_profit desc, sale_qty desc, oi.product_name asc');
@@ -3470,7 +3222,7 @@ class DataStatistics extends Common
      * - 关联：crm_client_order
      * - 时间/状态：专用过滤（check_status=2 + order_time）
      */
-    private function buildOrderProductSummaryBaseQuery(array $orgUsernames, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    private function buildOrderProductSummaryBaseQuery(string $timebucket = '', string $at_time = '', string $month_keys = '')
     {
         $query = Db::table('crm_order_item')->alias('oi')
             ->join('crm_client_order o', 'oi.order_id = o.id', 'INNER')
@@ -3478,11 +3230,6 @@ class DataStatistics extends Common
 
         $query->where('o.check_status', '=', 2);
         $this->applyOrderProductSummaryTimeFilter($query, $timebucket, $at_time, $month_keys);
-        if (empty($orgUsernames)) {
-            $query->whereRaw('1=0');
-            return $query;
-        }
-        $query->whereIn('o.pr_user', $orgUsernames);
         $query->whereRaw("TRIM(IFNULL(oi.product_name, '')) <> ''");
 
         return $query;
@@ -3507,30 +3254,10 @@ class DataStatistics extends Common
         $timebucket = Request::param('timebucket', '');
         $at_time    = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
-        $current_admin = Admin::getMyInfo();
-        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-
-        if (empty($orgUsernames)) {
-            return json([
-                'code' => 200,
-                'msg' => 'ok',
-                'data' => ['products' => [], 'teams' => []],
-                'summary' => [
-                    'company' => [
-                        'total_product_count' => 0,
-                        'total_sales_qty' => 0,
-                        'total_profit_raw' => 0,
-                        'total_profit' => number_format(0, 2, '.', ','),
-                    ],
-                    'team' => ['team_count' => 0, 'member_count' => 0],
-                ],
-            ]);
-        }
-
         try {
             $teamExpr = $this->getOrderProductSummaryTeamExpr();
 
-            $productRows = $this->buildOrderProductSummaryProductSalesQuery($orgUsernames, $timebucket, $at_time, $month_keys)
+            $productRows = $this->buildOrderProductSummaryProductSalesQuery($timebucket, $at_time, $month_keys)
                 ->select();
 
             $products = [];
@@ -3552,7 +3279,7 @@ class DataStatistics extends Common
                 ];
             }
 
-            $teamRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys)
+            $teamRows = $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys)
                 ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
                 ->field($teamExpr . " as team_name, SUM(IFNULL(oi.qty,0)) as sale_qty, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
                 ->group($teamExpr)
@@ -3571,7 +3298,7 @@ class DataStatistics extends Common
                 ];
             }
 
-            $memberRows = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys)
+            $memberRows = $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys)
                 ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
                 ->field("TRIM(o.pr_user) as username")
                 ->group("TRIM(o.pr_user)")
@@ -3627,22 +3354,10 @@ class DataStatistics extends Common
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
-        $current_admin = Admin::getMyInfo();
-        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-
-        if (empty($orgUsernames)) {
-            return json([
-                'code' => 200,
-                'msg' => 'ok',
-                'data' => [],
-                'summary' => ['team_count' => 0, 'member_count' => 0, 'total_sales_qty' => 0],
-            ]);
-        }
-
         $team_name = $this->normalizeOrderProductTeamName($team_name);
 
         try {
-            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
+            $query = $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
             $this->applyOrderProductSummaryTeamFilter($query, $team_name);
             $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
 
@@ -3695,28 +3410,10 @@ class DataStatistics extends Common
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
-        $current_admin = Admin::getMyInfo();
-        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-
-        if (empty($orgUsernames)) {
-            return json([
-                'code' => 200,
-                'msg' => 'ok',
-                'data' => [],
-                'summary' => [
-                    'team_product_count' => 0,
-                    'total_product_count' => 0,
-                    'total_sales_qty' => 0,
-                    'total_profit_raw' => 0,
-                    'total_profit' => number_format(0, 2, '.', ','),
-                ],
-            ]);
-        }
-
         $team_name = $this->normalizeOrderProductTeamName($team_name);
 
         try {
-            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
+            $query = $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
             $this->applyOrderProductSummaryTeamFilter($query, $team_name);
             $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
 
@@ -3783,9 +3480,6 @@ class DataStatistics extends Common
         $timebucket = Request::param('timebucket', '');
         $at_time = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
-        $current_admin = Admin::getMyInfo();
-        $orgUsernames = $this->getOrgUsernames($current_admin['org'] ?? '');
-
         if ($username === '') {
             return json([
                 'code' => 422,
@@ -3801,23 +3495,8 @@ class DataStatistics extends Common
             ]);
         }
 
-        if (!empty($orgUsernames) && !in_array($username, $orgUsernames, true)) {
-            return json([
-                'code' => 403,
-                'msg' => '无权限查看该业务员数据',
-                'data' => [],
-                'summary' => [
-                    'user_product_count' => 0,
-                    'total_product_count' => 0,
-                    'total_sales_qty' => 0,
-                    'total_profit_raw' => 0,
-                    'total_profit' => number_format(0, 2, '.', ','),
-                ],
-            ]);
-        }
-
         try {
-            $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
+            $query = $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
             $query->where('o.pr_user', '=', $username);
 
             $rows = $query
@@ -4449,14 +4128,9 @@ class DataStatistics extends Common
      */
     private function collectOrderProductExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
     {
-        $currentAdmin = Admin::getMyInfo();
-        $orgUsernames = $this->getOrgUsernames($currentAdmin['org'] ?? '');
-        if (empty($orgUsernames)) {
-            return ['company_rows' => [], 'team_rows' => [], 'user_rows' => [], 'raw_rows' => []];
-        }
         $teamExpr = $this->getOrderProductSummaryTeamExpr();
 
-        $baseQuery = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
+        $baseQuery = $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
         if (trim($team_name) !== '') {
             $this->applyOrderProductSummaryTeamFilter($baseQuery, trim($team_name));
         }
