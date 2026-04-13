@@ -79,6 +79,64 @@
         text-align: center; padding: 60px 20px; color: #6c757d;
     }
     .pane-empty .empty-icon { font-size: 48px; margin-bottom: 15px; display: block; }
+    /* 团队来源汇总小方框 */
+    .inquiry-team-source-summary-box {
+        margin: 12px 20px 0;
+        padding: 10px 12px;
+        border: 1px solid #e9d5ff;
+        border-radius: 10px;
+        background: #ffffff;
+        flex-shrink: 0;
+    }
+    .inquiry-team-source-summary-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+    .inquiry-team-source-summary-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #5b21b6;
+    }
+    .inquiry-team-source-summary-total {
+        font-size: 13px;
+        color: #6b7280;
+    }
+    .inquiry-team-source-summary-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .inquiry-team-source-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        max-width: 100%;
+        padding: 4px 8px;
+        background: #faf5ff;
+        border: 1px solid #e9d5ff;
+        border-radius: 999px;
+        font-size: 12px;
+        color: #4c1d95;
+        line-height: 1.2;
+    }
+    .inquiry-team-source-tag .name {
+        max-width: 160px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .inquiry-team-source-tag .count {
+        font-weight: 700;
+        color: #6d28d9;
+    }
+    .inquiry-team-source-summary-empty {
+        color: #9ca3af;
+        font-size: 13px;
+        padding: 4px 0;
+    }
 </style>
 
 <div id="inquirySummarySplitLayout">
@@ -134,6 +192,13 @@
                     <button class="btn btn-sm btn-light" id="inqSplitMidMaximize" title="最大化/恢复"><i class="bi bi-arrows-angle-expand"></i></button>
                     <button class="btn btn-sm btn-light" id="inqSplitMidCollapse" title="收起/展开"><i class="bi bi-chevron-right"></i></button>
                 </div>
+            </div>
+            <div id="inqTeamSourceSummaryBox" class="inquiry-team-source-summary-box">
+                <div class="inquiry-team-source-summary-header">
+                    <span class="inquiry-team-source-summary-title">团队来源汇总</span>
+                    <span class="inquiry-team-source-summary-total" id="inqTeamSourceSummaryTotal">合计：总询盘数 0</span>
+                </div>
+                <div class="inquiry-team-source-summary-empty">请选择团队查看来源分布</div>
             </div>
             <div id="inqMemberPane" style="flex:1;overflow-y:auto;padding:20px;">
                 <div class="pane-empty"><i class="bi bi-inbox empty-icon"></i><p>请点击团队名称查看成员询盘汇总</p></div>
@@ -323,7 +388,54 @@
         updatePaneSummary('#inqChannelPaneSummary', total);
     }
 
+    // ---- 团队来源汇总渲染 ----
+    function renderInquiryTeamSourceSummary(teamName, data, summary, emptyText) {
+        var rawTeam = $.trim(teamName || (summary && summary.team_name) || '');
+        var total = summary && summary.total_count ? Number(summary.total_count) : 0;
+        if (!isFinite(total)) total = 0;
+        var titleText = rawTeam ? ('团队来源汇总（' + esc(rawTeam) + '）') : '团队来源汇总';
+        var html = '<div class="inquiry-team-source-summary-header">'
+            + '<span class="inquiry-team-source-summary-title">' + titleText + '</span>'
+            + '<span class="inquiry-team-source-summary-total">合计：总询盘数 ' + total + '</span>'
+            + '</div>';
+        if (data && data.length) {
+            html += '<div class="inquiry-team-source-summary-tags">';
+            $.each(data, function(_, item) {
+                var name = $.trim((item && item.inquiry_name) ? String(item.inquiry_name) : '');
+                var count = Number(item && item.yw_num ? item.yw_num : 0);
+                if (!isFinite(count)) count = 0;
+                if (!name) name = '未知来源';
+                html += '<span class="inquiry-team-source-tag"><span class="name">' + esc(name) + '</span><span class="count">' + count + '</span></span>';
+            });
+            html += '</div>';
+        } else {
+            html += '<div class="inquiry-team-source-summary-empty">' + esc(emptyText || '暂无来源分布数据') + '</div>';
+        }
+        $('#inqTeamSourceSummaryBox').html(html);
+    }
+
     // ---- 数据加载 ----
+    function loadTeamSourceSummary(teamName) {
+        var params = getTimeParams();
+        if (!params) return;
+        renderInquiryTeamSourceSummary(teamName, [], {team_name: teamName, total_count: 0}, '加载中...');
+        $.ajax({
+            url: '{:url("DataStatistics/getInquiryTeamSourceSummaryData")}',
+            type: 'POST', dataType: 'json', timeout: 30000,
+            data: $.extend({}, params, { team_name: teamName }),
+            success: function(res) {
+                if (res.code === 0 || res.code === 200) {
+                    renderInquiryTeamSourceSummary(teamName, res.data || [], res.summary || {team_name: teamName, total_count: 0}, '暂无来源分布数据');
+                } else {
+                    renderInquiryTeamSourceSummary(teamName, [], {team_name: teamName, total_count: 0}, res.msg || '获取团队来源汇总失败');
+                }
+            },
+            error: function(xhr, status) {
+                renderInquiryTeamSourceSummary(teamName, [], {team_name: teamName, total_count: 0}, status === 'timeout' ? '请求超时，请稍后重试' : '网络错误，请稍后重试');
+            }
+        });
+    }
+
     function loadTeamSummary() {
         var params = getTimeParams();
         if (!params) return;
@@ -401,6 +513,7 @@
             renderEmpty($('#inqChannelPane'), '请点击业务员名称查看渠道分类明细');
             updatePaneSummary('#inqChannelPaneSummary', 0);
             $('#inqChannelPaneTitle').text('📋 渠道分类明细');
+            loadTeamSourceSummary(teamName);
             loadMemberSummary(teamName);
         });
     }
@@ -513,6 +626,7 @@
     });
 
     $('#inquirySummaryFilterBtn').on('click', function() {
+        renderInquiryTeamSourceSummary('', [], {total_count: 0}, '请选择团队查看来源分布');
         renderEmpty($('#inqMemberPane'), '请点击团队名称查看成员询盘汇总');
         updatePaneSummary('#inqMemberPaneSummary', 0);
         renderEmpty($('#inqChannelPane'), '请点击业务员名称查看渠道分类明细');
@@ -528,6 +642,7 @@
         $('#inquirySummaryStartDate').val('');
         $('#inquirySummaryEndDate').val('');
         clearMonthQuickState();
+        renderInquiryTeamSourceSummary('', [], {total_count: 0}, '请选择团队查看来源分布');
         renderEmpty($('#inqMemberPane'), '请点击团队名称查看成员询盘汇总');
         updatePaneSummary('#inqMemberPaneSummary', 0);
         renderEmpty($('#inqChannelPane'), '请点击业务员名称查看渠道分类明细');
