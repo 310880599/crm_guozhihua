@@ -12,7 +12,10 @@ class DataStatistics extends Common
         parent::initialize();
         $currentAdmin = Admin::getMyInfo();
         if ($currentAdmin['group_id'] != 1
-            && $currentAdmin['group_id'] != 15
+            && $currentAdmin['group_id'] != 11
+            && $currentAdmin['group_id'] != 12
+            && $currentAdmin['group_id'] != 13
+            && $currentAdmin['group_id'] != 19
             && $currentAdmin['username'] != 'admin') {
             $this->error('您无权限访问该模块');
         }
