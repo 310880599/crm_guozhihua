@@ -2287,17 +2287,29 @@ class DataStatistics extends Common
 
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
-            $staffExpr = $this->getOperationInquiryStaffNameExpr();
-            $staffRows = (clone $baseQuery)
-                ->field($staffExpr . ' as username, COUNT(*) as yw_num')
-                ->group($staffExpr)
-                ->order('yw_num desc, username asc')
-                ->select();
+
+            // 关键修复：不能再按 leads.oper_user/pr_user 直接分组，否则会出现“未分配运营”误归类。
+            // 统一对齐控制面板口径：先取当前组织下、运营组、启用、且负责当前 inquiry_id 的真实运营账号，再按账号配置的 port_id 与 leads 交集计数。
+            $staffRows = $this->fetchOperationStaffRowsForInquirySummary($inquiry_id);
+            if (empty($staffRows)) {
+                return json([
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'data' => [],
+                    'summary' => ['total_count' => 0],
+                ]);
+            }
+
             $result = [];
             $total = 0;
-            foreach ($staffRows as $op) {
+            foreach ((array)$staffRows as $op) {
                 $uname = trim((string)($op['username'] ?? ''));
-                $cnt = (int)($op['yw_num'] ?? 0);
+                if ($uname === '') {
+                    continue;
+                }
+                $ports = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+                $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($ports);
+                $cnt = (int)(clone $baseQuery)->whereRaw($portWhere)->count('l.id');
                 $total += $cnt;
                 $result[] = [
                     'username' => $uname,
@@ -2347,13 +2359,36 @@ class DataStatistics extends Common
 
             $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
-            $staffExpr = $this->getOperationInquiryStaffNameExpr();
+            $validPortMap = $this->getInquiryPortNameMapForSummary($inquiry_id);
+            $leadScopeQuery = clone $baseQuery;
 
+            // 关键修复：第三屏必须先锁定“当前来源 + 当前运营人员配置端口”，不能仅按字符串用户名过滤 leads。
             if ($username !== '') {
-                $baseQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
+                $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
+                if ($op === null) {
+                    return json([
+                        'code' => 0,
+                        'msg' => '获取成功',
+                        'data' => [],
+                        'summary' => ['total_count' => 0],
+                    ]);
+                }
+
+                $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+                if (empty($portIds)) {
+                    return json([
+                        'code' => 0,
+                        'msg' => '获取成功',
+                        'data' => [],
+                        'summary' => ['total_count' => 0],
+                    ]);
+                }
+
+                $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($portIds);
+                $leadScopeQuery->whereRaw($portWhere);
             }
 
-            $leadRows = $baseQuery->field('l.id,l.port_id')->select();
+            $leadRows = $leadScopeQuery->field('l.id,l.port_id')->select();
             if (is_array($leadRows)) {
                 $leadRowsArr = $leadRows;
             } elseif (is_object($leadRows) && method_exists($leadRows, 'toArray')) {
@@ -2361,7 +2396,6 @@ class DataStatistics extends Common
             } else {
                 $leadRowsArr = iterator_to_array($leadRows);
             }
-            $validPortMap = $this->getInquiryPortNameMapForSummary($inquiry_id);
             $portSummary = $this->buildOperationInquiryPortSummaryFromLeadRows($leadRowsArr, $validPortMap, '未分配端口');
 
             return json([
@@ -2618,14 +2652,23 @@ class DataStatistics extends Common
 
     private function fetchOperationStaffRowsForInquirySummary(int $inquiryIdToken): array
     {
-        $baseQuery = $this->buildInquirySummaryClientBaseQuery('', '', false, '');
-        $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryIdToken);
-        $staffExpr = $this->getOperationInquiryStaffNameExpr();
-        return (clone $baseQuery)
-            ->field($staffExpr . ' as username, COUNT(*) as yw_num')
-            ->group($staffExpr)
-            ->order('yw_num desc, username asc')
-            ->select();
+        $current_admin = Admin::getMyInfo();
+        $q = Db::table('admin')
+            ->where($this->getOrgWhere($current_admin['org']))
+            ->where('group_id', '=', $this->yygid)
+            ->where('is_open', '=', 1);
+
+        if ($inquiryIdToken <= 0) {
+            $q->where(function ($sub) {
+                $sub->whereNull('inquiry_id')
+                    ->whereOr('inquiry_id', '=', '')
+                    ->whereOr('inquiry_id', '=', 0);
+            });
+        } else {
+            $q->whereRaw('CAST(inquiry_id AS UNSIGNED) = ?', [$inquiryIdToken]);
+        }
+
+        return $q->field('username,port_id,inquiry_id')->order('username')->select();
     }
 
     private function applyOperatorInquiryLeadsSourceBucket($query, int $inquiryIdToken)
@@ -2636,6 +2679,25 @@ class DataStatistics extends Common
             $query->where('l.inquiry_id', '=', $inquiryIdToken);
         }
         return $query;
+    }
+
+    /**
+     * 判断 leads.port_id 与运营人员端口配置是否有交集。
+     */
+    private function buildLeadPortIntersectAdminPortsWhere(array $adminPortIds): string
+    {
+        if (empty($adminPortIds)) {
+            return '1=0';
+        }
+        $parts = [];
+        foreach ($adminPortIds as $pid) {
+            $pid = (int)$pid;
+            if ($pid <= 0) {
+                continue;
+            }
+            $parts[] = "FIND_IN_SET('{$pid}', l.port_id) > 0";
+        }
+        return empty($parts) ? '1=0' : '(' . implode(' OR ', $parts) . ')';
     }
 
     private function getOperationInquiryStaffNameExpr(): string
@@ -2649,16 +2711,38 @@ class DataStatistics extends Common
 
     private function findOperationStaffForPortSummary(string $username, int $inquiryIdToken): ?array
     {
-        return null;
+        $username = trim($username);
+        if ($username === '') {
+            return null;
+        }
+        $current_admin = Admin::getMyInfo();
+        $row = Db::table('admin')
+            ->where($this->getOrgWhere($current_admin['org']))
+            ->where('username', '=', $username)
+            ->where('group_id', '=', $this->yygid)
+            ->where('is_open', '=', 1)
+            ->field('username,port_id,inquiry_id')
+            ->find();
+        if (empty($row)) {
+            return null;
+        }
+        if ($inquiryIdToken <= 0) {
+            $ok = ($row['inquiry_id'] === null || $row['inquiry_id'] === '' || (int)$row['inquiry_id'] === 0);
+        } else {
+            $ok = ((int)$row['inquiry_id'] === $inquiryIdToken) || ((string)(int)$row['inquiry_id'] === (string)$inquiryIdToken);
+        }
+        return $ok ? $row : null;
     }
 
     private function getInquiryPortNameMapForSummary(int $inquiryId): array
     {
-        $query = Db::table('crm_inquiry_port');
-        if ($inquiryId > 0) {
-            $query->where('inquiry_id', '=', $inquiryId);
+        if ($inquiryId <= 0) {
+            return [];
         }
-        $rows = $query->field('id,port_name')->select();
+        $rows = Db::table('crm_inquiry_port')
+            ->where('inquiry_id', '=', $inquiryId)
+            ->field('id,port_name')
+            ->select();
         $map = [];
         foreach ($rows as $row) {
             $pid = (int)($row['id'] ?? 0);
@@ -2739,7 +2823,6 @@ class DataStatistics extends Common
     private function collectOperationInquiryExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', int $inquiry_id = 0, string $username = ''): array
     {
         $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
-        $staffExpr = $this->getOperationInquiryStaffNameExpr();
         if ($inquiry_id > 0) {
             $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiry_id);
         }
@@ -2814,7 +2897,26 @@ class DataStatistics extends Common
             $this->applyOperatorInquiryLeadsSourceBucket($detailQuery, $inquiry_id);
         }
         if ($username !== '') {
-            $detailQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
+            // 导出与页面保持一致：按“运营账号配置端口”过滤，不再按 leads 的 oper_user/pr_user 文本过滤。
+            $op = $this->findOperationStaffForPortSummary($username, $inquiry_id);
+            if ($op === null) {
+                return [
+                    'source_rows' => $sourceRows,
+                    'staff_rows' => $staffRows,
+                    'port_rows' => $portRows,
+                    'raw_rows' => [],
+                ];
+            }
+            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+            if (empty($portIds)) {
+                return [
+                    'source_rows' => $sourceRows,
+                    'staff_rows' => $staffRows,
+                    'port_rows' => $portRows,
+                    'raw_rows' => [],
+                ];
+            }
+            $detailQuery->whereRaw($this->buildLeadPortIntersectAdminPortsWhere($portIds));
         }
         $rawRowsRaw = $detailQuery
             ->field([
@@ -2858,22 +2960,24 @@ class DataStatistics extends Common
     {
         $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
         $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryId);
-        $staffExpr = $this->getOperationInquiryStaffNameExpr();
-        if ($username !== '') {
-            $baseQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
-        }
+        $staffRowsRaw = $this->fetchOperationStaffRowsForInquirySummary($inquiryId);
         $sourceName = $this->resolveOperationInquiryNameById($inquiryId);
-        $rowsRaw = (clone $baseQuery)
-            ->field($staffExpr . ' as username, COUNT(*) as yw_num')
-            ->group($staffExpr)
-            ->order('yw_num desc, username asc')
-            ->select();
         $rows = [];
-        foreach ((array)$rowsRaw as $row) {
+        foreach ((array)$staffRowsRaw as $row) {
+            $uname = trim((string)($row['username'] ?? ''));
+            if ($uname === '') {
+                continue;
+            }
+            if ($username !== '' && $uname !== $username) {
+                continue;
+            }
+            $ports = $this->parseCsvPortIdsForOperatorInquiry($row['port_id'] ?? '');
+            $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($ports);
+            $cnt = (int)(clone $baseQuery)->whereRaw($portWhere)->count('l.id');
             $rows[] = [
                 'source_name' => $sourceName,
-                'username' => (string)($row['username'] ?? ''),
-                'yw_num' => (int)($row['yw_num'] ?? 0),
+                'username' => $uname,
+                'yw_num' => $cnt,
             ];
         }
         usort($rows, function ($a, $b) {
@@ -2898,67 +3002,36 @@ class DataStatistics extends Common
     {
         $baseQuery = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, false, $month_keys);
         $this->applyOperatorInquiryLeadsSourceBucket($baseQuery, $inquiryId);
-        $staffExpr = $this->getOperationInquiryStaffNameExpr();
         $validPortMap = $this->getInquiryPortNameMapForSummary($inquiryId);
+        $leadScopeQuery = clone $baseQuery;
+        $displayUsername = '';
+
         if ($username !== '') {
-            $baseQuery->whereRaw($staffExpr . ' = :staff_name', ['staff_name' => $username]);
+            $op = $this->findOperationStaffForPortSummary($username, $inquiryId);
+            if ($op === null) {
+                return [];
+            }
+            $displayUsername = $username;
+            $portIds = $this->parseCsvPortIdsForOperatorInquiry($op['port_id'] ?? '');
+            if (empty($portIds)) {
+                return [];
+            }
+            $portWhere = $this->buildLeadPortIntersectAdminPortsWhere($portIds);
+            $leadScopeQuery->whereRaw($portWhere);
         }
 
-        $leadRows = $baseQuery
-            ->field($staffExpr . ' as username,l.port_id')
-            ->select();
+        $leadRows = $leadScopeQuery->field('l.id,l.port_id')->select();
         $leadRowsArr = is_array($leadRows)
             ? $leadRows
             : ((is_object($leadRows) && method_exists($leadRows, 'toArray')) ? $leadRows->toArray() : iterator_to_array($leadRows));
-        $groupRows = [];
-        foreach ((array)$leadRowsArr as $row) {
-            $staffName = trim((string)($row['username'] ?? ''));
-            if ($staffName === '') {
-                $staffName = '未分配运营';
-            }
-            $leadPortIds = $this->parseCsvPortIdsForOperatorInquiry($row['port_id'] ?? '');
-            $bucketPortId = 0;
-            foreach ($leadPortIds as $pid) {
-                $pid = (int)$pid;
-                if ($pid > 0 && isset($validPortMap[$pid])) {
-                    $bucketPortId = $pid;
-                    break;
-                }
-            }
-            $bucketName = $bucketPortId > 0 ? ($validPortMap[$bucketPortId] ?? ('ID:' . $bucketPortId)) : '未分配端口';
-            $groupKey = $staffName . '||' . (string)$bucketPortId;
-            if (!isset($groupRows[$groupKey])) {
-                $groupRows[$groupKey] = [
-                    'username' => $staffName,
-                    'port_name' => $bucketName,
-                    'yw_num' => 0,
-                ];
-            }
-            $groupRows[$groupKey]['yw_num']++;
-        }
-        $summaryRows = array_values($groupRows);
-        usort($summaryRows, function ($a, $b) {
-            $userCmp = strcmp((string)$a['username'], (string)$b['username']);
-            if ($userCmp !== 0) {
-                return $userCmp;
-            }
-            if ((int)$a['yw_num'] !== (int)$b['yw_num']) {
-                return (int)$b['yw_num'] <=> (int)$a['yw_num'];
-            }
-            return strcmp((string)$a['port_name'], (string)$b['port_name']);
-        });
+        $summary = $this->buildOperationInquiryPortSummaryFromLeadRows($leadRowsArr, $validPortMap, '未分配端口');
+
         $rows = [];
-        $rankByUser = [];
-        foreach ($summaryRows as $row) {
-            $staffName = (string)($row['username'] ?? '');
-            if (!isset($rankByUser[$staffName])) {
-                $rankByUser[$staffName] = 0;
-            }
-            $rankByUser[$staffName]++;
+        foreach ((array)($summary['data'] ?? []) as $row) {
             $rows[] = [
                 (string)$sourceName,
-                $staffName,
-                $rankByUser[$staffName],
+                (string)$displayUsername,
+                (int)($row['rank'] ?? 0),
                 (string)($row['port_name'] ?? ''),
                 (int)($row['yw_num'] ?? 0),
             ];

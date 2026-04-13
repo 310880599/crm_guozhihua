@@ -366,7 +366,7 @@
                     + '</tr>';
             });
         } else {
-            html += '<tr><td colspan="3" class="text-center text-muted">该来源下暂无运营人员，已在右侧直接展示端口明细</td></tr>';
+            html += '<tr><td colspan="3" class="text-center text-muted">该来源下暂无运营人员</td></tr>';
         }
         html += '</tbody></table></div></div>';
         $('#opInquiryStaffPane').html(html);
@@ -393,7 +393,7 @@
                     + '</tr>';
             });
         } else {
-            html += '<tr><td colspan="3" class="text-center text-muted">暂无端口配置或暂无匹配询盘</td></tr>';
+            html += '<tr><td colspan="3" class="text-center text-muted">该运营人员下暂无端口明细</td></tr>';
         }
         html += '</tbody></table></div></div>';
         $('#opInquiryPortPane').html(html);
@@ -502,13 +502,19 @@
                     if (rows.length === 0) {
                         if (isOpInquiryUnknownSource(inquiryId, name)) {
                             renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧展示未知来源异常明细');
+                            updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', {total_count: 0});
+                            self.lastUsername = '';
+                            self.bindStaffClick();
+                            return self.loadUnknownSourceDetail(inquiryId);
                         } else {
-                            renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员，已在右侧直接展示端口明细');
+                            renderOpInquiryEmpty($('#opInquiryStaffPane'), '该来源下暂无运营人员');
+                            renderOpInquiryEmpty($('#opInquiryPortPane'), '该运营人员下暂无端口明细');
+                            updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', {total_count: 0});
                         }
                         updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', {total_count: 0});
                         self.lastUsername = '';
                         self.bindStaffClick();
-                        return self.loadPortSummary(inquiryId, '');
+                        return res;
                     }
                     renderOpInquiryStaffPane(inquiryId, name, rows);
                     updateOpInquiryPaneSummary('#opInquiryStaffPaneSummary', res.summary || {});
@@ -787,7 +793,12 @@
                 var rows = staffRes.data || [];
                 if (rows.length === 0) {
                     self.lastUsername = '';
-                    return self.loadPortSummary(prevIid, '');
+                    if (isOpInquiryUnknownSource(prevIid, self.lastInquiryName)) {
+                        return self.loadUnknownSourceDetail(prevIid);
+                    }
+                    renderOpInquiryEmpty($('#opInquiryPortPane'), '该运营人员下暂无端口明细');
+                    updateOpInquiryPaneSummary('#opInquiryPortPaneSummary', {total_count: 0});
+                    return null;
                 }
                 var userOk = false;
                 if (prevUser) {
