@@ -2651,8 +2651,12 @@ private function exportToExcel($data)
                 ]);
             }
 
-            $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-                ->whereIn('pr_user', $usernames)
+            // 排除指定业务员：从 SQL 统计口径直接扣除，保证团队总利润/总金额/排名均不含这些人
+            $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+            $perfQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
+                ->whereIn('pr_user', $usernames);
+            $this->applyTeamPerformanceExcludedUsers($perfQuery, $excludedUsers);
+            $rows = $perfQuery
                 ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
                 ->group('team_name')
                 ->order('total_profit desc')
@@ -2756,6 +2760,7 @@ private function exportToExcel($data)
             }
 
         // 2) 先从 admin 表取该团队的业务员用户名集合（组织权限内）
+        $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
         $team_usernames_query = Db::name('admin')
             ->whereIn('username', $org_usernames);
         if ($is_ungrouped) {
@@ -2765,6 +2770,8 @@ private function exportToExcel($data)
         } else {
             $team_usernames_query->where('team_name', '=', $team_name);
         }
+        // 在 admin 名单查询层面即排除指定业务员（字段为 username）
+        $this->applyTeamPerformanceExcludedUsers($team_usernames_query, $excludedUsers, 'username');
         $team_usernames = $team_usernames_query->column('username');
         $team_usernames = $team_usernames ? array_values(array_filter($team_usernames)) : [];
 
@@ -2779,8 +2786,11 @@ private function exportToExcel($data)
             }
 
         // 3) 按成员用户名集合统计订单（不要依赖订单表 team_name，避免历史脏数据/不同步）
-        $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-            ->whereIn('pr_user', $team_usernames)
+        // $excludedUsers 已在步骤2中过滤了 $team_usernames，此处再在 SQL 层加一次保险
+        $memberOrderQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
+            ->whereIn('pr_user', $team_usernames);
+        $this->applyTeamPerformanceExcludedUsers($memberOrderQuery, $excludedUsers);
+        $order_stats = $memberOrderQuery
             ->field('pr_user, SUM(profit) as total_profit, SUM(money) as total_money')
             ->group('pr_user')
             ->order('total_profit desc')
@@ -2881,6 +2891,17 @@ private function exportToExcel($data)
             ]);
         }
 
+        // 团队业绩表排除逻辑：被排除的业务员第三屏直接返回空数据，不显示任何明细
+        $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+        if (!empty($excludedUsers) && in_array($username, $excludedUsers)) {
+            return json([
+                'code' => 200,
+                'msg' => 'ok',
+                'data' => [],
+                'summary' => ['total_money' => '0.00', 'total_profit' => '0.00']
+            ]);
+        }
+
         $current_admin = Admin::getMyInfo();
 
         // 组织权限校验：仅允许查询组织内成员
@@ -2934,6 +2955,57 @@ private function exportToExcel($data)
     /**
      * 订单产品汇总：团队名标准化（空值统一为“未分组”）
      */
+    // =========================================================================
+    // 团队业绩表专用排除逻辑 - 修改此处即可控制三连屏和导出的统计口径
+    // =========================================================================
+
+    /**
+     * 团队业绩表：需要从统计中排除的业务员用户名列表。
+     * 后续只需在此数组中增删名字，三连屏（第一/二/三屏）和导出（四个Sheet）均自动同步生效。
+     * 注释掉的行为保留示例，不影响实际运行。
+     */
+    private function getExcludedTeamPerformanceUsernames(): array
+    {
+        $items = [
+            // '张三',
+            // '李四',
+            '范文清',
+            '郭志华',
+            '郭志华2',
+            '付淑雅',
+            '叶诗龙',
+        ];
+
+        $items = array_map(function ($v) {
+            return trim((string)$v);
+        }, $items);
+
+        $items = array_filter($items, function ($v) {
+            return $v !== '';
+        });
+
+        return array_values(array_unique($items));
+    }
+
+    /**
+     * 团队业绩表：在 SQL 层统一应用业务员排除条件（优先于展示层隐藏）。
+     *
+     * @param mixed  $query         ThinkPHP Query 对象（直接修改，支持链式）
+     * @param array  $excludedUsers 排除的用户名数组（由 getExcludedTeamPerformanceUsernames() 提供）
+     * @param string $usernameField 表中存储用户名的字段名，默认 pr_user（订单表字段）；
+     *                              查询 admin 成员名单时可传 'username'
+     * @return mixed 原 $query
+     */
+    private function applyTeamPerformanceExcludedUsers($query, array $excludedUsers = [], string $usernameField = 'pr_user')
+    {
+        if (!empty($excludedUsers)) {
+            $query->where($usernameField, 'not in', $excludedUsers);
+        }
+        return $query;
+    }
+
+    // =========================================================================
+
     private function normalizeOrderProductTeamName(string $teamName): string
     {
         $teamName = trim($teamName);
@@ -5667,6 +5739,11 @@ private function exportToExcel($data)
         $teamExpr = "IFNULL(NULLIF(TRIM(team_name), ''), '未分组')";
         $baseQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
             ->whereIn('pr_user', $orgUsernames);
+
+        // 导出与页面完全同口径：四个 Sheet 统一排除指定业务员
+        $exportExcludedUsers = $this->getExcludedTeamPerformanceUsernames();
+        $this->applyTeamPerformanceExcludedUsers($baseQuery, $exportExcludedUsers);
+
         if ($teamName !== '') {
             $normTeam = $teamName === '未分组' ? '未分组' : $teamName;
             $baseQuery->whereRaw($teamExpr . " = :team_name", ['team_name' => $normTeam]);
