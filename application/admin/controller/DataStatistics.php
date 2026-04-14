@@ -22,6 +22,8 @@ class DataStatistics extends Common
             && $currentAdmin['group_id'] != 12
             && $currentAdmin['group_id'] != 13
             && $currentAdmin['group_id'] != 19
+            && $currentAdmin['group_id'] != 21
+            && $currentAdmin['group_id'] != 22
             && $currentAdmin['username'] != 'admin') {
             $this->error('您无权限访问该模块');
         }
