@@ -2257,20 +2257,10 @@ private function exportToExcel($data)
 
         // 需要从业绩表中排除的业务员（按姓名匹配）
         // 后续只需要在这里增删名字即可控制显示范围
-        $excludeUsernames = [
-            // '张三',
-            // '李四',
-            '范文清',
-            '郭志华',
-            '郭志华2',
-            '付淑雅',
-            '叶诗龙'
-        ];
-        // 清洗排除名单：去空格、去空值、去重
-        $excludeUsernames = array_values(array_unique(array_filter(array_map(function ($name) {
-            return trim((string)$name);
-        }, $excludeUsernames))));
-        $excludeMap = array_fill_keys($excludeUsernames, true);
+        // 业务人员业绩表展示排除名单（仅影响统计展示行和 summary，不影响账号权限）
+        // 统一由 Common::getPerformanceExcludeUsernames() 维护，如需调整请修改 Common.php
+        $excludeUsernames = $this->getPerformanceExcludeUsernames();
+        $excludeMap = $this->getPerformanceExcludeUsernameMap();
 
         $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username, $month_keys);
 
@@ -5556,10 +5546,9 @@ private function exportToExcel($data)
             ->limit(500)
             ->select();
 
-        $excludeUsernames = array_values(array_filter(array_unique(array_map(function ($name) {
-            return trim((string)$name);
-        }, ['范文清', '郭志华', '郭志华2', '付淑雅', '叶诗龙']))));
-        $excludeMap = array_fill_keys($excludeUsernames, true);
+        // 业务人员业绩表展示排除名单（仅影响统计展示，不影响权限），统一由 Common.php 维护
+        $excludeUsernames = $this->getPerformanceExcludeUsernames();
+        $excludeMap = $this->getPerformanceExcludeUsernameMap();
 
         $aggMap = [];
         foreach ((array)$orderStats as $stat) {

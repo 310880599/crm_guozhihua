@@ -555,7 +555,7 @@ class Common extends Controller
             '郭志华2',
             '付淑雅',
             '叶诗龙',
-            '樊培培',
+            '于喜英',
             // 按实际需要继续补充
         ];
 
@@ -584,6 +584,49 @@ class Common extends Controller
             $query->where($usernameField, 'not in', $excludedUsers);
         }
         return $query;
+    }
+
+    // =========================================================================
+    // 业务人员业绩表公共排除逻辑（统计排除，非权限限制）
+    // 被排除的人仍可登录和进入页面，只是数据不参与业务人员业绩表统计展示和导出
+    // 后续维护：只需修改此处一个数组，Operator 和 DataStatistics 两边自动同步生效
+    // =========================================================================
+
+    /**
+     * 业务人员业绩表统计排除名单（公共方法，Operator 与 DataStatistics 共用）。
+     *
+     * 说明：
+     * - 这里只是"统计排除"，不是"权限限制"。
+     * - 被排除的人自己仍然可以登录、进入页面查看数据。
+     * - 只是他们的数据不参与业务人员业绩表（页面展示行、汇总 summary、导出）。
+     *
+     * 后续维护：只需修改此处一个数组，两侧页面自动同步生效。
+     */
+    protected function getPerformanceExcludeUsernames(): array
+    {
+        $items = [
+            '范文清',
+            '郭志华',
+            '郭志华2',
+            '付淑雅',
+            '叶诗龙',
+            '于喜英',
+        ];
+
+        return array_values(array_unique(array_filter(array_map(function ($name) {
+            return trim((string)$name);
+        }, $items))));
+    }
+
+    /**
+     * 返回业务人员业绩表排除名单的 map 格式（key 为用户名，value 为 true）。
+     * 方便业务代码直接用 isset($map[$username]) 判断，无需遍历数组。
+     *
+     * 仅影响展示数据，不影响账号权限。
+     */
+    protected function getPerformanceExcludeUsernameMap(): array
+    {
+        return array_fill_keys($this->getPerformanceExcludeUsernames(), true);
     }
 
 }
