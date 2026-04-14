@@ -410,57 +410,6 @@ class DataStatistics extends Common
     // =========================================================
 
     /**
-     * 团队业绩表统计排除名单。
-     *
-     * 说明：
-     * - 这里只是"统计排除"，不是"权限限制"。
-     * - 被排除的人自己仍然可以进入页面查看。
-     * - 只是他们的数据不参与团队业绩表展示和导出（第一屏/第二屏/第三屏/导出均生效）。
-     *
-     * 后续维护：只需修改此数组中的姓名即可控制排除名单，无需改动其他代码。
-     */
-    private function getExcludedTeamPerformanceUsernames(): array
-    {
-        $items = [
-            // '张三',
-            // '李四',
-            '范文清',
-            '郭志华',
-            '郭志华2',
-            '付淑雅',
-            '叶诗龙',
-            '樊培培',
-            // 按实际需要继续补充
-        ];
-
-        $items = array_map(function ($v) {
-            return trim((string)$v);
-        }, $items);
-
-        $items = array_filter($items, function ($v) {
-            return $v !== '';
-        });
-
-        return array_values(array_unique($items));
-    }
-
-    /**
-     * 在 query 上追加"排除指定业务员"的 WHERE 条件。
-     *
-     * @param mixed  $query         ThinkPHP Query 对象
-     * @param array  $excludedUsers 排除名单（空数组则不追加条件）
-     * @param string $usernameField 字段名，默认 pr_user；admin 表查询时传 'username'
-     * @return mixed 原 query 对象（已链式追加条件）
-     */
-    private function applyTeamPerformanceExcludedUsers($query, array $excludedUsers = [], string $usernameField = 'pr_user')
-    {
-        if (!empty($excludedUsers)) {
-            $query->where($usernameField, 'not in', $excludedUsers);
-        }
-        return $query;
-    }
-
-    /**
      * 获取【团队】业绩数据
      * 统计口径：统一订单口径（crm_client_order，check_status=2，order_time）
      * 团队名称：只使用订单表 crm_client_order.team_name（订单快照团队）

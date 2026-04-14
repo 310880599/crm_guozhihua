@@ -2956,55 +2956,6 @@ private function exportToExcel($data)
      * 订单产品汇总：团队名标准化（空值统一为“未分组”）
      */
     // =========================================================================
-    // 团队业绩表专用排除逻辑 - 修改此处即可控制三连屏和导出的统计口径
-    // =========================================================================
-
-    /**
-     * 团队业绩表：需要从统计中排除的业务员用户名列表。
-     * 后续只需在此数组中增删名字，三连屏（第一/二/三屏）和导出（四个Sheet）均自动同步生效。
-     * 注释掉的行为保留示例，不影响实际运行。
-     */
-    private function getExcludedTeamPerformanceUsernames(): array
-    {
-        $items = [
-            // '张三',
-            // '李四',
-            '范文清',
-            '郭志华',
-            '郭志华2',
-            '付淑雅',
-            '叶诗龙',
-        ];
-
-        $items = array_map(function ($v) {
-            return trim((string)$v);
-        }, $items);
-
-        $items = array_filter($items, function ($v) {
-            return $v !== '';
-        });
-
-        return array_values(array_unique($items));
-    }
-
-    /**
-     * 团队业绩表：在 SQL 层统一应用业务员排除条件（优先于展示层隐藏）。
-     *
-     * @param mixed  $query         ThinkPHP Query 对象（直接修改，支持链式）
-     * @param array  $excludedUsers 排除的用户名数组（由 getExcludedTeamPerformanceUsernames() 提供）
-     * @param string $usernameField 表中存储用户名的字段名，默认 pr_user（订单表字段）；
-     *                              查询 admin 成员名单时可传 'username'
-     * @return mixed 原 $query
-     */
-    private function applyTeamPerformanceExcludedUsers($query, array $excludedUsers = [], string $usernameField = 'pr_user')
-    {
-        if (!empty($excludedUsers)) {
-            $query->where($usernameField, 'not in', $excludedUsers);
-        }
-        return $query;
-    }
-
-    // =========================================================================
 
     private function normalizeOrderProductTeamName(string $teamName): string
     {
