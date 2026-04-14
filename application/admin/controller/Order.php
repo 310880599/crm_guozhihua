@@ -1243,7 +1243,7 @@ class Order extends Common
         $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14, 18, 19]);
+                $q->whereIn('group_id', [13, 14, 18, 19, 22]);
                 if (!empty($extraManagerIds)) {
                     $q->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
                 }
@@ -2201,7 +2201,7 @@ class Order extends Common
         $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14, 18, 19]);
+                $q->whereIn('group_id', [13, 14, 18, 19, 22]);
                 if (!empty($extraManagerIds)) {
                     $q->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
                 }
@@ -2845,7 +2845,7 @@ class Order extends Common
         $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人
         $managerList = Db::name('admin')
             ->where(function($q) use ($extraManagerIds){
-                $q->whereIn('group_id', [13, 14, 18, 19]);
+                $q->whereIn('group_id', [13, 14, 18, 19, 22]);
                 if (!empty($extraManagerIds)) {
                     $q->whereOr('admin_id', 'in', $extraManagerIds);   // ✅ TP5.1 兼容
                 }
