@@ -410,6 +410,57 @@ class DataStatistics extends Common
     // =========================================================
 
     /**
+     * 团队业绩表统计排除名单。
+     *
+     * 说明：
+     * - 这里只是"统计排除"，不是"权限限制"。
+     * - 被排除的人自己仍然可以进入页面查看。
+     * - 只是他们的数据不参与团队业绩表展示和导出（第一屏/第二屏/第三屏/导出均生效）。
+     *
+     * 后续维护：只需修改此数组中的姓名即可控制排除名单，无需改动其他代码。
+     */
+    private function getExcludedTeamPerformanceUsernames(): array
+    {
+        $items = [
+            // '张三',
+            // '李四',
+            '范文清',
+            '郭志华',
+            '郭志华2',
+            '付淑雅',
+            '叶诗龙',
+            '樊培培',
+            // 按实际需要继续补充
+        ];
+
+        $items = array_map(function ($v) {
+            return trim((string)$v);
+        }, $items);
+
+        $items = array_filter($items, function ($v) {
+            return $v !== '';
+        });
+
+        return array_values(array_unique($items));
+    }
+
+    /**
+     * 在 query 上追加"排除指定业务员"的 WHERE 条件。
+     *
+     * @param mixed  $query         ThinkPHP Query 对象
+     * @param array  $excludedUsers 排除名单（空数组则不追加条件）
+     * @param string $usernameField 字段名，默认 pr_user；admin 表查询时传 'username'
+     * @return mixed 原 query 对象（已链式追加条件）
+     */
+    private function applyTeamPerformanceExcludedUsers($query, array $excludedUsers = [], string $usernameField = 'pr_user')
+    {
+        if (!empty($excludedUsers)) {
+            $query->where($usernameField, 'not in', $excludedUsers);
+        }
+        return $query;
+    }
+
+    /**
      * 获取【团队】业绩数据
      * 统计口径：统一订单口径（crm_client_order，check_status=2，order_time）
      * 团队名称：只使用订单表 crm_client_order.team_name（订单快照团队）
@@ -423,7 +474,12 @@ class DataStatistics extends Common
         $emptySummary = ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00'];
 
         try {
-            $rows = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
+            $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+            \think\facade\Log::info('[TeamPerformanceDebug] controller=' . __CLASS__ . ' method=' . __FUNCTION__ . ' excludedUsers=' . json_encode($excludedUsers, JSON_UNESCAPED_UNICODE));
+
+            $perfQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
+            $this->applyTeamPerformanceExcludedUsers($perfQuery, $excludedUsers);
+            $rows = $perfQuery
                 ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
                 ->group('team_name')
                 ->order('total_profit desc')
@@ -507,6 +563,9 @@ class DataStatistics extends Common
         $emptySummary = ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00'];
 
         try {
+            $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+            \think\facade\Log::info('[TeamPerformanceDebug] controller=' . __CLASS__ . ' method=' . __FUNCTION__ . ' team_name=' . $team_name . ' excludedUsers=' . json_encode($excludedUsers, JSON_UNESCAPED_UNICODE));
+
             $is_ungrouped = ($team_name === '' || $team_name === '未分组');
             $team_usernames_query = Db::name('admin');
             if ($is_ungrouped) {
@@ -516,6 +575,8 @@ class DataStatistics extends Common
             } else {
                 $team_usernames_query->where('team_name', '=', $team_name);
             }
+            // 在成员名单查询阶段就排除指定业务员，保证第二屏列表里根本不出现被排除的人
+            $this->applyTeamPerformanceExcludedUsers($team_usernames_query, $excludedUsers, 'username');
             $team_usernames = $team_usernames_query->column('username');
             $team_usernames = $team_usernames ? array_values(array_filter($team_usernames)) : [];
 
@@ -528,8 +589,11 @@ class DataStatistics extends Common
                 ]);
             }
 
-            $order_stats = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-                ->whereIn('pr_user', $team_usernames)
+            $memberOrderQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
+                ->whereIn('pr_user', $team_usernames);
+            // 双重保险：在订单统计层再次排除（防止 admin 表数据与订单表 pr_user 不一致的情况）
+            $this->applyTeamPerformanceExcludedUsers($memberOrderQuery, $excludedUsers);
+            $order_stats = $memberOrderQuery
                 ->field('pr_user, SUM(profit) as total_profit, SUM(money) as total_money')
                 ->group('pr_user')
                 ->order('total_profit desc')
@@ -615,7 +679,20 @@ class DataStatistics extends Common
         $at_time    = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
 
+        $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+        \think\facade\Log::info('[TeamPerformanceDebug] controller=' . __CLASS__ . ' method=' . __FUNCTION__ . ' username=' . $username . ' excludedUsers=' . json_encode($excludedUsers, JSON_UNESCAPED_UNICODE));
+
         if (empty($username)) {
+            return json([
+                'code' => 200,
+                'msg'  => 'ok',
+                'data' => [],
+                'summary' => ['total_money' => '0.00', 'total_profit' => '0.00']
+            ]);
+        }
+
+        // 如果传入的业务员在排除名单里，直接返回空数据，不再查询订单
+        if (in_array(trim((string)$username), $excludedUsers, true)) {
             return json([
                 'code' => 200,
                 'msg'  => 'ok',
@@ -677,6 +754,9 @@ class DataStatistics extends Common
             $month_keys = trim((string)Request::param('month_keys', ''));
             $team_name  = trim((string)Request::param('team_name', ''));
             $username   = trim((string)Request::param('username', ''));
+
+            $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+            \think\facade\Log::info('[TeamPerformanceDebug] controller=' . __CLASS__ . ' method=' . __FUNCTION__ . ' excludedUsers=' . json_encode($excludedUsers, JSON_UNESCAPED_UNICODE));
 
             $exportData = $this->collectTeamPerformanceExportData($timebucket, $at_time, $month_keys, $team_name, $username);
             $totalRows  = count($exportData['team_rows']) + count($exportData['member_rows']) + count($exportData['detail_rows']) + count($exportData['raw_rows']);
@@ -1086,10 +1166,15 @@ class DataStatistics extends Common
      */
     private function collectTeamPerformanceExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
     {
-        $teamName  = trim((string)$team_name);
-        $username  = trim((string)$username);
-        $teamExpr  = "IFNULL(NULLIF(TRIM(team_name), ''), '未分组')";
+        $teamName     = trim((string)$team_name);
+        $username     = trim((string)$username);
+        $teamExpr     = "IFNULL(NULLIF(TRIM(team_name), ''), '未分组')";
+        $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+
         $baseQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
+        // 导出四个 Sheet 统一排除指定业务员，与页面展示口径保持一致
+        $this->applyTeamPerformanceExcludedUsers($baseQuery, $excludedUsers);
+
         if ($teamName !== '') {
             $normTeam = $teamName === '未分组' ? '未分组' : $teamName;
             $baseQuery->whereRaw($teamExpr . " = :team_name", ['team_name' => $normTeam]);
