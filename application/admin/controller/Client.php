@@ -10,6 +10,7 @@ use think\facade\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use think\facade\Cache;
 use app\admin\model\Admin;
+use app\admin\service\ClientFollowService;
 
 class Client extends Common
 {
@@ -4472,30 +4473,59 @@ class Client extends Common
     }
     // ====== 修改 chengjiaoClientSearch 结束 ======
 
-    //评论
+    //兼容旧地址：转发到正式保存接口
     public function comment()
     {
+        return $this->saveClientFollow();
+    }
 
-        $data['leads_id'] = Request::param('leads_id');
-        $data['user_id'] = Session::get('aid');
-        $data['reply_msg'] = Request::param('reply_msg');
-        $data['create_date'] = time();
-
-        //更新跟进记录
-        $genjin['last_up_records'] = $data['reply_msg'];
-        $genjin['last_up_time'] = date("Y-m-d H:i:s", $data['create_date']);
-        $genjin['ut_time'] = date("Y-m-d H:i:s", time());
-
-        Db::table('crm_leads')->where(['id' => $data['leads_id']])->update($genjin);
-
-        $result = Db::table('crm_comment')->insert($data);
-        $data['create_date'] = date("Y年m月d日 H:i", $data['create_date']);
-
-        if ($result) {
-            return json(['code' => 0, 'msg' => '评论成功！', 'data' => $data]);
-        } else {
-            return json(['code' => 1, 'msg' => '评论失败！']);
+    // 保存客户跟进（供右侧新增跟进表单调用）
+    public function saveClientFollow()
+    {
+        $leadsId = (int) Request::param('leads_id', 0);
+        $content = trim((string) Request::param('content', ''));
+        if ($content === '') {
+            // 兼容历史前端字段 reply_msg
+            $content = trim((string) Request::param('reply_msg', ''));
         }
+        $nextUpTime = trim((string) Request::param('next_up_time', ''));
+
+        if ($leadsId <= 0) {
+            return json(['code' => 1, 'msg' => '缺少客户ID', 'data' => []]);
+        }
+        if ($content === '') {
+            return json(['code' => 1, 'msg' => '请输入跟进内容', 'data' => []]);
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int) Session::get('aid'),
+            'username' => trim((string) Session::get('username')),
+        ];
+        if ($operatorInfo['admin_id'] <= 0 || $operatorInfo['username'] === '') {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+
+        $service = new ClientFollowService();
+        $result = $service->saveFollow($leadsId, $content, $nextUpTime, $operatorInfo);
+
+        $code = (int)($result['code'] ?? 1);
+        $msg = (string)($result['msg'] ?? '保存失败');
+        $data = is_array($result['data'] ?? null) ? $result['data'] : [];
+
+        if ($code === 0) {
+            $data['leads_id'] = isset($data['leads_id']) ? (int)$data['leads_id'] : $leadsId;
+            $data['content'] = isset($data['reply_msg']) ? (string)$data['reply_msg'] : $content;
+            $data['latest_follow_summary'] = $data['content'];
+            if (!isset($data['next_up_time'])) {
+                $data['next_up_time'] = $nextUpTime;
+            }
+        }
+
+        return json([
+            'code' => $code,
+            'msg' => $msg,
+            'data' => $data,
+        ]);
     }
 
     // 获取客户详情和评论记录
