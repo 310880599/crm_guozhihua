@@ -583,12 +583,14 @@
                 </div>
             </div>
             {/if}
-            <!-- 询盘来源凭证 -->
+            <!-- 询盘来源凭证（兼容 JSON 数组/逗号分隔/单字符串） -->
             {if condition="!empty($orderInfo.inquiry_assign_image)"}
             <div class="layui-form-item" id="inquiry_assign_item">
                 <label class="layui-form-label label-long">询盘来源凭证</label>
                 <div class="layui-input-4">
-                    <img src="{$orderInfo.inquiry_assign_image}" alt="询盘来源凭证" class="js-img-preview" style="max-width: 500px; max-height: 300px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;">
+                    <div id="inquiry_assign_preview_list"
+                         class="multi-preview-list"
+                         data-raw='{:htmlentities(json_encode($orderInfo.inquiry_assign_image, JSON_UNESCAPED_UNICODE))}'></div>
                 </div>
             </div>
             {/if}
@@ -813,6 +815,84 @@
             }
             // 将对齐修正函数暴露到全局，便于在其他异步回调中调用
             window.fixSelectAlign = fixSelectAlign;
+
+            // 解析询盘来源凭证字段（兼容数组、对象、JSON 字符串、逗号分隔、单个 URL）
+            function parseInquiryImageFieldToArray(rawValue) {
+                var parsed = [];
+                if (rawValue == null || rawValue === '') return parsed;
+
+                if (Array.isArray(rawValue)) {
+                    rawValue.forEach(function(item) {
+                        if (item == null || item === '') return;
+                        if (typeof item === 'object') {
+                            var objUrl = item.full || item.url || item.thumb || '';
+                            if (objUrl) parsed.push(String(objUrl).trim());
+                        } else {
+                            var arrUrl = String(item).trim();
+                            if (arrUrl) parsed.push(arrUrl);
+                        }
+                    });
+                    return parsed;
+                }
+
+                if (typeof rawValue === 'object') {
+                    var singleObjUrl = rawValue.full || rawValue.url || rawValue.thumb || '';
+                    if (singleObjUrl) parsed.push(String(singleObjUrl).trim());
+                    return parsed;
+                }
+
+                var rawStr = String(rawValue).trim();
+                if (!rawStr) return parsed;
+
+                if (rawStr.charAt(0) === '[') {
+                    try {
+                        var arr = JSON.parse(rawStr);
+                        if (Array.isArray(arr)) {
+                            return parseInquiryImageFieldToArray(arr);
+                        }
+                    } catch (e) {}
+                }
+
+                if (rawStr.indexOf(',') > -1) {
+                    rawStr.split(',').forEach(function(item) {
+                        var s = String(item || '').trim();
+                        if (s) parsed.push(s);
+                    });
+                    return parsed;
+                }
+
+                parsed.push(rawStr);
+                return parsed;
+            }
+
+            function renderInquiryAssignPreviewsForDetails() {
+                var $list = $('#inquiry_assign_preview_list');
+                if (!$list.length) return;
+
+                var rawJson = $list.attr('data-raw') || '';
+                var rawValue = rawJson;
+                if (rawJson) {
+                    try {
+                        rawValue = JSON.parse(rawJson);
+                    } catch (e) {
+                        rawValue = rawJson;
+                    }
+                }
+
+                var urls = parseInquiryImageFieldToArray(rawValue);
+                $list.empty();
+                urls.forEach(function(url) {
+                    var safeUrl = String(url || '').trim();
+                    if (!safeUrl) return;
+                    $list.append(
+                        '<div class="preview-item">' +
+                            '<img src="' + safeUrl + '" class="js-img-preview" data-full="' + safeUrl + '" alt="询盘来源凭证" style="width: 100%; height: 100%; object-fit: cover; cursor: zoom-in;">' +
+                        '</div>'
+                    );
+                });
+            }
+
+            renderInquiryAssignPreviewsForDetails();
 
             // 判断是否满足凭证豁免条件（返单 or 利润<2000）
             function isVoucherExempt() {

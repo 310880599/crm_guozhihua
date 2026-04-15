@@ -863,11 +863,11 @@
                             <i class="layui-icon">&#xe67c;</i>上传图片
                         </button>
                         <div class="layui-upload-list">
-                            <img class="layui-upload-img js-img-preview" id="inquiry_assign_preview" style="max-width: 200px; max-height: 200px; display: none; cursor: zoom-in;">
+                            <div id="inquiry_assign_preview_list" class="multi-preview-list"></div>
+                            <p style="color: #999; margin: 6px 0 0;">最多上传10张</p>
                             <p id="inquiry_assign_text"></p>
                             <input type="hidden" name="inquiry_assign_image" id="inquiry_assign_image" value="" lay-verify="required">
                             <input type="hidden" name="clear_inquiry_assign_image" id="clear_inquiry_assign_image" value="0">
-                            <button type="button" class="layui-btn layui-btn-danger layui-btn-sm" id="btnRemoveInquiryAssign" style="margin-top:8px;display:none;">删除图片</button>
                         </div>
                     </div>
                 </div>
@@ -2077,89 +2077,181 @@
             // 初始化提示文本
             updateWechatReceiptText();
 
-            // 产品询盘分配图上传 - 使用隐藏的input
-            var inquiryAssignInput = $('<input type="file" accept="image/*" style="display:none;" id="inquiry_assign_input">');
-            $('body').append(inquiryAssignInput);
-            
-            $('#upload_inquiry_assign').on('click', function() {
-                inquiryAssignInput.click();
-            });
-            
-            inquiryAssignInput.on('change', function(e) {
-                var file = e.target.files[0];
-                if (!file) return;
-                
-                // 检查文件大小（压缩前限制10MB）
-                if(file.size > 10 * 1024 * 1024){
-                    layer.msg('图片大小不能超过10MB，请选择较小的图片', {icon: 2});
-                    return;
-                }
-                
-                // 预览原图
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    $('#inquiry_assign_preview').attr('src', e.target.result).show();
-                    $('#btnRemoveInquiryAssign').show();
-                };
-                reader.readAsDataURL(file);
-                
-                // 压缩图片
-                $('#inquiry_assign_text').html('<span style="color: #1E9FFF;">正在压缩图片...</span>');
-                compressImage(file, 1920, 1920, 0.8, function(compressedBlob){
-                    // 显示压缩后的大小
-                    var originalSize = (file.size / 1024 / 1024).toFixed(2);
-                    var compressedSize = (compressedBlob.size / 1024 / 1024).toFixed(2);
-                    $('#inquiry_assign_text').html('<span style="color: #1E9FFF;">压缩完成（' + originalSize + 'MB → ' + compressedSize + 'MB），开始上传...</span>');
-                    
-                    // 上传压缩后的图片
-                    uploadCompressedImage(
-                        compressedBlob,
-                        file.name.replace(/\.[^/.]+$/, '.jpg'),
-                        '{:url("UpFiles/upload")}',
-                        function(percent) {
-                            $('#inquiry_assign_text').html('<span style="color: #1E9FFF;">上传进度: ' + percent + '%</span>');
-                        },
-                        function(res) {
-                            if(res.code == 1){
-                                $('#inquiry_assign_image').val(res.url);
-                                window.__dirty = true;
-                                $('#inquiry_assign_image').trigger('change');
-                                $('#clear_inquiry_assign_image').val('0');
-                                $('#inquiry_assign_text').html('<span style="color: #5FB878;">上传成功</span>');
-                            } else {
-                                $('#inquiry_assign_text').html('<span style="color: #FF5722;">上传失败：' + (res.info || '未知错误') + '</span>');
-                            }
-                        },
-                        function(error) {
-                            $('#inquiry_assign_text').html('<span style="color: #FF5722;">上传失败：' + error + '</span>');
-                        }
-                    );
-                });
-            });
+            // 询盘来源凭证多图上传配置
+            var MAX_INQUIRY_ASSIGN_IMAGES = 10;
+            var inquiryAssignUrls = [];
 
-            // 询盘来源凭证：删除图片按钮
-            $('#btnRemoveInquiryAssign').on('click', function() {
-                $('#inquiry_assign_preview').attr('src', '').hide();
-                $('#btnRemoveInquiryAssign').hide();
-                $('#inquiry_assign_image').val('');
-                $('#clear_inquiry_assign_image').val('1');
-                $('#inquiry_assign_text').html('');
+            function renderInquiryAssignPreviews() {
+                var $list = $('#inquiry_assign_preview_list');
+                $list.empty();
+                inquiryAssignUrls.forEach(function(item) {
+                    var fullUrl = typeof item === 'string' ? item : item.full;
+                    var thumbUrl = typeof item === 'string' ? item : (item.thumb || item.full);
+                    var urlForRemove = typeof item === 'string' ? item : item.full;
+                    var $item = $('<div class="preview-item">' +
+                        '<img src="' + thumbUrl + '" class="js-img-preview" data-full="' + fullUrl + '" alt="预览图">' +
+                        '<span class="btn-remove" data-url="' + urlForRemove + '">×</span>' +
+                        '</div>');
+                    $list.append($item);
+                });
+            }
+
+            function syncInquiryAssignHidden() {
+                var urlArray = inquiryAssignUrls.map(function(item) {
+                    return typeof item === 'string' ? item : item.full;
+                });
+                $('#inquiry_assign_image').val(JSON.stringify(urlArray));
                 window.__dirty = true;
                 $('#inquiry_assign_image').trigger('change');
-            });
-
-            // 从 hidden 值渲染询盘单图预览（草稿回填用）
-            function hydrateInquiryAssignFromHidden() {
-                var url = ($('#inquiry_assign_image').val() || '').trim();
-                if (url) {
-                    $('#inquiry_assign_preview').attr('src', url).show();
-                    $('#btnRemoveInquiryAssign').show();
-                    $('#inquiry_assign_text').html('<span style="color:#5FB878;">已回填</span>');
+                if (urlArray.length > 0) {
+                    $('#clear_inquiry_assign_image').val('0');
                 } else {
-                    $('#inquiry_assign_preview').attr('src','').hide();
-                    $('#btnRemoveInquiryAssign').hide();
+                    $('#clear_inquiry_assign_image').val('1');
                 }
             }
+
+            function updateInquiryAssignText() {
+                $('#inquiry_assign_text').html('已上传 ' + inquiryAssignUrls.length + '/' + MAX_INQUIRY_ASSIGN_IMAGES);
+            }
+
+            // 从 hidden 值渲染询盘来源凭证多图预览（草稿回填用，不标脏）
+            function hydrateInquiryAssignFromHidden() {
+                var raw = $('#inquiry_assign_image').val();
+                inquiryAssignUrls = [];
+                if (!raw) {
+                    renderInquiryAssignPreviews();
+                    updateInquiryAssignText();
+                    return;
+                }
+                try {
+                    var arr = JSON.parse(raw);
+                    if (Array.isArray(arr)) {
+                        arr.forEach(function(url) {
+                            if (url && String(url).trim() !== '') {
+                                inquiryAssignUrls.push({ full: String(url), thumb: String(url) });
+                            }
+                        });
+                    } else if (typeof arr === 'string' && arr.trim() !== '') {
+                        inquiryAssignUrls.push({ full: arr.trim(), thumb: arr.trim() });
+                    }
+                } catch (e) {
+                    if (String(raw).trim() !== '') {
+                        inquiryAssignUrls.push({ full: String(raw).trim(), thumb: String(raw).trim() });
+                    }
+                }
+                renderInquiryAssignPreviews();
+                updateInquiryAssignText();
+            }
+
+            // 询盘来源凭证上传 - 使用隐藏 input，支持多选
+            var inquiryAssignInput = $('<input type="file" accept="image/*" multiple style="display:none;" id="inquiry_assign_input">');
+            $('body').append(inquiryAssignInput);
+
+            $('#upload_inquiry_assign').on('click', function() {
+                if (inquiryAssignUrls.length >= MAX_INQUIRY_ASSIGN_IMAGES) {
+                    layer.msg('最多只能上传 ' + MAX_INQUIRY_ASSIGN_IMAGES + ' 张图片', {icon: 2});
+                    return;
+                }
+                inquiryAssignInput.click();
+            });
+
+            inquiryAssignInput.on('change', function(e) {
+                var files = Array.from(e.target.files || []);
+                if (files.length === 0) return;
+
+                var remaining = MAX_INQUIRY_ASSIGN_IMAGES - inquiryAssignUrls.length;
+                if (files.length > remaining) {
+                    layer.msg('最多只能上传 ' + MAX_INQUIRY_ASSIGN_IMAGES + ' 张图片，本次只能上传 ' + remaining + ' 张', {icon: 2});
+                    files = files.slice(0, remaining);
+                }
+
+                var uploadCount = 0;
+                var successCount = 0;
+                var failCount = 0;
+
+                files.forEach(function(file) {
+                    if (file.size > 10 * 1024 * 1024) {
+                        layer.msg('图片 "' + file.name + '" 大小不能超过10MB，已跳过', {icon: 2});
+                        failCount++;
+                        uploadCount++;
+                        checkAllComplete();
+                        return;
+                    }
+
+                    compressImage(file, 1920, 1920, 0.8, function(compressedBlob) {
+                        if (uploadCount === 0) {
+                            $('#inquiry_assign_text').html('<span style="color: #1E9FFF;">正在上传第 ' + (uploadCount + 1) + '/' + files.length + ' 张...</span>');
+                        }
+                        uploadCompressedImage(
+                            compressedBlob,
+                            file.name.replace(/\.[^/.]+$/, '.jpg'),
+                            '{:url("UpFiles/upload")}',
+                            function(percent) {},
+                            function(res) {
+                                uploadCount++;
+                                if (res.code == 1) {
+                                    inquiryAssignUrls.push({
+                                        full: res.url,
+                                        thumb: res.url
+                                    });
+                                    successCount++;
+                                    renderInquiryAssignPreviews();
+                                    syncInquiryAssignHidden();
+                                    updateInquiryAssignText();
+                                } else {
+                                    failCount++;
+                                    layer.msg('图片 "' + file.name + '" 上传失败：' + (res.info || '未知错误'), {icon: 2});
+                                }
+                                checkAllComplete();
+                            },
+                            function(error) {
+                                uploadCount++;
+                                failCount++;
+                                layer.msg('图片 "' + file.name + '" 上传失败：' + error, {icon: 2});
+                                checkAllComplete();
+                            }
+                        );
+                    });
+                });
+
+                function checkAllComplete() {
+                    if (uploadCount >= files.length) {
+                        if (successCount > 0) {
+                            updateInquiryAssignText();
+                            if (failCount === 0) {
+                                layer.msg('全部上传成功', {icon: 1, time: 2000});
+                            }
+                        }
+                        inquiryAssignInput.val('');
+                    }
+                }
+            });
+
+            // 删除询盘来源凭证单张图片
+            $(document).on('click', '#inquiry_assign_preview_list .btn-remove', function(e) {
+                e.stopPropagation();
+                var url = $(this).data('url');
+                var index = -1;
+                for (var i = 0; i < inquiryAssignUrls.length; i++) {
+                    var item = inquiryAssignUrls[i];
+                    if (typeof item === 'string' && item === url) {
+                        index = i;
+                        break;
+                    } else if (typeof item === 'object' && item.full === url) {
+                        index = i;
+                        break;
+                    }
+                }
+                if (index > -1) {
+                    inquiryAssignUrls.splice(index, 1);
+                    renderInquiryAssignPreviews();
+                    syncInquiryAssignHidden();
+                    updateInquiryAssignText();
+                    window.__dirty = true;
+                }
+            });
+
+            updateInquiryAssignText();
 
             /**
              * 图片预览功能：点击图片打开预览（支持放大/缩小/重置/滚轮缩放/拖拽移动）
@@ -2396,10 +2488,20 @@
                     return false;
                 }
                 
-                // 询盘来源凭证校验
+                // 询盘来源凭证校验（多图，至少1张）
                 var inquiryAssignImage = $('#inquiry_assign_image').val();
                 if (!inquiryAssignImage || inquiryAssignImage.trim() === '') {
-                    layer.msg('请上传产品询盘分配图', { icon: 2, time: 2000 });
+                    layer.msg('请至少上传1张询盘来源凭证', { icon: 2, time: 2000 });
+                    return false;
+                }
+                try {
+                    var inquiryAssignArray = JSON.parse(inquiryAssignImage);
+                    if (!Array.isArray(inquiryAssignArray) || inquiryAssignArray.length < 1) {
+                        layer.msg('请至少上传1张询盘来源凭证', { icon: 2, time: 2000 });
+                        return false;
+                    }
+                } catch (e) {
+                    layer.msg('询盘来源凭证数据格式错误，请重新上传', { icon: 2, time: 2000 });
                     return false;
                 }
             }

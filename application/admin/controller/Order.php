@@ -6,6 +6,7 @@ use think\Db;
 use think\facade\Request;
 use think\facade\Session;
 use think\Container;
+use app\admin\service\OrderService;
 
 class Order extends Common
 {
@@ -853,16 +854,17 @@ class Order extends Common
                 
                 // 处理询盘来源凭证
                 $inquiryAssignImage = Request::param('inquiry_assign_image', '');
+                $handledInquiryAssignImage = OrderService::handleInquiryImages($inquiryAssignImage);
                 if ($exempt) {
                     // 豁免情况：允许为空，但如果上传了也保存
-                    $data['inquiry_assign_image'] = trim($inquiryAssignImage);
+                    $data['inquiry_assign_image'] = $handledInquiryAssignImage;
                 } else {
                     // 非豁免情况：必须上传
                     if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
                         $this->redisUnLock();
                         return json(['code' => 0, 'msg' => '请上传询盘来源凭证（产品询盘分配图）']);
                     }
-                    $data['inquiry_assign_image'] = trim($inquiryAssignImage);
+                    $data['inquiry_assign_image'] = $handledInquiryAssignImage;
                 }
             }
             $managerIds   = Request::param('product_manager/a'); // ★ 产品经理（管理员）ID 数组
@@ -1699,6 +1701,7 @@ class Order extends Common
             
             // 处理微信沟通凭证（多图上传）
             $MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量（与前端一致）
+            $clearWechatReceipt = (int)Request::param('clear_wechat_receipt_image', 0);
             $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
             $wechatReceiptUrls = [];
             
@@ -1729,7 +1732,14 @@ class Order extends Common
                 return !empty(trim($v));
             })));
             
-            if ($exempt) {
+            if ($clearWechatReceipt === 1) {
+                // 编辑页显式清空（前端删除到 0 张时会置为 1）
+                if ($exempt) {
+                    $data['wechat_receipt_image'] = '';
+                } else {
+                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
+                }
+            } elseif ($exempt) {
                 // 豁免情况：允许为空，但如果上传了也保存（不校验数量）
                 if (empty($wechatReceiptUrls)) {
                     // 如果前端传空，不覆盖数据库原值（编辑特性）
@@ -1752,23 +1762,34 @@ class Order extends Common
                 $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
             }
             
-            // 处理询盘来源凭证
-            $inquiryAssignImage = Request::param('inquiry_assign_image', '');
-            if ($exempt) {
-                // 豁免情况：允许为空，但如果上传了也保存
-                if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
-                    // 如果前端传空，不覆盖数据库原值（编辑特性）
-                    // 不设置 $data['inquiry_assign_image']，保留原值
-                } else {
-                    // 如果有值，保存新值
-                    $data['inquiry_assign_image'] = trim($inquiryAssignImage);
+            // 处理询盘来源凭证（多图）：兼容 JSON 数组/单字符串，支持显式清空
+            $MAX_INQUIRY_ASSIGN_IMAGES = 10;
+            $clearInquiryAssign = (int)Request::param('clear_inquiry_assign_image', 0);
+            $inquiryAssignRaw = Request::param('inquiry_assign_image', '');
+            $handledInquiryAssignImage = OrderService::handleInquiryImages($inquiryAssignRaw);
+            $inquiryAssignUrls = json_decode($handledInquiryAssignImage, true);
+            if (!is_array($inquiryAssignUrls)) {
+                $inquiryAssignUrls = [];
+            }
+
+            if ($clearInquiryAssign === 1) {
+                $data['inquiry_assign_image'] = '';
+            } elseif ($exempt) {
+                // 豁免时允许为空：有新图则保存，无新图且未显式清空则保留原值
+                $count = count($inquiryAssignUrls);
+                if ($count > $MAX_INQUIRY_ASSIGN_IMAGES) {
+                    return json(['code' => 0, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
+                }
+                if ($count > 0) {
+                    $data['inquiry_assign_image'] = $handledInquiryAssignImage;
                 }
             } else {
-                // 非豁免情况：必须上传
-                if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
-                    return json(['code' => 0, 'msg' => '请上传询盘来源凭证（产品询盘分配图）']);
+                // 非豁免时必须上传 1~N 张
+                $count = count($inquiryAssignUrls);
+                if ($count < 1 || $count > $MAX_INQUIRY_ASSIGN_IMAGES) {
+                    return json(['code' => 0, 'msg' => '询盘来源凭证图片数量必须在 1~' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张之间']);
                 }
-                $data['inquiry_assign_image'] = trim($inquiryAssignImage);
+                $data['inquiry_assign_image'] = $handledInquiryAssignImage;
             }
             $data['ut_time']          = date("Y-m-d H:i:s");              // 更新操作时间
 
@@ -2651,6 +2672,13 @@ class Order extends Common
         // 将解析结果写入 $order，供模板使用
         $order['wechat_receipt_images'] = $wechatReceiptImages;
         $order['wechat_receipt_full_urls'] = array_column($wechatReceiptImages, 'full');
+        
+        // 统一将询盘来源凭证转为数组后再 assign（兼容历史单字符串数据）
+        $inquiryAssignImages = [];
+        if (!empty($order['inquiry_assign_image'])) {
+            $inquiryAssignImages = $parseImages($order['inquiry_assign_image']);
+        }
+        $order['inquiry_assign_image'] = $inquiryAssignImages;
         
         // 读取该订单的所有产品明细行
         $items = Db::name('crm_order_item')->where('order_id', $orderId)->select();
@@ -4490,13 +4518,20 @@ class Order extends Common
         $data['sales_commission'] = Request::param('sales_commission', '');
         $data['split_remarks']    = Request::param('split_remarks', '');
         $data['amount_received']  = Request::param('amount_received', '');
-        // 询盘来源凭证：支持显式清空，空值不覆盖数据库已有图片
-        $inq = trim((string)Request::param('inquiry_assign_image', ''));
+        // 询盘来源凭证：支持多图 JSON、显式清空、数量限制
         $clearInq = (int)Request::param('clear_inquiry_assign_image', 0);
         if ($clearInq === 1) {
             $data['inquiry_assign_image'] = '';
-        } elseif ($inq !== '') {
-            $data['inquiry_assign_image'] = $inq;
+        } elseif (request()->has('inquiry_assign_image')) {
+            $handledInquiryAssignImage = OrderService::handleInquiryImages(Request::param('inquiry_assign_image', ''));
+            $inquiryAssignUrls = json_decode($handledInquiryAssignImage, true);
+            if (!is_array($inquiryAssignUrls)) {
+                $inquiryAssignUrls = [];
+            }
+            if (count($inquiryAssignUrls) > 10) {
+                return json(['code' => 1, 'msg' => '询盘来源凭证图片数量不能超过 10 张']);
+            }
+            $data['inquiry_assign_image'] = $handledInquiryAssignImage;
         }
         // 微信沟通凭证：支持显式清空，空值不覆盖数据库已有图片
         $wr = Request::param('wechat_receipt_image', null);
