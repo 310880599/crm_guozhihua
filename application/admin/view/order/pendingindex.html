@@ -382,13 +382,21 @@
         }
 
         /* === 列表缩略图样式（待审核订单）开始 === */
+        .voucher-strip,
         .img-strip{
-          display:flex;
-          gap:8px;
+          display:inline-flex;
           align-items:center;
-          flex-wrap:wrap;
+          flex-wrap:nowrap;        /* 不换行 */
+          gap:8px;                 /* 图片间距 */
+          width:max-content;       /* 多图自动撑开 */
+          min-width:100%;
+          overflow-x:auto;
+          overflow-y:hidden;
+          padding:2px 0;
         }
+        .voucher-item-img,
         .img-strip img{
+          flex:0 0 auto;
           width:60px;
           height:60px;
           object-fit:cover;
@@ -1318,23 +1326,31 @@
                 { field: 'shipping_cost', title: '运费', width: 180, hide: true },
                 { field: 'bank_account_name', title: '收款账户名称', width: 220, hide: true },
 
-                { field: 'wechat_receipt_image', title: '微信沟通及付款凭证', width: 780, hide: true, templet: function (res) {
+                { field: 'wechat_receipt_image', title: '微信沟通及付款凭证', hide: true, templet: function (res) {
         var arr = parseImages(res.wechat_receipt_image);
         if (!arr || arr.length === 0) return '-';
         var list = arr.map(function(url){ return { thumb: url, full: url }; });
         var dataImages = encodeURIComponent(JSON.stringify(list));
-        var html = '<div class="img-strip" data-images="' + dataImages + '">';
+        var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
         for (var i = 0; i < list.length; i++) {
             var u = list[i].full || list[i].thumb || '';
-            if (u) html += '<img class="js-img-gallery-preview" data-index="' + i + '" data-full="' + u + '" src="' + u + '" loading="lazy">';
+            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + u + '" loading="lazy">';
         }
         html += '</div>';
         return html;
     }},
-                { field: 'inquiry_assign_image', title: '询盘来源凭证', width: 180, hide: true, templet: function (res) {
-        if (!res.inquiry_assign_image) return '-';
-        var u = res.inquiry_assign_image;
-        return '<img class="js-img-preview" data-full="' + u + '" src="' + u + '" loading="lazy">';
+                { field: 'inquiry_assign_image', title: '询盘来源凭证', hide: true, templet: function (res) {
+        var arr = parseImages(res.inquiry_assign_image);
+        if (!arr || arr.length === 0) return '-';
+        var list = arr.map(function(url){ return { thumb: url, full: url }; });
+        var dataImages = encodeURIComponent(JSON.stringify(list));
+        var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
+        for (var i = 0; i < list.length; i++) {
+            var u = list[i].full || list[i].thumb || '';
+            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + u + '" loading="lazy">';
+        }
+        html += '</div>';
+        return html;
     }},
 
                 { field: 'check_status', title: '审核状态(check_status)', width: 200, hide: true, templet: function (res) {

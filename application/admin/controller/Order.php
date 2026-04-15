@@ -4987,6 +4987,12 @@ class Order extends Common
         
         foreach ($list['data'] as &$order) {
             $rows = $itemMap[$order['id']] ?? [];
+            // 待审核列表：补充前端预览图结构字段，不影响原有图片字段
+            $order['wechat_images'] = OrderService::buildPreviewImageItems($order['wechat_receipt_image'] ?? '');
+            $order['inquiry_images'] = OrderService::buildPreviewImageItems($order['inquiry_assign_image'] ?? '');
+            // 与图片字段一一对应的列宽，供前端表格动态渲染
+            $order['wechat_width'] = OrderService::calcImageColumnWidth($order['wechat_receipt_image'] ?? '');
+            $order['inquiry_width'] = OrderService::calcImageColumnWidth($order['inquiry_assign_image'] ?? '');
             // 回填子表聚合字段（多行用 \n 连接，前端 renderMultiline 换行展示）
             $order['item_product_name'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['product_name'] ?? ''); }, $rows)) : '';
             $order['item_spec_model'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['spec_model'] ?? ''); }, $rows)) : '';

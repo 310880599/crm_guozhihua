@@ -75,7 +75,7 @@ class OrderService
     }
 
     /**
-     * 统一凭证图片数据：去空、去重、限制数量并返回数组
+     * 统一凭证图片数据：基于 parseImageList，最多 10 张，返回标准 URL 数组
      *
      * @param mixed $raw
      * @param int $max
@@ -83,7 +83,7 @@ class OrderService
      */
     public static function normalizeVoucherImages($raw, $max = 10)
     {
-        $max = (int)$max;
+        $max = min(10, (int)$max);
         if ($max <= 0) {
             return [];
         }
@@ -94,6 +94,52 @@ class OrderService
         }
 
         return $images;
+    }
+
+    /**
+     * 构建前端预览组件所需图片项结构
+     *
+     * @param mixed $raw
+     * @return array
+     */
+    public static function buildPreviewImageItems($raw)
+    {
+        $images = self::normalizeVoucherImages($raw);
+        $items = [];
+
+        foreach ($images as $url) {
+            $items[] = [
+                'full' => $url,
+                'thumb' => $url,
+            ];
+        }
+
+        return $items;
+    }
+
+    /**
+     * 根据图片数量计算图片列宽
+     *
+     * 规则：
+     * - 0~1 张：180
+     * - 2 张：260
+     * - 3 张：340
+     * - 4 张：420
+     * - >=5 张：按每张 +80 递增，最大 780
+     *
+     * @param mixed $images
+     * @return int
+     */
+    public static function calcImageColumnWidth($images)
+    {
+        $count = count(self::parseImageList($images));
+
+        if ($count <= 1) {
+            return 180;
+        }
+
+        $width = 180 + (($count - 1) * 80);
+        return (int)min($width, 780);
     }
 
     /**
