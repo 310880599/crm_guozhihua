@@ -74,6 +74,33 @@ class Client extends Model
         return $v_foramt;
     }
 
+    /**
+     * 我的客户列表（仅负责人为当前登录用户）
+     * 保持原有分页/排序/状态口径，明确保留 next_up_time 字段。
+     */
+    public function getMyClientList($page, $pageSize, $username)
+    {
+        return Db::table('crm_leads')
+            ->where(['status' => 1, 'issuccess' => -1])
+            ->where(['pr_user' => $username])
+            ->field('*')
+            ->order('at_time desc')
+            ->paginate(['list_rows' => $pageSize, 'page' => $page])
+            ->toArray();
+    }
+
+    /**
+     * 跟进弹窗客户详情
+     * 通过模型层统一查询，保证返回 next_up_time。
+     */
+    public function getFollowClientDetailById($clientId)
+    {
+        return Db::table('crm_leads')
+            ->where(['id' => (int)$clientId])
+            ->field('*')
+            ->find();
+    }
+
     //查询
     public function getClientSearchList($page, $limit, $keyword)
     {

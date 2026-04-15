@@ -1271,6 +1271,10 @@
                     <span id="follow-last-time"></span>
                 </div>
                 <div class="info-item">
+                    <span class="info-label">下次跟进时间:</span>
+                    <span id="follow-next-time"></span>
+                </div>
+                <div class="info-item">
                     <span class="info-label">跟进记录:</span>
                     <textarea id="follow-last-record" class="layui-textarea" readonly style="height: 80px;"></textarea>
                 </div>
@@ -1571,6 +1575,18 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
     }
+    /** 下次跟进时间展示归一（空值统一返回占位） */
+    function normalizeNextUpTimeDisplay(value, emptyText) {
+        var fallback = (emptyText == null) ? '' : String(emptyText);
+        if (value == null) {
+            return fallback;
+        }
+        var text = String(value).trim();
+        if (text === '' || text === 'null' || text === 'undefined') {
+            return fallback;
+        }
+        return text;
+    }
 
     /** 最新跟进记录：悬浮层（仅截断时显示，挂到 body，避免被表格遮挡） */
     function ensureLastRecordTooltipEl() {
@@ -1669,6 +1685,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
              return '<div class="pc-last-record-wrap"><span class="pc-last-record-cell" data-pc-full="' + attr + '">' + safe + '</span></div>';
          }},
          { field: 'last_up_time', title: '最新跟进时间', width: 120 },
+         { field: 'next_up_time', title: '下次跟进时间', width: 120, templet: function (d) {
+             var v = normalizeNextUpTimeDisplay(d.next_up_time, '');
+             return personclientEscapeHtml(v);
+         }},
          { field: 'aux_phone', title: '辅助电话', width: 120 },
          { field: 'inquiry_name', title: '所属渠道', width: 120},     // 原"询盘来源"列
          { field: 'port_name', title: '运营端口', width: 120 },       // 原"来源端口"列
@@ -1712,6 +1732,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             main_phone: 120,
             aux_phone: 120,
             last_up_time: 140,
+            next_up_time: 140,
             at_time: 150,
             ut_time: 150,
             inquiry_name: 120,
@@ -2413,6 +2434,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#follow-joint-person').text(clientData.joint_person_names || '暂无');
         $('#follow-create-time').text(clientData.at_time || '');
         $('#follow-last-time').text(clientData.last_up_time || '暂无');
+        $('#follow-next-time').text(normalizeNextUpTimeDisplay(clientData.next_up_time, '--'));
         $('#follow-last-record').val(clientData.last_up_records || '暂无记录');
         $('#leads_id').val(clientData.id || '');
 

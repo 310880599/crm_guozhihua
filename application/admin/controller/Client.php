@@ -299,12 +299,7 @@ class Client extends Common
             $pageSize = input('limit') ? input('limit') : config('pageSize');
 
             // 基础列表（我的客户）
-            $list = Db::table('crm_leads')
-                ->where(['status' => 1, 'issuccess' => -1])
-                ->where(['pr_user' => Session::get('username')])
-                ->order('at_time desc')
-                ->paginate(['list_rows' => $pageSize, 'page' => $page])
-                ->toArray();
+            $list = model('Client')->getMyClientList($page, $pageSize, Session::get('username'));
 
             if (empty($list) || empty($list['data'])) {
                 return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
@@ -369,6 +364,9 @@ class Client extends Common
             // 收集协同人ID，后续统一查用户名
             $uidSet = [];
             foreach ($rows as &$row) {
+                if (!array_key_exists('next_up_time', $row)) {
+                    $row['next_up_time'] = '';
+                }
                 // 询盘来源中文
                 //$row['kh_status_name'] = isset($statusMap[$row['kh_status']]) ? $statusMap[$row['kh_status']] : (string)$row['kh_status'];
                 
@@ -1585,6 +1583,23 @@ class Client extends Common
         unset($row);
     }
    // ====== 新增 enrichLeadsRows 结束 ======
+
+    /**
+     * 跟进筛选参数归一（follow_filter + follow_days -> __follow_*）
+     */
+    private function normalizeFollowFilterKeyword(array $keyword): array
+    {
+        $followFilter = isset($keyword['follow_filter']) ? trim((string)$keyword['follow_filter']) : '';
+        $followDays = isset($keyword['follow_days']) ? (int)$keyword['follow_days'] : 0;
+
+        if ($followFilter !== '' && $followDays > 0) {
+            $keyword['__follow_filter'] = $followFilter;
+            $keyword['__follow_boundary'] = date('Y-m-d H:i:s', time() - $followDays * 86400);
+        }
+
+        unset($keyword['follow_filter'], $keyword['follow_days']);
+        return $keyword;
+    }
 
    public function successCliList()
     {
@@ -3932,18 +3947,7 @@ class Client extends Common
             $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
         }
 
-        // 【新增-跟进筛选-参数归一】最新跟进时间筛选参数处理
-        $followFilter = isset($keyword['follow_filter']) ? trim($keyword['follow_filter']) : '';
-        $followDays   = isset($keyword['follow_days']) ? intval($keyword['follow_days']) : 0;
-
-        // 只有当 follow_filter 非空 且 follow_days > 0 时才计算边界并写入 keyword
-        if (!empty($followFilter) && $followDays > 0) {
-            $boundaryTime = date('Y-m-d H:i:s', time() - $followDays * 86400);
-            $keyword['__follow_filter']   = $followFilter;
-            $keyword['__follow_boundary'] = $boundaryTime;
-            // 移除原始字段避免其他旧逻辑误判
-            unset($keyword['follow_filter'], $keyword['follow_days']);
-        }
+        $keyword = $this->normalizeFollowFilterKeyword($keyword);
 
         // 取列表（保留你原来的模型查询逻辑）
         $list = model('client')->getPersonClientSearchList($page, $limit, $keyword);
@@ -4132,18 +4136,7 @@ class Client extends Common
             $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
         }
 
-        // 【新增-跟进筛选-参数归一】最新跟进时间筛选参数处理
-        $followFilter = isset($keyword['follow_filter']) ? trim($keyword['follow_filter']) : '';
-        $followDays   = isset($keyword['follow_days']) ? intval($keyword['follow_days']) : 0;
-
-        // 只有当 follow_filter 非空 且 follow_days > 0 时才计算边界并写入 keyword
-        if (!empty($followFilter) && $followDays > 0) {
-            $boundaryTime = date('Y-m-d H:i:s', time() - $followDays * 86400);
-            $keyword['__follow_filter']   = $followFilter;
-            $keyword['__follow_boundary'] = $boundaryTime;
-            // 移除原始字段避免其他旧逻辑误判
-            unset($keyword['follow_filter'], $keyword['follow_days']);
-        }
+        $keyword = $this->normalizeFollowFilterKeyword($keyword);
 
         // 获取当前登录人可见的负责人列表（支持团队可见）
         $visibleUsers = $this->getCheckClientVisibleUsernames();
@@ -4516,9 +4509,7 @@ class Client extends Common
             $data['leads_id'] = isset($data['leads_id']) ? (int)$data['leads_id'] : $leadsId;
             $data['content'] = isset($data['reply_msg']) ? (string)$data['reply_msg'] : $content;
             $data['latest_follow_summary'] = $data['content'];
-            if (!isset($data['next_up_time'])) {
-                $data['next_up_time'] = $nextUpTime;
-            }
+            $data['next_up_time'] = $service->formatNextUpTimeForDisplay($data['next_up_time'] ?? $nextUpTime);
         }
 
         return json([
@@ -4537,172 +4528,13 @@ class Client extends Common
         }
 
         // 获取客户信息
-        $client = Db::table('crm_leads')->where(['id' => $clientId])->find();
+        $client = model('Client')->getFollowClientDetailById($clientId);
         if (!$client) {
             return json(['code' => 1, 'msg' => '客户不存在']);
         }
-
-        // 获取主/辅电话（1=主电话，3=辅助电话）
-        $mainPhone = '';
-        $auxPhone = '';
-        $contacts = Db::table('crm_contacts')
-            ->where('is_delete', 0)
-            ->where('leads_id', $clientId)
-            ->whereIn('contact_type', [1, 3])
-            ->order('id', 'asc')
-            ->field('contact_type, contact_value')
-            ->select();
-        foreach ($contacts as $c) {
-            if ($c['contact_type'] == 1 && $mainPhone === '') {
-                $mainPhone = $c['contact_value'];
-            } elseif ($c['contact_type'] == 3 && $auxPhone === '') {
-                $auxPhone = $c['contact_value'];
-            }
-        }
-        $client['main_phone'] = $mainPhone;
-        $client['aux_phone'] = $auxPhone;
-
-        // 获取询盘来源中文名称（如果 kh_status 是 ID）
-        $khStatusValue = $client['kh_status'];
-        $statusName = $khStatusValue;
-        if (is_numeric($khStatusValue)) {
-            $statusInfo = Db::table('crm_client_status')->where('id', $khStatusValue)->find();
-            if ($statusInfo) {
-                $statusName = $statusInfo['status_name'];
-            }
-        }
-        $client['kh_status_name'] = $statusName;
-
-        // 获取客户级别名称（兼容：新数据存ID，旧数据存名称）
-        $rankMap = Db::table('crm_client_rank')->column('rank_name', 'id');
-        $rankNameMap = [];
-        foreach ($rankMap as $rankId => $rankName) {
-            $rankNameMap[(string)$rankId] = trim((string)$rankName);
-        }
-        $client['kh_rank_name'] = $this->resolveKhRankDisplayName($client['kh_rank'] ?? '', $rankNameMap);
-
-        // 获取询盘来源名称（如果 inquiry_id 是 ID）  // 新增代码
-        $inquiryValue = $client['inquiry_id'];
-        $inquiryName = $inquiryValue;
-        if (is_numeric($inquiryValue)) {
-            $inquiryInfo = Db::table('crm_inquiry')->where('id', $inquiryValue)->find();
-            if ($inquiryInfo) {
-                $inquiryName = $inquiryInfo['inquiry_name'];
-            }
-        }
-        $client['inquiry_name'] = $inquiryName;  // 新增代码
-
-        // 获取运营端口名称（如果 port_id 是 ID）    // 新增代码
-        $portValue = $client['port_id'];
-        $portName = $portValue;
-        if (is_numeric($portValue)) {
-            $portInfo = Db::table('crm_inquiry_port')->where('id', $portValue)->find();
-            if ($portInfo) {
-                $portName = $portInfo['port_name'];
-            }
-        }
-        $client['port_name'] = $portName;  // 新增代码
-
-        // ✅新增：获取产品名称（如果 product_name 是 ID）
-        $productValue = $client['product_name'];
-        $productName = $productValue;
-        if (is_numeric($productValue) && !empty($productValue)) {
-            $productInfo = Db::table('crm_products')->where('id', $productValue)->find();
-            if ($productInfo) {
-                $productName = $productInfo['product_name'];
-            }
-        }
-        $client['product_name'] = $productName;  // 转换为产品名称
-
-        // 获取来源端口名称（如果 source_port 字段存在）
-        // $client['source_port_name'] = '';
-        // try {
-        //     $columns = Db::query("SHOW COLUMNS FROM `crm_leads` LIKE 'source_port'");
-        //     if (!empty($columns) && !empty($client['source_port'])) {
-        //         $sourcePortId = $client['source_port'];
-                
-        //         // 尝试从 crm_operation_shops 表查找店铺名称
-        //         $shopInfo = Db::table('crm_operation_shops')
-        //             ->where('id', $sourcePortId)
-        //             ->where('is_active', 1)
-        //             ->field('shop_name')
-        //             ->find();
-                
-        //         if ($shopInfo) {
-        //             $client['source_port_name'] = $shopInfo['shop_name'];
-        //         } else {
-        //             // 如果表中找不到，尝试从 crm_client_status 的 shop_names 字段查找
-        //             // source_port 可能是 md5(id + shop_name) 格式，需要反向查找
-        //             if (!empty($statusName)) {
-        //                 $statusInfo = Db::table('crm_client_status')
-        //                     ->where('status_name', $statusName)
-        //                     ->field('id, shop_names')
-        //                     ->find();
-                        
-        //                 if ($statusInfo && !empty($statusInfo['shop_names'])) {
-        //                     $shop_names = array_filter(array_map('trim', explode(',', $statusInfo['shop_names'])));
-        //                     foreach ($shop_names as $shop_name) {
-        //                         $expectedId = md5($statusInfo['id'] . '_' . $shop_name);
-        //                         if ($expectedId === $sourcePortId) {
-        //                             $client['source_port_name'] = $shop_name;
-        //                             break;
-        //                         }
-        //                     }
-        //                 }
-        //             }
-                    
-        //             // 如果还是找不到，显示ID
-        //             if (empty($client['source_port_name'])) {
-        //                 $client['source_port_name'] = $sourcePortId;
-        //             }
-        //         }
-        //     }
-        // } catch (\Exception $e) {
-        //     // 忽略错误
-        // }
-
-        // 解析协同人信息（joint_person）
-        $jointPersonIds = [];
-        $jointPersonNames = [];
-        if (!empty($client['joint_person'])) {
-            $jp = $client['joint_person'];
-            if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
-                // JSON 数组格式
-                $tmp = json_decode($jp, true);
-                if (is_array($tmp)) {
-                    $jointPersonIds = $tmp;
-                }
-            } else {
-                // 逗号分隔格式
-                $jointPersonIds = array_values(array_filter(explode(',', $jp)));
-            }
-            
-            // 查询协同人用户名
-            if (!empty($jointPersonIds)) {
-                $adminMap = Db::table('admin')
-                    ->whereIn('admin_id', $jointPersonIds)
-                    ->column('username', 'admin_id');
-                foreach ($jointPersonIds as $uid) {
-                    $jointPersonNames[] = $adminMap[$uid] ?? (string)$uid;
-                }
-            }
-        }
-        $client['joint_person_ids'] = $jointPersonIds;
-        $client['joint_person_names'] = implode('、', $jointPersonNames);
-
-        // 获取客户的评论记录
-        $comments = Db::table('crm_comment')
-            ->alias('com')
-            ->join('admin adm', 'com.user_id = adm.admin_id')
-            ->where(['leads_id' => $clientId])
-            ->field('com.*, adm.username, adm.avatar')
-            ->order('com.create_date desc')
-            ->select();
-
-        // 格式化时间
-        foreach ($comments as &$comment) {
-            $comment['create_date'] = date("Y年m月d日 H:i", $comment['create_date']);
-        }
+        $followService = new ClientFollowService();
+        $client = $followService->buildFollowClientDetailData($client, $clientId);
+        $comments = $followService->getFollowComments($clientId);
 
         return json([
             'code' => 0,
