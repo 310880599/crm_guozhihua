@@ -591,8 +591,34 @@
             defaultToolbar = ['filter', 'print', 'exports'];
             {/if}
 
+            // 凭证：旧数据 = 单图 URL 字符串；新数据 = JSON 数组（或接口已解析的数组）
+            function normalizeVoucherImageItems(raw) {
+                if (raw == null || raw === '') return [];
+                if (Array.isArray(raw)) {
+                    return raw.map(function (x) {
+                        if (typeof x === 'string') return { full: x, thumb: x };
+                        x = x || {};
+                        var f = x.full || x.url || x.path || x.src || '';
+                        var t = x.thumb || x.thumbnail || x.small || f;
+                        return f ? { full: f, thumb: t } : null;
+                    }).filter(Boolean);
+                }
+                var s = String(raw).trim();
+                if (!s) return [];
+                if (s.charAt(0) === '[') {
+                    try {
+                        var arr = JSON.parse(s);
+                        if (Array.isArray(arr)) return normalizeVoucherImageItems(arr);
+                    } catch (e) {}
+                }
+                return [{ full: s, thumb: s }];
+            }
+
             function renderMultiImageCell(images, single) {
                 images = images || [];
+                if (!images.length && single) {
+                    images = normalizeVoucherImageItems(single);
+                }
 
                 if (images && images.length > 0) {
                     var html = '<div class="img-strip" data-images="' + encodeURIComponent(JSON.stringify(images.map(function(img) {
@@ -615,10 +641,6 @@
 
                     html += '</div>';
                     return html || '-';
-                }
-
-                if (single) {
-                    return '<img class="js-img-preview" data-full="' + single + '" src="' + single + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
                 }
 
                 return '-';

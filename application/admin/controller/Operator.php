@@ -6,6 +6,8 @@ use think\Db;
 use think\facade\Request;
 use think\facade\Session;
 use app\admin\model\Admin;
+use app\admin\service\PersonOrderService;
+use app\admin\service\VoucherImageParseService;
 
 class Operator extends Common
 {
@@ -504,336 +506,41 @@ private function exportToExcel($data)
         return $this->fetch();
     }
 
+    /**
+     * 成交订单列表接口（运营管理-成交订单表格）。
+     * 列表行上的 wechat_receipt_image、inquiry_assign_image 在本方法中统一解析为
+     * wechat_receipt_images、inquiry_assign_images（{@see VoucherImageParseService::parseList}）。
+     */
     public function personOrderSearch()
     {
-        $where = [];
-        $client_where = [];
-        
-        // 获取当前登录用户信息
-        $current_admin = Admin::getMyInfo();
-        
-        // 统一的权限判断变量 $isSuper
-        $isSuper = (
-            (int)session('aid') === 1
-            || ($current_admin['username'] ?? '') === 'admin'
-            || (int)($current_admin['group_id'] ?? 0) === 12
-            || (int)($current_admin['group_id'] ?? 0) === 13
-            || (int)($current_admin['group_id'] ?? 0) === 16
-        );
-        
         $page = input('page') ?? 1;
         $limit = input('limit') ?? config('pageSize');
-        $keyword = Request::param('keyword');
-        // 过滤掉 null 元素
-        if ($keyword) $keyword = array_filter($keyword);
 
-        // if (isset($keyword['status'])) $where[] = ['status', '=', $keyword['status']];
-        if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
-        
-        // 时间筛选逻辑：如果 keyword['timebucket'] 有值（today/week/month…），用 buildTimeWhere；如果为空（自定义）且 keyword['at_time'] 有值，用 buildTimeWhere
-        $timeCondition = null;
-        if (isset($keyword['timebucket']) && $keyword['timebucket'] !== '') {
-            $timeCondition = $keyword['timebucket'];
-        } elseif (isset($keyword['at_time']) && $keyword['at_time'] !== '') {
-            $timeCondition = $keyword['at_time'];
-        }
-        
-        if ($timeCondition) {
-            $where[] = $this->buildTimeWhere($timeCondition, 'order_time');
-            $timeWhere['at_time'] = $this->buildTimeWhere($timeCondition, 'at_time');
-            $timeWhere['to_kh_time'] = $this->buildTimeWhere($timeCondition, 'to_kh_time');
-            $client_where[] = function ($query) use ($timeWhere) {
-                $query->where(...$timeWhere['at_time']);
-                $query->whereOr(...$timeWhere['to_kh_time']);
-            };
-        }
-        
-        if (isset($keyword['min_money'])) $where[] = ['money', '>', $keyword['min_money']];
-        if (isset($keyword['max_money'])) $where[] = ['money', '<', $keyword['max_money']];
-        if (isset($keyword['min_profit'])) $where[] = ['profit', '>', $keyword['min_profit']];
-        if (isset($keyword['max_profit'])) $where[] = ['profit', '<', $keyword['max_profit']];
-        if (isset($keyword['min_margin_rate'])) $where[] = ['margin_rate', '>', $keyword['min_margin_rate']];
-        if (isset($keyword['max_margin_rate'])) $where[] = ['margin_rate', '<', $keyword['max_margin_rate']];
-        if (isset($keyword['cname'])) {
-            $where[] = ['cname', 'like', "%{$keyword['cname']}%"];
-            // $client_where[] = ['kh_name', 'like', "%{$keyword['cname']}%"];
-        }
-        if (isset($keyword['contact'])) {
-            $where[] = ['contact', 'like', "%{$keyword['contact']}%"];
-        }
-        if (isset($keyword['customer_type'])) {
-            $where[] = ['customer_type', '=', $keyword['customer_type']];
-        }
-        if (isset($keyword['product_name'])) {
-            $where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
-        }
-        
-        // 权限过滤逻辑
-        $current_username = $current_admin['username'] ?? '';
-        
-        if ($isSuper === true) {
-            // 超级管理员：不添加任何权限过滤条件，可以查看所有成交订单
-            // 但保留用户主动筛选条件（team_name、org、pr_user）
-        } else {
-            // 普通员工：只能查看自己创建/负责的成交订单
-            if ($current_username) {
-                $where[] = ['pr_user', '=', $current_username];
-                $client_where[] = ['pr_user', '=', $current_username];
+        $service = new PersonOrderService();
+        $result = $service->search(
+            Request::param(),
+            $page,
+            $limit,
+            function ($timebucket, $field) {
+                return $this->buildTimeWhere($timebucket, $field);
+            },
+            function ($org, $alias = '') {
+                return $this->getOrgWhere($org, $alias);
             }
-        }
-        
-        // 用户主动筛选：团队名称筛选（仅当用户主动选择时）
-        if (isset($keyword['team_name']) && !empty($keyword['team_name'])) {
-            $where[] = ['team_name', '=', $keyword['team_name']];
-        }
-        
-        // 用户主动筛选：组织过滤（仅当用户主动选择时）
-        $org_where = [];
-        if (!empty($keyword['org'])) {
-            $org_where[] = $this->getOrgWhere($keyword['org']);
-        }
-        
-        // 如果用户主动筛选了团队名称或组织，需要根据筛选条件进一步过滤业务员列表
-        $filter_team_name = $keyword['team_name'] ?? '';
-        if ($filter_team_name || !empty($org_where)) {
-            $filter_query = Db::table('admin');
-            if ($filter_team_name) {
-                $filter_query->where('team_name', $filter_team_name);
-            }
-            if (!empty($org_where)) {
-                $filter_query->where($org_where);
-            }
-            $filtered_usernames = $filter_query->column('username');
-            
-            // 如果筛选后没有匹配的业务员，返回空结果
-            if (empty($filtered_usernames)) {
-                $client_where[] = ['pr_user', '=', time()];
-                $where[] = ['pr_user', '=', time()];
-            } else {
-                if ($isSuper) {
-                    // 超级管理员：使用筛选后的业务员列表
-                    $client_where[] = ['pr_user', 'in', $filtered_usernames];
-                    $where[] = ['pr_user', 'in', $filtered_usernames];
-                } else {
-                    // 普通员工：检查当前用户是否在筛选范围内
-                    if (!in_array($current_username, $filtered_usernames)) {
-                        // 当前用户不在筛选范围内，返回空结果
-                        $client_where[] = ['pr_user', '=', time()];
-                        $where[] = ['pr_user', '=', time()];
-                    }
-                    // 如果当前用户在筛选范围内，保持原有权限过滤（pr_user = 当前登录用户名）
+        );
+
+        if (!empty($result['data']) && is_array($result['data'])) {
+            foreach ($result['data'] as &$row) {
+                if (!is_array($row)) {
+                    continue;
                 }
+                $row['wechat_receipt_images'] = VoucherImageParseService::parseList($row['wechat_receipt_image'] ?? null);
+                $row['inquiry_assign_images'] = VoucherImageParseService::parseList($row['inquiry_assign_image'] ?? null);
             }
-        }
-        
-        // 询盘渠道查询
-        if (isset($keyword['source'])) {
-            $where[] = ['source', '=', $keyword['source']];
-            //兼容历史数据
-            $kh_source = strtolower($keyword['source']);
-            $client_where[] = ['kh_status', 'like', "%$kh_source%"];
-        }
-        // 询盘端口查询
-        if (isset($keyword['source_port'])) {
-            $where[] = ['source_port', '=', $keyword['source_port']];
-        }
-        
-        // 业务员筛选：若传了 pr_user，则追加 ['pr_user','=',$keyword['pr_user']]
-        if (isset($keyword['pr_user'])) {
-            if ($isSuper) {
-                // 超级管理员：可以使用筛选的业务员
-                $where[] = ['pr_user', '=', $keyword['pr_user']];
-                $client_where[] = ['pr_user', '=', $keyword['pr_user']];
-            } else {
-                // 普通员工：只能查看自己的订单，如果筛选的不是自己，返回空结果
-                if ($keyword['pr_user'] !== $current_username) {
-                    $client_where[] = ['pr_user', '=', time()];
-                    $where[] = ['pr_user', '=', time()];
-                }
-                // 如果筛选的是自己，保持原有权限过滤（pr_user = 当前登录用户名）
-            }
-        }
-        
-        // 客户查询条件：只查询启用状态的客户
-        $client_where[] = ['l.status', '=', 1];
-        
-        $list = Db::table('crm_client_order')
-            ->alias('o')
-            ->where($where)
-            ->order('o.order_time desc')
-            ->paginate([
-                'list_rows' => $limit,
-                'page' => $page
-            ])
-            ->toArray();
-
-        // ====== 新增：批量查询产品明细 ======
-        $orderIds = array_column($list['data'], 'id');
-        $orderItemsMap = [];
-        if (!empty($orderIds)) {
-            // 批量查询订单明细表，关联产品和分类表获取产品名称
-            $items = Db::table('crm_order_item')
-                ->alias('oi')
-                ->leftJoin('crm_products p', 'oi.product_id = p.id')
-                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-                ->whereIn('oi.order_id', $orderIds)
-                ->order('oi.order_id asc, oi.line_no asc')
-                ->field('oi.order_id, oi.product_name, oi.product_id, p.product_name as product_name_from_table')
-                ->select();
-
-            // 按 order_id 分组组装产品明细
-            foreach ($items as $item) {
-                $orderId = $item['order_id'];
-                // 优先使用明细表中的 product_name，如果没有则使用关联表的产品名称
-                $productName = !empty($item['product_name']) ? $item['product_name'] : ($item['product_name_from_table'] ?? '');
-                if (!empty($productName)) {
-                    $orderItemsMap[$orderId][] = [
-                        'product_name' => $productName
-                    ];
-                }
-            }
+            unset($row);
         }
 
-        // 将产品明细添加到每条订单数据中
-        foreach ($list['data'] as &$order) {
-            $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
-        }
-        unset($order);
-        // ====== 新增代码结束 ======
-
-        // === wechat_receipt_images 解析兼容开始 ===
-        // 【重要说明】crm_client_hangye 表已废弃，不再使用任何 hangye 表的回退逻辑
-        // 若订单 wechat_receipt_image 为空，直接保持为空，不做任何回退查询
-        
-        /**
-         * 解析图片数据，统一输出格式
-         * @param mixed $raw 原始数据（可能是字符串、JSON字符串、数组等）
-         * @return array 统一格式：[['full' => '...', 'thumb' => '...'], ...]
-         */
-        $parseImages = function($raw) {
-            // 空值安全处理：null、空字符串、'null'、'[]' 都返回空数组
-            if (empty($raw)) {
-                return [];
-            }
-            
-            // 处理字符串 'null' 或 '[]'
-            if (is_string($raw)) {
-                $raw = trim($raw);
-                if (empty($raw) || $raw === 'null' || $raw === '[]') {
-                    return [];
-                }
-                
-                // 如果以 [ 开头，尝试解析为JSON数组
-                if (substr($raw, 0, 1) === '[') {
-                    $decoded = json_decode($raw, true);
-                    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                        $raw = $decoded;
-                    } else {
-                        // JSON解析失败，当作单字符串处理
-                        return [['full' => $raw, 'thumb' => $raw]];
-                    }
-                } else {
-                    // 不是JSON数组，当作单字符串处理
-                    return [['full' => $raw, 'thumb' => $raw]];
-                }
-            }
-
-            // 如果是数组
-            if (is_array($raw)) {
-                $result = [];
-                $seenFulls = []; // 用于去重
-
-                foreach ($raw as $item) {
-                    if (is_string($item)) {
-                        // 数组元素是字符串
-                        $full = trim($item);
-                        if (!empty($full) && !isset($seenFulls[$full])) {
-                            $seenFulls[$full] = true;
-                            $result[] = ['full' => $full, 'thumb' => $full];
-                        }
-                    } elseif (is_array($item) || is_object($item)) {
-                        // 数组元素是对象
-                        $item = (array)$item;
-                        
-                        // 优先从 full/path/src/url 取 full
-                        $full = '';
-                        foreach (['full', 'path', 'src', 'url'] as $key) {
-                            if (!empty($item[$key])) {
-                                $full = trim($item[$key]);
-                                break;
-                            }
-                        }
-                        
-                        if (empty($full)) {
-                            continue; // 没有找到full，跳过
-                        }
-
-                        // 去重
-                        if (isset($seenFulls[$full])) {
-                            continue;
-                        }
-                        $seenFulls[$full] = true;
-
-                        // thumb 优先 thumb/thumbnail/small，没有则 thumb=full
-                        $thumb = $full;
-                        foreach (['thumb', 'thumbnail', 'small'] as $key) {
-                            if (!empty($item[$key])) {
-                                $thumb = trim($item[$key]);
-                                break;
-                            }
-                        }
-
-                        $result[] = ['full' => $full, 'thumb' => $thumb];
-                    }
-                }
-
-                return $result;
-            }
-
-            return [];
-        };
-
-        // 为每条订单添加 wechat_receipt_images 字段（不再从 hangye 表回退）
-        foreach ($list['data'] as &$order) {
-            $raw = $order['wechat_receipt_image'] ?? '';
-            
-            // 【修改】直接解析订单自身的 wechat_receipt_image，不再尝试从 hangye 回退
-            // 如果订单 wechat_receipt_image 为空，parseImages 会返回空数组 []
-            $order['wechat_receipt_images'] = $parseImages($raw);
-            
-            // 注意：保留原字段 wechat_receipt_image 以兼容旧逻辑
-        }
-        unset($order);
-        // === wechat_receipt_images 解析兼容结束 ===
-
-        //成单率
-
-        $totalInquiries = Db::table('crm_leads')
-            ->alias('l')
-            ->where($client_where)
-            ->count();
-
-        $successOrders = $list['total'];
-        $successRate = $totalInquiries > 0 ? ($successOrders / $totalInquiries * 100) : 0;
-        $totalMoney = Db::table('crm_client_order')
-            ->alias('o')
-            ->where($where)
-            ->sum('o.money');
-        $totalProfit = Db::table('crm_client_order')
-            ->alias('o')
-            ->where($where)
-            ->sum('o.profit');
-        return $result = [
-            'code' => 0,
-            'msg' => '获取成功!',
-            'data' => $list['data'],
-            'count' => $list['total'],
-            'rel' => 1,
-            'totalInquiries' => $totalInquiries,
-            'successRate' => number_format($successRate, 2),
-            'totalMoney' => number_format($totalMoney, 2),
-            'totalProfit' => number_format($totalProfit, 2),
-        ];
+        return json($result);
     }
 
 

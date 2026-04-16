@@ -250,16 +250,19 @@
             box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
         }
 
-        /* 微信沟通凭证图片横向滚动容器样式 */
-        .img-strip {
-            display: flex;
-            gap: 4px;
-            width: 100%;
-            max-width: 100%;      /* 关键：不要再限制 260px */
-            overflow-x: auto;     /* 窄屏不够宽时允许滚动 */
+        /* 微信沟通 / 询盘来源凭证：多图横条 img-strip（与待审核订单 voucher-strip 一致） */
+        .img-strip,
+        .img-strip.voucher-strip {
+            display: inline-flex;
+            align-items: center;
+            flex-wrap: nowrap;
+            gap: 8px;
+            width: max-content;
+            min-width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
             overflow-y: hidden;
             padding: 2px 0;
-            /* 优化滚动条样式 */
             scrollbar-width: thin;
             scrollbar-color: #c1c1c1 #f1f1f1;
         }
@@ -282,10 +285,14 @@
             background: #a8a8a8;
         }
 
-        .img-strip img {
-            flex-shrink: 0;
+        .img-strip img,
+        .img-strip .voucher-item-img {
+            flex: 0 0 auto;
+            width: 60px;
+            height: 60px;
             max-width: 60px;
             max-height: 60px;
+            object-fit: cover;
             margin: 0;
         }
 
@@ -583,6 +590,167 @@
             const { table, form, laydate, upload, util, element } = layui;
             var $ = layui.$;
             var layer = layui.layer;
+            /** HTML 属性值转义，避免 URL 含引号导致 DOM 错乱、预览失效 */
+            function escapeHtmlAttr(s) {
+                if (s == null || s === '') return '';
+                return String(s)
+                    .replace(/&/g, '&amp;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+            }
+
+            // 凭证字段兼容：单图 URL；JSON 数组字符串；对象数组；避免把 JSON 整段当单元格文本输出
+            function normalizeVoucherImageItems(raw) {
+                if (raw == null || raw === '') return [];
+                if (Array.isArray(raw)) {
+                    return raw.map(function (x) {
+                        if (typeof x === 'string') return { full: x, thumb: x };
+                        x = x || {};
+                        var f = x.full || x.url || x.path || x.src || '';
+                        var t = x.thumb || x.thumbnail || x.small || f;
+                        return f ? { full: String(f).trim(), thumb: String(t || f).trim() } : null;
+                    }).filter(Boolean);
+                }
+                var s = String(raw).trim();
+                if (!s) return [];
+                if (s.charAt(0) === '[') {
+                    try {
+                        var arr = JSON.parse(s);
+                        if (Array.isArray(arr)) return normalizeVoucherImageItems(arr);
+                    } catch (e) {}
+                    return [];
+                }
+                if (s.charAt(0) === '{') {
+                    try {
+                        var obj = JSON.parse(s);
+                        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                            return normalizeVoucherImageItems([obj]);
+                        }
+                    } catch (e) {}
+                    return [];
+                }
+                return [{ full: s, thumb: s }];
+            }
+
+            /**
+             * 统一从行数据取列表：兼容数组、JSON 字符串、单 URL 字符串；避免仅列表字段为 URL 时被忽略
+             */
+            function coerceVoucherImageListFromRow(res, listKey, rawKey) {
+                var v = res[listKey];
+                if (typeof v === 'string') {
+                    var t = v.trim();
+                    if (t.charAt(0) === '[' || t.charAt(0) === '{') {
+                        try {
+                            var j = JSON.parse(t);
+                            if (Array.isArray(j)) {
+                                v = j;
+                            } else if (j && typeof j === 'object') {
+                                v = [j];
+                            } else {
+                                v = null;
+                            }
+                        } catch (e) {
+                            v = null;
+                        }
+                    }
+                }
+                if (Array.isArray(v) && v.length > 0) {
+                    return normalizeVoucherImageItems(v);
+                }
+                if (typeof v === 'string' && v.trim() !== '') {
+                    return normalizeVoucherImageItems(v);
+                }
+                return normalizeVoucherImageItems(res[rawKey]);
+            }
+
+            function wechatReceiptImagesForTableRow(res) {
+                return coerceVoucherImageListFromRow(res, 'wechat_receipt_images', 'wechat_receipt_image');
+            }
+            function inquiryAssignImagesForTableRow(res) {
+                return coerceVoucherImageListFromRow(res, 'inquiry_assign_images', 'inquiry_assign_image');
+            }
+            /**
+             * data-images：URI 编码的 JSON 数组 [{thumb,full},...]，供点击时多图预览；
+             * 单图时数组长度为 1，与多图同一套逻辑（openZoomPreviewGallery）。
+             */
+            function buildVoucherDataImagesAttr(images) {
+                var payload = images.map(function (img) {
+                    var thumb = img.thumb || img.full || '';
+                    var full = img.full || thumb;
+                    return { thumb: thumb, full: full };
+                });
+                return encodeURIComponent(JSON.stringify(payload));
+            }
+
+            /** 微信 / 询盘：img-strip + data-images；属性已转义，避免 JSON/引号破坏结构 */
+            function renderVoucherImageStripHtml(images) {
+                if (!images || !images.length) {
+                    return '-';
+                }
+                var html = '<div class="img-strip voucher-strip" data-images="' + buildVoucherDataImagesAttr(images) + '">';
+                for (var i = 0; i < images.length; i++) {
+                    var img = images[i];
+                    var thumb = img.thumb || img.full || '';
+                    var full = img.full || thumb;
+                    thumb = String(thumb || '').trim();
+                    full = String(full || '').trim();
+                    if (thumb) {
+                        html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + escapeHtmlAttr(full) + '" src="' + escapeHtmlAttr(thumb) + '" loading="lazy">';
+                    }
+                }
+                html += '</div>';
+                return html.indexOf('<img') !== -1 ? html : '-';
+            }
+
+            /**
+             * 与后端 OrderService::calcImageColumnWidth 一致：按「当前列最大图片张数」算列宽
+             * 0～1 张：180；2 张：260；每多 1 张 +80；上限 780
+             */
+            function calcVoucherColumnWidthByMaxImageCount(maxCount) {
+                var n = parseInt(maxCount, 10) || 0;
+                if (n <= 1) {
+                    return 180;
+                }
+                var w = 180 + (n - 1) * 80;
+                return Math.min(w, 780);
+            }
+
+            /** 根据当前页 data 中微信/询盘列各自「最大图片数」设置列宽 */
+            function applyVoucherImageColumnWidthsFromPageData(res) {
+                var rows = (res && res.data) ? res.data : [];
+                var maxWechat = 0;
+                var maxInq = 0;
+                for (var i = 0; i < rows.length; i++) {
+                    var row = rows[i];
+                    var cw = wechatReceiptImagesForTableRow(row).length;
+                    var ci = inquiryAssignImagesForTableRow(row).length;
+                    if (cw > maxWechat) maxWechat = cw;
+                    if (ci > maxInq) maxInq = ci;
+                }
+                var wWx = calcVoucherColumnWidthByMaxImageCount(maxWechat);
+                var wIq = calcVoucherColumnWidthByMaxImageCount(maxInq);
+                var $view = $('#table-list').next('.layui-table-view');
+                if (!$view.length) {
+                    return;
+                }
+                var wxPx = wWx + 'px';
+                var iqPx = wIq + 'px';
+                // 只设 width/minWidth，不用 maxWidth，避免与表头/横向滚动条叠加导致列错乱
+                $view.find('[data-field="wechat_receipt_image"]').css({
+                    width: wxPx,
+                    minWidth: wxPx
+                });
+                $view.find('[data-field="inquiry_assign_image"]').css({
+                    width: iqPx,
+                    minWidth: iqPx
+                });
+                if (typeof table.resize === 'function') {
+                    table.resize('table-list');
+                }
+            }
+
             // 根据超级管理员权限设置工具栏按钮
             var defaultToolbar = ['filter'];
             {if session('aid') eq 1}
@@ -598,11 +766,11 @@
                 toolbar: '#topBtn',
                 defaultToolbar: defaultToolbar,
                 cols: [[
-                    { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
-                    { field: 'order_no', title: '订单编号', totalRowText: '合计：',width: 180 },
-                    { field: 'cname', title: '客户名称',width: 180 },
-                    { field: 'contact', title: '联系方式',width: 180 },
-                    { field: 'order_items', title: '产品明细', width: 280, templet: function(d){
+                    { field: 'id', title: 'ID', minWidth: 60, fixed: true, hide: true },
+                    { field: 'order_no', title: '订单编号', totalRowText: '合计：', minWidth: 140 },
+                    { field: 'cname', title: '客户名称', minWidth: 120 },
+                    { field: 'contact', title: '联系方式', minWidth: 120 },
+                    { field: 'order_items', title: '产品明细', minWidth: 180, templet: function(d){
                         if (!d.order_items || d.order_items.length === 0) {
                             return '';
                         }
@@ -612,73 +780,42 @@
                             return name;
                         }).join('<br>');
                     }},
-                    { field: 'money', title: '成交金额(￥)', totalRow: true,width: 180 },
-                    { field: 'profit', title: '利润', totalRow: true,width: 180 },
-                    { field: 'margin_rate', title: '利润率(%)', totalRow: true,width: 180 },
-                    { field: 'order_time', title: '成交时间',width: 180 },
-                    { field: 'source', title: '询盘来源',width: 180 },
-                    { field: 'source_port', title: '来源端口',width: 180 },
+                    { field: 'money', title: '成交金额(￥)', totalRow: true, minWidth: 120 },
+                    { field: 'profit', title: '利润', totalRow: true, minWidth: 100 },
+                    { field: 'margin_rate', title: '利润率(%)', totalRow: true, minWidth: 100 },
+                    { field: 'order_time', title: '成交时间', minWidth: 150 },
+                    { field: 'source', title: '询盘来源', minWidth: 120 },
+                    { field: 'source_port', title: '来源端口', minWidth: 120 },
                     { 
                         field: 'wechat_receipt_image', 
                         title: '微信沟通及付款凭证', 
-                        width: 780,
+                        minWidth: 180,
                         templet: function(res){
-                            // === wechat_receipt_images 解析兼容开始 ===
-                            var images = res.wechat_receipt_images || [];
-                            
-                            // 如果后端提供了 wechat_receipt_images 数组
-                            if (images && images.length > 0) {
-                                // 修改：显示全部图片，不再截断为3张
-                                // 构建图片数组（统一为 full 地址数组，用于预览）
-                                var html = '<div class="img-strip" data-images="' + encodeURIComponent(JSON.stringify(images.map(function(img) {
-                                    var thumb = img.thumb || img.full || '';
-                                    var full = img.full || thumb;
-                                    return {
-                                        thumb: thumb,
-                                        full: full
-                                    };
-                                }))) + '">';
-                                
-                                // 遍历全部图片，渲染所有缩略图
-                                for (var i = 0; i < images.length; i++) {
-                                    var img = images[i];
-                                    var thumb = img.thumb || img.full || '';
-                                    var full = img.full || thumb;
-                                    if (thumb) {
-                                        // 添加 data-index 用于标识图片索引，data-full 用于单图预览兼容
-                                        html += '<img class="js-img-gallery-preview" data-index="' + i + '" data-full="' + full + '" src="' + thumb + '" loading="lazy" style="cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
-                                    }
-                                }
-                                html += '</div>';
-                                return html || '-';
+                            try {
+                                return renderVoucherImageStripHtml(wechatReceiptImagesForTableRow(res));
+                            } catch (e) {
+                                console.error('wechat_receipt_image cell', e);
+                                return '-';
                             }
-                            
-                            // 兼容旧数据：如果后端没给 wechat_receipt_images，尝试使用 wechat_receipt_image
-                            if (res.wechat_receipt_image) {
-                                return '<img class="js-img-preview" data-full="' + res.wechat_receipt_image + '" src="' + res.wechat_receipt_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
-                            }
-                            
-                            return '-';
-                            // === wechat_receipt_images 解析兼容结束 ===
                         }
                     },
                     { 
                         field: 'inquiry_assign_image', 
                         title: '询盘来源凭证', 
-                        width: 180,
+                        minWidth: 180,
                         templet: function(res){
-                            // === wechat_receipt_images 解析兼容开始 ===
-                            if(res.inquiry_assign_image){
-                                return '<img class="js-img-preview" data-full="' + res.inquiry_assign_image + '" src="' + res.inquiry_assign_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                            try {
+                                return renderVoucherImageStripHtml(inquiryAssignImagesForTableRow(res));
+                            } catch (e) {
+                                console.error('inquiry_assign_image cell', e);
+                                return '-';
                             }
-                            return '-';
-                            // === wechat_receipt_images 解析兼容结束 ===
                         }
                     },
-                    { field: 'pr_user', title: '负责人', hide: false,width: 180 },
-                    { field: 'team_name', title: '团队', hide: false,width: 180 },
-                    { field: 'create_time', title: '创建时间',width: 180 },
-                    { field: 'update_time', title: '更新时间',width: 180 },
+                    { field: 'pr_user', title: '负责人', hide: false, minWidth: 100 },
+                    { field: 'team_name', title: '团队', hide: false, minWidth: 100 },
+                    { field: 'create_time', title: '创建时间', minWidth: 150 },
+                    { field: 'update_time', title: '更新时间', minWidth: 150 },
                 ]],
                 limit: 100, //每页默认显示的数量
 
@@ -689,6 +826,9 @@
                     $('#total-profit').text(res.totalProfit);
                     $('#total-inquiries').text(res.totalInquiries);
                     $('#success-rate').text(res.successRate);
+                    setTimeout(function () {
+                        applyVoucherImageColumnWidthsFromPageData(res);
+                    }, 0);
                 }
             });
             table.on('tool(table-list)', function (obj) {
@@ -793,7 +933,7 @@
                     + '  </div>'
                     + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
                     + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
-                    + '      <img id="previewZoomImg" src="' + imgSrc + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
+                    + '      <img id="previewZoomImg" src="' + escapeHtmlAttr(imgSrc) + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
                     + '    </div>'
                     + '  </div>'
                     + '</div>';
@@ -965,7 +1105,7 @@
                     + '  </div>'
                     + '  <div id="previewStage" style="position:absolute; inset:0; overflow:auto; padding:20px;">'
                     + '    <div id="previewCanvas" style="position:relative; min-width:100%; min-height:100%; display:flex; align-items:flex-start; justify-content:center;">'
-                    + '      <img id="previewZoomImg" src="' + fullImages[currentIndex] + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
+                    + '      <img id="previewZoomImg" src="' + escapeHtmlAttr(fullImages[currentIndex]) + '" style="transform-origin: top center; max-width:none; user-select:none; cursor:grab;" />'
                     + '    </div>'
                     + '  </div>'
                     + '</div>';
@@ -1079,45 +1219,40 @@
                 });
             }
 
-            // 事件委托：绑定图片组预览（.js-img-gallery-preview）
+            // 凭证缩略图：优先读容器 data-images 多图预览；无容器 / 解析失败 / 空数组 → 单图 openZoomPreview（data-full 或 src）
             $(document).on('click', '.js-img-gallery-preview', function() {
                 // 防止关闭后立即点击穿透
                 if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) {
                     return;
                 }
 
-                // 获取图片组容器
-                var $container = $(this).closest('.img-strip');
+                var $el = $(this);
+                var $container = $el.closest('.img-strip, .voucher-strip');
                 if ($container.length === 0) {
-                    // 如果没有容器，降级为单图预览
-                    var imgSrc = $(this).data('full') || $(this).attr('src');
-                    if (imgSrc) openZoomPreview(imgSrc);
+                    var lone = $el.data('full') || $el.attr('src');
+                    if (lone) openZoomPreview(lone);
                     return;
                 }
 
-                // 从 data-images 属性读取图片数组（使用 attr 直接读取，因为数据是 encodeURIComponent 编码的）
                 var imagesData = null;
                 var encodedData = $container.attr('data-images');
                 if (encodedData) {
                     try {
                         imagesData = JSON.parse(decodeURIComponent(encodedData));
-                    } catch(e) {
-                        console.error('解析图片数据失败', e);
+                    } catch (e) {
+                        console.error('解析 data-images 失败', e);
                     }
                 }
 
-                if (!imagesData || imagesData.length === 0) {
-                    // 降级为单图预览
-                    var imgSrc = $(this).data('full') || $(this).attr('src');
-                    if (imgSrc) openZoomPreview(imgSrc);
+                if (!imagesData || !imagesData.length) {
+                    var one = $el.data('full') || $el.attr('src');
+                    if (one) openZoomPreview(one);
                     return;
                 }
 
-                // 获取当前点击的图片索引
-                var startIndex = parseInt($(this).data('index')) || 0;
+                var startIndex = parseInt($el.data('index'), 10) || 0;
                 if (startIndex < 0 || startIndex >= imagesData.length) startIndex = 0;
 
-                // 打开图片组预览
                 openZoomPreviewGallery(imagesData, startIndex);
             });
 

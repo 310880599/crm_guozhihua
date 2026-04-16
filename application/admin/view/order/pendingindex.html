@@ -1203,7 +1203,7 @@
                 if (panel0) initSortable(panel0);
             }
 
-            // 解析多图字段：兼容 JSON 数组、逗号分隔、单张字符串
+            // 解析多图字段：旧数据 = 单 URL / 逗号分隔；新数据 = JSON 数组字符串
             function parseImages(val) {
                 if (!val) return [];
                 if (Array.isArray(val)) return val;
@@ -1214,6 +1214,26 @@
                     try { return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean); } catch (e) { return []; }
                 }
                 return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+            }
+
+            // 将 parseImages 结果转为 {full,thumb}[]（兼容旧单 URL 与新 JSON 数组内的对象元素）
+            function normalizeVoucherRowItems(arr) {
+                if (!arr || !arr.length) return [];
+                return arr.map(function (item) {
+                    if (item == null) return null;
+                    if (typeof item === 'string') {
+                        var u = item.trim();
+                        return u ? { full: u, thumb: u } : null;
+                    }
+                    if (typeof item === 'object') {
+                        var f = item.full || item.url || item.path || item.src || '';
+                        var t = item.thumb || item.thumbnail || item.small || f;
+                        f = String(f || '').trim();
+                        t = String(t || f).trim();
+                        return f ? { full: f, thumb: t } : null;
+                    }
+                    return null;
+                }).filter(Boolean);
             }
 
             // HTML 转义防注入
@@ -1328,26 +1348,26 @@
 
                 { field: 'wechat_receipt_image', title: '微信沟通及付款凭证', hide: true, templet: function (res) {
         var arr = parseImages(res.wechat_receipt_image);
-        if (!arr || arr.length === 0) return '-';
-        var list = arr.map(function(url){ return { thumb: url, full: url }; });
+        var list = normalizeVoucherRowItems(arr);
+        if (!list || list.length === 0) return '-';
         var dataImages = encodeURIComponent(JSON.stringify(list));
         var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
         for (var i = 0; i < list.length; i++) {
             var u = list[i].full || list[i].thumb || '';
-            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + u + '" loading="lazy">';
+            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + (list[i].thumb || u) + '" loading="lazy">';
         }
         html += '</div>';
         return html;
     }},
                 { field: 'inquiry_assign_image', title: '询盘来源凭证', hide: true, templet: function (res) {
         var arr = parseImages(res.inquiry_assign_image);
-        if (!arr || arr.length === 0) return '-';
-        var list = arr.map(function(url){ return { thumb: url, full: url }; });
+        var list = normalizeVoucherRowItems(arr);
+        if (!list || list.length === 0) return '-';
         var dataImages = encodeURIComponent(JSON.stringify(list));
         var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
         for (var i = 0; i < list.length; i++) {
             var u = list[i].full || list[i].thumb || '';
-            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + u + '" loading="lazy">';
+            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + (list[i].thumb || u) + '" loading="lazy">';
         }
         html += '</div>';
         return html;
