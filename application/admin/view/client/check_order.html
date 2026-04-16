@@ -582,11 +582,47 @@
             const { table, form, laydate, upload, util, element } = layui;
             var $ = layui.$;
             var layer = layui.layer;
+            var BASE_COL_WIDTH = 180;
+            var IMAGE_COL_MIN_WIDTH = 300;
+            var IMAGE_COL_WIDTH = 360;
             // 根据超级管理员权限设置工具栏按钮
             var defaultToolbar = ['filter'];
             {if session('aid') eq 1}
             defaultToolbar = ['filter', 'print', 'exports'];
             {/if}
+
+            function renderMultiImageCell(images, single) {
+                images = images || [];
+
+                if (images && images.length > 0) {
+                    var html = '<div class="img-strip" data-images="' + encodeURIComponent(JSON.stringify(images.map(function(img) {
+                        var thumb = img.thumb || img.full || '';
+                        var full = img.full || thumb;
+                        return {
+                            thumb: thumb,
+                            full: full
+                        };
+                    }))) + '">';
+
+                    for (var i = 0; i < images.length; i++) {
+                        var img = images[i];
+                        var thumb = img.thumb || img.full || '';
+                        var full = img.full || thumb;
+                        if (thumb) {
+                            html += '<img class="js-img-gallery-preview" data-index="' + i + '" data-full="' + full + '" src="' + thumb + '" loading="lazy" style="cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                        }
+                    }
+
+                    html += '</div>';
+                    return html || '-';
+                }
+
+                if (single) {
+                    return '<img class="js-img-preview" data-full="' + single + '" src="' + single + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
+                }
+
+                return '-';
+            }
             
             var tableIn = table.render({
                 elem: '#table-list',
@@ -598,9 +634,9 @@
                 defaultToolbar: defaultToolbar,
                 cols: [[
                     { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
-                    { field: 'order_no', title: '订单编号', totalRowText: '合计：',width: 180 },
-                    { field: 'cname', title: '客户名称',width: 180 },
-                    { field: 'contact', title: '联系方式',width: 180 },
+                    { field: 'order_no', title: '订单编号', totalRowText: '合计：',width: BASE_COL_WIDTH },
+                    { field: 'cname', title: '客户名称',width: BASE_COL_WIDTH },
+                    { field: 'contact', title: '联系方式',width: BASE_COL_WIDTH },
                     { field: 'order_items', title: '产品明细', width: 280, templet: function(d){
                         if (!d.order_items || d.order_items.length === 0) {
                             return '';
@@ -611,73 +647,34 @@
                             return name;
                         }).join('<br>');
                     }},
-                    { field: 'money', title: '成交金额(￥)', totalRow: true,width: 180 },
-                    { field: 'profit', title: '利润', totalRow: true,width: 180 },
-                    { field: 'margin_rate', title: '利润率(%)', totalRow: true,width: 180 },
-                    { field: 'order_time', title: '成交时间',width: 180 },
-                    { field: 'source', title: '询盘来源',width: 180 },
-                    { field: 'source_port', title: '来源端口',width: 180 },
+                    { field: 'money', title: '成交金额(￥)', totalRow: true,width: BASE_COL_WIDTH },
+                    { field: 'profit', title: '利润', totalRow: true,width: BASE_COL_WIDTH },
+                    { field: 'margin_rate', title: '利润率(%)', totalRow: true,width: BASE_COL_WIDTH },
+                    { field: 'order_time', title: '成交时间',width: BASE_COL_WIDTH },
+                    { field: 'source', title: '询盘来源',width: BASE_COL_WIDTH },
+                    { field: 'source_port', title: '来源端口',width: BASE_COL_WIDTH },
                     { 
                         field: 'wechat_receipt_image', 
                         title: '微信沟通及付款凭证', 
-                        width: 780,
+                        width: IMAGE_COL_WIDTH,
+                        minWidth: IMAGE_COL_MIN_WIDTH,
                         templet: function(res){
-                            // === wechat_receipt_images 解析兼容开始 ===
-                            var images = res.wechat_receipt_images || [];
-                            
-                            // 如果后端提供了 wechat_receipt_images 数组
-                            if (images && images.length > 0) {
-                                // 修改：显示全部图片，不再截断为3张
-                                // 构建图片数组（统一为 full 地址数组，用于预览）
-                                var html = '<div class="img-strip" data-images="' + encodeURIComponent(JSON.stringify(images.map(function(img) {
-                                    var thumb = img.thumb || img.full || '';
-                                    var full = img.full || thumb;
-                                    return {
-                                        thumb: thumb,
-                                        full: full
-                                    };
-                                }))) + '">';
-                                
-                                // 遍历全部图片，渲染所有缩略图
-                                for (var i = 0; i < images.length; i++) {
-                                    var img = images[i];
-                                    var thumb = img.thumb || img.full || '';
-                                    var full = img.full || thumb;
-                                    if (thumb) {
-                                        // 添加 data-index 用于标识图片索引，data-full 用于单图预览兼容
-                                        html += '<img class="js-img-gallery-preview" data-index="' + i + '" data-full="' + full + '" src="' + thumb + '" loading="lazy" style="cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
-                                    }
-                                }
-                                html += '</div>';
-                                return html || '-';
-                            }
-                            
-                            // 兼容旧数据：如果后端没给 wechat_receipt_images，尝试使用 wechat_receipt_image
-                            if (res.wechat_receipt_image) {
-                                return '<img class="js-img-preview" data-full="' + res.wechat_receipt_image + '" src="' + res.wechat_receipt_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
-                            }
-                            
-                            return '-';
-                            // === wechat_receipt_images 解析兼容结束 ===
+                            return renderMultiImageCell(res.wechat_receipt_images, res.wechat_receipt_image);
                         }
                     },
                     { 
                         field: 'inquiry_assign_image', 
                         title: '询盘来源凭证', 
-                        width: 180,
+                        width: IMAGE_COL_WIDTH,
+                        minWidth: IMAGE_COL_MIN_WIDTH,
                         templet: function(res){
-                            // === wechat_receipt_images 解析兼容开始 ===
-                            if(res.inquiry_assign_image){
-                                return '<img class="js-img-preview" data-full="' + res.inquiry_assign_image + '" src="' + res.inquiry_assign_image + '" style="max-width: 60px; max-height: 60px; cursor: pointer; border-radius: 4px; border: 1px solid #e8e8e8;">';
-                            }
-                            return '-';
-                            // === wechat_receipt_images 解析兼容结束 ===
+                            return renderMultiImageCell(res.inquiry_assign_images, res.inquiry_assign_image);
                         }
                     },
-                    { field: 'pr_user', title: '负责人', hide: false,width: 180 },
-                    { field: 'team_name', title: '团队', hide: false,width: 180 },
-                    { field: 'create_time', title: '创建时间',width: 180 },
-                    { field: 'update_time', title: '更新时间',width: 180 },
+                    { field: 'pr_user', title: '负责人', hide: false,width: BASE_COL_WIDTH },
+                    { field: 'team_name', title: '团队', hide: false,width: BASE_COL_WIDTH },
+                    { field: 'create_time', title: '创建时间',width: BASE_COL_WIDTH },
+                    { field: 'update_time', title: '更新时间',width: BASE_COL_WIDTH },
                 ]],
                 limit: 100, //每页默认显示的数量
 

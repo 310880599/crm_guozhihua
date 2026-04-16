@@ -11,6 +11,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use think\facade\Cache;
 use app\admin\model\Admin;
 use app\admin\service\ClientFollowService;
+use app\admin\service\OrderImageService;
 
 class Client extends Common
 {
@@ -969,110 +970,7 @@ class Client extends Common
         unset($order);
         // ====== 新增代码结束 ======
 
-        // === wechat_receipt_images 解析兼容开始 ===
-        // 【重要说明】crm_client_hangye 表已废弃，不再使用任何 hangye 表的回退逻辑
-        // 若订单 wechat_receipt_image 为空，直接保持为空，不做任何回退查询
-        
-        /**
-         * 解析图片数据，统一输出格式
-         * @param mixed $raw 原始数据（可能是字符串、JSON字符串、数组等）
-         * @return array 统一格式：[['full' => '...', 'thumb' => '...'], ...]
-         */
-        $parseImages = function($raw) {
-            // 空值安全处理：null、空字符串、'null'、'[]' 都返回空数组
-            if (empty($raw)) {
-                return [];
-            }
-            
-            // 处理字符串 'null' 或 '[]'
-            if (is_string($raw)) {
-                $raw = trim($raw);
-                if (empty($raw) || $raw === 'null' || $raw === '[]') {
-                    return [];
-                }
-                
-                // 如果以 [ 开头，尝试解析为JSON数组
-                if (substr($raw, 0, 1) === '[') {
-                    $decoded = json_decode($raw, true);
-                    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                        $raw = $decoded;
-                    } else {
-                        // JSON解析失败，当作单字符串处理
-                        return [['full' => $raw, 'thumb' => $raw]];
-                    }
-                } else {
-                    // 不是JSON数组，当作单字符串处理
-                    return [['full' => $raw, 'thumb' => $raw]];
-                }
-            }
-
-            // 如果是数组
-            if (is_array($raw)) {
-                $result = [];
-                $seenFulls = []; // 用于去重
-
-                foreach ($raw as $item) {
-                    if (is_string($item)) {
-                        // 数组元素是字符串
-                        $full = trim($item);
-                        if (!empty($full) && !isset($seenFulls[$full])) {
-                            $seenFulls[$full] = true;
-                            $result[] = ['full' => $full, 'thumb' => $full];
-                        }
-                    } elseif (is_array($item) || is_object($item)) {
-                        // 数组元素是对象
-                        $item = (array)$item;
-                        
-                        // 优先从 full/path/src/url 取 full
-                        $full = '';
-                        foreach (['full', 'path', 'src', 'url'] as $key) {
-                            if (!empty($item[$key])) {
-                                $full = trim($item[$key]);
-                                break;
-                            }
-                        }
-                        
-                        if (empty($full)) {
-                            continue; // 没有找到full，跳过
-                        }
-
-                        // 去重
-                        if (isset($seenFulls[$full])) {
-                            continue;
-                        }
-                        $seenFulls[$full] = true;
-
-                        // thumb 优先 thumb/thumbnail/small，没有则 thumb=full
-                        $thumb = $full;
-                        foreach (['thumb', 'thumbnail', 'small'] as $key) {
-                            if (!empty($item[$key])) {
-                                $thumb = trim($item[$key]);
-                                break;
-                            }
-                        }
-
-                        $result[] = ['full' => $full, 'thumb' => $thumb];
-                    }
-                }
-
-                return $result;
-            }
-
-            return [];
-        };
-
-        // 为每条订单添加 wechat_receipt_images 字段（不再从 hangye 表回退）
-        foreach ($list['data'] as &$order) {
-            $raw = $order['wechat_receipt_image'] ?? '';
-            
-            // 【修改】直接解析订单自身的 wechat_receipt_image，不再尝试从 hangye 回退
-            // 如果订单 wechat_receipt_image 为空，parseImages 会返回空数组 []
-            $order['wechat_receipt_images'] = $parseImages($raw);
-            
-            // 注意：保留原字段 wechat_receipt_image 以兼容旧逻辑
-        }
-        unset($order);
-        // === wechat_receipt_images 解析兼容结束 ===
+        $list['data'] = OrderImageService::appendOrderImageFields($list['data'] ?? []);
 
         //成单率
 
