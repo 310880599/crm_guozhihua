@@ -10,8 +10,8 @@ use think\facade\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use think\facade\Cache;
 use app\admin\model\Admin;
+use app\admin\service\CheckOrderService;
 use app\admin\service\ClientFollowService;
-use app\admin\service\OrderImageService;
 
 class Client extends Common
 {
@@ -703,7 +703,7 @@ class Client extends Common
     }
 
 
-    //检查订单
+    //检查订单（调度：View / Service；时间条件与组织条件沿用 Common）
     public function checkOrder()
     {
         if (request()->isPost()) {
@@ -711,295 +711,45 @@ class Client extends Common
             if (!isset($params['keyword'])) {
                 $params['keyword'] = [];
             }
-            // 只在前端没传 timebucket/at_time 的情况下，默认设置 timebucket = month
             if (!isset($params['keyword']['timebucket']) && !isset($params['keyword']['at_time'])) {
                 $params['keyword']['timebucket'] = 'month';
             }
             Request::merge($params);
             return $this->checkOrderSearch();
         }
-        
-        // 获取所有渠道列表（启用状态的）
-        $inquiryList = Db::name('crm_inquiry')
-            ->where('status', 0)
-            ->field('inquiry_name')
-            ->order('inquiry_name', 'asc')
-            ->select();
-        $channelList = array_column($inquiryList, 'inquiry_name');
-        
-        // 获取所有端口列表（启用状态的）
-        $portList = Db::name('crm_inquiry_port')
-            ->where('status', 0)
-            ->field('port_name')
-            ->order('port_name', 'asc')
-            ->select();
-        $portList = array_column($portList, 'port_name');
-        
-        // 统一使用“检查客户业务员可见名单”生成业务员下拉
-        $allowedUsernames = $this->getCheckClientAllowedUsernames();
 
-        $adminResult = [];
-        if (!empty($allowedUsernames)) {
-            $adminResult = Db::name('admin')
-                ->field('admin_id,username')
-                ->where('username', 'in', $allowedUsernames)
-                ->order('admin_id', 'asc')
-                ->select();
-        }
-        $this->assign('adminResult', $adminResult);
-        
-        //查询所有团队
-        $teamList = $this->getTeamList();
-        $this->assign('teamList', $teamList);
-        
+        $svc = new CheckOrderService();
+        $assign = $svc->getPageAssignData(
+            $this->getCheckClientAllowedUsernames(),
+            function () {
+                return $this->getTeamList();
+            }
+        );
+        $this->assign($assign);
         $this->assign('customer_type', Order::CUSTOMER_TYPE);
-        $this->assign('channelList', $channelList);
-        $this->assign('portList', $portList);
         return $this->fetch();
     }
 
+    /**
+     * 检查订单列表数据（供 POST JSON；业务见 CheckOrderService）
+     */
     public function checkOrderSearch()
     {
-        $where = [];
-        $client_where = [];
-
-        // 只查询审核通过订单
-        $where[] = ['o.check_status', '=', 2];
-
-        // 统一使用“检查客户业务员可见名单”作为检查订单的可见业务员列表
-        $visibleUsers = $this->getCheckClientAllowedUsernames();
-        $visibleUsers = array_values(array_unique(array_filter(array_map('trim', (array) $visibleUsers))));
-        $currentUsername = trim((string) Session::get('username'));
-        if (empty($visibleUsers) && $currentUsername !== '') {
-            $visibleUsers = [$currentUsername];
-        }
-        
-        $page = input('page') ?? 1;
-        $limit = input('limit') ?? config('pageSize');
-        $keyword = Request::param('keyword');
-        // 过滤掉 null 元素
-        if ($keyword) $keyword = array_filter($keyword);
-
-        // if (isset($keyword['status'])) $where[] = ['status', '=', $keyword['status']];
-        if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
-        
-        // 时间筛选逻辑：如果 keyword['timebucket'] 有值（today/week/month…），用 buildTimeWhere；如果为空（自定义）且 keyword['at_time'] 有值，用 buildTimeWhere
-        $timeCondition = null;
-        if (isset($keyword['timebucket']) && $keyword['timebucket'] !== '') {
-            $timeCondition = $keyword['timebucket'];
-        } elseif (isset($keyword['at_time']) && $keyword['at_time'] !== '') {
-            $timeCondition = $keyword['at_time'];
-        }
-        
-        if ($timeCondition) {
-            $where[] = $this->buildTimeWhere($timeCondition, 'order_time');
-            $timeWhere['at_time'] = $this->buildTimeWhere($timeCondition, 'at_time');
-            $timeWhere['to_kh_time'] = $this->buildTimeWhere($timeCondition, 'to_kh_time');
-            $client_where[] = function ($query) use ($timeWhere) {
-                $query->where(...$timeWhere['at_time']);
-                $query->whereOr(...$timeWhere['to_kh_time']);
-            };
-        }
-        
-        if (isset($keyword['min_money'])) $where[] = ['money', '>', $keyword['min_money']];
-        if (isset($keyword['max_money'])) $where[] = ['money', '<', $keyword['max_money']];
-        if (isset($keyword['min_profit'])) $where[] = ['profit', '>', $keyword['min_profit']];
-        if (isset($keyword['max_profit'])) $where[] = ['profit', '<', $keyword['max_profit']];
-        if (isset($keyword['min_margin_rate'])) $where[] = ['margin_rate', '>', $keyword['min_margin_rate']];
-        if (isset($keyword['max_margin_rate'])) $where[] = ['margin_rate', '<', $keyword['max_margin_rate']];
-        if (isset($keyword['cname'])) {
-            $where[] = ['cname', 'like', "%{$keyword['cname']}%"];
-            // $client_where[] = ['kh_name', 'like', "%{$keyword['cname']}%"];
-        }
-        if (isset($keyword['contact'])) {
-            $where[] = ['contact', 'like', "%{$keyword['contact']}%"];
-        }
-        if (isset($keyword['customer_type'])) {
-            $where[] = ['customer_type', '=', $keyword['customer_type']];
-        }
-        if (isset($keyword['product_name'])) {
-            $where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
-        }
-
-        /**
-         * 基于“检查客户”的权限名单，统一计算本次查询可见的业务员列表
-         * 规则：
-         * 1）基础可见范围：$visibleUsers（getCheckClientAllowedUsernames）
-         * 2）若用户选择 team_name / org，则在基础可见范围内再做一次筛选
-         * 3）若用户选择 pr_user，则必须在上一步可见范围内，否则直接返回空结果
-         * 4）最终所有订单/客户查询都叠加 whereIn(pr_user, $scopedUsers)，防止越权
-         */
-
-        // 用户主动筛选：团队名称筛选（仅当用户主动选择时）
-        $filter_team_name = '';
-        if (isset($keyword['team_name']) && $keyword['team_name'] !== '') {
-            $where[] = ['team_name', '=', $keyword['team_name']];
-            $filter_team_name = $keyword['team_name'];
-        }
-
-        // 用户主动筛选：组织过滤（仅当用户主动选择时）
-        $org_where = [];
-        if (!empty($keyword['org'])) {
-            $org_where[] = $this->getOrgWhere($keyword['org']);
-        }
-
-        // 基于“可见业务员名单”+ 团队/组织进一步收窄本次查询的业务员范围
-        $scopedUsers = $visibleUsers;
-        if ($filter_team_name || !empty($org_where)) {
-            $filterQuery = Db::table('admin')->where('username', 'in', $visibleUsers);
-            if ($filter_team_name) {
-                $filterQuery->where('team_name', $filter_team_name);
+        $keyword = Request::param('keyword', []);
+        $svc = new CheckOrderService();
+        return json($svc->search(
+            is_array($keyword) ? $keyword : [],
+            input('page') ?? 1,
+            input('limit') ?? config('pageSize'),
+            $this->getCheckClientAllowedUsernames(),
+            trim((string) Session::get('username')),
+            function ($timeCondition, $field) {
+                return $this->buildTimeWhere($timeCondition, $field);
+            },
+            function ($org, $alias = '') {
+                return $this->getOrgWhere($org, $alias);
             }
-            if (!empty($org_where)) {
-                $filterQuery->where($org_where);
-            }
-            $filteredUsernames = $filterQuery->column('username');
-
-            // 团队/组织筛选后若无任何可见业务员，直接返回空结果，防止越权
-            if (empty($filteredUsernames)) {
-                return [
-                    'code' => 0,
-                    'msg' => '获取成功!',
-                    'data' => [],
-                    'count' => 0,
-                    'rel' => 1,
-                    'totalInquiries' => 0,
-                    'successRate' => number_format(0, 2),
-                    'totalMoney' => number_format(0, 2),
-                    'totalProfit' => number_format(0, 2),
-                ];
-            }
-
-            $scopedUsers = $filteredUsernames;
-        }
-        
-        // 询盘渠道查询
-        if (isset($keyword['source'])) {
-            $where[] = ['source', '=', $keyword['source']];
-            //兼容历史数据
-            $kh_source = strtolower($keyword['source']);
-            $client_where[] = ['kh_status', 'like', "%$kh_source%"];
-        }
-        // 询盘端口查询
-        if (isset($keyword['source_port'])) {
-            $where[] = ['source_port', '=', $keyword['source_port']];
-        }
-        
-        // 业务员筛选：若传了 pr_user，则在可见范围内进一步精确筛选
-        $selectedPrUser = '';
-        if (isset($keyword['pr_user'])) {
-            $selectedPrUser = trim((string) $keyword['pr_user']);
-        }
-
-        if ($selectedPrUser !== '') {
-            // 若选择的业务员不在本次可见范围内，直接返回空结果，防止越权
-            if (empty($scopedUsers) || !in_array($selectedPrUser, $scopedUsers, true)) {
-                return [
-                    'code' => 0,
-                    'msg' => '获取成功!',
-                    'data' => [],
-                    'count' => 0,
-                    'rel' => 1,
-                    'totalInquiries' => 0,
-                    'successRate' => number_format(0, 2),
-                    'totalMoney' => number_format(0, 2),
-                    'totalProfit' => number_format(0, 2),
-                ];
-            }
-
-            $where[] = ['pr_user', '=', $selectedPrUser];
-            $client_where[] = ['pr_user', '=', $selectedPrUser];
-            // 本次查询只看这个业务员
-            $scopedUsers = [$selectedPrUser];
-        }
-
-        // 最终统一的权限边界：订单负责人必须在本次可见业务员范围内
-        if (!empty($scopedUsers)) {
-            $where[] = ['pr_user', 'in', $scopedUsers];
-            $client_where[] = ['pr_user', 'in', $scopedUsers];
-        } elseif ($currentUsername !== '') {
-            // 极端情况兜底：只看自己
-            $where[] = ['pr_user', '=', $currentUsername];
-            $client_where[] = ['pr_user', '=', $currentUsername];
-        }
-        
-        // 客户查询条件：只查询启用状态的客户
-        $client_where[] = ['l.status', '=', 1];
-        
-        $list = Db::table('crm_client_order')
-            ->alias('o')
-            ->where($where)
-            ->order('o.order_time desc')
-            ->paginate([
-                'list_rows' => $limit,
-                'page' => $page
-            ])
-            ->toArray();
-
-        // ====== 新增：批量查询产品明细 ======
-        $orderIds = array_column($list['data'], 'id');
-        $orderItemsMap = [];
-        if (!empty($orderIds)) {
-            // 批量查询订单明细表，关联产品和分类表获取产品名称
-            $items = Db::table('crm_order_item')
-                ->alias('oi')
-                ->leftJoin('crm_products p', 'oi.product_id = p.id')
-                ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-                ->whereIn('oi.order_id', $orderIds)
-                ->order('oi.order_id asc, oi.line_no asc')
-                ->field('oi.order_id, oi.product_name, oi.product_id, p.product_name as product_name_from_table')
-                ->select();
-
-            // 按 order_id 分组组装产品明细
-            foreach ($items as $item) {
-                $orderId = $item['order_id'];
-                // 优先使用明细表中的 product_name，如果没有则使用关联表的产品名称
-                $productName = !empty($item['product_name']) ? $item['product_name'] : ($item['product_name_from_table'] ?? '');
-                if (!empty($productName)) {
-                    $orderItemsMap[$orderId][] = [
-                        'product_name' => $productName
-                    ];
-                }
-            }
-        }
-
-        // 将产品明细添加到每条订单数据中
-        foreach ($list['data'] as &$order) {
-            $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
-        }
-        unset($order);
-        // ====== 新增代码结束 ======
-
-        $list['data'] = OrderImageService::appendOrderImageFields($list['data'] ?? []);
-
-        //成单率
-
-        $totalInquiries = Db::table('crm_leads')
-            ->alias('l')
-            ->where($client_where)
-            ->count();
-
-        $successOrders = $list['total'];
-        $successRate = $totalInquiries > 0 ? ($successOrders / $totalInquiries * 100) : 0;
-        $totalMoney = Db::table('crm_client_order')
-            ->alias('o')
-            ->where($where)
-            ->sum('o.money');
-        $totalProfit = Db::table('crm_client_order')
-            ->alias('o')
-            ->where($where)
-            ->sum('o.profit');
-        return $result = [
-            'code' => 0,
-            'msg' => '获取成功!',
-            'data' => $list['data'],
-            'count' => $list['total'],
-            'rel' => 1,
-            'totalInquiries' => $totalInquiries,
-            'successRate' => number_format($successRate, 2),
-            'totalMoney' => number_format($totalMoney, 2),
-            'totalProfit' => number_format($totalProfit, 2),
-        ];
+        ));
     }
 
 

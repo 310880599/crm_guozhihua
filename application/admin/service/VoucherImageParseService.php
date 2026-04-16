@@ -5,12 +5,12 @@ namespace app\admin\service;
 /**
  * 订单凭证图片字段解析（微信沟通/付款凭证、询盘来源凭证等）
  *
- * 支持输入形态：
- * 1. 单图字符串：单个 URL
- * 2. JSON 数组：字符串形如 ["url1","url2"] 或已 decode 的索引数组
- * 3. 对象数组：数组元素为对象/关联数组，含 full、thumb（或 path/src/url、thumbnail 等）
+ * 兼容输入（统一转成「条目数组」再规范为 full/thumb）：
+ * 1. 单图字符串：单个 URL（含逗号分隔多 URL、非 JSON 的旧数据）
+ * 2. JSON 数组：字符串 '["url1","url2"]' / '[{...}]'，或已 json_decode 的索引数组
+ * 3. 数组对象：PHP 数组，元素为 string | array | object（stdClass 等），含 full/thumb 或 path/src/url
  *
- * 统一输出：
+ * 统一输出（索引数组；每项仅含 full、thumb，JSON 即 [{"full":"...","thumb":"..."},...]）：
  *   [ ['full' => string, 'thumb' => string], ... ]
  */
 class VoucherImageParseService
@@ -22,10 +22,44 @@ class VoucherImageParseService
     public static function parseList($raw)
     {
         try {
-            return self::normalizeItemList(self::coerceToItemArray($raw));
+            $items = self::coerceToItemArray($raw);
+            if (!is_array($items)) {
+                return [];
+            }
+            $normalized = self::normalizeItemList($items);
+            return self::finalizeUniformList($normalized);
         } catch (\Throwable $e) {
             return [];
         }
+    }
+
+    /**
+     * 将已解析条目再压成统一结构（仅保留 full/thumb，去空、去杂键）
+     *
+     * @param array<int, mixed> $rows
+     * @return array<int, array{full: string, thumb: string}>
+     */
+    public static function finalizeUniformList($rows): array
+    {
+        if (!is_array($rows)) {
+            return [];
+        }
+        $out = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $full = isset($row['full']) ? trim((string) $row['full']) : '';
+            if ($full === '') {
+                continue;
+            }
+            $thumb = isset($row['thumb']) ? trim((string) $row['thumb']) : '';
+            if ($thumb === '') {
+                $thumb = $full;
+            }
+            $out[] = ['full' => $full, 'thumb' => $thumb];
+        }
+        return $out;
     }
 
     /**
@@ -40,12 +74,24 @@ class VoucherImageParseService
             return [];
         }
 
+        // 单对象 / ArrayAccess：统一成「数组里一条」，再走 normalize
         if (is_object($raw)) {
-            return [(array)$raw];
+            if ($raw instanceof \Traversable) {
+                try {
+                    $raw = iterator_to_array($raw, false);
+                } catch (\Throwable $e) {
+                    return [];
+                }
+                if (!is_array($raw)) {
+                    return [];
+                }
+            } else {
+                return [self::objectToArray($raw)];
+            }
         }
 
         if (is_string($raw)) {
-            $s = trim($raw);
+            $s = self::normalizeJsonLikeString($raw);
             if ($s === '' || $s === 'null' || $s === '[]') {
                 return [];
             }
@@ -95,15 +141,54 @@ class VoucherImageParseService
             if ($raw === []) {
                 return [];
             }
-            // 已是 PHP 数组：索引数组（JSON 数组）或需再判断
+            // 已是 PHP 数组：索引数组（多图）或单条关联数组（单对象）
             if (self::isAssociativeArray($raw)) {
                 return [$raw];
             }
 
-            return $raw;
+            // 索引数组：元素可能为 string / array / object
+            $out = [];
+            foreach ($raw as $item) {
+                if (is_object($item)) {
+                    $out[] = self::objectToArray($item);
+                } else {
+                    $out[] = $item;
+                }
+            }
+            return $out;
         }
 
         return [];
+    }
+
+    /**
+     * 去掉 BOM、首尾空白，便于 JSON 解析
+     */
+    private static function normalizeJsonLikeString($s)
+    {
+        $s = (string)$s;
+        $s = preg_replace('/^\xEF\xBB\xBF/', '', $s);
+        return trim($s);
+    }
+
+    /**
+     * 对象转关联数组（便于 itemToFullThumb 读 full/url 等键）
+     *
+     * @param object $obj
+     * @return array<string, mixed>
+     */
+    private static function objectToArray($obj)
+    {
+        if ($obj instanceof \JsonSerializable) {
+            $v = $obj->jsonSerialize();
+            if (is_array($v)) {
+                return $v;
+            }
+            if (is_object($v)) {
+                return (array)$v;
+            }
+        }
+        return json_decode(json_encode($obj, JSON_UNESCAPED_UNICODE), true) ?: (array)$obj;
     }
 
     /**
@@ -147,7 +232,7 @@ class VoucherImageParseService
         }
 
         if (is_object($item)) {
-            $item = (array)$item;
+            $item = self::objectToArray($item);
         }
 
         if (!is_array($item)) {

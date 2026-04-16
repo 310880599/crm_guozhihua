@@ -52,5 +52,47 @@ class Admin extends Model
         }
         return $info;
     }
+
+    /**
+     * 检查订单下拉：按用户名白名单取 admin_id、username
+     *
+     * @param string[] $usernames
+     * @return array
+     */
+    public static function listByUsernamesForSelect(array $usernames): array
+    {
+        if (empty($usernames)) {
+            return [];
+        }
+        return Db::name('admin')
+            ->field('admin_id,username')
+            ->where('username', 'in', $usernames)
+            ->order('admin_id', 'asc')
+            ->select();
+    }
+
+    /**
+     * 在可见用户名池内按团队、组织条件筛出仍可见的用户名（检查订单权限收窄）
+     *
+     * @param string[] $visibleUsernames
+     * @param string|null $teamName
+     * @param array<int, \Closure> $orgWhereClosures getOrgWhere 等闭包条件
+     * @return string[]
+     */
+    public static function columnUsernamesAfterTeamOrgFilter(array $visibleUsernames, ?string $teamName, array $orgWhereClosures): array
+    {
+        if (empty($visibleUsernames)) {
+            return [];
+        }
+        $q = Db::name('admin')->where('username', 'in', $visibleUsernames);
+        if ($teamName !== null && $teamName !== '') {
+            $q->where('team_name', $teamName);
+        }
+        if (!empty($orgWhereClosures)) {
+            $q->where($orgWhereClosures);
+        }
+        return $q->column('username');
+    }
+
     // 验证码检查方法已移除
 }

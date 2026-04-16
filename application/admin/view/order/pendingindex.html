@@ -381,19 +381,42 @@
           word-break: break-word;
         }
 
-        /* === 列表缩略图样式（待审核订单）开始 === */
+        /* 凭证列单元格：不裁切横排缩略图条 */
+        .layui-table-view .layui-table td[data-field="wechat_receipt_image"] .layui-table-cell,
+        .layui-table-view .layui-table td[data-field="inquiry_assign_image"] .layui-table-cell {
+          white-space: normal !important;
+          height: auto !important;
+          line-height: 20px !important;
+          padding-top: 8px;
+          padding-bottom: 8px;
+          overflow: visible !important;
+        }
+        /* === 列表缩略图：多图横排一行，超出横向滚动；点击组图预览 === */
         .voucher-strip,
         .img-strip{
           display:inline-flex;
+          flex-direction:row;
           align-items:center;
-          flex-wrap:nowrap;        /* 不换行 */
-          gap:8px;                 /* 图片间距 */
-          width:max-content;       /* 多图自动撑开 */
+          flex-wrap:nowrap;
+          gap:8px;
+          width:max-content;
           min-width:100%;
+          max-width:100%;
+          box-sizing:border-box;
           overflow-x:auto;
           overflow-y:hidden;
           padding:2px 0;
+          scrollbar-width:thin;
+          scrollbar-color:#c1c1c1 #f1f1f1;
         }
+        .voucher-strip::-webkit-scrollbar,
+        .img-strip::-webkit-scrollbar{ height:6px; }
+        .voucher-strip::-webkit-scrollbar-track,
+        .img-strip::-webkit-scrollbar-track{ background:#f1f1f1; border-radius:3px; }
+        .voucher-strip::-webkit-scrollbar-thumb,
+        .img-strip::-webkit-scrollbar-thumb{ background:#c1c1c1; border-radius:3px; }
+        .voucher-strip::-webkit-scrollbar-thumb:hover,
+        .img-strip::-webkit-scrollbar-thumb:hover{ background:#a8a8a8; }
         .voucher-item-img,
         .img-strip img{
           flex:0 0 auto;
@@ -719,21 +742,22 @@
                 return 'colwidth:' + COLWIDTH_PAGE_KEY + ':' + COLWIDTH_TABLE_ID;
             }
 
+            /** 主表表头列宽：取滚动区主 header 的 table，避免与固定列表头混淆 */
             function getCurrentWidthsSnapshot() {
                 var map = {};
                 try {
-                    var $ths = $('#table-list')
-                        .next('.layui-table-view')
-                        .find('.layui-table-header thead tr')
-                        .eq(0)
-                        .find('th');
-
+                    var $view = $('#table-list').next('.layui-table-view');
+                    if (!$view.length) return map;
+                    var $headerTable = $view.find('.layui-table-header table').eq(0);
+                    if (!$headerTable.length) return map;
+                    var $ths = $headerTable.find('thead tr').eq(0).find('th');
                     $ths.each(function () {
-                        var field = $(this).attr('data-field');
+                        var $th = $(this);
+                        var field = $th.attr('data-field');
                         if (!field || field === '0') return;
-                        if (/^\d+$/.test(field)) return; // 过滤 Layui 自动生成的纯数字 field（例如 "14"）
-                        var w = parseInt($(this).outerWidth(), 10);
-                        if (w > 0) map[field] = w;
+                        if (/^\d+$/.test(field)) return;
+                        var w = parseInt($th.width(), 10);
+                        if (w >= 30 && w <= 3000) map[field] = w;
                     });
                 } catch (e) {}
                 return map;
@@ -762,7 +786,10 @@
                 } catch (e) {}
             }
 
-            function restoreColWidth(cols) {
+            /**
+             * 同步调用 Order/getColWidths，读取当前账号保存的列宽（失败或未登录返回 null）
+             */
+            function getColWidths() {
                 var dbMap = null;
                 try {
                     $.ajax({
@@ -778,13 +805,22 @@
                         }
                     });
                 } catch (e) {}
+                return dbMap;
+            }
 
+            /** 页面加载 / 重渲染列：优先 getColWidths 结果，否则 localStorage */
+            function restoreColWidth(cols) {
+                var dbMap = getColWidths();
                 var localMap = loadLocalWidths();
                 if (dbMap) applyWidthsToCols(cols, dbMap);
                 else if (localMap) applyWidthsToCols(cols, localMap);
             }
 
-            function saveWidths(widthMap) {
+            /**
+             * 保存列宽：先写 localStorage，再 POST 调用 Order 控制器的 saveColWidths 接口
+             */
+            function saveColWidths(widthMap) {
+                widthMap = widthMap || {};
                 saveLocalWidths(widthMap);
                 $.ajax({
                     url: "{:url('Order/saveColWidths')}",
@@ -793,7 +829,7 @@
                     data: {
                         page_key: COLWIDTH_PAGE_KEY,
                         table_id: COLWIDTH_TABLE_ID,
-                        widths: JSON.stringify(widthMap || {})
+                        widths: JSON.stringify(widthMap)
                     }
                 });
             }
@@ -805,6 +841,7 @@
                 $(document).on('mouseup.colwidthsave touchend.colwidthsave', function () {
                     setTimeout(function () {
                         var now = getCurrentWidthsSnapshot();
+                        if (Object.keys(now).length === 0) return;
                         var changed = false;
 
                         if (!__colwidth_last_snapshot) changed = true;
@@ -824,7 +861,12 @@
 
                         if (changed) {
                             __colwidth_last_snapshot = now;
-                            saveWidths(now);
+                            saveColWidths(now);
+                            try {
+                                $(document).trigger('layuiTableColwidthChange', [now, COLWIDTH_PAGE_KEY]);
+                            } catch (e1) {}
+                            setTimeout(function () { syncFixedRowHeights(COLWIDTH_TABLE_ID); }, 0);
+                            setTimeout(function () { syncFixedRowHeights(COLWIDTH_TABLE_ID); }, 200);
                         }
                     }, 120);
                 });
@@ -1098,6 +1140,7 @@
                     id: 'table-list',
                     url: '{:url("pendingindex")}',
                     method: 'post',
+                    cellMinWidth: 60,
                     toolbar: '#topBtn',
                     defaultToolbar: defaultToolbar,
                     cols: pendingCols,
@@ -1123,6 +1166,7 @@
                         setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
                     }
                 });
+                attachTableReloadHook();
             }
 
             var __colSortObserverInited = false;
@@ -1209,8 +1253,19 @@
                 if (Array.isArray(val)) return val;
                 var s = String(val).trim();
                 if (!s) return [];
-                if (s.charAt(0) === '[') {
-                    try { return JSON.parse(s); } catch (e) {}
+                if (s.charAt(0) === '[' || s.charAt(0) === '{') {
+                    try {
+                        var parsed = JSON.parse(s);
+                        if (Array.isArray(parsed)) return parsed;
+                        if (parsed && typeof parsed === 'object') {
+                            var keys = Object.keys(parsed).sort(function (a, b) {
+                                return parseInt(a, 10) - parseInt(b, 10);
+                            });
+                            if (keys.length && keys.every(function (k) { return /^\d+$/.test(k); })) {
+                                return keys.map(function (k) { return parsed[k]; });
+                            }
+                        }
+                    } catch (e) {}
                     try { return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean); } catch (e) { return []; }
                 }
                 return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean);
@@ -1236,11 +1291,46 @@
                 }).filter(Boolean);
             }
 
+            /**
+             * 优先 wechat_receipt_images / inquiry_assign_images；若为空或规范化后仍无有效图，再使用
+             * wechat_receipt_image / inquiry_assign_image。
+             */
+            function getVoucherImageList(res, rawField, imagesField) {
+                var api = res[imagesField];
+                if (Array.isArray(api) && api.length > 0) {
+                    var fromApi = normalizeVoucherRowItems(api);
+                    if (fromApi && fromApi.length > 0) {
+                        return fromApi;
+                    }
+                }
+                return normalizeVoucherRowItems(parseImages(res[rawField]));
+            }
+
             // HTML 转义防注入
             function escapeHtml(str) {
                 if (str == null || str === '') return '';
                 var s = String(str);
                 return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            }
+
+            function renderVoucherStripCell(res, rawField, imagesField) {
+                var on = String(res.order_no || '');
+                if (/合计/.test(on)) return '';
+                var list = getVoucherImageList(res, rawField, imagesField);
+                if (!list || list.length === 0) return '-';
+                var dataImages = encodeURIComponent(JSON.stringify(list));
+                var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
+                var hasImg = false;
+                for (var i = 0; i < list.length; i++) {
+                    var full = list[i].full || list[i].thumb || '';
+                    var thumb = list[i].thumb || full;
+                    if (full) {
+                        hasImg = true;
+                        html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + escapeHtml(full) + '" src="' + escapeHtml(thumb) + '" loading="lazy" alt="">';
+                    }
+                }
+                html += '</div>';
+                return hasImg ? html : '-';
             }
             // 多行展示：后端 \n 拆行，逐行转义后用 div 拼接
             function renderMultiline(val) {
@@ -1347,30 +1437,10 @@
                 { field: 'bank_account_name', title: '收款账户名称', width: 220, hide: true },
 
                 { field: 'wechat_receipt_image', title: '微信沟通及付款凭证', hide: true, templet: function (res) {
-        var arr = parseImages(res.wechat_receipt_image);
-        var list = normalizeVoucherRowItems(arr);
-        if (!list || list.length === 0) return '-';
-        var dataImages = encodeURIComponent(JSON.stringify(list));
-        var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
-        for (var i = 0; i < list.length; i++) {
-            var u = list[i].full || list[i].thumb || '';
-            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + (list[i].thumb || u) + '" loading="lazy">';
-        }
-        html += '</div>';
-        return html;
+        return renderVoucherStripCell(res, 'wechat_receipt_image', 'wechat_receipt_images');
     }},
                 { field: 'inquiry_assign_image', title: '询盘来源凭证', hide: true, templet: function (res) {
-        var arr = parseImages(res.inquiry_assign_image);
-        var list = normalizeVoucherRowItems(arr);
-        if (!list || list.length === 0) return '-';
-        var dataImages = encodeURIComponent(JSON.stringify(list));
-        var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
-        for (var i = 0; i < list.length; i++) {
-            var u = list[i].full || list[i].thumb || '';
-            if (u) html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + u + '" src="' + (list[i].thumb || u) + '" loading="lazy">';
-        }
-        html += '</div>';
-        return html;
+        return renderVoucherStripCell(res, 'inquiry_assign_image', 'inquiry_assign_images');
     }},
 
                 { field: 'check_status', title: '审核状态(check_status)', width: 200, hide: true, templet: function (res) {
@@ -1419,16 +1489,40 @@
 
             ensureColsMaster();
 
-            // 渲染前：先恢复列顺序，再套用隐藏，再套用列宽
+            // 渲染前：列顺序 → 显隐 → getColWidths 恢复列宽
             restoreColOrder(pendingCols[0]);
             restoreColConfig(pendingCols[0]);
             restoreColWidth(pendingCols[0]);
             setPendingCurrentFiltersFromForm();
 
+            /** 无 cols 的 reload（翻页等）补全列顺序/显隐/列宽；筛选走 reloadTableWithDbCols 已带 cols */
+            function attachTableReloadHook() {
+                if (!tableIn || typeof tableIn.reload !== 'function') return;
+                var _reload = tableIn.reload;
+                tableIn.reload = function (opt) {
+                    opt = opt || {};
+                    if (!opt.cols) {
+                        ensureColsMaster();
+                        var cols0 = cloneCols0(PENDING_COLS_MASTER);
+                        restoreColOrder(cols0);
+                        restoreColConfig(cols0);
+                        restoreColWidth(cols0);
+                        pendingCols[0] = cols0;
+                        opt.cols = [cols0];
+                    }
+                    var ret = _reload.call(tableIn, opt);
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 0);
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 200);
+                    return ret;
+                };
+            }
+
             var tableIn = table.render({
                 elem: '#table-list',
+                id: 'table-list',
                 url: '{:url("pendingindex")}',
                 method: 'post',
+                cellMinWidth: 60,
                 // width:'100%',
                 toolbar: '#topBtn',
                 defaultToolbar: defaultToolbar,
@@ -1452,17 +1546,8 @@
                     setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
                 }
             });
+            attachTableReloadHook();
             buildOrderColWhitelist(pendingCols[0]);
-            // ✅ 包装 reload：每次 reload 后自动同步行高
-            (function(){
-              var _reload = tableIn.reload;
-              tableIn.reload = function(){
-                var ret = _reload.apply(tableIn, arguments);
-                setTimeout(function(){ syncFixedRowHeights('table-list'); }, 0);
-                setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
-                return ret;
-              };
-            })();
             // ====== BEGIN 修改：reload 从数据库恢复列宽/列配置/列顺序 ======
             function reloadTableWithDbCols(extraOpt) {
               ensureColsMaster();
@@ -2030,7 +2115,7 @@
 
             $(document).on('click', '.js-img-gallery-preview', function() {
                 if (window.__IMG_PREVIEW_CLOSE_AT__ && Date.now() - window.__IMG_PREVIEW_CLOSE_AT__ < 350) { return; }
-                var $container = $(this).closest('.img-strip');
+                var $container = $(this).closest('.img-strip, .voucher-strip');
                 if ($container.length === 0) {
                     var imgSrc = $(this).data('full') || $(this).attr('src');
                     if (imgSrc) openZoomPreview(imgSrc);

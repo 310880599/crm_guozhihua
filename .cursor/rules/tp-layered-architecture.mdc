@@ -1,0 +1,19 @@
+---
+description: ThinkPHP 后台分层：Service / Controller / Model / View
+alwaysApply: true
+---
+
+# 分层架构（本项目）
+
+业务代码放在 **`application/`** 下（勿另建 `app/` 目录）。
+
+| 层 | 职责 | 禁止 |
+|---|------|------|
+| **Service** | 业务规则、数据组装、调用多个 Model、可复用的领域逻辑 | 不要在 Service 里直接输出 HTML |
+| **Controller** | 接收请求、参数校验与转发、**仅调用** Service / Model 编排、返回 view/json | **不写复杂业务与 SQL**；不做凭证/图片解析等应下沉到 Service 的逻辑 |
+| **Model** | 表模型、查询与作用域、单表/关联查库 | 不写 HTTP、不写跨模块业务流程 |
+| **View** | 模板与前端渲染、表单展示 | 不写 PHP 业务与 SQL |
+
+**调用方向**：`Controller → Service → Model`；需要时 Controller 可读 Model，但复杂查询与事务优先放在 Service。
+
+**与 AI 协作**：改功能时优先定位对应模块下的 `service/`、`controller/`、`model/`、`view/`，保持改动落在同一分层习惯内。

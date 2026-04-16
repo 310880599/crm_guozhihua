@@ -6,8 +6,8 @@ use think\Db;
 use think\facade\Request;
 use think\facade\Session;
 use think\Container;
+use app\admin\service\OrderImageService;
 use app\admin\service\OrderService;
-use app\admin\service\VoucherImageParseService;
 
 class Order extends Common
 {
@@ -2569,14 +2569,8 @@ class Order extends Common
             $order['city'] = trim((string)($order['city'] ?? ''));
         }
 
-        // wechat_receipt_image、inquiry_assign_image 统一解析为 [{full,thumb},...]
-        $wechatReceiptImages = VoucherImageParseService::parseList($order['wechat_receipt_image'] ?? null);
-        $order['wechat_receipt_images'] = $wechatReceiptImages;
-        $order['wechat_receipt_full_urls'] = array_column($wechatReceiptImages, 'full');
+        $order = OrderImageService::enrichOrderForEditView($order);
 
-        $inquiryAssignImages = VoucherImageParseService::parseList($order['inquiry_assign_image'] ?? null);
-        $order['inquiry_assign_image'] = $inquiryAssignImages;
-        
         // 读取该订单的所有产品明细行
         $items = Db::name('crm_order_item')->where('order_id', $orderId)->select();
 
@@ -3456,11 +3450,10 @@ class Order extends Common
             if (empty($order['product_name']) && !empty($order['order_items'])) {
                 $order['product_name'] = $order['order_items'][0]['product_name'] ?? '';
             }
-
-            $order['wechat_receipt_images'] = VoucherImageParseService::parseList($order['wechat_receipt_image'] ?? null);
-            $order['inquiry_assign_images'] = VoucherImageParseService::parseList($order['inquiry_assign_image'] ?? null);
         }
         unset($order);
+
+        $list['data'] = OrderImageService::appendOrderImageFields($list['data'] ?? []);
 
         //成单率
 
