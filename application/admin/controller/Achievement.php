@@ -22,11 +22,11 @@ class Achievement extends Common
     private $wcDashboardTitlePermanentPerson = '旺春现有团队个人 · 业绩看板';
 
     // 统计周期文本（展示用）
-    private $wcStatPeriodText = '2026.03.01 - 2026.04.15';
+    private $wcStatPeriodText = '2026.04.16 - 2026.05.31';
 
     // 统计时间范围（用于筛选订单，建议与上面文本保持一致）
-    private $wcStatStartTime = '2026-03-01 00:00:00'; // 统计开始时间
-    private $wcStatEndTime   = '2026-04-15 23:59:59'; // 统计结束时间
+    private $wcStatStartTime = '2026-04-16 00:00:00'; // 统计开始时间
+    private $wcStatEndTime   = '2026-05-31 23:59:59'; // 统计结束时间
 
     /**
      * 订单时间字段：用于统计周期过滤
