@@ -70,7 +70,21 @@ class VoucherImageParseService
                     return $decoded;
                 }
 
-                return [$s];
+                // 与待审核页 parseImages 一致：JSON 解析失败时按逗号拆（旧数据）
+                $parts = array_values(array_filter(array_map('trim', explode(',', $s)), function ($p) {
+                    return $p !== '';
+                }));
+                return !empty($parts) ? $parts : [$s];
+            }
+
+            // 逗号分隔多 URL（旧数据，非 JSON）
+            if (strpos($s, ',') !== false) {
+                $parts = array_values(array_filter(array_map('trim', explode(',', $s)), function ($p) {
+                    return $p !== '';
+                }));
+                if (count($parts) > 1) {
+                    return $parts;
+                }
             }
 
             // 单图 URL 字符串

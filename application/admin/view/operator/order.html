@@ -580,17 +580,651 @@
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
     </div>
 
-
-</script>
-
+    <script type="text/html" id="topBtn"></script>
 
     {include file="common/foot"/}
+    <script src="/static/admin/js/sortable.min.js"></script>
     <script>
         layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
             const { table, form, laydate, upload, util, element } = layui;
             var $ = layui.$;
             var layer = layui.layer;
-            /** HTML 属性值转义，避免 URL 含引号导致 DOM 错乱、预览失效 */
+
+            // 根据超级管理员权限设置工具栏按钮
+            var defaultToolbar = ['filter'];
+            {if session('aid') eq 1}
+            defaultToolbar = ['filter', 'print', 'exports'];
+            {/if}
+
+            // ================= 列宽记忆（数据库优先 + localStorage 兜底）=================
+            var COLWIDTH_PAGE_KEY = 'operator_deal_order'; // 固定键：避免 URL 变化导致丢失
+            var COLWIDTH_TABLE_ID = 'table-list';    // 你的表格 id
+
+            // ================= 列配置记忆（显示/隐藏）（数据库优先 + localStorage 兜底）=================
+            var COLCFG_PAGE_KEY = 'operator_deal_order'; // 与列宽保持一致（固定键）
+            var COLCFG_TABLE_ID = 'table-list';    // 表格 id
+
+            // ================= 列顺序记忆（拖拽排序）（数据库优先 + localStorage 兜底）=================
+            var COLORDER_PAGE_KEY = 'operator_deal_order';
+            var COLORDER_TABLE_KEY = 'operator_deal_main';
+
+            var ORDER_COL_FIELD_WHITELIST = [];
+            // 待审核列表当前排序状态（仅前端内存保存）
+            var operatorDealSortState = {
+                field: '',
+                order: ''
+            };
+            // 待审核列表当前筛选条件缓存（用于审核后刷新时保留查询条件）
+            var operatorDealCurrentFilters = {};
+            function buildOperatorDealKeywordFromForm() {
+                var raw = {};
+                $('#searchForm').serializeArray().forEach(function (item) {
+                    raw[item.name] = item.value;
+                });
+                var keyword = {};
+                for (var k in raw) {
+                    if (!raw.hasOwnProperty(k)) continue;
+                    var v = (typeof raw[k] === 'string') ? $.trim(raw[k]) : raw[k];
+                    if (v !== '' && v !== null && typeof v !== 'undefined') {
+                        keyword[k] = v;
+                    }
+                }
+                // timebucket 有值时必须传
+                if (raw.hasOwnProperty('timebucket')) {
+                    var tb = $.trim(raw.timebucket || '');
+                    if (tb !== '') keyword.timebucket = tb;
+                }
+                return keyword;
+            }
+            function setOperatorDealCurrentFiltersFromForm() {
+                var keyword = buildOperatorDealKeywordFromForm();
+                // 首次进入/空值时默认本月，和后端默认口径一致
+                if (!keyword.timebucket) keyword.timebucket = 'month';
+                operatorDealCurrentFilters = { keyword: keyword };
+                return $.extend(true, {}, operatorDealCurrentFilters);
+            }
+            function getOperatorDealCurrentFilters() {
+                if (!operatorDealCurrentFilters || !operatorDealCurrentFilters.keyword) {
+                    return setOperatorDealCurrentFiltersFromForm();
+                }
+                return $.extend(true, {}, operatorDealCurrentFilters);
+            }
+            function buildOrderColWhitelist(tableCols) {
+                var arr = [];
+                (tableCols || []).forEach(function (c) {
+                    if (c && c.field) arr.push(String(c.field));
+                });
+                ORDER_COL_FIELD_WHITELIST = arr;
+            }
+
+            function getFieldFromCheckbox($cb) {
+                var v = ($cb.attr('value') || '').trim();
+                if (v && v !== 'on') return v;
+                var n = ($cb.attr('name') || '').trim();
+                if (n && n !== 'on') return n;
+                var d = ($cb.attr('data-field') || $cb.data('field') || '').toString().trim();
+                if (d && d !== 'on') return d;
+                return '';
+            }
+
+            function colwidthStorageKey() {
+                return 'colwidth:' + COLWIDTH_PAGE_KEY + ':' + COLWIDTH_TABLE_ID;
+            }
+
+            function getCurrentWidthsSnapshot() {
+                var map = {};
+                try {
+                    var $ths = $('#table-list')
+                        .next('.layui-table-view')
+                        .find('.layui-table-header thead tr')
+                        .eq(0)
+                        .find('th');
+
+                    $ths.each(function () {
+                        var field = $(this).attr('data-field');
+                        if (!field || field === '0') return;
+                        if (/^\d+$/.test(field)) return; // 过滤 Layui 自动生成的纯数字 field（例如 "14"）
+                        var w = parseInt($(this).outerWidth(), 10);
+                        if (w > 0) map[field] = w;
+                    });
+                } catch (e) {}
+                return map;
+            }
+
+            function applyWidthsToCols(cols, widthMap) {
+                if (!cols || !cols.length || !widthMap) return;
+                cols.forEach(function (c) {
+                    if (!c || !c.field) return;
+                    if (widthMap[c.field]) c.width = parseInt(widthMap[c.field], 10);
+                });
+            }
+
+            function loadLocalWidths() {
+                try {
+                    var raw = localStorage.getItem(colwidthStorageKey());
+                    if (!raw) return null;
+                    var obj = JSON.parse(raw);
+                    return obj && typeof obj === 'object' ? obj : null;
+                } catch (e) { return null; }
+            }
+
+            function saveLocalWidths(widthMap) {
+                try {
+                    localStorage.setItem(colwidthStorageKey(), JSON.stringify(widthMap || {}));
+                } catch (e) {}
+            }
+
+            function restoreColWidth(cols) {
+                var dbMap = null;
+                try {
+                    $.ajax({
+                        url: "{:url('Order/getColWidths')}",
+                        type: 'post',
+                        dataType: 'json',
+                        async: false,
+                        data: { page_key: COLWIDTH_PAGE_KEY, table_id: COLWIDTH_TABLE_ID },
+                        success: function (res) {
+                            if (res && (res.code === 0 || res.code === 1) && res.data) {
+                                dbMap = res.data;
+                            }
+                        }
+                    });
+                } catch (e) {}
+
+                var localMap = loadLocalWidths();
+                if (dbMap) applyWidthsToCols(cols, dbMap);
+                else if (localMap) applyWidthsToCols(cols, localMap);
+                window.__operatorDealPersistedWidthMap = {};
+                if (dbMap) window.__operatorDealPersistedWidthMap = $.extend({}, dbMap);
+                else if (localMap) window.__operatorDealPersistedWidthMap = $.extend({}, localMap);
+            }
+
+            function saveWidths(widthMap) {
+                saveLocalWidths(widthMap);
+                window.__operatorDealPersistedWidthMap = $.extend({}, window.__operatorDealPersistedWidthMap || {}, widthMap || {});
+                $.ajax({
+                    url: "{:url('Order/saveColWidths')}",
+                    type: 'post',
+                    dataType: 'json',
+                    data: {
+                        page_key: COLWIDTH_PAGE_KEY,
+                        table_id: COLWIDTH_TABLE_ID,
+                        widths: JSON.stringify(widthMap || {})
+                    }
+                });
+            }
+
+            var __colwidth_last_snapshot = null;
+            function bindResizeSave() {
+                __colwidth_last_snapshot = getCurrentWidthsSnapshot();
+                $(document).off('mouseup.colwidthsave touchend.colwidthsave');
+                $(document).on('mouseup.colwidthsave touchend.colwidthsave', function () {
+                    setTimeout(function () {
+                        var now = getCurrentWidthsSnapshot();
+                        var changed = false;
+
+                        if (!__colwidth_last_snapshot) changed = true;
+                        else {
+                            var aKeys = Object.keys(__colwidth_last_snapshot);
+                            var bKeys = Object.keys(now);
+                            if (aKeys.length !== bKeys.length) changed = true;
+                            else {
+                                for (var i = 0; i < bKeys.length; i++) {
+                                    var k = bKeys[i];
+                                    if (parseInt(now[k], 10) !== parseInt(__colwidth_last_snapshot[k], 10)) {
+                                        changed = true; break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (changed) {
+                            __colwidth_last_snapshot = now;
+                            saveWidths(now);
+                        }
+                    }, 120);
+                });
+            }
+            // ================= 列宽记忆 END =================
+
+            // ================= 列配置记忆（显示/隐藏）BEGIN =================
+            function colcfgStorageKey() {
+                return 'colcfg:' + COLCFG_PAGE_KEY + ':' + COLCFG_TABLE_ID;
+            }
+
+            function colorderStorageKey() {
+                return 'colorder:' + COLORDER_PAGE_KEY + ':' + COLORDER_TABLE_KEY;
+            }
+            function loadLocalColOrder() {
+                try {
+                    var raw = localStorage.getItem(colorderStorageKey());
+                    if (!raw) return null;
+                    var arr = JSON.parse(raw);
+                    return Array.isArray(arr) ? arr : null;
+                } catch (e) { return null; }
+            }
+            function saveLocalColOrder(orderArr) {
+                try {
+                    localStorage.setItem(colorderStorageKey(), JSON.stringify(orderArr || []));
+                } catch (e) {}
+            }
+
+            function loadLocalColCfg() {
+                try {
+                    var raw = localStorage.getItem(colcfgStorageKey());
+                    if (!raw) return null;
+                    var obj = JSON.parse(raw);
+                    return obj && typeof obj === 'object' ? obj : null;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function saveLocalColCfg(obj) {
+                try {
+                    localStorage.setItem(colcfgStorageKey(), JSON.stringify(obj || {}));
+                } catch (e) {}
+            }
+
+            // 按 orderArr 重排列定义（固定列规则：左固定最前、右固定最后，只排序正常业务列）
+            function applyOrderToCols(cols, orderArr) {
+                if (!cols || !cols.length) return cols || [];
+                var leftFixed = [], rightFixed = [], normal = [], byField = {};
+                cols.forEach(function (c) {
+                    if (!c) return;
+                    var f = c.field;
+                    var isLeft = (c.fixed === 'left' || c.fixed === true) || (c.type === 'numbers' || c.type === 'checkbox');
+                    var isRight = c.fixed === 'right';
+                    if (isLeft) { leftFixed.push(c); return; }
+                    if (isRight) { rightFixed.push(c); return; }
+                    if (f && f !== '0' && !/^\d+$/.test(String(f))) {
+                        normal.push(c);
+                        byField[f] = c;
+                    } else {
+                        normal.push(c);
+                    }
+                });
+                var ordered = [];
+                var used = {};
+                if (orderArr && orderArr.length) {
+                    orderArr.forEach(function (field) {
+                        if (byField[field] && !used[field]) {
+                            ordered.push(byField[field]);
+                            used[field] = true;
+                        }
+                    });
+                }
+                normal.forEach(function (c) {
+                    var f = c.field;
+                    if (f && f !== '0' && !/^\d+$/.test(String(f)) && !used[f]) ordered.push(c);
+                });
+                return leftFixed.concat(ordered).concat(rightFixed);
+            }
+
+            // 从数据库优先恢复列顺序，其次 localStorage；会直接修改 cols 引用内容
+            function restoreColOrder(cols) {
+                var dbOrder = null;
+                try {
+                    $.ajax({
+                        url: "{:url('Order/getColOrder')}",
+                        type: 'post',
+                        dataType: 'json',
+                        async: false,
+                        data: { page_key: COLORDER_PAGE_KEY, table_key: COLORDER_TABLE_KEY },
+                        success: function (res) {
+                            if (res && (res.code === 0 || res.code === 1) && res.data && Array.isArray(res.data)) {
+                                dbOrder = res.data;
+                            }
+                        }
+                    });
+                } catch (e) {}
+                var orderArr = dbOrder || loadLocalColOrder();
+                if (!orderArr || !orderArr.length) return;
+                var ordered = applyOrderToCols(cols, orderArr);
+                cols.splice(0, cols.length);
+                for (var i = 0; i < ordered.length; i++) cols.push(ordered[i]);
+            }
+
+            // 把隐藏状态应用到列定义（渲染前调用）
+            function applyHideToCols(cols, hideMap) {
+                if (!cols || !cols.length || !hideMap) return;
+                cols.forEach(function (c) {
+                    if (!c || !c.field) return;
+                    var field = c.field;
+                    if (!field || field === '0') return;
+                    // 过滤纯数字 field（Layui 自动列）以及操作列（通常无 field）
+                    if (/^\d+$/.test(field)) return;
+                    if (Object.prototype.hasOwnProperty.call(hideMap, field)) {
+                        c.hide = parseInt(hideMap[field], 10) === 1;
+                    }
+                });
+            }
+
+            // 从数据库优先恢复列配置，其次 localStorage
+            function restoreColConfig(cols) {
+                var dbCfg = null;
+                try {
+                    $.ajax({
+                        url: "{:url('Order/getColConfig')}",
+                        type: 'post',
+                        dataType: 'json',
+                        async: false,
+                        data: { page_key: COLCFG_PAGE_KEY },
+                        success: function (res) {
+                            if (res && (res.code === 0 || res.code === 1) && res.data) {
+                                dbCfg = res.data;
+                            }
+                        }
+                    });
+                } catch (e) {}
+
+                var localCfg = loadLocalColCfg();
+                // 约定：后端 data 即为 hideMap（field=>0/1）
+                if (dbCfg) applyHideToCols(cols, dbCfg);
+                else if (localCfg) applyHideToCols(cols, localCfg);
+            }
+
+            // 获取当前页面实际隐藏状态快照（以 DOM 为准）
+            function getCurrentHideSnapshot() {
+                var hideMap = {};
+                try {
+                    var $view = $('#table-list').next('.layui-table-view');
+                    var $ths = $view.find('.layui-table-header thead tr').eq(0).find('th');
+
+                    // 只处理 operatorDealCols[0] 里定义过的 field
+                    if (Array.isArray(operatorDealCols) && operatorDealCols.length > 0) {
+                        operatorDealCols[0].forEach(function (c) {
+                            if (!c || !c.field) return;
+                            var field = c.field;
+                            if (!field || field === '0') return;
+                            if (/^\d+$/.test(field)) return; // 过滤纯数字 field
+
+                            var $th = $ths.filter('[data-field="' + field + '"]');
+                            var hide = 1; // 默认认为隐藏
+                            if ($th.length) {
+                                if (!$th.hasClass('layui-hide') && $th.css('display') !== 'none') {
+                                    hide = 0;
+                                }
+                            }
+                            hideMap[field] = hide;
+                        });
+                    }
+                } catch (e) {}
+                return hideMap;
+            }
+
+            function saveColConfig(hideMap) {
+                saveLocalColCfg(hideMap);
+                $.ajax({
+                    url: "{:url('Order/saveColConfig')}",
+                    type: 'post',
+                    dataType: 'json',
+                    data: {
+                        page_key: COLCFG_PAGE_KEY,
+                        config_json: JSON.stringify(hideMap || {})
+                    }
+                });
+            }
+
+            function colcfgChanged(oldSnap, newSnap) {
+                if (!oldSnap && newSnap) return true;
+                if (oldSnap && !newSnap) return true;
+                if (!oldSnap && !newSnap) return false;
+                var aKeys = Object.keys(oldSnap);
+                var bKeys = Object.keys(newSnap);
+                if (aKeys.length !== bKeys.length) return true;
+                for (var i = 0; i < bKeys.length; i++) {
+                    var k = bKeys[i];
+                    if (parseInt(newSnap[k], 10) !== parseInt(oldSnap[k], 10)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function saveColOrder(orderArr) {
+                saveLocalColOrder(orderArr);
+                $.ajax({
+                    url: "{:url('Order/saveColOrder')}",
+                    type: 'post',
+                    dataType: 'json',
+                    data: {
+                        page_key: COLORDER_PAGE_KEY,
+                        table_key: COLORDER_TABLE_KEY,
+                        column_order: JSON.stringify(orderArr || [])
+                    }
+                });
+            }
+
+            var __colcfg_last_snapshot = null;
+            function bindColPanelSave() {
+                __colcfg_last_snapshot = getCurrentHideSnapshot();
+
+                // 勾选列显示/隐藏
+                $(document).off('change.colcfg').on('change.colcfg', '.layui-table-tool-panel input[type=checkbox]', function () {
+                    setTimeout(function () {
+                        var now = getCurrentHideSnapshot();
+                        if (colcfgChanged(__colcfg_last_snapshot, now)) {
+                            __colcfg_last_snapshot = now;
+                            saveColConfig(now);
+                        }
+                    }, 60);
+                });
+
+                // 面板关闭或点击空白处的兜底保存
+                $(document).off('mouseup.colcfg_panel touchend.colcfg_panel')
+                    .on('mouseup.colcfg_panel touchend.colcfg_panel', function () {
+                        setTimeout(function () {
+                            var now = getCurrentHideSnapshot();
+                            if (colcfgChanged(__colcfg_last_snapshot, now)) {
+                                __colcfg_last_snapshot = now;
+                                saveColConfig(now);
+                            }
+                        }, 80);
+                    });
+            }
+            // ================= 列配置记忆（显示/隐藏）END =================
+
+            function applyOrderAndRerender(orderArr) {
+                ensureColsMaster();
+
+                // 1) 以 master 为基准生成新 cols0（避免反复 splice 污染对象/顺序）
+                var newCols0 = cloneCols0(OPERATOR_DEAL_COLS_MASTER);
+
+                // 2) 应用隐藏/列宽（你原本是渲染前做的，这里重渲染也要做）
+                restoreColConfig(newCols0);
+                restoreColWidth(newCols0);
+
+                // 3) 应用顺序（用你现有 applyOrderToCols）
+                newCols0 = applyOrderToCols(newCols0, orderArr);
+
+                // 4) 更新 operatorDealCols 当前使用值（仅用于后续 snapshot/白名单等）
+                operatorDealCols[0] = newCols0;
+
+                // 5) 关键：销毁旧的 layui-table-view，再 render（避免 reload 列结构不重建导致串列）
+                try {
+                    var $view = $('#table-list').next('.layui-table-view');
+                    if ($view.length) $view.remove();
+                    $('#table-list').show(); // 确保 table 还在
+                } catch(e){}
+
+                // 6) 重新 render，并更新 tableIn 句柄
+                tableIn = table.render({
+                    elem: '#table-list',
+                    id: 'table-list',
+                    url: '{:url("order")}',
+                    method: 'post',
+                    height: 'full-260',
+                    toolbar: '#topBtn',
+                    defaultToolbar: defaultToolbar,
+                    cols: operatorDealCols,
+                    limit: 100,
+                    // 关闭 layui 本地排序，统一走后端排序
+                    autoSort: false,
+                    where: getOperatorDealCurrentFilters(),
+                    page: { limits: [10, 20, 30, 40, 50, 100, 9999999] },
+                    totalRow: true,
+                    done: function (res, curr, count) {
+                        $('#total-money').text(res.totalMoney);
+                        $('#total-profit').text(res.totalProfit);
+                        $('#total-inquiries').text(res.totalInquiries);
+                        $('#success-rate').text(res.successRate);
+
+                        // 重建白名单（顺序变了）
+                        buildOrderColWhitelist(operatorDealCols[0]);
+
+                        bindResizeSave();
+                        bindColPanelSave();
+                        bindColPanelDragSort();
+
+                        setTimeout(function(){ applyVoucherImageColumnWidthsFromPageData(res); }, 0);
+                        setTimeout(function(){ syncFixedRowHeights('table-list'); }, 0);
+                        setTimeout(function(){ syncFixedRowHeights('table-list'); }, 200);
+                    }
+                });
+            }
+
+            var __colSortObserverInited = false;
+            function bindColPanelDragSort() {
+                function initSortable(panel) {
+                    if (!panel || panel.getAttribute('data-col-sortable-inited') === '1') return;
+                    if (typeof Sortable === 'undefined') return;
+
+                    var $panel = $(panel);
+
+                    // 给每个 checkbox 外层元素打标 + 加拖拽把手
+                    $panel.find('input[type=checkbox]').each(function () {
+                        var $cb = $(this);
+
+                        // Layui 面板里 checkbox 外层可能是 label，也可能是 .layui-form-item（兼容写法）
+                        var $item = $cb.closest('label, .layui-form-item').first();
+                        if (!$item.length) $item = $cb.parent();
+
+                        if (!$item.length) return;
+
+                        var field = getFieldFromCheckbox($cb);
+                        if (!field || field === 'on') return;
+
+                        $item.attr('data-field', field);
+                        $cb.attr('data-field', field);
+                        $item.addClass('col-sort-item');
+
+                        // 加拖拽把手（只允许按把手拖，不影响勾选）
+                        if ($item.find('.drag-handle').length === 0) {
+                            $item.prepend('<span class="drag-handle" title="拖拽排序" style="cursor: move; user-select:none; display:inline-block; margin-right:6px;">&#9776;</span>');
+                        }
+                    });
+
+                    // 初始化 Sortable
+                    new Sortable(panel, {
+                        draggable: '.col-sort-item',
+                        handle: '.drag-handle',
+                        animation: 150,
+                        ghostClass: 'col-sort-ghost',
+                        chosenClass: 'col-sort-chosen',
+
+                        // 只允许拖拽，不要因为拖拽影响 checkbox 勾选
+                        filter: 'input, .layui-form-checkbox, .layui-icon',
+                        preventOnFilter: false,
+
+                        onEnd: function () {
+                            var orderArr = [];
+                            $panel.find('.col-sort-item').each(function () {
+                                var f = ($(this).attr('data-field') || '').trim();
+                                if (f && f !== 'on') orderArr.push(f);
+                            });
+                            if (!orderArr.length || (orderArr.length === 1 && orderArr[0] === 'on')) {
+                                console.warn('column order invalid:', orderArr);
+                                return;
+                            }
+                            orderArr = orderArr.filter(function (f) {
+                                return ORDER_COL_FIELD_WHITELIST.indexOf(f) !== -1;
+                            });
+                            if (!orderArr.length) return;
+                            saveColOrder(orderArr);
+                            applyOrderAndRerender(orderArr);
+                        }
+                    });
+
+                    panel.setAttribute('data-col-sortable-inited', '1');
+                }
+
+                // 监听 Layui 的列面板出现（面板是动态插入的）- 只创建一次 observer
+                if (!__colSortObserverInited) {
+                    __colSortObserverInited = true;
+                    var observer = new MutationObserver(function () {
+                        var panel = document.querySelector('.layui-table-tool-panel');
+                        if (panel) initSortable(panel);
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+                }
+                var panel0 = document.querySelector('.layui-table-tool-panel');
+                if (panel0) initSortable(panel0);
+            }
+
+            // ✅ 同步主表 / 左固定列 / 右固定列 的每一行高度（与待审核一致）
+            function syncFixedRowHeights(layIdOrElemId) {
+              var $view = $('.layui-table-view[lay-id="' + layIdOrElemId + '"]');
+              if (!$view.length) {
+                $view = $('#' + layIdOrElemId).next('.layui-table-view');
+              }
+              if (!$view.length) return;
+
+              var $mainTrs  = $view.find('.layui-table-body tbody tr');
+              var $leftTrs  = $view.find('.layui-table-fixed-l .layui-table-body tbody tr');
+              var $rightTrs = $view.find('.layui-table-fixed-r .layui-table-body tbody tr');
+
+              $mainTrs.css('height', 'auto');
+              $leftTrs.css('height', 'auto');
+              $rightTrs.css('height', 'auto');
+
+              $mainTrs.each(function(i){
+                var hMain = $(this).outerHeight() || 0;
+                var hLeft = $leftTrs.eq(i).outerHeight() || 0;
+                var hRight = $rightTrs.eq(i).outerHeight() || 0;
+                var maxH = Math.max(hMain, hLeft, hRight);
+
+                if (maxH > 0) {
+                  $(this).height(maxH);
+                  if ($leftTrs.length) $leftTrs.eq(i).height(maxH);
+                  if ($rightTrs.length) $rightTrs.eq(i).height(maxH);
+                }
+              });
+            }
+
+            // 解析多图字段：与待审核页 parseImages 一致
+            function parseImages(val) {
+                if (!val) return [];
+                if (Array.isArray(val)) return val;
+                var s = String(val).trim();
+                if (!s) return [];
+                if (s.charAt(0) === '[') {
+                    try { return JSON.parse(s); } catch (e) {}
+                    try { return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean); } catch (e) { return []; }
+                }
+                return s.split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+            }
+
+            function normalizeVoucherRowItems(arr) {
+                if (!arr || !arr.length) return [];
+                return arr.map(function (item) {
+                    if (item == null) return null;
+                    if (typeof item === 'string') {
+                        var u = item.trim();
+                        return u ? { full: u, thumb: u } : null;
+                    }
+                    if (typeof item === 'object') {
+                        var f = item.full || item.url || item.path || item.src || '';
+                        var t = item.thumb || item.thumbnail || item.small || f;
+                        f = String(f || '').trim();
+                        t = String(t || f).trim();
+                        return f ? { full: f, thumb: t } : null;
+                    }
+                    return null;
+                }).filter(Boolean);
+            }
+
+            /** HTML 属性值转义 */
             function escapeHtmlAttr(s) {
                 if (s == null || s === '') return '';
                 return String(s)
@@ -601,123 +1235,50 @@
                     .replace(/>/g, '&gt;');
             }
 
-            // 凭证字段兼容：单图 URL；JSON 数组字符串；对象数组；避免把 JSON 整段当单元格文本输出
-            function normalizeVoucherImageItems(raw) {
-                if (raw == null || raw === '') return [];
-                if (Array.isArray(raw)) {
-                    return raw.map(function (x) {
-                        if (typeof x === 'string') return { full: x, thumb: x };
-                        x = x || {};
-                        var f = x.full || x.url || x.path || x.src || '';
-                        var t = x.thumb || x.thumbnail || x.small || f;
-                        return f ? { full: String(f).trim(), thumb: String(t || f).trim() } : null;
-                    }).filter(Boolean);
-                }
-                var s = String(raw).trim();
-                if (!s) return [];
-                if (s.charAt(0) === '[') {
-                    try {
-                        var arr = JSON.parse(s);
-                        if (Array.isArray(arr)) return normalizeVoucherImageItems(arr);
-                    } catch (e) {}
-                    return [];
-                }
-                if (s.charAt(0) === '{') {
-                    try {
-                        var obj = JSON.parse(s);
-                        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-                            return normalizeVoucherImageItems([obj]);
-                        }
-                    } catch (e) {}
-                    return [];
-                }
-                return [{ full: s, thumb: s }];
-            }
-
-            /**
-             * 统一从行数据取列表：兼容数组、JSON 字符串、单 URL 字符串；避免仅列表字段为 URL 时被忽略
-             */
-            function coerceVoucherImageListFromRow(res, listKey, rawKey) {
-                var v = res[listKey];
-                if (typeof v === 'string') {
-                    var t = v.trim();
-                    if (t.charAt(0) === '[' || t.charAt(0) === '{') {
-                        try {
-                            var j = JSON.parse(t);
-                            if (Array.isArray(j)) {
-                                v = j;
-                            } else if (j && typeof j === 'object') {
-                                v = [j];
-                            } else {
-                                v = null;
-                            }
-                        } catch (e) {
-                            v = null;
-                        }
-                    }
-                }
-                if (Array.isArray(v) && v.length > 0) {
-                    return normalizeVoucherImageItems(v);
-                }
-                if (typeof v === 'string' && v.trim() !== '') {
-                    return normalizeVoucherImageItems(v);
-                }
-                return normalizeVoucherImageItems(res[rawKey]);
-            }
-
             function wechatReceiptImagesForTableRow(res) {
-                return coerceVoucherImageListFromRow(res, 'wechat_receipt_images', 'wechat_receipt_image');
+                var arr = parseImages(res.wechat_receipt_image);
+                var list = normalizeVoucherRowItems(arr);
+                if (list.length) return list;
+                return normalizeVoucherRowItems(res.wechat_receipt_images || []);
             }
             function inquiryAssignImagesForTableRow(res) {
-                return coerceVoucherImageListFromRow(res, 'inquiry_assign_images', 'inquiry_assign_image');
-            }
-            /**
-             * data-images：URI 编码的 JSON 数组 [{thumb,full},...]，供点击时多图预览；
-             * 单图时数组长度为 1，与多图同一套逻辑（openZoomPreviewGallery）。
-             */
-            function buildVoucherDataImagesAttr(images) {
-                var payload = images.map(function (img) {
-                    var thumb = img.thumb || img.full || '';
-                    var full = img.full || thumb;
-                    return { thumb: thumb, full: full };
-                });
-                return encodeURIComponent(JSON.stringify(payload));
+                var arr = parseImages(res.inquiry_assign_image);
+                var list = normalizeVoucherRowItems(arr);
+                if (list.length) return list;
+                return normalizeVoucherRowItems(res.inquiry_assign_images || []);
             }
 
-            /** 微信 / 询盘：img-strip + data-images；属性已转义，避免 JSON/引号破坏结构 */
-            function renderVoucherImageStripHtml(images) {
-                if (!images || !images.length) {
-                    return '-';
+            function voucherCellHtml(res, rawKey, listKey) {
+                var arr = parseImages(res[rawKey]);
+                var list = normalizeVoucherRowItems(arr);
+                if (!list.length && res[listKey] && res[listKey].length) {
+                    list = normalizeVoucherRowItems(res[listKey]);
                 }
-                var html = '<div class="img-strip voucher-strip" data-images="' + buildVoucherDataImagesAttr(images) + '">';
-                for (var i = 0; i < images.length; i++) {
-                    var img = images[i];
-                    var thumb = img.thumb || img.full || '';
-                    var full = img.full || thumb;
-                    thumb = String(thumb || '').trim();
-                    full = String(full || '').trim();
-                    if (thumb) {
-                        html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + escapeHtmlAttr(full) + '" src="' + escapeHtmlAttr(thumb) + '" loading="lazy">';
+                if (!list.length) return '-';
+                var dataImages = encodeURIComponent(JSON.stringify(list));
+                var html = '<div class="img-strip voucher-strip" data-images="' + dataImages + '">';
+                for (var i = 0; i < list.length; i++) {
+                    var u = list[i].full || list[i].thumb || '';
+                    if (u) {
+                        html += '<img class="js-img-gallery-preview voucher-item-img" data-index="' + i + '" data-full="' + escapeHtmlAttr(u) + '" src="' + escapeHtmlAttr(list[i].thumb || u) + '" loading="lazy">';
                     }
                 }
                 html += '</div>';
                 return html.indexOf('<img') !== -1 ? html : '-';
             }
 
-            /**
-             * 与后端 OrderService::calcImageColumnWidth 一致：按「当前列最大图片张数」算列宽
-             * 0～1 张：180；2 张：260；每多 1 张 +80；上限 780
-             */
             function calcVoucherColumnWidthByMaxImageCount(maxCount) {
                 var n = parseInt(maxCount, 10) || 0;
-                if (n <= 1) {
-                    return 180;
-                }
+                if (n <= 1) return 180;
                 var w = 180 + (n - 1) * 80;
                 return Math.min(w, 780);
             }
 
-            /** 根据当前页 data 中微信/询盘列各自「最大图片数」设置列宽 */
+            function fieldHasPersistedWidth(field) {
+                var w = parseInt((window.__operatorDealPersistedWidthMap || {})[field], 10);
+                return w > 0;
+            }
+
             function applyVoucherImageColumnWidthsFromPageData(res) {
                 var rows = (res && res.data) ? res.data : [];
                 var maxWechat = 0;
@@ -732,40 +1293,21 @@
                 var wWx = calcVoucherColumnWidthByMaxImageCount(maxWechat);
                 var wIq = calcVoucherColumnWidthByMaxImageCount(maxInq);
                 var $view = $('#table-list').next('.layui-table-view');
-                if (!$view.length) {
-                    return;
-                }
+                if (!$view.length) return;
                 var wxPx = wWx + 'px';
                 var iqPx = wIq + 'px';
-                // 只设 width/minWidth，不用 maxWidth，避免与表头/横向滚动条叠加导致列错乱
-                $view.find('[data-field="wechat_receipt_image"]').css({
-                    width: wxPx,
-                    minWidth: wxPx
-                });
-                $view.find('[data-field="inquiry_assign_image"]').css({
-                    width: iqPx,
-                    minWidth: iqPx
-                });
+                if (!fieldHasPersistedWidth('wechat_receipt_image')) {
+                    $view.find('[data-field="wechat_receipt_image"]').css({ width: wxPx, minWidth: wxPx });
+                }
+                if (!fieldHasPersistedWidth('inquiry_assign_image')) {
+                    $view.find('[data-field="inquiry_assign_image"]').css({ width: iqPx, minWidth: iqPx });
+                }
                 if (typeof table.resize === 'function') {
                     table.resize('table-list');
                 }
             }
 
-            // 根据超级管理员权限设置工具栏按钮
-            var defaultToolbar = ['filter'];
-            {if session('aid') eq 1}
-            defaultToolbar = ['filter', 'print', 'exports'];
-            {/if}
-            
-            var tableIn = table.render({
-                elem: '#table-list',
-                url: '{:url("order")}',
-                method: 'post',
-                // width:'100%',
-                height: 'full-260', // ✅ 关键：给表格一个高度（260 按你页面头部高度微调）
-                toolbar: '#topBtn',
-                defaultToolbar: defaultToolbar,
-                cols: [[
+            var operatorDealCols = [[
                     { field: 'id', title: 'ID', minWidth: 60, fixed: true, hide: true },
                     { field: 'order_no', title: '订单编号', totalRowText: '合计：', minWidth: 140 },
                     { field: 'cname', title: '客户名称', minWidth: 120 },
@@ -786,99 +1328,137 @@
                     { field: 'order_time', title: '成交时间', minWidth: 150 },
                     { field: 'source', title: '询盘来源', minWidth: 120 },
                     { field: 'source_port', title: '来源端口', minWidth: 120 },
-                    { 
-                        field: 'wechat_receipt_image', 
-                        title: '微信沟通及付款凭证', 
+                    {
+                        field: 'wechat_receipt_image',
+                        title: '微信沟通及付款凭证',
                         minWidth: 180,
-                        templet: function(res){
-                            try {
-                                return renderVoucherImageStripHtml(wechatReceiptImagesForTableRow(res));
-                            } catch (e) {
-                                console.error('wechat_receipt_image cell', e);
-                                return '-';
-                            }
+                        templet: function (res) {
+                            try { return voucherCellHtml(res, 'wechat_receipt_image', 'wechat_receipt_images'); } catch (e) { return '-'; }
                         }
                     },
-                    { 
-                        field: 'inquiry_assign_image', 
-                        title: '询盘来源凭证', 
+                    {
+                        field: 'inquiry_assign_image',
+                        title: '询盘来源凭证',
                         minWidth: 180,
-                        templet: function(res){
-                            try {
-                                return renderVoucherImageStripHtml(inquiryAssignImagesForTableRow(res));
-                            } catch (e) {
-                                console.error('inquiry_assign_image cell', e);
-                                return '-';
-                            }
+                        templet: function (res) {
+                            try { return voucherCellHtml(res, 'inquiry_assign_image', 'inquiry_assign_images'); } catch (e) { return '-'; }
                         }
                     },
                     { field: 'pr_user', title: '负责人', hide: false, minWidth: 100 },
                     { field: 'team_name', title: '团队', hide: false, minWidth: 100 },
                     { field: 'create_time', title: '创建时间', minWidth: 150 },
-                    { field: 'update_time', title: '更新时间', minWidth: 150 },
-                ]],
-                limit: 100, //每页默认显示的数量
+                    { field: 'update_time', title: '更新时间', minWidth: 150 }
+            ]];
 
+            var OPERATOR_DEAL_COLS_MASTER = null;
+
+            function cloneCols0(cols0) {
+                return (cols0 || []).map(function (c) {
+                    var o = {};
+                    for (var k in c) o[k] = c[k];
+                    return o;
+                });
+            }
+
+            function ensureColsMaster() {
+                if (!OPERATOR_DEAL_COLS_MASTER) {
+                    OPERATOR_DEAL_COLS_MASTER = cloneCols0(operatorDealCols[0]);
+                }
+            }
+
+            ensureColsMaster();
+
+            restoreColOrder(operatorDealCols[0]);
+            restoreColConfig(operatorDealCols[0]);
+            restoreColWidth(operatorDealCols[0]);
+            setOperatorDealCurrentFiltersFromForm();
+
+            var tableIn = table.render({
+                elem: '#table-list',
+                id: 'table-list',
+                url: '{:url("order")}',
+                method: 'post',
+                height: 'full-260',
+                toolbar: '#topBtn',
+                defaultToolbar: defaultToolbar,
+                cols: operatorDealCols,
+                limit: 100,
+                autoSort: false,
+                where: getOperatorDealCurrentFilters(),
                 page: { limits: [10, 20, 30, 40, 50, 100, 9999999] },
-                totalRow: true,// 开启统计行
+                totalRow: true,
                 done: function (res, curr, count) {
                     $('#total-money').text(res.totalMoney);
                     $('#total-profit').text(res.totalProfit);
                     $('#total-inquiries').text(res.totalInquiries);
                     $('#success-rate').text(res.successRate);
-                    setTimeout(function () {
-                        applyVoucherImageColumnWidthsFromPageData(res);
-                    }, 0);
+                    bindResizeSave();
+                    bindColPanelSave();
+                    bindColPanelDragSort();
+                    setTimeout(function () { applyVoucherImageColumnWidthsFromPageData(res); }, 0);
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 0);
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 200);
                 }
             });
+            buildOrderColWhitelist(operatorDealCols[0]);
+
+            (function () {
+                var _reload = tableIn.reload;
+                tableIn.reload = function () {
+                    var ret = _reload.apply(tableIn, arguments);
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 0);
+                    setTimeout(function () { syncFixedRowHeights('table-list'); }, 200);
+                    return ret;
+                };
+            })();
+
+            function reloadTableWithDbCols(extraOpt) {
+                ensureColsMaster();
+                var cols0 = cloneCols0(OPERATOR_DEAL_COLS_MASTER);
+                restoreColOrder(cols0);
+                restoreColConfig(cols0);
+                restoreColWidth(cols0);
+                var where = getOperatorDealCurrentFilters();
+                var url = (tableIn.config && tableIn.config.url) ? tableIn.config.url : '{:url("order")}';
+                var opt = { cols: [cols0], where: where, url: url };
+                if (extraOpt && typeof extraOpt === 'object') {
+                    for (var k in extraOpt) opt[k] = extraOpt[k];
+                }
+                tableIn.reload(opt);
+            }
+
             table.on('tool(table-list)', function (obj) {
                 var data = obj.data;
-            })
-
-            //监听事件
-            table.on('toolbar(table-list)', function (obj) {
-
-                var checkStatus = table.checkStatus(obj.config.id)
-                    , data = checkStatus.data; //获取选中的数据
             });
 
+            table.on('toolbar(table-list)', function (obj) {
+                var checkStatus = table.checkStatus(obj.config.id)
+                    , data = checkStatus.data;
+            });
 
-            //监听搜索
             form.on('submit(LAY-app-contlist-search)', function (data) {
-                var field = data.field;
-                table.reload('table-list', {
+                operatorDealCurrentFilters = { keyword: data.field };
+                reloadTableWithDbCols({
                     url: "{:url('personOrderSearch')}",
-                    where: {
-                        keyword: data.field
-                    },
-                    page: {
-                        curr: 1
-                    }
+                    where: { keyword: data.field },
+                    page: { curr: 1 }
                 });
                 return false;
-
             });
 
-            // 初始化折叠面板
             element.render('collapse');
-            
-            // 日期控件（自定义日期范围）
             laydate.render({
                 elem: '#at_time',
-                range: true, // 开启范围选择
+                range: true,
                 trigger: 'click'
             });
-            
-            // 控制日期范围选择框的显示与隐藏
             form.on('select(dateRange)', function (data) {
-                const isCustom = data.value === '';
+                var isCustom = data.value === '';
                 $('#at_time').toggle(isCustom);
                 if (!isCustom) {
                     $('#at_time').val('');
                 }
             });
-
-            // 初始隐藏日期范围选择框
             $('#at_time').hide();
 
             // === 图片预览功能（支持缩放/拖拽）开始 ===
@@ -1282,5 +1862,4 @@
 
 </body>
 
-</html>
 </html>

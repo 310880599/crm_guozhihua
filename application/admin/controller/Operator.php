@@ -7,7 +7,7 @@ use think\facade\Request;
 use think\facade\Session;
 use app\admin\model\Admin;
 use app\admin\service\PersonOrderService;
-use app\admin\service\VoucherImageParseService;
+use app\admin\service\OrderImageService;
 
 class Operator extends Common
 {
@@ -509,7 +509,7 @@ private function exportToExcel($data)
     /**
      * 成交订单列表接口（运营管理-成交订单表格）。
      * 列表行上的 wechat_receipt_image、inquiry_assign_image 在本方法中统一解析为
-     * wechat_receipt_images、inquiry_assign_images（{@see VoucherImageParseService::parseList}）。
+     * wechat_receipt_images、inquiry_assign_images（{@see OrderImageService::appendOrderImageFields}）。
      */
     public function personOrderSearch()
     {
@@ -530,14 +530,7 @@ private function exportToExcel($data)
         );
 
         if (!empty($result['data']) && is_array($result['data'])) {
-            foreach ($result['data'] as &$row) {
-                if (!is_array($row)) {
-                    continue;
-                }
-                $row['wechat_receipt_images'] = VoucherImageParseService::parseList($row['wechat_receipt_image'] ?? null);
-                $row['inquiry_assign_images'] = VoucherImageParseService::parseList($row['inquiry_assign_image'] ?? null);
-            }
-            unset($row);
+            $result['data'] = OrderImageService::appendOrderImageFields($result['data']);
         }
 
         return json($result);
