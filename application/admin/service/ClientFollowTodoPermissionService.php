@@ -90,16 +90,22 @@ class ClientFollowTodoPermissionService
         $adminId = (int)$scope['admin_id'];
 
         $query->where(function ($q2) use ($usernames, $adminId, $alias) {
-            if (empty($usernames)) {
-                $q2->where($alias . '.id', '=', 0);
-                return;
-            }
             $q2->where(function ($q3) use ($usernames, $adminId, $alias) {
-                $q3->whereIn($alias . '.pr_user', $usernames);
+                $hasOwnerScope = false;
+                if (!empty($usernames)) {
+                    $q3->whereIn($alias . '.pr_user', $usernames);
+                    $hasOwnerScope = true;
+                }
                 if ($adminId > 0) {
-                    $q3->whereOr(function ($q4) use ($adminId, $alias) {
-                        $this->whereJointPersonMatchesAdmin($q4, $alias, $adminId);
-                    });
+                    if ($hasOwnerScope) {
+                        $q3->whereOr(function ($q4) use ($adminId, $alias) {
+                            $this->whereJointPersonMatchesAdmin($q4, $alias, $adminId);
+                        });
+                    } else {
+                        $this->whereJointPersonMatchesAdmin($q3, $alias, $adminId);
+                    }
+                } elseif (!$hasOwnerScope) {
+                    $q3->where($alias . '.id', '=', 0);
                 }
             });
         });
@@ -123,8 +129,7 @@ class ClientFollowTodoPermissionService
                 ->whereOr($field, 'like', '%,' . $s . ',%')
                 ->whereOr($field, 'like', $s . ',%')
                 ->whereOr($field, 'like', '%,' . $s)
-                ->whereOr($field, '=', $s)
-                ->whereOrRaw('FIND_IN_SET(?, ' . $field . ')', [$s]);
+                ->whereOr($field, '=', $s);
         });
     }
 }

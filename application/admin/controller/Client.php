@@ -2569,7 +2569,7 @@ class Client extends Common
         $teamName = session('team_name') ?: '';
         $adminList = Db::name('admin')
             ->where('group_id', '<>', 1)
-            ->whereIn('group_id', [10, 11, 14,17,18])
+            ->whereIn('group_id', [10, 11, 14,17,18, 19, 21, 22])
             ->field('admin_id, username')
             ->select();
         $collaboratorData = [];
@@ -3044,7 +3044,7 @@ class Client extends Common
         $teamName = session('team_name') ?: '';
         $adminList = \think\Db::name('admin')
             ->where('group_id', '<>', 1)  // 非超管
-            ->whereIn('group_id', [10, 11, 14,17,18])
+            ->whereIn('group_id', [10, 11, 14,17,18, 19, 21, 22])
             ->field('admin_id, username')
             ->select();
         $collaboratorData = [];
