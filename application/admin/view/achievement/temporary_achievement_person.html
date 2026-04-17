@@ -1,6 +1,6 @@
 <?php
 // 变量容错，避免未定义报错（数据由 Achievement 控制器赋值）
-// 后续改活动名单、统计周期等，请到控制器 application/admin/controller/Achievement.php 顶部配置区修改
+// 后续改活动名单、统计周期等，请到 application/admin/service/AchievementConfigService.php 按 key 修改
 $dashboardTitle     = isset($dashboardTitle) ? $dashboardTitle : '旺春PK小组 · 业绩看板';
 $periodText         = isset($periodText) ? $periodText : '';
 $groupAvgRankList   = isset($groupAvgRankList) && is_array($groupAvgRankList) ? $groupAvgRankList : [];
@@ -1272,8 +1272,8 @@ $wcStamp            = isset($wcStamp) ? $wcStamp : '';
     console.log('[WC] 页面脚本已加载');
     (function() {
         // ========== 旺春PK小组业绩看板 · 前端轮询（依赖 layui jquery，确保 iframe 内 $ 可用） ==========
-        var wcHeartbeatUrl = "<?php echo url('Achievement/temporaryAchievementHeartbeat'); ?>";
-        var wcDataUrl = "<?php echo url('Achievement/temporaryAchievementData'); ?>";
+        var wcHeartbeatUrl = "<?php echo url('Achievement/temporaryAchievementPersonHeartbeat'); ?>";
+        var wcDataUrl = "<?php echo url('Achievement/temporaryAchievementPersonData'); ?>";
         console.log('[WC] heartbeat url:', wcHeartbeatUrl);
         console.log('[WC] data url:', wcDataUrl);
 
