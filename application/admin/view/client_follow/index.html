@@ -87,6 +87,11 @@
             flex-wrap: nowrap;
             gap: 6px;
             min-width: 196px;
+            padding: 4px 8px;
+            border-radius: 8px;
+            border: 1px solid #dbe7fb;
+            background: #f5f9ff;
+            box-sizing: border-box;
         }
         .todo-action-wrap .layui-btn {
             margin: 0;
@@ -96,10 +101,32 @@
             overflow: visible !important;
             white-space: nowrap !important;
             text-overflow: initial !important;
-            padding: 0 6px !important;
+            padding: 6px !important;
+            background: #f8fbff !important;
+            border-radius: 10px;
+            box-sizing: border-box;
+        }
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-main .layui-table-body tr td:last-child,
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-main .layui-table-header tr th:last-child,
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-fixed-r .layui-table-body tr td:last-child,
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-fixed-r .layui-table-header tr th:last-child {
+            background: #ffffff !important;
         }
         .layui-table-view[lay-id="table-todo-follow"] .layui-table-fixed-r .todo-action-cell {
             overflow: visible !important;
+            background: #f8fbff !important;
+        }
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-body tr:hover td .todo-action-cell,
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-fixed-r .layui-table-body tr:hover td .todo-action-cell {
+            background: #f2f7ff !important;
+        }
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-body tr.todo-row-overdue td .todo-action-cell,
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-fixed-r .layui-table-body tr.todo-row-overdue td .todo-action-cell {
+            background: #fff1f1 !important;
+        }
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-body tr.todo-row-overdue:hover td .todo-action-cell,
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-fixed-r .layui-table-body tr.todo-row-overdue:hover td .todo-action-cell {
+            background: #ffe8e8 !important;
         }
         /* 逾期：整行浅红 + 关键列强调（不花哨） */
         .layui-table-view .layui-table-body tr.todo-row-overdue { background-color: #fff5f5 !important; }
