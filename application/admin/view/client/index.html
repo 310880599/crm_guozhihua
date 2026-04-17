@@ -1607,6 +1607,14 @@
                     layer.msg('系统繁忙，请稍后...', { time: 1800, icon: 1 });
                 }
             });
+
+            // 待办跟进等入口：URL 带 follow_open_id 时自动打开跟进弹窗
+            var followOpenId = parseInt('{$followOpenId|default=0}', 10) || 0;
+            if (followOpenId > 0 && typeof openFollowDialog === 'function') {
+                setTimeout(function () {
+                    openFollowDialog(followOpenId);
+                }, 400);
+            }
         });
     </script>
 

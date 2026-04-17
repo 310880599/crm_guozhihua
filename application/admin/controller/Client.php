@@ -216,6 +216,7 @@ class Client extends Common
         $this->assign('khRankList', $khRankList);
         $this->assign('inquiryList', $inquiryList);
         $this->assign('xsSourceList', $xsSourceList);
+        $this->assign('followOpenId', (int)Request::param('follow_open_id', 0));
         return $this->fetch();
     }
 

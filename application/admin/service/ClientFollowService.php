@@ -2,6 +2,7 @@
 
 namespace app\admin\service;
 
+use app\admin\model\ClientFollow;
 use think\Db;
 use Throwable;
 
@@ -322,6 +323,421 @@ class ClientFollowService
         unset($comment);
 
         return $comments;
+    }
+
+    /**
+     * 待办跟进管理表格数据（layui table）：Model 只负责分页查询，本方法负责全部展示层组装。
+     *
+     * @param int $page
+     * @param int $limit
+     * @param array $keyword 与 ClientFollow::buildTodoFollowBaseQuery 一致
+     * @param array $currentAdmin 预留，透传 Model
+     * @return array{code:int,msg:string,data:array,count:int,rel:int}
+     */
+    public function getTodoFollowTableData($page, $limit, $keyword = [], $currentAdmin = [])
+    {
+        $page = max(1, (int)$page);
+        $limit = max(1, (int)$limit);
+        $keyword = is_array($keyword) ? $keyword : [];
+
+        $list = (new ClientFollow())->getTodoFollowList($page, $limit, $keyword, $currentAdmin);
+        if ($list === null || empty($list['data'])) {
+            return [
+                'code' => 0,
+                'msg' => '获取成功!',
+                'data' => [],
+                'count' => 0,
+                'rel' => 1,
+            ];
+        }
+
+        $rows = $list['data'];
+        $total = (int)($list['total'] ?? 0);
+
+        $inquiryIds = array_unique(array_filter(array_column($rows, 'inquiry_id')));
+        $portIds = array_unique(array_filter(array_column($rows, 'port_id')));
+        $productIds = [];
+        foreach ($rows as $r) {
+            $pv = $r['product_name'] ?? '';
+            if ($pv !== '' && $pv !== null && is_numeric($pv)) {
+                $productIds[] = (int)$pv;
+            }
+        }
+        $productIds = array_unique(array_filter($productIds));
+
+        $inquiryMap = [];
+        if (!empty($inquiryIds)) {
+            $inquiryMap = Db::table('crm_inquiry')->whereIn('id', $inquiryIds)->column('inquiry_name', 'id');
+        }
+        $portMap = [];
+        if (!empty($portIds)) {
+            $portMap = Db::table('crm_inquiry_port')->whereIn('id', $portIds)->column('port_name', 'id');
+        }
+        $productMap = [];
+        if (!empty($productIds)) {
+            $productMap = Db::table('crm_products')->whereIn('id', $productIds)->column('product_name', 'id');
+        }
+
+        $jointIdSet = [];
+        foreach ($rows as $r) {
+            foreach ($this->parseJointPersonIds($r['joint_person'] ?? '') as $jid) {
+                if ($jid > 0) {
+                    $jointIdSet[$jid] = true;
+                }
+            }
+        }
+        $jointAdminMap = [];
+        if (!empty($jointIdSet)) {
+            $jointAdminMap = Db::table('admin')
+                ->whereIn('admin_id', array_keys($jointIdSet))
+                ->column('username', 'admin_id');
+        }
+
+        $out = [];
+        foreach ($rows as $row) {
+            $out[] = $this->buildTodoFollowTableRow($row, $inquiryMap, $portMap, $productMap, $jointAdminMap);
+        }
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功!',
+            'data' => $out,
+            'count' => $total,
+            'rel' => 1,
+        ];
+    }
+
+    /**
+     * 单行待办列表展示数据（时间、电话、渠道、逾期与前端标签均在 Service 内完成）。
+     *
+     * @param array $row Model 行
+     * @param array $inquiryMap id => inquiry_name
+     * @param array $portMap id => port_name
+     * @param array $productMap id => product_name
+     * @param array $jointAdminMap admin_id => username
+     * @return array
+     */
+    private function buildTodoFollowTableRow(array $row, array $inquiryMap, array $portMap, array $productMap, array $jointAdminMap)
+    {
+        $nextRaw = array_key_exists('next_up_time', $row) ? $row['next_up_time'] : null;
+        $lastRaw = array_key_exists('last_up_time', $row) ? $row['last_up_time'] : null;
+
+        $row['next_up_time_display'] = $this->formatNextUpTimeForDisplay($nextRaw);
+        $row['last_up_time_display'] = $this->formatLastUpTimeForDisplay($lastRaw);
+
+        $phones = $this->buildTodoFollowPhoneDisplay(
+            $row['main_phone'] ?? null,
+            $row['aux_phone'] ?? null
+        );
+        $row['main_phone_display'] = $phones['main_phone_display'];
+        $row['aux_phone_display'] = $phones['aux_phone_display'];
+        $row['phone_summary'] = $phones['phone_summary'];
+
+        $iid = $row['inquiry_id'] ?? null;
+        $row['inquiry_name'] = $this->mapInquiryName($iid, $inquiryMap);
+
+        $pid = $row['port_id'] ?? null;
+        $row['port_name'] = $this->mapPortName($pid, $portMap);
+
+        $prodVal = $row['product_name'] ?? null;
+        $row['product_name_display'] = $this->mapProductNameDisplay($prodVal, $productMap);
+
+        $row['kh_name_display'] = $this->scalarToDisplay($row['kh_name'] ?? null, '-');
+        $row['pr_user_display'] = $this->scalarToDisplay($row['pr_user'] ?? null, '-');
+        $row['last_up_records_display'] = $this->scalarToDisplay($row['last_up_records'] ?? null, '-');
+
+        $row['joint_person_display'] = $this->formatJointPersonNamesForTable($row['joint_person'] ?? '', $jointAdminMap);
+
+        $row['overdue_days'] = $this->calcOverdueDays($nextRaw);
+        $od = (int)$row['overdue_days'];
+        $row['overdue_days_display'] = $od > 0 ? ($od . '天') : '—';
+
+        $row['is_todo_follow'] = $this->isTodoFollow($nextRaw);
+
+        $tag = $this->buildTodoFollowTag($nextRaw, (int)$row['overdue_days']);
+        $row['todo_tag'] = $tag['todo_tag'];
+        $row['todo_status_text'] = $tag['todo_status_text'];
+
+        return $row;
+    }
+
+    /**
+     * 解析 joint_person 为 admin_id 列表（JSON 数组或逗号分隔）。
+     *
+     * @param mixed $jointRaw
+     * @return int[]
+     */
+    private function parseJointPersonIds($jointRaw)
+    {
+        $jointRaw = trim((string)$jointRaw);
+        if ($jointRaw === '') {
+            return [];
+        }
+
+        $jointIds = [];
+        if (preg_match('/^\s*\[.*\]\s*$/', $jointRaw)) {
+            $decoded = json_decode($jointRaw, true);
+            if (is_array($decoded)) {
+                $jointIds = $decoded;
+            }
+        } else {
+            $jointIds = array_values(array_filter(explode(',', $jointRaw)));
+        }
+
+        $out = [];
+        foreach ($jointIds as $id) {
+            $n = (int)$id;
+            if ($n > 0) {
+                $out[] = $n;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * 协同人展示名（与 buildFollowClientDetailData 口径一致）。
+     *
+     * @param array $adminIdToName admin_id => username
+     */
+    private function formatJointPersonNamesForTable($jointRaw, array $adminIdToName)
+    {
+        $ids = $this->parseJointPersonIds($jointRaw);
+        if (empty($ids)) {
+            return '-';
+        }
+        $names = [];
+        foreach ($ids as $id) {
+            $name = isset($adminIdToName[$id]) ? $adminIdToName[$id] : (isset($adminIdToName[(string)$id]) ? $adminIdToName[(string)$id] : '');
+            $name = trim((string)$name);
+            $names[] = $name !== '' ? $name : (string)$id;
+        }
+        return empty($names) ? '-' : implode('、', $names);
+    }
+
+    /**
+     * 上次跟进时间展示（与下次跟进时间同一套日期时间规范化）。
+     *
+     * @param mixed $lastUpTime
+     * @return string
+     */
+    public function formatLastUpTimeForDisplay($lastUpTime)
+    {
+        return $this->formatNextUpTimeForDisplay($lastUpTime);
+    }
+
+    /**
+     * 主电话 / 辅助电话：Model 已聚合为 main_phone、aux_phone，此处统一去空、去标签、供表格展示。
+     *
+     * @return array{main_phone_display:string,aux_phone_display:string,phone_summary:string}
+     */
+    private function buildTodoFollowPhoneDisplay($mainRaw, $auxRaw)
+    {
+        $main = $this->normalizePhoneChunk($mainRaw);
+        $aux = $this->normalizePhoneChunk($auxRaw);
+        if ($aux !== '') {
+            $aux = str_replace(['<br>', '<br/>', '<br />'], '、', $aux);
+            $aux = trim(preg_replace('/\s+/u', ' ', strip_tags($aux)));
+        }
+
+        $mainDisp = $main === '' ? '-' : $main;
+        $auxDisp = $aux === '' ? '-' : $aux;
+
+        $summary = $mainDisp;
+        if ($auxDisp !== '-') {
+            $summary = ($mainDisp === '-') ? $auxDisp : ($mainDisp . ' / ' . $auxDisp);
+        }
+        if ($summary === '-') {
+            $summary = '-';
+        }
+
+        return [
+            'main_phone_display' => $mainDisp,
+            'aux_phone_display' => $auxDisp,
+            'phone_summary' => $summary,
+        ];
+    }
+
+    /**
+     * @param mixed $chunk
+     * @return string
+     */
+    private function normalizePhoneChunk($chunk)
+    {
+        if ($chunk === null) {
+            return '';
+        }
+        $s = trim((string)$chunk);
+        if ($s === '' || strtolower($s) === 'null' || strtolower($s) === 'undefined') {
+            return '';
+        }
+        return $s;
+    }
+
+    /**
+     * @param mixed $inquiryId
+     * @param array $inquiryMap
+     * @return string
+     */
+    private function mapInquiryName($inquiryId, array $inquiryMap)
+    {
+        if ($inquiryId === null || $inquiryId === '') {
+            return '-';
+        }
+        if (is_numeric($inquiryId)) {
+            $id = (int)$inquiryId;
+            if (isset($inquiryMap[$id]) && trim((string)$inquiryMap[$id]) !== '') {
+                return trim((string)$inquiryMap[$id]);
+            }
+            return '-';
+        }
+        $s = trim((string)$inquiryId);
+        return $s === '' ? '-' : $s;
+    }
+
+    /**
+     * @param mixed $portId
+     * @param array $portMap
+     * @return string
+     */
+    private function mapPortName($portId, array $portMap)
+    {
+        if ($portId === null || $portId === '') {
+            return '-';
+        }
+        if (is_numeric($portId)) {
+            $id = (int)$portId;
+            if (isset($portMap[$id]) && trim((string)$portMap[$id]) !== '') {
+                return trim((string)$portMap[$id]);
+            }
+            return '-';
+        }
+        $s = trim((string)$portId);
+        return $s === '' ? '-' : $s;
+    }
+
+    /**
+     * @param mixed $productVal
+     * @param array $productMap
+     * @return string
+     */
+    private function mapProductNameDisplay($productVal, array $productMap)
+    {
+        if ($productVal === null || $productVal === '') {
+            return '-';
+        }
+        if (is_numeric($productVal)) {
+            $id = (int)$productVal;
+            if (isset($productMap[$id]) && trim((string)$productMap[$id]) !== '') {
+                return trim((string)$productMap[$id]);
+            }
+            return '-';
+        }
+        $s = trim((string)$productVal);
+        return $s === '' ? '-' : $s;
+    }
+
+    /**
+     * 标量展示：空/null/伪空 统一为占位符。
+     *
+     * @param mixed $value
+     * @param string $placeholder
+     * @return string
+     */
+    private function scalarToDisplay($value, $placeholder = '-')
+    {
+        if ($value === null) {
+            return $placeholder;
+        }
+        $s = trim((string)$value);
+        if ($s === '' || strtolower($s) === 'null' || strtolower($s) === 'undefined') {
+            return $placeholder;
+        }
+        return $s;
+    }
+
+    /**
+     * 前端列表标签：逾期 N 天 / 今日待办 / 待跟进。
+     *
+     * @param mixed $nextUpTime
+     * @param int $overdueDays
+     * @return array{todo_tag:string,todo_status_text:string}
+     */
+    private function buildTodoFollowTag($nextUpTime, $overdueDays)
+    {
+        if ($overdueDays > 0) {
+            return [
+                'todo_tag' => 'overdue',
+                'todo_status_text' => '逾期' . $overdueDays . '天',
+            ];
+        }
+        $raw = $nextUpTime === null ? '' : trim((string)$nextUpTime);
+        if ($raw === '' || strtolower($raw) === 'null') {
+            return ['todo_tag' => 'unknown', 'todo_status_text' => '-'];
+        }
+        $ts = strtotime($raw);
+        if ($ts !== false && date('Y-m-d', $ts) === date('Y-m-d')) {
+            return [
+                'todo_tag' => 'today',
+                'todo_status_text' => '今日待办',
+            ];
+        }
+        return [
+            'todo_tag' => 'due',
+            'todo_status_text' => '待跟进',
+        ];
+    }
+
+    /**
+     * 逾期天数：下次跟进日期的「日历日」早于「今天」时，返回相隔天数；否则 0。
+     * 与「仅看逾期」口径一致：跨自然日才算逾期天数。
+     *
+     * @param mixed $nextUpTime
+     * @return int
+     */
+    public function calcOverdueDays($nextUpTime)
+    {
+        if ($nextUpTime === null) {
+            return 0;
+        }
+        $raw = trim((string)$nextUpTime);
+        if ($raw === '' || strtolower($raw) === 'null') {
+            return 0;
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return 0;
+        }
+        $dueDay = date('Y-m-d', $ts);
+        $today = date('Y-m-d');
+        if ($dueDay >= $today) {
+            return 0;
+        }
+        $dueStart = strtotime($dueDay . ' 00:00:00');
+        $todayStart = strtotime($today . ' 00:00:00');
+        return (int)(($todayStart - $dueStart) / 86400);
+    }
+
+    /**
+     * 是否满足「待办时间」语义：有下次跟进时间且已到期（<= 当前时刻）。
+     * 不校验 status / issuccess（由列表查询保证）。
+     *
+     * @param mixed $nextUpTime
+     * @return bool
+     */
+    public function isTodoFollow($nextUpTime)
+    {
+        if ($nextUpTime === null) {
+            return false;
+        }
+        $raw = trim((string)$nextUpTime);
+        if ($raw === '' || strtolower($raw) === 'null') {
+            return false;
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return false;
+        }
+        return $ts <= time();
     }
 
     private function fail($msg)

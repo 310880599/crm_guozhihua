@@ -1,241 +1,681 @@
 <!DOCTYPE html>
 <html>
 <head>
-    {include file="common/head"/}  <!-- 包含通用的CSS和JS -->
+    {include file="common/head"/}
+    <title>待办跟进管理 - {:config('sys_name')}</title>
     <style>
-        .filtrate-warp {
-            margin-bottom: 10px;
-        }
+        script[type="text/html"] { display: none !important; }
+        .filtrate-warp { margin-bottom: 15px; }
         .layui-elem-field {
-            background: #fff !important;
-            border-radius: 8px !important;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
-            border: 1px solid #e8e8e8 !important;
-            overflow: hidden !important;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e8e8e8;
+            background: #fafafa;
         }
         .layui-elem-field legend {
             margin-left: 20px;
-            padding: 0 10px;
-            font-size: 20px;
-            font-weight: 300;
-            background: #4285f4;
-            color: #fff;
             padding: 10px 15px;
-            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            background: #6695ea;
+            color: #fff;
+            border-radius: 8px;
         }
+        .filtrate-warp .layui-form-label { white-space: nowrap; width: 108px; padding: 9px 12px; }
+        .filtrate-warp .layui-input-inline { width: 168px; }
+        .todo-page-hint { padding: 10px 20px 0; font-size: 13px; color: #666; line-height: 1.6; }
+        .todo-quick-bar {
+            padding: 6px 20px 10px;
+            font-size: 13px;
+            color: #555;
+            border-bottom: 1px dashed #e8e8e8;
+        }
+        .todo-quick-bar .layui-btn-xs { margin-right: 6px; margin-bottom: 4px; }
+        .todo-quick-label { margin-right: 8px; color: #888; }
+        .todo-search-actions { float: right; padding: 0 20px 14px 0; }
+        /* 逾期：整行浅红 + 关键列强调（不花哨） */
+        .layui-table-view .layui-table-body tr.todo-row-overdue { background-color: #fff5f5 !important; }
+        .layui-table-view .layui-table-body tr.todo-row-overdue:hover { background-color: #ffe8e8 !important; }
+        .layui-table-view .layui-table-fixed-r .layui-table-body tr.todo-row-overdue { background-color: #fff5f5 !important; }
+        .layui-table-view .layui-table-fixed-r .layui-table-body tr.todo-row-overdue:hover { background-color: #ffe8e8 !important; }
+        .todo-text-warn { color: #c62828 !important; font-weight: 500; }
 
-        .filtrate-warp .title {
-            padding: 5px 12px 7px 12px;
-            font-size: 14px;
-            font-weight: normal;
-            text-align: left;
-            cursor: pointer;
-            width: 90px;
-            background-color: transparent !important;
-            color: black !important;
+        /* 与「我的客户」跟进弹窗同源样式（精简） */
+        .follow-container { padding: 20px; background: #fff; }
+        .follow-header { border-bottom: 2px solid #4285f4; padding-bottom: 15px; margin-bottom: 20px; }
+        .follow-header h3 { margin: 0; color: #333; font-size: 18px; font-weight: 600; }
+        .follow-content { display: flex; gap: 30px; }
+        .follow-info { flex: 1; padding-right: 20px; border-right: 1px solid #e0e0e0; }
+        .follow-history { flex: 1; padding-left: 20px; }
+        .follow-action-panel { margin-top: 16px; padding: 12px; background: #fafafa; border: 1px solid #e8e8e8; border-radius: 6px; }
+        .follow-action-panel .layui-form-label { width: 100px; padding-left: 0; }
+        .follow-action-panel .layui-input-block { margin-left: 100px; }
+        .follow-action-btns { text-align: right; margin-bottom: 0 !important; }
+        .follow-history h4 { margin: 0 0 15px 0; color: #333; font-size: 16px; font-weight: 600; padding-bottom: 10px; border-bottom: 1px solid #e0e0e0; }
+        .info-item { margin-bottom: 15px; padding: 8px 0; border-bottom: 1px solid #f5f5f5; }
+        .info-item:last-child { border-bottom: none; }
+        .info-label { font-weight: 600; display: inline-block; width: 100px; color: #666; font-size: 14px; }
+        .info-item span:not(.info-label) { color: #333; font-size: 14px; }
+        #follow-rank-row { white-space: nowrap; }
+        .follow-rank-select { height: 26px; line-height: 26px; padding: 0 8px; font-size: 13px; border: 1px solid #d2d6de; border-radius: 4px; max-width: 160px; background: #fff; }
+        #follow-rank-row .follow-rank-btn { display: inline-block; height: 26px; line-height: 24px; padding: 0 12px; font-size: 12px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; vertical-align: middle; }
+        #follow-rank-row .follow-rank-btn-edit { color: #4285f4; background: #f0f5ff; border-color: #bad3fb; margin-left: 6px; }
+        #follow-rank-row .follow-rank-btn-save { color: #fff; background: #4285f4; border-color: #4285f4; margin-left: 6px; }
+        #follow-rank-row .follow-rank-btn-cancel { color: #7b8a9e; background: #f5f7fa; border-color: #d2d6de; margin-left: 4px; }
+        .timeline-item { margin-bottom: 20px; padding: 12px; background: #f8f9fa; border-radius: 6px; border-left: 3px solid #4285f4; }
+        .timeline-title { color: #4285f4; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+        .timeline-content { color: #333; font-size: 14px; line-height: 1.6; }
+        .timeline-content strong { color: #4285f4; margin-right: 5px; }
+        #follow-history-list { max-height: 240px; overflow-y: auto; padding-right: 10px; }
+        #follow-last-record { border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; font-size: 14px; resize: none; }
+        #reply_msg { border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; font-size: 14px; }
+        #reply_msg:focus { border-color: #4285f4; outline: none; }
+        #submit-comment { background: #4285f4; border-color: #4285f4; color: #fff; border-radius: 6px; padding: 8px 24px; font-size: 14px; }
+        .avatar { width: 30px; height: 30px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+        .follow-mask { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, .3); display: none; }
+        @media (max-width: 992px) {
+            .follow-content { flex-direction: column; gap: 20px; }
+            .follow-info { padding-right: 0; border-right: none; border-bottom: 1px solid #e0e0e0; padding-bottom: 20px; }
+            .follow-history { padding-left: 0; }
         }
-
-        .filtrate-warp .title:hover {
-            color: black;
-        }
-
-        .filtrate-warp .flag {
-            padding: 6px 12px 6px 12px;
-            cursor: pointer;
-        }
-
-        .filtrate-warp .flag:hover {
-            color: black;
-        }
-
-        .filtrate-warp .layui-badge:hover {
-            color: white !important;
-        }
-        .layui-form-label {
-            white-space: nowrap;   /* 不允许换行 */
-        }
-
     </style>
 </head>
 <body class="layui-layout-body">
-<div class="admin-main layui-anim layui-anim-upbit">
-    <fieldset class="layui-elem-field ">
-        <legend>高级查询</legend>
-
-        <div class="layui-card" style="box-shadow: none;margin-top: 10px">
-            <div class="layui-form layui-card-header layuiadmin-card-header-auto"
-                style="border-bottom: transparent;height: auto">
-                <div class="layui-form-item" style="text-align: left;padding-left: 20px;">
+<div class="admin-main layui-anim layui-anim-upbit filtrate-warp">
+    <fieldset class="layui-elem-field">
+        <legend>【待办跟进管理】</legend>
+        <div class="todo-page-hint">
+            默认列出：有效线索、未成交、已设置下次跟进时间且已到期的客户（含今日待办与历史逾期）。下方可缩小筛选范围。
+        </div>
+        <div class="todo-quick-bar">
+            <span class="todo-quick-label">快捷筛选</span>
+            <button type="button" class="layui-btn layui-btn-xs layui-btn-normal" id="btn-quick-today" title="下次跟进时间在今日">今日待跟进</button>
+            <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="btn-quick-all" title="清除跟进时间条件与「仅逾期」">全部待跟进</button>
+            <button type="button" class="layui-btn layui-btn-xs layui-btn-danger" id="btn-quick-overdue" title="仅看已逾期">仅看逾期</button>
+        </div>
+        <div class="layui-card" style="box-shadow: none; margin-top: 8px;">
+            <form class="layui-form layui-card-header layuiadmin-card-header-auto" lay-filter="todo-follow-search"
+                  style="border-bottom: transparent; height: auto;">
+                <div class="layui-form-item" style="text-align: left; padding-left: 12px;">
                     <div class="layui-inline">
-                        <label class="layui-form-label" style="margin-left: 5px">收款账户：</label>
+                        <label class="layui-form-label">客户名称</label>
                         <div class="layui-input-inline">
-                            <input type="text" id="account" name="account" placeholder="请输入收款账户："
-                                class="layui-input">
+                            <input type="text" name="kh_name" placeholder="模糊搜索" autocomplete="off" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">手机号</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="phone" placeholder="主号 / 辅号" autocomplete="off" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">负责人</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="pr_user" placeholder="负责人姓名" autocomplete="off" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">跟进时间起</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="next_up_start" placeholder="下次跟进 ≥ 该时间" autocomplete="off" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">跟进时间止</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="next_up_end" placeholder="下次跟进 ≤ 该时间" autocomplete="off" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">所属渠道</label>
+                        <div class="layui-input-inline">
+                            <select name="inquiry_id" lay-search>
+                                <option value="">全部</option>
+                                {volist name="inquiryList" id="inv"}
+                                <option value="{$inv.id}">{$inv.inquiry_name|default=''}</option>
+                                {/volist}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">运营端口</label>
+                        <div class="layui-input-inline">
+                            <select name="port_id" lay-search>
+                                <option value="">全部</option>
+                                {volist name="portList" id="pv"}
+                                <option value="{$pv.id}">{$pv.port_name|default=''}</option>
+                                {/volist}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">仅逾期</label>
+                        <div class="layui-input-inline" style="width: auto;">
+                            <input type="checkbox" name="only_overdue" value="1" title="仅看逾期" lay-skin="primary">
                         </div>
                     </div>
                 </div>
-                <div class="layui-inline" style="float: right;padding-bottom: 15px">
-                    <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
-                        <i class="layui-icon layui-icon-search layuiadmin-button-btn"
-                            style="vertical-align: sub;"></i>查询数据
+                <div class="todo-search-actions layui-clear">
+                    <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="btn-todo-reset">重置筛选</button>
+                    <button type="button" class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-todo-follow-search">
+                        <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align: sub;"></i>查询
                     </button>
                 </div>
-            </div>
+            </form>
         </div>
     </fieldset>
 
-    <!-- 数据列表表格 -->
-    <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+    <table class="layui-table" id="table-todo-follow" lay-filter="table-todo-follow"></table>
 </div>
 
-<!-- 表格操作列模板 -->
-<script type="text/html" id="action">
-    <a class="layui-btn layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
-    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
+<!-- 与「我的客户」同一套跟进弹窗 DOM，配合 openFollowDialog 使用 -->
+<div id="follow-dialog" style="display: none;">
+    <div class="follow-container">
+        <div class="follow-header"><h3>客户跟进</h3></div>
+        <div class="follow-content">
+            <div class="follow-info">
+                <div class="info-item"><span class="info-label">客户ID:</span><span id="follow-client-id"></span></div>
+                <div class="info-item"><span class="info-label">客户名称:</span><span id="follow-client-name"></span></div>
+                <div class="info-item"><span class="info-label">联系人:</span><span id="follow-contact"></span></div>
+                <div class="info-item"><span class="info-label">主电话:</span><span id="follow-main-phone"></span></div>
+                <div class="info-item"><span class="info-label">辅助电话:</span><span id="follow-aux-phone"></span></div>
+                <div class="info-item"><span class="info-label">地区:</span><span id="follow-area"></span></div>
+                <div class="info-item"><span class="info-label">所属渠道:</span><span id="follow-source"></span></div>
+                <div class="info-item"><span class="info-label">运营端口:</span><span id="follow-source-port"></span></div>
+                <div class="info-item" id="follow-rank-row">
+                    <span class="info-label">客户级别:</span>
+                    <span id="follow-rank-display">
+                        <span id="follow-rank"></span>
+                        <button type="button" class="follow-rank-btn follow-rank-btn-edit" id="follow-rank-edit-btn">修改</button>
+                    </span>
+                    <span id="follow-rank-editor" style="display:none;">
+                        <select id="follow-rank-select" class="follow-rank-select"></select>
+                        <button type="button" class="follow-rank-btn follow-rank-btn-save" id="follow-rank-save-btn">保存</button>
+                        <button type="button" class="follow-rank-btn follow-rank-btn-cancel" id="follow-rank-cancel-btn">取消</button>
+                    </span>
+                </div>
+                <div class="info-item"><span class="info-label">负责人:</span><span id="follow-user"></span></div>
+                <div class="info-item"><span class="info-label">协同人:</span><span id="follow-joint-person"></span></div>
+                <div class="info-item"><span class="info-label">创建时间:</span><span id="follow-create-time"></span></div>
+                <div class="info-item"><span class="info-label">最后跟进:</span><span id="follow-last-time"></span></div>
+                <div class="info-item"><span class="info-label">下次跟进时间:</span><span id="follow-next-time"></span></div>
+                <div class="info-item"><span class="info-label">跟进记录:</span><textarea id="follow-last-record" class="layui-textarea" readonly style="height: 80px;"></textarea></div>
+            </div>
+            <div class="follow-history">
+                <h4>跟进历史</h4>
+                <div id="follow-history-list" style="max-height: 240px; overflow-y: auto;"></div>
+                <div class="follow-action-panel">
+                    <h4>新增跟进</h4>
+                    <div class="layui-form">
+                        <div class="layui-form-item layui-form-text">
+                            <textarea name="reply_msg" id="reply_msg" placeholder="请输入跟进内容" class="layui-textarea" style="height: 96px;"></textarea>
+                        </div>
+                        <div class="layui-form-item">
+                            <label class="layui-form-label">下次跟进</label>
+                            <div class="layui-input-block">
+                                <input type="text" name="next_up_time" id="next_up_time" placeholder="请选择下次跟进时间（选填）" autocomplete="off" class="layui-input">
+                            </div>
+                        </div>
+                        <div class="layui-form-item follow-action-btns">
+                            <input type="hidden" name="leads_id" id="leads_id" value="">
+                            <button type="button" class="layui-btn layui-btn-normal" id="submit-comment">保存跟进</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="follow-mask" class="follow-mask" style="display:none;"></div>
+
+<script type="text/html" id="col-todo-action">
+    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="writeFollow"><i class="layui-icon">&#xe642;</i>写跟进</a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs" lay-event="viewClient"><i class="layui-icon">&#xe615;</i>查看客户</a>
 </script>
 
-<!-- 表格顶部工具栏模板：新增按钮 -->
-<script type="text/html" id="topBtn">
-  <button class="layui-btn layui-btn-success layui-btn-sm" lay-event="add">
-    <i class="layui-icon">&#xe608;</i> 添加收款账户
-  </button>
-  <button class="layui-btn layui-btn-danger layui-btn-sm" lay-event="batchDel">
-    <i class="layui-icon">&#xe640;</i> 批量删除
-  </button>
-  <button class="layui-btn layui-btn-warm layui-btn-sm" lay-event="importExcel">
-    <i class="layui-icon">&#xe67c;</i> 导入Excel
-  </button>
-  <!-- ★ 新增：下载模板 -->
-  <button class="layui-btn layui-btn-normal layui-btn-sm" lay-event="downloadTpl">
-    <i class="layui-icon">&#xe601;</i> 下载模板
-  </button>
-</script>
-
-
-{include file="common/foot"/}  <!-- 通用尾部 JS -->
+{include file="common/foot"/}
 
 <script>
-layui.use(['table','form','util','jquery'], function() {
-    var table = layui.table, form = layui.form, util = layui.util, $ = layui.jquery;
-    // 渲染数据表格
-    var tableIns = table.render({
-        elem: '#table-list',
-        id: 'table-list',              // ★新增
-        url: "{:url('ReceiveAccount/index')}",  // 获取数据接口:contentReference[oaicite:6]{index=6}
+layui.use(['table', 'form', 'jquery', 'laydate'], function () {
+    var table = layui.table, form = layui.form, $ = layui.jquery, laydate = layui.laydate;
+
+    var tableIns;
+    var todoFollowCurrPage = 1;
+    var followIndex = null;
+    var todoFollowReloadPending = false;
+
+    function getSearchWhere() {
+        return form.val('todo-follow-search');
+    }
+
+    function reloadTodoTablePreserve() {
+        table.reload('table-todo-follow', {
+            where: getSearchWhere(),
+            page: { curr: todoFollowCurrPage }
+        });
+    }
+
+    /** 列表时间统一为 YYYY-MM-DD HH:mm（去掉秒，便于阅读） */
+    function formatDisplayTime(str) {
+        if (str == null || str === '') return '-';
+        var s = String(str).trim();
+        if (s === '' || s === '-') return '-';
+        return s.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2}):\d{2}$/, function (_, a, b) { return a + ' ' + b; });
+    }
+
+    function isOverdueRow(d) {
+        return (parseInt(d.overdue_days, 10) || 0) > 0;
+    }
+
+    function markTodoOverdueRows(res) {
+        var $view = $('#table-todo-follow').next('.layui-table-view');
+        if (!$view.length || !res.data || !res.data.length) return;
+        var rows = res.data;
+        function paint($trs) {
+            $trs.removeClass('todo-row-overdue');
+            $trs.each(function (i) {
+                if (rows[i] && isOverdueRow(rows[i])) {
+                    $(this).addClass('todo-row-overdue');
+                }
+            });
+        }
+        paint($view.find('.layui-table-main .layui-table-body tr'));
+        paint($view.find('.layui-table-fixed-r .layui-table-body tr'));
+    }
+
+    tableIns = table.render({
+        elem: '#table-todo-follow',
+        id: 'table-todo-follow',
+        url: "{:url('ClientFollow/index')}",
         method: 'post',
-        toolbar: '#topBtn',  // 顶部工具栏：添加按钮:contentReference[oaicite:7]{index=7}:contentReference[oaicite:8]{index=8}
         page: true,
+        limits: [10, 20, 50, 100],
+        limit: 10,
+        text: { none: '暂无待办客户' },
         cols: [[
-            {type:'checkbox', fixed: 'left'},
-            {field: 'id', title: 'ID', width: 80, sort: true},
-            {field: 'account', title: '收款账户',width: 180},
-            {field: 'receiver', title: '创建人',width: 100},
-            {field:'create_time', title:'创建时间',width: 180,
-                templet: function(d){
-                  var v = d.create_time;
-                  if (!v) return '';
-                  // 如果是纯数字（秒级时间戳）
-                  if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
-                  // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
-                  return v;
+            { field: 'kh_name_display', title: '客户名称', minWidth: 140 },
+            { field: 'product_name_display', title: '产品名称', minWidth: 130 },
+            { field: 'main_phone_display', title: '主电话', width: 130 },
+            { field: 'last_up_records_display', title: '最新跟进记录', minWidth: 180 },
+            { field: 'last_up_time_display', title: '最新跟进时间', width: 158, templet: function (d) {
+                return formatDisplayTime(d.last_up_time_display);
+            }},
+            { field: 'next_up_time_display', title: '下次跟进时间', width: 158, templet: function (d) {
+                var t = formatDisplayTime(d.next_up_time_display);
+                if (isOverdueRow(d)) {
+                    return '<span class="todo-text-warn">' + t + '</span>';
                 }
-            },
-            {field:'update_time', title:'修改时间',width: 180,
-                templet: function(d){
-                  var v = d.update_time;
-                  if (!v) return '';
-                  if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
-                  return v;
+                return t;
+            }},
+            { field: 'overdue_days_display', title: '逾期天数', width: 96, align: 'center', templet: function (d) {
+                var t = d.overdue_days_display || '—';
+                if (isOverdueRow(d)) {
+                    return '<span class="todo-text-warn">' + t + '</span>';
                 }
-            },
-            {title: '操作', width: 180, align: 'center', toolbar: '#action'}
+                return t;
+            }},
+            { field: 'pr_user_display', title: '负责人', width: 100 },
+            { field: 'joint_person_display', title: '协同人', minWidth: 120 },
+            { field: 'inquiry_name', title: '所属渠道', width: 120 },
+            { field: 'port_name', title: '运营端口', width: 120 },
+            { title: '操作', width: 178, align: 'center', fixed: 'right', toolbar: '#col-todo-action' }
         ]],
-        limit: 10
+        done: function (res, curr, count) {
+            todoFollowCurrPage = curr;
+            markTodoOverdueRows(res);
+        }
     });
 
+    form.render('select');
+    form.render('checkbox');
 
+    laydate.render({ elem: '#next_up_time', type: 'datetime', trigger: 'click' });
 
-    // 工具栏事件监听 - 编辑或删除按钮
-    table.on('tool(table-list)', function(obj) {
-        var data = obj.data;
-        if (obj.event === 'del') {
-            layer.confirm('确认删除该来源吗？', function(index) {
-                $.post("{:url('ReceiveAccount/del')}", {id: data.id}, function(res) {
-                    if (res.code === 0) {
-                        layer.msg(res.msg, {icon:1, time:1000});
-                        tableIns.reload();  // 刷新表格:contentReference[oaicite:9]{index=9}
-                    } else {
-                        layer.msg(res.msg || '删除失败！', {icon:2, time:1500});
-                    }
-                }, 'json');
-                layer.close(index);
+    form.on('submit(LAY-todo-follow-search)', function () {
+        table.reload('table-todo-follow', { where: getSearchWhere(), page: { curr: 1 } });
+        return false;
+    });
+
+    function resetTodoFiltersAll() {
+        var $form = $('form[lay-filter="todo-follow-search"]');
+        $form[0].reset();
+        form.render('select');
+        form.render('checkbox');
+        table.reload('table-todo-follow', { where: {}, page: { curr: 1 } });
+    }
+
+    $('#btn-todo-reset').on('click', function () {
+        resetTodoFiltersAll();
+    });
+
+    function todayYmd() {
+        var t = new Date();
+        var m = ('0' + (t.getMonth() + 1)).slice(-2);
+        var d = ('0' + t.getDate()).slice(-2);
+        return t.getFullYear() + '-' + m + '-' + d;
+    }
+
+    function reloadTodoPage1() {
+        table.reload('table-todo-follow', { where: getSearchWhere(), page: { curr: 1 } });
+    }
+
+    $('#btn-quick-today').on('click', function () {
+        var day = todayYmd();
+        $('input[name="next_up_start"]').val(day);
+        $('input[name="next_up_end"]').val(day);
+        $('input[name="only_overdue"]').prop('checked', false);
+        form.render('checkbox');
+        reloadTodoPage1();
+    });
+
+    $('#btn-quick-all').on('click', function () {
+        $('input[name="next_up_start"]').val('');
+        $('input[name="next_up_end"]').val('');
+        $('input[name="only_overdue"]').prop('checked', false);
+        form.render('checkbox');
+        reloadTodoPage1();
+    });
+
+    $('#btn-quick-overdue').on('click', function () {
+        $('input[name="next_up_start"]').val('');
+        $('input[name="next_up_end"]').val('');
+        $('input[name="only_overdue"]').prop('checked', true);
+        form.render('checkbox');
+        reloadTodoPage1();
+    });
+
+    function normalizeNextUpTimeDisplay(value, emptyText) {
+        var fallback = (emptyText == null) ? '' : String(emptyText);
+        if (value == null) return fallback;
+        var text = String(value).trim();
+        if (text === '' || text === 'null' || text === 'undefined') return fallback;
+        return text;
+    }
+
+    function renderFollowHistory(comments) {
+        var html = '';
+        if (comments && comments.length > 0) {
+            $.each(comments, function (index, item) {
+                html += '<div class="timeline-item">' +
+                    '<div class="timeline-title">' + (item.create_date || '') + '</div>' +
+                    '<div class="timeline-content">' +
+                    '<img src="' + (item.avatar || '/static/admin/images/0.jpg') + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
+                    '<strong>' + (item.username || '系统') + '：</strong>' + (item.reply_msg || '') +
+                    '</div></div>';
             });
-        } else if (obj.event === 'edit') {
+        } else {
+            html = '<p>暂无跟进记录</p>';
+        }
+        $('#follow-history-list').html(html);
+    }
+
+    function renderFollowDialogData(clientData, comments, options) {
+        options = options || {};
+        $('#follow-client-id').text(clientData.id || '');
+        $('#follow-client-name').text(clientData.kh_name || '');
+        $('#follow-contact').text(clientData.kh_contact || '');
+        $('#follow-main-phone').text(clientData.main_phone || '暂无');
+        $('#follow-aux-phone').text(clientData.aux_phone || '暂无');
+        $('#follow-area').text(clientData.xs_area || '');
+        $('#follow-source').text(clientData.inquiry_name || clientData.inquiry_id || '');
+        $('#follow-source-port').text(clientData.port_name || clientData.port_id || '暂无');
+        var rankDisplayText = clientData.kh_rank_name || clientData.kh_rank || '';
+        $('#follow-rank').text(rankDisplayText);
+        $('#follow-rank-display').show();
+        $('#follow-rank-editor').hide();
+        $('#follow-rank-row').data('clientId', clientData.id).data('khRank', clientData.kh_rank || '').data('rankDisplayText', rankDisplayText);
+        $('#follow-user').text(clientData.pr_user || '');
+        $('#follow-joint-person').text(clientData.joint_person_names || '暂无');
+        $('#follow-create-time').text(clientData.at_time || '');
+        $('#follow-last-time').text(clientData.last_up_time || '暂无');
+        $('#follow-next-time').text(normalizeNextUpTimeDisplay(clientData.next_up_time, '--'));
+        $('#follow-last-record').val(clientData.last_up_records || '暂无记录');
+        $('#leads_id').val(clientData.id || '');
+        if (options.resetForm !== false) {
+            $('#reply_msg').val('');
+            $('#next_up_time').val('');
+        }
+        renderFollowHistory(comments || []);
+    }
+
+    function requestFollowDialogData(clientId, options) {
+        options = options || {};
+        var loading = options.showLoading !== false ? layer.load(1, { shade: 0 }) : null;
+        $.ajax({
+            url: "{:url('Client/getClientDetailAndComments')}",
+            method: 'GET',
+            data: { id: clientId },
+            success: function (res) {
+                if (loading !== null) layer.close(loading);
+                if (res.code !== 0 || !res.data || !res.data.client) {
+                    if (typeof options.onError === 'function') {
+                        options.onError(res.msg || '获取客户信息失败');
+                    } else {
+                        layer.msg(res.msg || '获取客户信息失败', { icon: 2 });
+                    }
+                    return;
+                }
+                if (typeof options.onSuccess === 'function') options.onSuccess(res.data);
+            },
+            error: function () {
+                if (loading !== null) layer.close(loading);
+                if (typeof options.onError === 'function') {
+                    options.onError('网络错误，获取客户信息失败');
+                } else {
+                    layer.msg('网络错误，获取客户信息失败', { icon: 2 });
+                }
+            }
+        });
+    }
+
+    function ensureFollowMask() {
+        var $mask = $('#follow-mask');
+        if (!$mask.length) {
+            $('body').append('<div id="follow-mask" class="follow-mask" style="display:none;"></div>');
+            $mask = $('#follow-mask');
+        }
+        return $mask;
+    }
+
+    function showFollowMaskUnderLayer(layero) {
+        var $mask = ensureFollowMask();
+        var z = parseInt($(layero).css('z-index'), 10);
+        $mask.css('z-index', !isNaN(z) ? z - 1 : 19999999);
+        $mask.show();
+    }
+
+    function hideFollowMask() {
+        $('#follow-mask').hide();
+    }
+
+    function openFollowDialog(clientId) {
+        requestFollowDialogData(clientId, {
+            showLoading: true,
+            onSuccess: function (data) {
+                var clientData = data.client || {};
+                var comments = data.comments || [];
+                renderFollowDialogData(clientData, comments, { resetForm: true });
+                if (followIndex !== null) {
+                    layer.close(followIndex);
+                    followIndex = null;
+                }
+                followIndex = layer.open({
+                    type: 1,
+                    title: '客户跟进 - ' + (clientData.kh_name || ''),
+                    area: ['90%', '80%'],
+                    content: $('#follow-dialog'),
+                    closeBtn: 1,
+                    shade: 0,
+                    shadeClose: false,
+                    key: true,
+                    anim: -1,
+                    success: function (layero, index) {
+                        $('#follow-dialog').show();
+                        layer.setTop(layero);
+                        showFollowMaskUnderLayer(layero);
+                        $(layero).find('.layui-layer-close').off('click.todoFollow').on('click.todoFollow', function (e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            layer.close(index);
+                        });
+                    },
+                    end: function () {
+                        $('#follow-dialog').hide().appendTo('body');
+                        hideFollowMask();
+                        $('.layui-layer-shade').remove();
+                        followIndex = null;
+                        setFollowSubmitState(false);
+                        if (todoFollowReloadPending) {
+                            todoFollowReloadPending = false;
+                            reloadTodoTablePreserve();
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    var followSubmitDefaultText = $.trim($('#submit-comment').text()) || '保存跟进';
+    var followSubmitting = false;
+
+    function setFollowSubmitState(isSubmitting) {
+        followSubmitting = !!isSubmitting;
+        $('#submit-comment')
+            .prop('disabled', followSubmitting)
+            .toggleClass('layui-btn-disabled', followSubmitting)
+            .text(followSubmitting ? '提交中...' : followSubmitDefaultText);
+    }
+
+    $('#submit-comment').on('click', function (e) {
+        e.preventDefault();
+        if (followSubmitting) return;
+        var replyMsg = $.trim($('#reply_msg').val());
+        var nextUpTime = $.trim($('#next_up_time').val());
+        var leadsId = $('#leads_id').val();
+        if (!replyMsg) {
+            layer.msg('请输入跟进内容', { icon: 0 });
+            return;
+        }
+        if (!leadsId) {
+            layer.msg('缺少客户ID', { icon: 2 });
+            return;
+        }
+        setFollowSubmitState(true);
+        $.ajax({
+            method: 'post',
+            url: "{:url('Client/saveClientFollow')}",
+            data: { reply_msg: replyMsg, leads_id: leadsId, next_up_time: nextUpTime },
+            success: function (res) {
+                if (res.code === 0) {
+                    layer.msg(res.msg || '保存成功', { icon: 1, time: 800 }, function () {
+                        todoFollowReloadPending = true;
+                        if (followIndex !== null) {
+                            layer.close(followIndex);
+                        }
+                    });
+                } else {
+                    layer.msg(res.msg || '保存失败', { icon: 2 });
+                }
+            },
+            error: function () {
+                layer.msg('提交失败，请检查网络', { icon: 2 });
+            },
+            complete: function () {
+                setFollowSubmitState(false);
+            }
+        });
+    });
+
+    $(document).on('click', '#follow-rank-edit-btn', function () {
+        var $row = $('#follow-rank-row');
+        var clientId = $row.data('clientId');
+        if (!clientId) return;
+        var $select = $('#follow-rank-select');
+        $select.empty().append('<option value="">加载中...</option>');
+        $('#follow-rank-display').hide();
+        $('#follow-rank-editor').show();
+        $.ajax({
+            url: "{:url('Client/getFollowRankOptions')}",
+            method: 'GET',
+            data: { id: clientId },
+            success: function (res) {
+                if (res.code === 0 && res.data) {
+                    $select.empty().append('<option value="">请选择</option>');
+                    var currentKhRank = $row.data('khRank') + '';
+                    $.each(res.data, function (i, item) {
+                        var display = item.rank_name_display || item.rank_name;
+                        var selected = (currentKhRank === (item.id + '')) ? ' selected' : '';
+                        $select.append('<option value="' + item.id + '"' + selected + '>' + display + '</option>');
+                    });
+                } else {
+                    layer.msg(res.msg || '获取级别选项失败');
+                    $('#follow-rank-display').show();
+                    $('#follow-rank-editor').hide();
+                }
+            },
+            error: function () {
+                layer.msg('网络错误');
+                $('#follow-rank-display').show();
+                $('#follow-rank-editor').hide();
+            }
+        });
+    });
+
+    $(document).on('click', '#follow-rank-cancel-btn', function () {
+        $('#follow-rank-editor').hide();
+        $('#follow-rank-display').show();
+    });
+
+    $(document).on('click', '#follow-rank-save-btn', function () {
+        var $row = $('#follow-rank-row');
+        var clientId = $row.data('clientId');
+        var newRankId = $('#follow-rank-select').val();
+        if (!newRankId) {
+            layer.msg('请选择客户级别');
+            return;
+        }
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('保存中');
+        $.ajax({
+            url: "{:url('Client/updateClientRankInFollow')}",
+            method: 'POST',
+            data: { id: clientId, kh_rank: newRankId },
+            success: function (res) {
+                $btn.prop('disabled', false).text('保存');
+                if (res.code === 0 && res.data) {
+                    layer.msg('客户级别修改成功');
+                    var newName = res.data.kh_rank_name || '';
+                    $('#follow-rank').text(newName);
+                    $row.data('khRank', res.data.kh_rank || '').data('rankDisplayText', newName);
+                    $('#follow-rank-editor').hide();
+                    $('#follow-rank-display').show();
+                } else {
+                    layer.msg(res.msg || '保存失败');
+                }
+            },
+            error: function () {
+                $btn.prop('disabled', false).text('保存');
+                layer.msg('网络错误');
+            }
+        });
+    });
+
+    table.on('tool(table-todo-follow)', function (obj) {
+        var data = obj.data;
+        if (obj.event === 'writeFollow') {
+            openFollowDialog(data.id);
+        } else if (obj.event === 'viewClient') {
             layer.open({
                 type: 2,
-                title: '编辑询盘来源',
-                area: ['600px', '400px'],
-                shadeClose: false,
-                content: ["{:url('ReceiveAccount/edit')}?id=" + data.id, 'no']
+                title: '查看客户',
+                area: ['96%', '92%'],
+                maxmin: true,
+                shadeClose: true,
+                content: "{:url('Client/edit')}?id=" + data.id
             });
         }
     });
-    
-    
-    
-    
-    table.on('toolbar(table-list)', function(obj){
-      if (obj.event === 'add') {
-        layer.open({
-          type: 2,
-          title: '添加收款账户',
-          area: ['600px','400px'],
-          shadeClose: true,
-          content: ["{:url('ReceiveAccount/add')}", 'no']
-        });
-      } else if (obj.event === 'batchDel') {
-        var rows = table.checkStatus('table-list').data || [];
-        if (!rows.length) return layer.msg('请先勾选要删除的记录', {icon:0});
-        var ids = rows.map(function(r){return r.id;});
-        layer.confirm('确认删除选中的 '+ids.length+' 条记录吗？', function(index){
-          $.post("{:url('ReceiveAccount/batchDel')}", {ids: ids}, function(res){
-            if (res.code === 0) {
-              layer.msg('删除成功', {icon:1, time:800});
-              tableIns.reload({page:{curr:1}});
-            } else {
-              layer.msg(res.msg || '删除失败', {icon:2});
-            }
-          }, 'json');
-          layer.close(index);
-        });
-      }else if (obj.event === 'importExcel') {
-        layer.open({
-          type: 2,
-          title: '批量导入（Excel/CSV）',
-          area: ['600px','360px'],
-          shadeClose: true,
-          content: ["{:url('ReceiveAccount/import')}", 'no']
-        });
-      }else if (obj.event === 'downloadTpl') {
-        // 方式一：当前窗口直接下载
-        window.location.href = "{:url('ReceiveAccount/tpl')}";
-    
-        // （可选）方式二：新标签下载
-        // window.open("{:url('ReceiveAccount/tpl')}", "_blank");
-      }
-    });
-
-    //监听搜索
-    form.on('submit(LAY-app-contlist-search)', function (data) {
-        table.reload('table-list', {
-            url: "{:url('ReceiveAccount/accountSearch')}",
-            where: data.field,
-            page: { curr: 1 }
-        });
-        return false;
-    });
-    
-    
 });
 </script>
 </body>
