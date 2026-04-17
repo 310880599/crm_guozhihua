@@ -33,6 +33,74 @@
         .todo-quick-bar .layui-btn-xs { margin-right: 6px; margin-bottom: 4px; }
         .todo-quick-label { margin-right: 8px; color: #888; }
         .todo-search-actions { float: right; padding: 0 20px 14px 0; }
+        .todo-btn-quick-all,
+        .todo-btn-reset,
+        .todo-btn-write,
+        .todo-btn-view {
+            border-radius: 6px;
+            transition: all .2s ease;
+        }
+        .todo-btn-quick-all {
+            color: #2f67d6 !important;
+            background: #eef4ff !important;
+            border: 1px solid #b9cdfa !important;
+        }
+        .todo-btn-quick-all:hover {
+            color: #285cc2 !important;
+            background: #e2edff !important;
+            border-color: #9db9f4 !important;
+        }
+        .todo-btn-reset {
+            color: #4e5969 !important;
+            background: #f5f7fa !important;
+            border: 1px solid #d7dee8 !important;
+        }
+        .todo-btn-reset:hover {
+            color: #3f4a59 !important;
+            background: #edf1f6 !important;
+            border-color: #c5cfdb !important;
+        }
+        .todo-btn-write {
+            color: #fff !important;
+            background: #3f7ff2 !important;
+            border: 1px solid #3a74da !important;
+            box-shadow: 0 1px 0 rgba(17, 56, 128, 0.12);
+        }
+        .todo-btn-write:hover {
+            background: #366fd4 !important;
+            border-color: #3065bf !important;
+        }
+        .todo-btn-view {
+            color: #2f5f9a !important;
+            background: #edf4ff !important;
+            border: 1px solid #c1d6f5 !important;
+        }
+        .todo-btn-view:hover {
+            color: #274f80 !important;
+            background: #e2edfb !important;
+            border-color: #a7c3ec !important;
+        }
+        .todo-action-wrap {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: nowrap;
+            gap: 6px;
+            min-width: 196px;
+        }
+        .todo-action-wrap .layui-btn {
+            margin: 0;
+            white-space: nowrap;
+        }
+        .layui-table-view[lay-id="table-todo-follow"] .todo-action-cell {
+            overflow: visible !important;
+            white-space: nowrap !important;
+            text-overflow: initial !important;
+            padding: 0 6px !important;
+        }
+        .layui-table-view[lay-id="table-todo-follow"] .layui-table-fixed-r .todo-action-cell {
+            overflow: visible !important;
+        }
         /* 逾期：整行浅红 + 关键列强调（不花哨） */
         .layui-table-view .layui-table-body tr.todo-row-overdue { background-color: #fff5f5 !important; }
         .layui-table-view .layui-table-body tr.todo-row-overdue:hover { background-color: #ffe8e8 !important; }
@@ -90,7 +158,7 @@
         <div class="todo-quick-bar">
             <span class="todo-quick-label">快捷筛选</span>
             <button type="button" class="layui-btn layui-btn-xs layui-btn-normal" id="btn-quick-today" title="下次跟进时间在今日">今日待跟进</button>
-            <button type="button" class="layui-btn layui-btn-xs layui-btn-primary" id="btn-quick-all" title="清除跟进时间条件与「仅逾期」">全部待跟进</button>
+            <button type="button" class="layui-btn layui-btn-xs todo-btn-quick-all" id="btn-quick-all" title="清除跟进时间条件与「仅逾期」">全部待跟进</button>
             <button type="button" class="layui-btn layui-btn-xs layui-btn-danger" id="btn-quick-overdue" title="仅看已逾期">仅看逾期</button>
         </div>
         <div class="layui-card" style="box-shadow: none; margin-top: 8px;">
@@ -157,7 +225,7 @@
                     </div>
                 </div>
                 <div class="todo-search-actions layui-clear">
-                    <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="btn-todo-reset">重置筛选</button>
+                    <button type="button" class="layui-btn layui-btn-sm todo-btn-reset" id="btn-todo-reset">重置筛选</button>
                     <button type="button" class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-todo-follow-search">
                         <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align: sub;"></i>查询
                     </button>
@@ -230,8 +298,10 @@
 <div id="follow-mask" class="follow-mask" style="display:none;"></div>
 
 <script type="text/html" id="col-todo-action">
-    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="writeFollow"><i class="layui-icon">&#xe642;</i>写跟进</a>
-    <a class="layui-btn layui-btn-primary layui-btn-xs" lay-event="viewClient"><i class="layui-icon">&#xe615;</i>查看客户</a>
+    <div class="todo-action-wrap">
+        <a class="layui-btn layui-btn-xs todo-btn-write" lay-event="writeFollow"><i class="layui-icon">&#xe642;</i>写跟进</a>
+        <a class="layui-btn layui-btn-xs todo-btn-view" lay-event="viewClient"><i class="layui-icon">&#xe615;</i>查看客户</a>
+    </div>
 </script>
 
 {include file="common/foot"/}
@@ -319,11 +389,17 @@ layui.use(['table', 'form', 'jquery', 'laydate'], function () {
             { field: 'joint_person_display', title: '协同人', minWidth: 120 },
             { field: 'inquiry_name', title: '所属渠道', width: 120 },
             { field: 'port_name', title: '运营端口', width: 120 },
-            { title: '操作', width: 178, align: 'center', fixed: 'right', toolbar: '#col-todo-action' }
+            { title: '操作', width: 228, align: 'center', fixed: 'right', toolbar: '#col-todo-action' }
         ]],
         done: function (res, curr, count) {
             todoFollowCurrPage = curr;
             markTodoOverdueRows(res);
+            var $view = $('#table-todo-follow').next('.layui-table-view');
+            if ($view.length) {
+                var actionWidth = '228px';
+                $view.find('.layui-table-header colgroup col:last-child, .layui-table-main colgroup col:last-child, .layui-table-fixed-r colgroup col:last-child').css('width', actionWidth);
+                $view.find('.layui-table-main .layui-table-body td:last-child .layui-table-cell, .layui-table-fixed-r .layui-table-body td:last-child .layui-table-cell, .layui-table-header th:last-child .layui-table-cell, .layui-table-fixed-r .layui-table-header th:last-child .layui-table-cell').addClass('todo-action-cell');
+            }
         }
     });
 
