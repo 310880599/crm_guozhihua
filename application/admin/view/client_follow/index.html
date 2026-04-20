@@ -334,20 +334,26 @@
 {include file="common/foot"/}
 
 <script>
-layui.use(['table', 'form', 'jquery', 'laydate'], function () {
-    var table = layui.table, form = layui.form, $ = layui.jquery, laydate = layui.laydate;
+layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
+    var table = layui.table, form = layui.form, $ = layui.jquery, laydate = layui.laydate, layer = layui.layer;
 
     var tableIns;
     var todoFollowCurrPage = 1;
     var followIndex = null;
     var todoFollowReloadPending = false;
+    var currentUsername = "{$Think.session.username}" || "default";
+    var tableId = 'table-todo-follow';
+    var pageKey = 'client_follow_manage';
+    var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
+    var lastSnapshot = {};
+    var resizeSaveTimer = null;
 
     function getSearchWhere() {
         return form.val('todo-follow-search');
     }
 
     function reloadTodoTablePreserve() {
-        table.reload('table-todo-follow', {
+        reloadKeepColWidth({
             where: getSearchWhere(),
             page: { curr: todoFollowCurrPage }
         });
@@ -366,7 +372,7 @@ layui.use(['table', 'form', 'jquery', 'laydate'], function () {
     }
 
     function markTodoOverdueRows(res) {
-        var $view = $('#table-todo-follow').next('.layui-table-view');
+        var $view = $('#' + tableId).next('.layui-table-view');
         if (!$view.length || !res.data || !res.data.length) return;
         var rows = res.data;
         function paint($trs) {
@@ -381,52 +387,238 @@ layui.use(['table', 'form', 'jquery', 'laydate'], function () {
         paint($view.find('.layui-table-fixed-r .layui-table-body tr'));
     }
 
+    function isValidColField(field) {
+        return typeof field === 'string' && field !== '0' && /^[a-zA-Z0-9_]+$/.test(field);
+    }
+
+    function parseWidthValue(v) {
+        var w = parseInt(v, 10);
+        return (w >= 30 && w <= 2000) ? w : 0;
+    }
+
+    function applyWidthsToCols(colArr, widths) {
+        if (!colArr || !colArr.length || !widths) return;
+        colArr.forEach(function (col) {
+            if (!col || !isValidColField(col.field)) return;
+            var w = parseWidthValue(widths[col.field]);
+            if (w > 0) {
+                col.width = w;
+            }
+        });
+    }
+
+    function shrinkDefaultWidths(colArr) {
+        var map = {
+            kh_name_display: 150,
+            product_name_display: 150,
+            main_phone_display: 130,
+            last_up_records_display: 200,
+            last_up_time_display: 160,
+            next_up_time_display: 160,
+            overdue_days_display: 96,
+            pr_user_display: 100,
+            joint_person_display: 120,
+            inquiry_name: 120,
+            port_name: 120
+        };
+
+        colArr.forEach(function (col) {
+            if (!col || !isValidColField(col.field)) return;
+            col.width = map[col.field] || 120;
+        });
+    }
+
+    function restoreColWidth(colArr) {
+        var dbWidths = {};
+        var localWidths = {};
+        var finalWidths = {};
+
+        try {
+            localWidths = JSON.parse(localStorage.getItem(columnWidthKey) || '{}') || {};
+        } catch (e) {
+            localWidths = {};
+        }
+
+        $.ajax({
+            url: "{:url('Client/getColWidths')}",
+            type: 'GET',
+            async: false,
+            dataType: 'json',
+            data: {
+                page_key: pageKey,
+                table_id: tableId
+            },
+            success: function (res) {
+                if (res && res.code === 0 && res.data && typeof res.data === 'object') {
+                    dbWidths = res.data;
+                }
+            }
+        });
+
+        finalWidths = Object.keys(dbWidths).length > 0
+            ? $.extend({}, localWidths, dbWidths)
+            : localWidths;
+
+        if (Object.keys(finalWidths).length > 0) {
+            applyWidthsToCols(colArr, finalWidths);
+            try {
+                localStorage.setItem(columnWidthKey, JSON.stringify(finalWidths));
+            } catch (e) {}
+        }
+    }
+
+    function getCurrentWidthsSnapshot() {
+        var snapshot = {};
+        var $view = $('#' + tableId).next('.layui-table-view');
+        if (!$view.length) return snapshot;
+
+        var $headerTable = $view.find('.layui-table-header table').eq(0);
+        if (!$headerTable.length) return snapshot;
+
+        var $ths = $headerTable.find('thead tr th');
+        var $cols = $headerTable.find('colgroup col');
+
+        $ths.each(function (index) {
+            var $th = $(this);
+            var field = $th.attr('data-field');
+            if (!isValidColField(field)) return;
+
+            var w = parseWidthValue($th.width());
+            if (!w && $cols.length > index) {
+                var $col = $cols.eq(index);
+                w = parseWidthValue($col.width() || $col.attr('width'));
+            }
+            if (w) {
+                snapshot[field] = w;
+            }
+        });
+
+        return snapshot;
+    }
+
+    function saveWidths(widthMap) {
+        var widths = widthMap || getCurrentWidthsSnapshot();
+        if (!widths || !Object.keys(widths).length) return;
+
+        try {
+            localStorage.setItem(columnWidthKey, JSON.stringify(widths));
+        } catch (e) {}
+
+        $.ajax({
+            url: "{:url('Client/saveColWidths')}",
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                page_key: pageKey,
+                table_id: tableId,
+                widths: JSON.stringify(widths)
+            },
+            success: function (res) {
+                if (!res || res.code !== 0) {
+                    layer.msg((res && res.msg) ? res.msg : '列宽保存失败', { icon: 2, time: 1200 });
+                }
+            },
+            error: function () {
+                layer.msg('列宽保存失败：网络错误', { icon: 2, time: 1200 });
+            }
+        });
+    }
+
+    function bindResizeSave() {
+        var $view = $('#' + tableId).next('.layui-table-view');
+        if (!$view.length) return;
+
+        $(document).off('mouseup.todoFollowColWidth touchend.todoFollowColWidth');
+        lastSnapshot = getCurrentWidthsSnapshot();
+
+        $(document).on('mouseup.todoFollowColWidth touchend.todoFollowColWidth', function () {
+            if (resizeSaveTimer) clearTimeout(resizeSaveTimer);
+            resizeSaveTimer = setTimeout(function () {
+                var newSnapshot = getCurrentWidthsSnapshot();
+                if (!Object.keys(newSnapshot).length) return;
+                if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
+                    saveWidths(newSnapshot);
+                    lastSnapshot = newSnapshot;
+                }
+            }, 120);
+        });
+    }
+
+    function reloadKeepColWidth(reloadOptions) {
+        var snapshot = getCurrentWidthsSnapshot();
+        if (!Object.keys(snapshot).length) {
+            try {
+                snapshot = JSON.parse(localStorage.getItem(columnWidthKey) || '{}') || {};
+            } catch (e) {
+                snapshot = {};
+            }
+        }
+
+        if (Object.keys(snapshot).length) {
+            applyWidthsToCols(todoFollowCols[0], snapshot);
+            if (tableIns && tableIns.config && tableIns.config.cols && tableIns.config.cols[0]) {
+                applyWidthsToCols(tableIns.config.cols[0], snapshot);
+            }
+            try {
+                localStorage.setItem(columnWidthKey, JSON.stringify(snapshot));
+            } catch (e) {}
+        }
+
+        table.reload(tableId, reloadOptions || {});
+    }
+
+    var todoFollowCols = [[
+        { field: 'kh_name_display', title: '客户名称', minWidth: 140 },
+        { field: 'product_name_display', title: '产品名称', minWidth: 130 },
+        { field: 'main_phone_display', title: '主电话', width: 130 },
+        { field: 'last_up_records_display', title: '最新跟进记录', minWidth: 180 },
+        { field: 'last_up_time_display', title: '最新跟进时间', width: 158, templet: function (d) {
+            return formatDisplayTime(d.last_up_time_display);
+        }},
+        { field: 'next_up_time_display', title: '下次跟进时间', width: 158, templet: function (d) {
+            var t = formatDisplayTime(d.next_up_time_display);
+            if (isOverdueRow(d)) {
+                return '<span class="todo-text-warn">' + t + '</span>';
+            }
+            return t;
+        }},
+        { field: 'overdue_days_display', title: '逾期天数', width: 96, align: 'center', templet: function (d) {
+            var t = d.overdue_days_display || '—';
+            if (isOverdueRow(d)) {
+                return '<span class="todo-text-warn">' + t + '</span>';
+            }
+            return t;
+        }},
+        { field: 'pr_user_display', title: '负责人', width: 100 },
+        { field: 'joint_person_display', title: '协同人', minWidth: 120 },
+        { field: 'inquiry_name', title: '所属渠道', width: 120 },
+        { field: 'port_name', title: '运营端口', width: 120 },
+        { title: '操作', width: 228, align: 'center', fixed: 'right', toolbar: '#col-todo-action' }
+    ]];
+
+    shrinkDefaultWidths(todoFollowCols[0]);
+    restoreColWidth(todoFollowCols[0]);
+
     tableIns = table.render({
-        elem: '#table-todo-follow',
-        id: 'table-todo-follow',
+        elem: '#' + tableId,
+        id: tableId,
         url: "{:url('ClientFollow/index')}",
         method: 'post',
         page: true,
         limits: [10, 20, 50, 100],
         limit: 10,
         text: { none: '暂无待办客户' },
-        cols: [[
-            { field: 'kh_name_display', title: '客户名称', minWidth: 140 },
-            { field: 'product_name_display', title: '产品名称', minWidth: 130 },
-            { field: 'main_phone_display', title: '主电话', width: 130 },
-            { field: 'last_up_records_display', title: '最新跟进记录', minWidth: 180 },
-            { field: 'last_up_time_display', title: '最新跟进时间', width: 158, templet: function (d) {
-                return formatDisplayTime(d.last_up_time_display);
-            }},
-            { field: 'next_up_time_display', title: '下次跟进时间', width: 158, templet: function (d) {
-                var t = formatDisplayTime(d.next_up_time_display);
-                if (isOverdueRow(d)) {
-                    return '<span class="todo-text-warn">' + t + '</span>';
-                }
-                return t;
-            }},
-            { field: 'overdue_days_display', title: '逾期天数', width: 96, align: 'center', templet: function (d) {
-                var t = d.overdue_days_display || '—';
-                if (isOverdueRow(d)) {
-                    return '<span class="todo-text-warn">' + t + '</span>';
-                }
-                return t;
-            }},
-            { field: 'pr_user_display', title: '负责人', width: 100 },
-            { field: 'joint_person_display', title: '协同人', minWidth: 120 },
-            { field: 'inquiry_name', title: '所属渠道', width: 120 },
-            { field: 'port_name', title: '运营端口', width: 120 },
-            { title: '操作', width: 228, align: 'center', fixed: 'right', toolbar: '#col-todo-action' }
-        ]],
+        cols: todoFollowCols,
         done: function (res, curr, count) {
             todoFollowCurrPage = curr;
             markTodoOverdueRows(res);
-            var $view = $('#table-todo-follow').next('.layui-table-view');
+            var $view = $('#' + tableId).next('.layui-table-view');
             if ($view.length) {
                 var actionWidth = '228px';
                 $view.find('.layui-table-header colgroup col:last-child, .layui-table-main colgroup col:last-child, .layui-table-fixed-r colgroup col:last-child').css('width', actionWidth);
                 $view.find('.layui-table-main .layui-table-body td:last-child .layui-table-cell, .layui-table-fixed-r .layui-table-body td:last-child .layui-table-cell, .layui-table-header th:last-child .layui-table-cell, .layui-table-fixed-r .layui-table-header th:last-child .layui-table-cell').addClass('todo-action-cell');
             }
+            bindResizeSave();
         }
     });
 
@@ -436,7 +628,7 @@ layui.use(['table', 'form', 'jquery', 'laydate'], function () {
     laydate.render({ elem: '#next_up_time', type: 'datetime', trigger: 'click' });
 
     form.on('submit(LAY-todo-follow-search)', function () {
-        table.reload('table-todo-follow', { where: getSearchWhere(), page: { curr: 1 } });
+        reloadKeepColWidth({ where: getSearchWhere(), page: { curr: 1 } });
         return false;
     });
 
@@ -445,7 +637,7 @@ layui.use(['table', 'form', 'jquery', 'laydate'], function () {
         $form[0].reset();
         form.render('select');
         form.render('checkbox');
-        table.reload('table-todo-follow', { where: {}, page: { curr: 1 } });
+        reloadKeepColWidth({ where: {}, page: { curr: 1 } });
     }
 
     $('#btn-todo-reset').on('click', function () {
@@ -460,7 +652,7 @@ layui.use(['table', 'form', 'jquery', 'laydate'], function () {
     }
 
     function reloadTodoPage1() {
-        table.reload('table-todo-follow', { where: getSearchWhere(), page: { curr: 1 } });
+        reloadKeepColWidth({ where: getSearchWhere(), page: { curr: 1 } });
     }
 
     $('#btn-quick-today').on('click', function () {
