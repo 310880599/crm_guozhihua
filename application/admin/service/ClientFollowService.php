@@ -430,10 +430,17 @@ class ClientFollowService
         $keyword['kh_name'] = $this->normalizeSearchScalar($keyword['kh_name']);
         $keyword['phone'] = $this->normalizeSearchScalar($keyword['phone']);
         $keyword['pr_user'] = $this->normalizeSearchScalar($keyword['pr_user']);
-        $keyword['next_up_start'] = $this->normalizeSearchScalar($keyword['next_up_start']);
-        $keyword['next_up_end'] = $this->normalizeSearchScalar($keyword['next_up_end']);
+        $keyword['next_up_start'] = $this->normalizeSearchDateTimeBound($keyword['next_up_start'], false);
+        $keyword['next_up_end'] = $this->normalizeSearchDateTimeBound($keyword['next_up_end'], true);
         $keyword['inquiry_id'] = $this->normalizeSearchScalar($keyword['inquiry_id']);
         $keyword['port_id'] = $this->normalizeSearchScalar($keyword['port_id']);
+
+        // 起止时间倒置时自动纠正，避免筛选结果异常为空。
+        if ($keyword['next_up_start'] !== '' && $keyword['next_up_end'] !== '' && strcmp($keyword['next_up_start'], $keyword['next_up_end']) > 0) {
+            $tmp = $keyword['next_up_start'];
+            $keyword['next_up_start'] = $keyword['next_up_end'];
+            $keyword['next_up_end'] = $tmp;
+        }
 
         $onlyOverdueRaw = $keyword['only_overdue'];
         $keyword['only_overdue'] = $this->isTruthyFlag($onlyOverdueRaw) ? '1' : '';
@@ -460,6 +467,35 @@ class ClientFollowService
         }
 
         return $s;
+    }
+
+    /**
+     * 搜索时间边界统一标准化：
+     * - 支持 Y-m-d：起始补 00:00:00，结束补 23:59:59
+     * - 支持可解析的日期时间：统一为 Y-m-d H:i:s
+     * - 非法值回退为空字符串（相当于不加该条件）
+     *
+     * @param mixed $value
+     * @param bool $isEndBound
+     * @return string
+     */
+    private function normalizeSearchDateTimeBound($value, $isEndBound)
+    {
+        $v = $this->normalizeSearchScalar($value);
+        if ($v === '') {
+            return '';
+        }
+
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $v)) {
+            return $v . ($isEndBound ? ' 23:59:59' : ' 00:00:00');
+        }
+
+        $ts = strtotime($v);
+        if ($ts === false) {
+            return '';
+        }
+
+        return date('Y-m-d H:i:s', $ts);
     }
 
     /**

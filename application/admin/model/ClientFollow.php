@@ -79,23 +79,27 @@ class ClientFollow extends Model
             'only_overdue' => '',
         ], $keyword);
 
-        // 待办默认：next_up_time <= 当前时间；若传了结束时间，取 min(结束, 当前时间)，不查未来
-        $upperBound = $now;
+        $startRaw = $keyword['next_up_start'];
         $endRaw = $keyword['next_up_end'];
-        if ($endRaw !== '' && $endRaw !== null) {
-            $parsedEnd = $this->parseNextUpTimeBound($endRaw, true);
-            if ($parsedEnd !== null) {
-                $upperBound = strcmp($parsedEnd, $now) < 0 ? $parsedEnd : $now;
-            }
+        $hasCustomRange = (($startRaw !== '' && $startRaw !== null) || ($endRaw !== '' && $endRaw !== null));
+
+        // 默认待办口径：不传时间范围时仅看「已到期」(<= 当前时刻)。
+        // 传了时间范围时，按用户输入区间过滤（用于“今日待跟进”等快捷筛选）。
+        if (!$hasCustomRange) {
+            $query->where('l.next_up_time', '<=', $now);
         }
 
-        $query->where('l.next_up_time', '<=', $upperBound);
-
-        $startRaw = $keyword['next_up_start'];
         if ($startRaw !== '' && $startRaw !== null) {
             $parsedStart = $this->parseNextUpTimeBound($startRaw, false);
             if ($parsedStart !== null) {
                 $query->where('l.next_up_time', '>=', $parsedStart);
+            }
+        }
+
+        if ($endRaw !== '' && $endRaw !== null) {
+            $parsedEnd = $this->parseNextUpTimeBound($endRaw, true);
+            if ($parsedEnd !== null) {
+                $query->where('l.next_up_time', '<=', $parsedEnd);
             }
         }
 
@@ -182,43 +186,42 @@ class ClientFollow extends Model
     private function applyTodoFollowPhoneFilter($query, $phoneKw, $leadAlias = 'l')
     {
         $rawKeyword = trim((string)$phoneKw);
-        $normalizedKeyword = strtolower($rawKeyword);
-        $normalizedKeyword = str_replace(
-            ["\r", "\n", "\t", ' ', ',', '，', '<br />', '<br/>', '<br>'],
-            '',
-            $normalizedKeyword
-        );
         $digitKeyword = preg_replace('/\D+/', '', $rawKeyword);
 
-        // 用户确实输入了内容，但提纯后无可检索字符，按无匹配处理，避免误放大为全量。
-        if ($rawKeyword === '' && $normalizedKeyword === '' && $digitKeyword === '') {
+        // 关键词无效时按无结果处理，避免误返回全量。
+        if ($rawKeyword === '' && $digitKeyword === '') {
             $query->where($leadAlias . '.id', '=', -1);
             return;
         }
 
-        $query->whereExists(function ($sub) use ($leadAlias, $rawKeyword, $normalizedKeyword, $digitKeyword) {
-            $sub->table('crm_contacts')
-                ->alias('cfp')
-                ->field('1')
-                ->whereRaw('cfp.leads_id = ' . $leadAlias . '.id')
-                ->where('cfp.is_delete', 0)
-                ->whereIn('cfp.contact_type', [1, 3])
-                ->where(function ($w) use ($rawKeyword, $normalizedKeyword, $digitKeyword) {
-                    if ($rawKeyword !== '') {
-                        $w->where('cfp.contact_value', 'like', '%' . $this->escapeLike($rawKeyword) . '%');
-                    }
+        // 方案A：先筛 contacts，再反查 leads_id，规避 TP5.1 子查询复杂绑定导致的 2031。
+        $contactsQuery = Db::table('crm_contacts')
+            ->alias('cfp')
+            ->where('cfp.is_delete', 0)
+            ->whereIn('cfp.contact_type', [1, 3]);
 
-                    if ($normalizedKeyword !== '') {
-                        $normalizedField = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(IFNULL(cfp.contact_value,'')), '\\r', ''), '\\n', ''), '\\t', ''), ' ', ''), ',', ''), '，', ''), '<br />', ''), '<br/>', ''), '<br>', '')";
-                        $w->whereOrRaw($normalizedField . " LIKE ?", ['%' . $this->escapeLike($normalizedKeyword) . '%']);
-                    }
-
-                    if ($digitKeyword !== '') {
-                        $digitPattern = '(^|[^0-9])' . preg_quote($digitKeyword, '/') . '([^0-9]|$)';
-                        $w->whereOrRaw('cfp.contact_value REGEXP ?', [$digitPattern]);
-                    }
-                });
+        $contactsQuery->where(function ($w) use ($rawKeyword, $digitKeyword) {
+            if ($rawKeyword !== '') {
+                $w->where('cfp.contact_value', 'like', '%' . $this->escapeLike($rawKeyword) . '%');
+            }
+            if ($digitKeyword !== '' && $digitKeyword !== $rawKeyword) {
+                $w->whereOr('cfp.contact_value', 'like', '%' . $this->escapeLike($digitKeyword) . '%');
+            }
         });
+
+        $leadIds = $contactsQuery->column('cfp.leads_id');
+        if (empty($leadIds)) {
+            $query->where($leadAlias . '.id', '=', -1);
+            return;
+        }
+
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds))));
+        if (empty($leadIds)) {
+            $query->where($leadAlias . '.id', '=', -1);
+            return;
+        }
+
+        $query->whereIn($leadAlias . '.id', $leadIds);
     }
 
     /**
