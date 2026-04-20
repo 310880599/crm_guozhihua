@@ -115,10 +115,7 @@ class ClientFollow extends Model
         if ($keyword['phone'] !== '' && $keyword['phone'] !== null) {
             $phoneKw = trim((string)$keyword['phone']);
             if ($phoneKw !== '') {
-                $phoneCond = (new Client())->getContactSearchAll($phoneKw, 'l');
-                if (!empty($phoneCond)) {
-                    $query->where($phoneCond);
-                }
+                $this->applyTodoFollowPhoneFilter($query, $phoneKw, 'l');
             }
         }
 
@@ -139,7 +136,7 @@ class ClientFollow extends Model
         if ($keyword['port_id'] !== '' && $keyword['port_id'] !== null) {
             $portId = (int)$keyword['port_id'];
             if ($portId > 0) {
-                $query->where('l.port_id', '=', $portId);
+                $query->whereRaw('(l.port_id = ' . $portId . ' OR FIND_IN_SET(' . $portId . ', l.port_id) > 0)');
             }
         }
 
@@ -172,6 +169,44 @@ class ClientFollow extends Model
             return null;
         }
         return date('Y-m-d H:i:s', $ts);
+    }
+
+    /**
+     * 待办跟进页手机号筛选（主号/辅号）：以 EXISTS 子查询命中 contacts，避免受外层聚合字段影响。
+     *
+     * @param \think\db\Query $query
+     * @param string $phoneKw
+     * @param string $leadAlias
+     * @return void
+     */
+    private function applyTodoFollowPhoneFilter($query, $phoneKw, $leadAlias = 'l')
+    {
+        $rawKeyword = trim((string)$phoneKw);
+        $rawKeyword = preg_replace('/\s+/', '', $rawKeyword);
+        $digitKeyword = preg_replace('/\D+/', '', $rawKeyword);
+
+        // 用户确实输入了内容，但提纯后无可检索字符，按无匹配处理，避免误放大为全量。
+        if ($rawKeyword === '' && $digitKeyword === '') {
+            $query->where($leadAlias . '.id', '=', -1);
+            return;
+        }
+
+        $query->whereExists(function ($sub) use ($leadAlias, $rawKeyword, $digitKeyword) {
+            $sub->table('crm_contacts')
+                ->alias('cfp')
+                ->field('1')
+                ->whereRaw('cfp.leads_id = ' . $leadAlias . '.id')
+                ->where('cfp.is_delete', 0)
+                ->whereIn('cfp.contact_type', [1, 3])
+                ->where(function ($w) use ($rawKeyword, $digitKeyword) {
+                    if ($rawKeyword !== '') {
+                        $w->where('cfp.contact_value', 'like', '%' . $rawKeyword . '%');
+                    }
+                    if ($digitKeyword !== '' && $digitKeyword !== $rawKeyword) {
+                        $w->whereOr('cfp.contact_value', 'like', '%' . $digitKeyword . '%');
+                    }
+                });
+        });
     }
 
     /**

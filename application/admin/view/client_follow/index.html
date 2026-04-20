@@ -213,13 +213,13 @@
                     <div class="layui-inline">
                         <label class="layui-form-label">跟进时间起</label>
                         <div class="layui-input-inline">
-                            <input type="text" name="next_up_start" placeholder="下次跟进 ≥ 该时间" autocomplete="off" class="layui-input">
+                            <input type="text" id="next_up_start" name="next_up_start" placeholder="下次跟进 ≥ 该时间" autocomplete="off" class="layui-input">
                         </div>
                     </div>
                     <div class="layui-inline">
                         <label class="layui-form-label">跟进时间止</label>
                         <div class="layui-input-inline">
-                            <input type="text" name="next_up_end" placeholder="下次跟进 ≤ 该时间" autocomplete="off" class="layui-input">
+                            <input type="text" id="next_up_end" name="next_up_end" placeholder="下次跟进 ≤ 该时间" autocomplete="off" class="layui-input">
                         </div>
                     </div>
                     <div class="layui-inline">
@@ -253,7 +253,7 @@
                 </div>
                 <div class="todo-search-actions layui-clear">
                     <button type="button" class="layui-btn layui-btn-sm todo-btn-reset" id="btn-todo-reset">重置筛选</button>
-                    <button type="button" class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-todo-follow-search">
+                    <button type="submit" class="layui-btn layuiadmin-btn-list" id="btn-todo-search" lay-submit lay-filter="LAY-todo-follow-search">
                         <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align: sub;"></i>查询
                     </button>
                 </div>
@@ -347,9 +347,35 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
     var lastSnapshot = {};
     var resizeSaveTimer = null;
+    var TODO_SEARCH_DEFAULTS = {
+        kh_name: '',
+        phone: '',
+        pr_user: '',
+        next_up_start: '',
+        next_up_end: '',
+        inquiry_id: '',
+        port_id: '',
+        only_overdue: ''
+    };
 
     function getSearchWhere() {
-        return form.val('todo-follow-search');
+        var where = $.extend({}, TODO_SEARCH_DEFAULTS, form.val('todo-follow-search') || {});
+        where.only_overdue = where.only_overdue ? '1' : '';
+        where.kh_name = $.trim(where.kh_name || '');
+        where.phone = $.trim(where.phone || '');
+        where.pr_user = $.trim(where.pr_user || '');
+        where.next_up_start = $.trim(where.next_up_start || '');
+        where.next_up_end = $.trim(where.next_up_end || '');
+        where.inquiry_id = $.trim(where.inquiry_id || '');
+        where.port_id = $.trim(where.port_id || '');
+        return where;
+    }
+
+    function applySearchPatch(patch) {
+        var next = $.extend({}, getSearchWhere(), patch || {});
+        form.val('todo-follow-search', next);
+        form.render('select');
+        form.render('checkbox');
     }
 
     function reloadTodoTablePreserve() {
@@ -625,6 +651,8 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     form.render('select');
     form.render('checkbox');
 
+    laydate.render({ elem: '#next_up_start', type: 'datetime', trigger: 'click' });
+    laydate.render({ elem: '#next_up_end', type: 'datetime', trigger: 'click' });
     laydate.render({ elem: '#next_up_time', type: 'datetime', trigger: 'click' });
 
     form.on('submit(LAY-todo-follow-search)', function () {
@@ -633,11 +661,10 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     });
 
     function resetTodoFiltersAll() {
-        var $form = $('form[lay-filter="todo-follow-search"]');
-        $form[0].reset();
+        form.val('todo-follow-search', $.extend({}, TODO_SEARCH_DEFAULTS));
         form.render('select');
         form.render('checkbox');
-        reloadKeepColWidth({ where: {}, page: { curr: 1 } });
+        reloadKeepColWidth({ where: $.extend({}, TODO_SEARCH_DEFAULTS), page: { curr: 1 } });
     }
 
     $('#btn-todo-reset').on('click', function () {
@@ -657,26 +684,29 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
 
     $('#btn-quick-today').on('click', function () {
         var day = todayYmd();
-        $('input[name="next_up_start"]').val(day);
-        $('input[name="next_up_end"]').val(day);
-        $('input[name="only_overdue"]').prop('checked', false);
-        form.render('checkbox');
+        applySearchPatch({
+            next_up_start: day + ' 00:00:00',
+            next_up_end: day + ' 23:59:59',
+            only_overdue: ''
+        });
         reloadTodoPage1();
     });
 
     $('#btn-quick-all').on('click', function () {
-        $('input[name="next_up_start"]').val('');
-        $('input[name="next_up_end"]').val('');
-        $('input[name="only_overdue"]').prop('checked', false);
-        form.render('checkbox');
+        applySearchPatch({
+            next_up_start: '',
+            next_up_end: '',
+            only_overdue: ''
+        });
         reloadTodoPage1();
     });
 
     $('#btn-quick-overdue').on('click', function () {
-        $('input[name="next_up_start"]').val('');
-        $('input[name="next_up_end"]').val('');
-        $('input[name="only_overdue"]').prop('checked', true);
-        form.render('checkbox');
+        applySearchPatch({
+            next_up_start: '',
+            next_up_end: '',
+            only_overdue: '1'
+        });
         reloadTodoPage1();
     });
 

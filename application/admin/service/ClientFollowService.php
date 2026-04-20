@@ -338,7 +338,7 @@ class ClientFollowService
     {
         $page = max(1, (int)$page);
         $limit = max(1, (int)$limit);
-        $keyword = is_array($keyword) ? $keyword : [];
+        $keyword = $this->normalizeTodoSearchKeyword($keyword);
 
         $list = (new ClientFollow())->getTodoFollowList($page, $limit, $keyword, $currentAdmin);
         if ($list === null || empty($list['data'])) {
@@ -405,6 +405,58 @@ class ClientFollowService
             'count' => $total,
             'rel' => 1,
         ];
+    }
+
+    /**
+     * 待办跟进搜索条件标准化（Service 统一入口，Controller 只负责接收与转发）。
+     *
+     * @param mixed $keyword
+     * @return array
+     */
+    private function normalizeTodoSearchKeyword($keyword)
+    {
+        $keyword = is_array($keyword) ? $keyword : [];
+        $keyword = array_merge([
+            'kh_name' => '',
+            'phone' => '',
+            'pr_user' => '',
+            'next_up_start' => '',
+            'next_up_end' => '',
+            'inquiry_id' => '',
+            'port_id' => '',
+            'only_overdue' => '',
+        ], $keyword);
+
+        $keyword['kh_name'] = trim((string)$keyword['kh_name']);
+        $keyword['phone'] = trim((string)$keyword['phone']);
+        $keyword['pr_user'] = trim((string)$keyword['pr_user']);
+        $keyword['next_up_start'] = trim((string)$keyword['next_up_start']);
+        $keyword['next_up_end'] = trim((string)$keyword['next_up_end']);
+        $keyword['inquiry_id'] = trim((string)$keyword['inquiry_id']);
+        $keyword['port_id'] = trim((string)$keyword['port_id']);
+
+        $onlyOverdueRaw = $keyword['only_overdue'];
+        $keyword['only_overdue'] = $this->isTruthyFlag($onlyOverdueRaw) ? '1' : '';
+
+        return $keyword;
+    }
+
+    /**
+     * 布尔型筛选统一识别（兼容 1/true/on/yes）。
+     *
+     * @param mixed $v
+     * @return bool
+     */
+    private function isTruthyFlag($v)
+    {
+        if ($v === true || $v === 1 || $v === '1') {
+            return true;
+        }
+        if (is_string($v)) {
+            $s = strtolower(trim($v));
+            return $s === 'true' || $s === 'yes' || $s === 'on';
+        }
+        return false;
     }
 
     /**
