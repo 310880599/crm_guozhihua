@@ -182,31 +182,58 @@ class ClientFollow extends Model
     private function applyTodoFollowPhoneFilter($query, $phoneKw, $leadAlias = 'l')
     {
         $rawKeyword = trim((string)$phoneKw);
-        $rawKeyword = preg_replace('/\s+/', '', $rawKeyword);
+        $normalizedKeyword = strtolower($rawKeyword);
+        $normalizedKeyword = str_replace(
+            ["\r", "\n", "\t", ' ', ',', '，', '<br />', '<br/>', '<br>'],
+            '',
+            $normalizedKeyword
+        );
         $digitKeyword = preg_replace('/\D+/', '', $rawKeyword);
 
         // 用户确实输入了内容，但提纯后无可检索字符，按无匹配处理，避免误放大为全量。
-        if ($rawKeyword === '' && $digitKeyword === '') {
+        if ($rawKeyword === '' && $normalizedKeyword === '' && $digitKeyword === '') {
             $query->where($leadAlias . '.id', '=', -1);
             return;
         }
 
-        $query->whereExists(function ($sub) use ($leadAlias, $rawKeyword, $digitKeyword) {
+        $query->whereExists(function ($sub) use ($leadAlias, $rawKeyword, $normalizedKeyword, $digitKeyword) {
             $sub->table('crm_contacts')
                 ->alias('cfp')
                 ->field('1')
                 ->whereRaw('cfp.leads_id = ' . $leadAlias . '.id')
                 ->where('cfp.is_delete', 0)
                 ->whereIn('cfp.contact_type', [1, 3])
-                ->where(function ($w) use ($rawKeyword, $digitKeyword) {
+                ->where(function ($w) use ($rawKeyword, $normalizedKeyword, $digitKeyword) {
                     if ($rawKeyword !== '') {
-                        $w->where('cfp.contact_value', 'like', '%' . $rawKeyword . '%');
+                        $w->where('cfp.contact_value', 'like', '%' . $this->escapeLike($rawKeyword) . '%');
                     }
-                    if ($digitKeyword !== '' && $digitKeyword !== $rawKeyword) {
-                        $w->whereOr('cfp.contact_value', 'like', '%' . $digitKeyword . '%');
+
+                    if ($normalizedKeyword !== '') {
+                        $normalizedField = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(IFNULL(cfp.contact_value,'')), '\\r', ''), '\\n', ''), '\\t', ''), ' ', ''), ',', ''), '，', ''), '<br />', ''), '<br/>', ''), '<br>', '')";
+                        $w->whereOrRaw($normalizedField . " LIKE ?", ['%' . $this->escapeLike($normalizedKeyword) . '%']);
+                    }
+
+                    if ($digitKeyword !== '') {
+                        $digitPattern = '(^|[^0-9])' . preg_quote($digitKeyword, '/') . '([^0-9]|$)';
+                        $w->whereOrRaw('cfp.contact_value REGEXP ?', [$digitPattern]);
                     }
                 });
         });
+    }
+
+    /**
+     * LIKE 关键字转义，避免 %/_ 作为通配符误扩大匹配范围。
+     *
+     * @param string $value
+     * @return string
+     */
+    private function escapeLike($value)
+    {
+        return strtr((string)$value, [
+            '\\' => '\\\\',
+            '%' => '\%',
+            '_' => '\_',
+        ]);
     }
 
     /**

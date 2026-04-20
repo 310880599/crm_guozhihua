@@ -359,16 +359,21 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     };
 
     function getSearchWhere() {
-        var where = $.extend({}, TODO_SEARCH_DEFAULTS, form.val('todo-follow-search') || {});
-        where.only_overdue = where.only_overdue ? '1' : '';
-        where.kh_name = $.trim(where.kh_name || '');
-        where.phone = $.trim(where.phone || '');
-        where.pr_user = $.trim(where.pr_user || '');
-        where.next_up_start = $.trim(where.next_up_start || '');
-        where.next_up_end = $.trim(where.next_up_end || '');
-        where.inquiry_id = $.trim(where.inquiry_id || '');
-        where.port_id = $.trim(where.port_id || '');
-        return where;
+        var $form = $('form[lay-filter="todo-follow-search"]');
+        if (!$form.length) {
+            return $.extend({}, TODO_SEARCH_DEFAULTS);
+        }
+
+        return {
+            kh_name: $.trim($form.find('[name="kh_name"]').val() || ''),
+            phone: $.trim($form.find('[name="phone"]').val() || ''),
+            pr_user: $.trim($form.find('[name="pr_user"]').val() || ''),
+            next_up_start: $.trim($form.find('[name="next_up_start"]').val() || ''),
+            next_up_end: $.trim($form.find('[name="next_up_end"]').val() || ''),
+            inquiry_id: $.trim($form.find('[name="inquiry_id"]').val() || ''),
+            port_id: $.trim($form.find('[name="port_id"]').val() || ''),
+            only_overdue: $form.find('[name="only_overdue"]').prop('checked') ? '1' : ''
+        };
     }
 
     function applySearchPatch(patch) {
@@ -378,11 +383,16 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
         form.render('checkbox');
     }
 
-    function reloadTodoTablePreserve() {
+    function reloadTodoTable(pageCurr) {
+        var curr = (typeof pageCurr === 'number' && pageCurr > 0) ? pageCurr : todoFollowCurrPage;
         reloadKeepColWidth({
             where: getSearchWhere(),
-            page: { curr: todoFollowCurrPage }
+            page: { curr: curr }
         });
+    }
+
+    function reloadTodoTablePreserve() {
+        reloadTodoTable(todoFollowCurrPage);
     }
 
     /** 列表时间统一为 YYYY-MM-DD HH:mm（去掉秒，便于阅读） */
@@ -656,7 +666,7 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     laydate.render({ elem: '#next_up_time', type: 'datetime', trigger: 'click' });
 
     form.on('submit(LAY-todo-follow-search)', function () {
-        reloadKeepColWidth({ where: getSearchWhere(), page: { curr: 1 } });
+        reloadTodoTable(1);
         return false;
     });
 
@@ -664,7 +674,7 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
         form.val('todo-follow-search', $.extend({}, TODO_SEARCH_DEFAULTS));
         form.render('select');
         form.render('checkbox');
-        reloadKeepColWidth({ where: $.extend({}, TODO_SEARCH_DEFAULTS), page: { curr: 1 } });
+        reloadTodoTable(1);
     }
 
     $('#btn-todo-reset').on('click', function () {
@@ -679,7 +689,7 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     }
 
     function reloadTodoPage1() {
-        reloadKeepColWidth({ where: getSearchWhere(), page: { curr: 1 } });
+        reloadTodoTable(1);
     }
 
     $('#btn-quick-today').on('click', function () {

@@ -33,17 +33,39 @@ class ClientFollow extends Common
         $limit = input('limit/d', 10);
 
         $keyword = [
-            'kh_name' => input('kh_name', ''),
-            'phone' => input('phone', ''),
-            'pr_user' => input('pr_user', ''),
-            'next_up_start' => input('next_up_start', ''),
-            'next_up_end' => input('next_up_end', ''),
-            'inquiry_id' => input('inquiry_id', ''),
-            'port_id' => input('port_id', ''),
-            'only_overdue' => input('only_overdue', ''),
+            'kh_name' => $this->normalizeSearchInput('kh_name'),
+            'phone' => $this->normalizeSearchInput('phone'),
+            'pr_user' => $this->normalizeSearchInput('pr_user'),
+            'next_up_start' => $this->normalizeSearchInput('next_up_start'),
+            'next_up_end' => $this->normalizeSearchInput('next_up_end'),
+            'inquiry_id' => $this->normalizeSearchInput('inquiry_id'),
+            'port_id' => $this->normalizeSearchInput('port_id'),
+            'only_overdue' => $this->normalizeSearchInput('only_overdue'),
         ];
 
         $service = new ClientFollowService();
         return json($service->getTodoFollowTableData($page, $limit, $keyword, []));
+    }
+
+    /**
+     * 搜索参数标准化：统一转字符串并处理 null/undefined。
+     *
+     * @param string $key
+     * @return string
+     */
+    private function normalizeSearchInput($key)
+    {
+        $value = input($key, '');
+        if ($value === null) {
+            return '';
+        }
+
+        $s = trim((string)$value);
+        $lower = strtolower($s);
+        if ($lower === 'null' || $lower === 'undefined') {
+            return '';
+        }
+
+        return $s;
     }
 }

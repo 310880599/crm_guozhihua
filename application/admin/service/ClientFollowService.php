@@ -427,18 +427,39 @@ class ClientFollowService
             'only_overdue' => '',
         ], $keyword);
 
-        $keyword['kh_name'] = trim((string)$keyword['kh_name']);
-        $keyword['phone'] = trim((string)$keyword['phone']);
-        $keyword['pr_user'] = trim((string)$keyword['pr_user']);
-        $keyword['next_up_start'] = trim((string)$keyword['next_up_start']);
-        $keyword['next_up_end'] = trim((string)$keyword['next_up_end']);
-        $keyword['inquiry_id'] = trim((string)$keyword['inquiry_id']);
-        $keyword['port_id'] = trim((string)$keyword['port_id']);
+        $keyword['kh_name'] = $this->normalizeSearchScalar($keyword['kh_name']);
+        $keyword['phone'] = $this->normalizeSearchScalar($keyword['phone']);
+        $keyword['pr_user'] = $this->normalizeSearchScalar($keyword['pr_user']);
+        $keyword['next_up_start'] = $this->normalizeSearchScalar($keyword['next_up_start']);
+        $keyword['next_up_end'] = $this->normalizeSearchScalar($keyword['next_up_end']);
+        $keyword['inquiry_id'] = $this->normalizeSearchScalar($keyword['inquiry_id']);
+        $keyword['port_id'] = $this->normalizeSearchScalar($keyword['port_id']);
 
         $onlyOverdueRaw = $keyword['only_overdue'];
         $keyword['only_overdue'] = $this->isTruthyFlag($onlyOverdueRaw) ? '1' : '';
 
         return $keyword;
+    }
+
+    /**
+     * 搜索标量统一标准化：trim + 兜底 null/undefined。
+     *
+     * @param mixed $value
+     * @return string
+     */
+    private function normalizeSearchScalar($value)
+    {
+        if ($value === null) {
+            return '';
+        }
+
+        $s = trim((string)$value);
+        $lower = strtolower($s);
+        if ($lower === 'null' || $lower === 'undefined') {
+            return '';
+        }
+
+        return $s;
     }
 
     /**
