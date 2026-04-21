@@ -8,6 +8,7 @@ use Throwable;
 
 class ClientFollowService
 {
+    const NEXT_UP_TIME_DEFAULT_CLOCK = '09:00:00';
     /**
      * 保存客户跟进记录，并同步更新 crm_leads 跟进字段
      *
@@ -135,11 +136,23 @@ class ClientFollowService
     private function normalizeNextUpTimeValue($nextUpTime)
     {
         if ($nextUpTime !== '') {
+            if (preg_match('/^(\d{4}-\d{2}-\d{2})$/', $nextUpTime, $dateOnlyMatch)) {
+                return [true, $dateOnlyMatch[1] . ' ' . self::NEXT_UP_TIME_DEFAULT_CLOCK, ''];
+            }
+            if (preg_match('/^(\d{4}-\d{2}-\d{2})\s+00:00:00$/', $nextUpTime, $midnightMatch)) {
+                return [true, $midnightMatch[1] . ' ' . self::NEXT_UP_TIME_DEFAULT_CLOCK, ''];
+            }
+
             $timestamp = strtotime($nextUpTime);
             if ($timestamp === false) {
                 return [false, null, '下次跟进时间格式不正确'];
             }
-            return [true, date('Y-m-d H:i:s', $timestamp), ''];
+
+            $normalized = date('Y-m-d H:i:s', $timestamp);
+            if (substr($normalized, 11, 8) === '00:00:00') {
+                $normalized = substr($normalized, 0, 10) . ' ' . self::NEXT_UP_TIME_DEFAULT_CLOCK;
+            }
+            return [true, $normalized, ''];
         }
 
         return [true, $this->emptyNextUpTimeValue(), ''];

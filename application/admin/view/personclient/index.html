@@ -1609,12 +1609,70 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }
         return text;
     }
+    function shouldApplyNextUpDefaultClock(value) {
+        var text = $.trim(value || '');
+        if (text === '') {
+            return true;
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+            return true;
+        }
+        return /^\d{4}-\d{2}-\d{2}\s+00:00:00$/.test(text);
+    }
     function applyNextUpTimeDefault(value) {
         var normalized = normalizeNextUpTimeInput(value);
         if ($.trim($('#next_up_time').val()) !== normalized) {
             $('#next_up_time').val(normalized);
         }
         return normalized;
+    }
+    function initFollowNextUpTimeDefault(rawValue) {
+        var text = $.trim(rawValue || '');
+        if (text === '') {
+            $('#next_up_time').val('');
+            return '';
+        }
+        return applyNextUpTimeDefault(text);
+    }
+    function applyLaydatePanelDefaultClockIfNeeded(value) {
+        if (!shouldApplyNextUpDefaultClock(value)) {
+            return;
+        }
+        var parts = NEXT_UP_TIME_DEFAULT_CLOCK.split(':');
+        if (parts.length !== 3) {
+            return;
+        }
+        setTimeout(function () {
+            var $panel = $('.layui-laydate:visible').last();
+            if (!$panel.length) {
+                return;
+            }
+
+            // 同步底部时分秒输入框，确保面板打开时默认显示 09:00:00。
+            var $timeInputs = $panel.find('.laydate-time-text input');
+            if ($timeInputs.length >= 3) {
+                $timeInputs.eq(0).val(parts[0]).trigger('keyup').trigger('blur');
+                $timeInputs.eq(1).val(parts[1]).trigger('keyup').trigger('blur');
+                $timeInputs.eq(2).val(parts[2]).trigger('keyup').trigger('blur');
+            }
+
+            // 尝试同步高亮时间列表（不同 layui 版本 DOM 结构有差异，因此做兼容选择器）。
+            var $timeCols = $panel.find('.laydate-time-list ol');
+            if (!$timeCols.length) {
+                $timeCols = $panel.find('.laydate-time-list li ol');
+            }
+            if ($timeCols.length >= 3) {
+                $.each(parts, function (idx, part) {
+                    var $col = $timeCols.eq(idx);
+                    var $target = $col.children('li').filter(function () {
+                        return $.trim($(this).text()) === part;
+                    }).first();
+                    if ($target.length) {
+                        $target.trigger('click');
+                    }
+                });
+            }
+        }, 0);
     }
 
     /** 最新跟进记录：悬浮层（仅截断时显示，挂到 body，避免被表格遮挡） */
@@ -2469,7 +2527,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         if (options.resetForm !== false) {
             $('#reply_msg').val('');
-            $('#next_up_time').val('');
+            initFollowNextUpTimeDefault(clientData.next_up_time || '');
         }
         renderFollowHistory(comments || []);
     }
@@ -2597,7 +2655,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 if (res.code === 0) {
                     layer.msg(res.msg || '保存成功', {icon: 1});
                     $('#reply_msg').val('');
-                    $('#next_up_time').val('');
+                    initFollowNextUpTimeDefault('');
 
                     requestFollowDialogData(leadsId, {
                         showLoading: false,
@@ -3012,7 +3070,17 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     laydate.render({
         elem: '#next_up_time',
         type: 'datetime',
+        format: 'yyyy-MM-dd HH:mm:ss',
         trigger: 'click',
+        ready: function () {
+            applyLaydatePanelDefaultClockIfNeeded($.trim($('#next_up_time').val()));
+        },
+        change: function (value) {
+            if (value) {
+                applyNextUpTimeDefault(value);
+            }
+            applyLaydatePanelDefaultClockIfNeeded(value);
+        },
         done: function (value) {
             applyNextUpTimeDefault(value);
         }
