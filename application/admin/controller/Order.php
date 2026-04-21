@@ -24,6 +24,17 @@ class Order extends Common
         '其他',
     ];
 
+    /**
+     * 利润达到阈值时，必须上传两类凭证
+     *
+     * @param mixed $profit
+     * @return bool
+     */
+    private function isVoucherRequired($profit)
+    {
+        return floatval($profit) >= 2000;
+    }
+
     //订单列表
     public function index()
     {
@@ -781,16 +792,9 @@ class Order extends Common
             $data['amount_received']  = Request::param('amount_received'); // 已收款金额
             //$data['remark']           = Request::param('remark');         // 备注
             
-            // ====== 判断是否满足凭证豁免条件（返单 or 利润<2000） ======
-            $source = trim(Request::param('source', ''));
-            $isReturnOrder = ($source === '返单');
-            
-            // 从请求参数中读取利润（前端会在提交前调用 updateTotals() 计算好）
+            // ====== 仅按利润判断是否强制上传凭证 ======
             $profit = floatval(Request::param('profit', 0));
-            $isLowProfit = ($profit < 2000);
-            
-            // 豁免条件：返单 或 利润<2000
-            $exempt = $isReturnOrder || $isLowProfit;
+            $voucherRequired = $this->isVoucherRequired($profit);
             
             // ✅草稿：跳过“强必填凭证校验”，避免字段不全也能落库
             if ($isDraft) {
@@ -829,8 +833,8 @@ class Order extends Common
                     return !empty(trim($v));
                 })));
                 
-                if ($exempt) {
-                    // 豁免情况：允许为空，但如果上传了也保存（不校验数量）
+                if (!$voucherRequired) {
+                    // 利润<2000：允许为空，但如果上传了也保存（仍校验上限）
                     if (empty($wechatReceiptUrls)) {
                         $data['wechat_receipt_image'] = '';
                     } else {
@@ -843,7 +847,7 @@ class Order extends Common
                         $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
                     }
                 } else {
-                    // 非豁免情况：必须上传，保持原有校验逻辑
+                    // 利润>=2000：必须上传
                     $count = count($wechatReceiptUrls);
                     if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
                         $this->redisUnLock();
@@ -856,11 +860,11 @@ class Order extends Common
                 // 处理询盘来源凭证
                 $inquiryAssignImage = Request::param('inquiry_assign_image', '');
                 $handledInquiryAssignImage = OrderService::handleInquiryImages($inquiryAssignImage);
-                if ($exempt) {
-                    // 豁免情况：允许为空，但如果上传了也保存
+                if (!$voucherRequired) {
+                    // 利润<2000：允许为空，但如果上传了也保存
                     $data['inquiry_assign_image'] = $handledInquiryAssignImage;
                 } else {
-                    // 非豁免情况：必须上传
+                    // 利润>=2000：必须上传
                     if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
                         $this->redisUnLock();
                         return json(['code' => 0, 'msg' => '请上传询盘来源凭证（产品询盘分配图）']);
@@ -1686,16 +1690,9 @@ class Order extends Common
             $data['amount_received']  = Request::param('amount_received'); // 已收款金额
             //$data['remark']           = Request::param('remark');         // 备注
             
-            // ====== 判断是否满足凭证豁免条件（返单 or 利润<2000） ======
-            $source = trim(Request::param('source', ''));
-            $isReturnOrder = ($source === '返单');
-            
-            // 从请求参数中读取利润（前端会在提交前调用 updateTotals() 计算好）
+            // ====== 仅按利润判断是否强制上传凭证 ======
             $profit = floatval(Request::param('profit', 0));
-            $isLowProfit = ($profit < 2000);
-            
-            // 豁免条件：返单 或 利润<2000
-            $exempt = $isReturnOrder || $isLowProfit;
+            $voucherRequired = $this->isVoucherRequired($profit);
             
             // 获取原始订单数据（用于豁免情况下保留原值）
             $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('wechat_receipt_image, inquiry_assign_image')->find();
@@ -1735,13 +1732,13 @@ class Order extends Common
             
             if ($clearWechatReceipt === 1) {
                 // 编辑页显式清空（前端删除到 0 张时会置为 1）
-                if ($exempt) {
+                if (!$voucherRequired) {
                     $data['wechat_receipt_image'] = '';
                 } else {
                     return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
                 }
-            } elseif ($exempt) {
-                // 豁免情况：允许为空，但如果上传了也保存（不校验数量）
+            } elseif (!$voucherRequired) {
+                // 利润<2000：允许为空，但如果上传了也保存（不校验最少张数）
                 if (empty($wechatReceiptUrls)) {
                     // 如果前端传空，不覆盖数据库原值（编辑特性）
                     // 不设置 $data['wechat_receipt_image']，保留原值
@@ -1754,7 +1751,7 @@ class Order extends Common
                     $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
                 }
             } else {
-                // 非豁免情况：必须上传，保持原有校验逻辑
+                // 利润>=2000：必须上传
                 $count = count($wechatReceiptUrls);
                 if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
                     return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
@@ -1775,8 +1772,8 @@ class Order extends Common
 
             if ($clearInquiryAssign === 1) {
                 $data['inquiry_assign_image'] = '';
-            } elseif ($exempt) {
-                // 豁免时允许为空：有新图则保存，无新图且未显式清空则保留原值
+            } elseif (!$voucherRequired) {
+                // 利润<2000：允许为空；有新图则保存，无新图且未显式清空则保留原值
                 $count = count($inquiryAssignUrls);
                 if ($count > $MAX_INQUIRY_ASSIGN_IMAGES) {
                     return json(['code' => 0, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
@@ -1785,7 +1782,7 @@ class Order extends Common
                     $data['inquiry_assign_image'] = $handledInquiryAssignImage;
                 }
             } else {
-                // 非豁免时必须上传 1~N 张
+                // 利润>=2000：必须上传 1~N 张
                 $count = count($inquiryAssignUrls);
                 if ($count < 1 || $count > $MAX_INQUIRY_ASSIGN_IMAGES) {
                     return json(['code' => 0, 'msg' => '询盘来源凭证图片数量必须在 1~' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张之间']);
@@ -4091,6 +4088,18 @@ class Order extends Common
         }
         if ($isEmpty($order['margin_rate'] ?? null)) {
             $missing[] = '利润率';
+        }
+        // 利润>=2000 时，两个凭证必须存在
+        $profit = floatval($order['profit'] ?? 0);
+        if ($this->isVoucherRequired($profit)) {
+            $wechatImages = OrderService::parseImageList($order['wechat_receipt_image'] ?? null);
+            if (count($wechatImages) < 1) {
+                $missing[] = '微信沟通及付款凭证';
+            }
+            $inquiryImages = OrderService::parseImageList($order['inquiry_assign_image'] ?? null);
+            if (count($inquiryImages) < 1) {
+                $missing[] = '询盘来源凭证';
+            }
         }
 
         // 产品明细：至少 1 行，每行含 product_name / product_manager(manager_id) / unit / qty / unit_price / purchase_price

@@ -894,18 +894,11 @@
 
             renderInquiryAssignPreviewsForDetails();
 
-            // 判断是否满足凭证豁免条件（返单 or 利润<2000）
+            // 判断是否满足凭证豁免条件（仅利润<2000）
             function isVoucherExempt() {
-                // 判断询盘来源是否为"返单"
-                var sourceValue = $('#source').val() || '';
-                var sourceText = $('#source option:selected').text() || '';
-                var isReturnOrder = (sourceValue === '返单' || sourceText === '返单');
-                
                 // 判断利润是否<2000
                 var profit = parseFloat($('#profit').val()) || 0;
-                var isLowProfit = profit < 2000;
-                
-                return isReturnOrder || isLowProfit;
+                return profit < 2000;
             }
             
             // 根据豁免条件更新凭证展示块的显示/隐藏
