@@ -1766,9 +1766,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
      var cols = [[
          { type: 'checkbox',  width: 50 },
          { field: 'id', title: 'ID',  width: 120, fixed: true, hide: true },
-         { field: 'kh_name', title: '客户名称',  width: 120, sort: true, templet: function(res){
-             return "<a href='{:url('dialogue')}?id=" + res.id + "'>" + (res.kh_name || '') + "</a>";
-         }},
+        { field: 'kh_name', title: '客户名称',  width: 120, sort: true, templet: function(res){
+            var name = res.kh_name || '';
+            return '<a href="javascript:;" class="js-client-edit-link" data-id="' + res.id + '">' + name + '</a>';
+        }},
          { field: 'product_name', title: '产品名称',  width: 120 }, 
          { field: 'main_phone', title: '主电话', width: 120 },
          { field: 'last_up_records', title: '最新跟进记录', width: 120, templet: function (d) {
@@ -2995,6 +2996,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     table.on('tool(table-list)', function (obj) {
         var layEvent = obj.event, id = obj.data.id;
         lineEvent(layEvent, id);
+    });
+    // 客户名称点击：与操作列“编辑客户”保持一致
+    $(document).off('click.clientEditByName').on('click.clientEditByName', '.js-client-edit-link', function () {
+        var id = $(this).data('id');
+        if (!id) return;
+        layer_add("编辑客户", "{:url('Client/edit')}?id=" + id);
     });
     // 弹层内按钮事件委托
     $('body').on('click', '.layui-layer-content [lay-event]', function(){
