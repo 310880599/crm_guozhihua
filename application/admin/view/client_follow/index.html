@@ -668,7 +668,7 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
         type: 'datetime',
         trigger: 'click',
         done: function (value) {
-            applyNextUpTimeDefault(value);
+            syncNextUpTimeAfterLaydateDone(value);
         }
     });
     $(document)
@@ -763,6 +763,18 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
             $('#next_up_time').val(normalized);
         }
         return normalized;
+    }
+    /**
+     * 兼容 laydate done 回调与 input 回写的时序差，取最终 input 值再归一。
+     */
+    function syncNextUpTimeAfterLaydateDone(doneValue) {
+        setTimeout(function () {
+            var finalValue = $.trim($('#next_up_time').val());
+            if (finalValue === '') {
+                finalValue = $.trim(doneValue || '');
+            }
+            applyNextUpTimeDefault(finalValue);
+        }, 0);
     }
 
     function renderFollowHistory(comments) {

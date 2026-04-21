@@ -1626,6 +1626,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }
         return normalized;
     }
+    /**
+     * laydate 点击“确定”时，先等组件把最终值回写到 input，再做默认时间归一。
+     * 避免 done(value) 时序过早导致 input 又被写回 00:00:00。
+     */
+    function syncNextUpTimeAfterLaydateDone(doneValue) {
+        setTimeout(function () {
+            var finalValue = $.trim($('#next_up_time').val());
+            if (finalValue === '') {
+                finalValue = $.trim(doneValue || '');
+            }
+            applyNextUpTimeDefault(finalValue);
+        }, 0);
+    }
     function initFollowNextUpTimeDefault(rawValue) {
         var text = $.trim(rawValue || '');
         if (text === '') {
@@ -3082,7 +3095,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             applyLaydatePanelDefaultClockIfNeeded(value);
         },
         done: function (value) {
-            applyNextUpTimeDefault(value);
+            syncNextUpTimeAfterLaydateDone(value);
         }
     });
     $(document)
