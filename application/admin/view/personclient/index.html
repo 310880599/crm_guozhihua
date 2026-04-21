@@ -1587,6 +1587,35 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }
         return text;
     }
+    var NEXT_UP_TIME_DEFAULT_CLOCK = '09:00:00';
+    /**
+     * 下次跟进时间输入归一：
+     * 1) 仅日期 -> 自动补 09:00:00
+     * 2) 00:00:00 -> 自动改为 09:00:00
+     * 3) 其他时间保持用户选择
+     */
+    function normalizeNextUpTimeInput(value) {
+        var text = $.trim(value || '');
+        if (text === '') {
+            return '';
+        }
+        var dateOnlyMatch = text.match(/^(\d{4}-\d{2}-\d{2})$/);
+        if (dateOnlyMatch) {
+            return dateOnlyMatch[1] + ' ' + NEXT_UP_TIME_DEFAULT_CLOCK;
+        }
+        var dateTimeMatch = text.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2}):(\d{2})$/);
+        if (dateTimeMatch && dateTimeMatch[2] === '00' && dateTimeMatch[3] === '00' && dateTimeMatch[4] === '00') {
+            return dateTimeMatch[1] + ' ' + NEXT_UP_TIME_DEFAULT_CLOCK;
+        }
+        return text;
+    }
+    function applyNextUpTimeDefault(value) {
+        var normalized = normalizeNextUpTimeInput(value);
+        if ($.trim($('#next_up_time').val()) !== normalized) {
+            $('#next_up_time').val(normalized);
+        }
+        return normalized;
+    }
 
     /** 最新跟进记录：悬浮层（仅截断时显示，挂到 body，避免被表格遮挡） */
     function ensureLastRecordTooltipEl() {
@@ -2542,7 +2571,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             return;
         }
         var replyMsg = $.trim($('#reply_msg').val());
-        var nextUpTime = $.trim($('#next_up_time').val());
+        var nextUpTime = applyNextUpTimeDefault($.trim($('#next_up_time').val()));
         var leadsId = $('#leads_id').val();
         
         if (!replyMsg) {
@@ -2980,7 +3009,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     // 日期控件
     laydate.render({ elem: '#at_time', range: true, trigger: 'click' });
-    laydate.render({ elem: '#next_up_time', type: 'datetime', trigger: 'click' });
+    laydate.render({
+        elem: '#next_up_time',
+        type: 'datetime',
+        trigger: 'click',
+        done: function (value) {
+            applyNextUpTimeDefault(value);
+        }
+    });
+    $(document)
+        .off('blur.personclientNextUpTimeDefault', '#next_up_time')
+        .on('blur.personclientNextUpTimeDefault', '#next_up_time', function () {
+            applyNextUpTimeDefault(this.value);
+        });
     form.on('select(dateRange)', function (data) {
         var isCustom = data.value === '';
         $('#at_time').toggle(isCustom);
