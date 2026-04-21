@@ -792,85 +792,53 @@ class Order extends Common
             $data['amount_received']  = Request::param('amount_received'); // 已收款金额
             //$data['remark']           = Request::param('remark');         // 备注
             
-            // ====== 仅按利润判断是否强制上传凭证 ======
-            $profit = floatval(Request::param('profit', 0));
-            $voucherRequired = $this->isVoucherRequired($profit);
-            
-            // ✅草稿：跳过“强必填凭证校验”，避免字段不全也能落库
+            // ====== 后端统一重算利润（禁止使用前端传入 profit）======
+            $profitCalcParams = [
+                'qty' => Request::param('qty/a'),
+                'unit_price' => Request::param('unit_price/a'),
+                'purchase_price' => Request::param('purchase_price/a'),
+                'shipping_cost' => $data['shipping_cost'],
+                'tax_amount' => $data['tax_amount'],
+                'debugging_cost' => $data['debugging_cost'],
+                'sales_commission' => $data['sales_commission'],
+            ];
+            $profitCalc = OrderService::recalculateOrderProfit($profitCalcParams);
+
+            // ✅草稿：可不传凭证；正式提交必须通过统一凭证校验
             if ($isDraft) {
                 $data['wechat_receipt_image'] = '';
                 $data['inquiry_assign_image'] = '';
             } else {
-                // 处理微信沟通凭证（多图上传）
-                $MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量（与前端一致）
+                $MAX_WECHAT_RECEIPT_IMAGES = 10;
+                $MAX_INQUIRY_ASSIGN_IMAGES = 10;
+
                 $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
-                $wechatReceiptUrls = [];
-                
-                // 解析：兼容 JSON 数组字符串、单字符串、数组三种格式
-                if (is_array($wechatReceiptRaw)) {
-                    $wechatReceiptUrls = $wechatReceiptRaw;
-                } else if (is_string($wechatReceiptRaw)) {
-                    $wechatReceiptRaw = trim($wechatReceiptRaw);
-                    if ($wechatReceiptRaw !== '') {
-                        // 尝试解析为 JSON 数组
-                        if (preg_match('/^\s*\[.*\]\s*$/', $wechatReceiptRaw)) {
-                            $tmp = json_decode($wechatReceiptRaw, true);
-                            if (is_array($tmp)) {
-                                $wechatReceiptUrls = $tmp;
-                            } else {
-                                // JSON 解析失败，当作单字符串处理
-                                $wechatReceiptUrls = [$wechatReceiptRaw];
-                            }
-                        } else {
-                            // 单字符串格式（历史数据兼容）
-                            $wechatReceiptUrls = [$wechatReceiptRaw];
-                        }
-                    }
+                $wechatReceiptParsed = OrderService::parseImageList($wechatReceiptRaw);
+                if (count($wechatReceiptParsed) > $MAX_WECHAT_RECEIPT_IMAGES) {
+                    $this->redisUnLock();
+                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
                 }
-                
-                // 去空、去重、重建索引
-                $wechatReceiptUrls = array_values(array_unique(array_filter($wechatReceiptUrls, function($v) {
-                    return !empty(trim($v));
-                })));
-                
-                if (!$voucherRequired) {
-                    // 利润<2000：允许为空，但如果上传了也保存（仍校验上限）
-                    if (empty($wechatReceiptUrls)) {
-                        $data['wechat_receipt_image'] = '';
-                    } else {
-                        // 如果上传了，校验数量不超过上限
-                        $count = count($wechatReceiptUrls);
-                        if ($count > $MAX_WECHAT_RECEIPT_IMAGES) {
-                            $this->redisUnLock();
-                            return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
-                        }
-                        $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
-                    }
-                } else {
-                    // 利润>=2000：必须上传
-                    $count = count($wechatReceiptUrls);
-                    if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
-                        $this->redisUnLock();
-                        return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
-                    }
-                    // JSON 编码存库
-                    $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
+                $wechatReceiptUrls = OrderService::normalizeVoucherImages($wechatReceiptParsed, $MAX_WECHAT_RECEIPT_IMAGES);
+
+                $inquiryAssignRaw = Request::param('inquiry_assign_image', '');
+                $inquiryAssignParsed = OrderService::parseImageList($inquiryAssignRaw);
+                if (count($inquiryAssignParsed) > $MAX_INQUIRY_ASSIGN_IMAGES) {
+                    $this->redisUnLock();
+                    return json(['code' => 0, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
                 }
-                
-                // 处理询盘来源凭证
-                $inquiryAssignImage = Request::param('inquiry_assign_image', '');
-                $handledInquiryAssignImage = OrderService::handleInquiryImages($inquiryAssignImage);
-                if (!$voucherRequired) {
-                    // 利润<2000：允许为空，但如果上传了也保存
-                    $data['inquiry_assign_image'] = $handledInquiryAssignImage;
-                } else {
-                    // 利润>=2000：必须上传
-                    if (empty($inquiryAssignImage) || trim($inquiryAssignImage) === '') {
-                        $this->redisUnLock();
-                        return json(['code' => 0, 'msg' => '请上传询盘来源凭证（产品询盘分配图）']);
-                    }
-                    $data['inquiry_assign_image'] = $handledInquiryAssignImage;
+                $inquiryAssignUrls = OrderService::normalizeVoucherImages($inquiryAssignParsed, $MAX_INQUIRY_ASSIGN_IMAGES);
+
+                $voucherValidationParams = $profitCalcParams;
+                $voucherValidationParams['wechat_receipt_image'] = $wechatReceiptRaw;
+                $voucherValidationParams['inquiry_assign_image'] = $inquiryAssignRaw;
+                $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, []);
+                if (empty($voucherValidation['ok'])) {
+                    $this->redisUnLock();
+                    return json(['code' => 0, 'msg' => $voucherValidation['message']]);
                 }
+
+                $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $data['inquiry_assign_image'] = json_encode($inquiryAssignUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             }
             $managerIds   = Request::param('product_manager/a'); // ★ 产品经理（管理员）ID 数组
             // ✅文本状态（如表里有 status 字段则同步）
@@ -1012,18 +980,10 @@ class Order extends Common
                 }
             }
 
-            // 计算订单总金额（已存在逻辑）
-            $data['money'] = round($sumTotal, 2);
-
-            // 将费用字段从字符串转换为浮点数，然后计算最终利润
-            $shippingCost    = floatval(Request::param('shipping_cost'));
-            $taxAmount       = floatval(Request::param('tax_amount'));
-            $debuggingCost   = floatval(Request::param('debugging_cost'));
-            $salesCommission = floatval(Request::param('sales_commission'));
-
-            $finalProfit       = $sumProfit - $shippingCost - $taxAmount - $debuggingCost - $salesCommission;
-            $data['profit']    = round($finalProfit, 2);
-            $data['margin_rate'] = ($sumTotal > 0) ? round($finalProfit / $sumTotal * 100, 2) : 0;
+            // 使用 Service 统一口径写回总金额/利润/利润率
+            $data['money'] = $profitCalc['sales_total'];
+            $data['profit'] = $profitCalc['profit'];
+            $data['margin_rate'] = $profitCalc['profit_rate'];
 
 
             // 主表 product_name（存第一个产品名称，非ID）
@@ -1690,104 +1650,71 @@ class Order extends Common
             $data['amount_received']  = Request::param('amount_received'); // 已收款金额
             //$data['remark']           = Request::param('remark');         // 备注
             
-            // ====== 仅按利润判断是否强制上传凭证 ======
-            $profit = floatval(Request::param('profit', 0));
-            $voucherRequired = $this->isVoucherRequired($profit);
-            
-            // 获取原始订单数据（用于豁免情况下保留原值）
-            $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('wechat_receipt_image, inquiry_assign_image')->find();
-            
-            // 处理微信沟通凭证（多图上传）
-            $MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量（与前端一致）
-            $clearWechatReceipt = (int)Request::param('clear_wechat_receipt_image', 0);
-            $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
-            $wechatReceiptUrls = [];
-            
-            // 解析：兼容 JSON 数组字符串、单字符串、数组三种格式
-            if (is_array($wechatReceiptRaw)) {
-                $wechatReceiptUrls = $wechatReceiptRaw;
-            } else if (is_string($wechatReceiptRaw)) {
-                $wechatReceiptRaw = trim($wechatReceiptRaw);
-                if ($wechatReceiptRaw !== '') {
-                    // 尝试解析为 JSON 数组
-                    if (preg_match('/^\s*\[.*\]\s*$/', $wechatReceiptRaw)) {
-                        $tmp = json_decode($wechatReceiptRaw, true);
-                        if (is_array($tmp)) {
-                            $wechatReceiptUrls = $tmp;
-                        } else {
-                            // JSON 解析失败，当作单字符串处理
-                            $wechatReceiptUrls = [$wechatReceiptRaw];
-                        }
-                    } else {
-                        // 单字符串格式（历史数据兼容）
-                        $wechatReceiptUrls = [$wechatReceiptRaw];
-                    }
-                }
+            // ====== 编辑场景：读取原订单并统一重算利润 + 凭证校验 ======
+            $originalOrder = Db::name('crm_client_order')
+                ->where('id', $id)
+                ->field('wechat_receipt_image, inquiry_assign_image')
+                ->find();
+            if (!$originalOrder) {
+                $originalOrder = [];
             }
-            
-            // 去空、去重、重建索引
-            $wechatReceiptUrls = array_values(array_unique(array_filter($wechatReceiptUrls, function($v) {
-                return !empty(trim($v));
-            })));
-            
-            if ($clearWechatReceipt === 1) {
-                // 编辑页显式清空（前端删除到 0 张时会置为 1）
-                if (!$voucherRequired) {
-                    $data['wechat_receipt_image'] = '';
-                } else {
-                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
-                }
-            } elseif (!$voucherRequired) {
-                // 利润<2000：允许为空，但如果上传了也保存（不校验最少张数）
-                if (empty($wechatReceiptUrls)) {
-                    // 如果前端传空，不覆盖数据库原值（编辑特性）
-                    // 不设置 $data['wechat_receipt_image']，保留原值
-                } else {
-                    // 如果上传了，校验数量不超过上限
-                    $count = count($wechatReceiptUrls);
-                    if ($count > $MAX_WECHAT_RECEIPT_IMAGES) {
-                        return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
-                    }
-                    $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
-                }
-            } else {
-                // 利润>=2000：必须上传
-                $count = count($wechatReceiptUrls);
-                if ($count < 1 || $count > $MAX_WECHAT_RECEIPT_IMAGES) {
-                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量必须在 1~' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张之间']);
-                }
-                // JSON 编码存库
-                $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
-            }
-            
-            // 处理询盘来源凭证（多图）：兼容 JSON 数组/单字符串，支持显式清空
+
+            $profitCalcParams = [
+                'qty' => Request::param('qty/a'),
+                'unit_price' => Request::param('unit_price/a'),
+                'purchase_price' => Request::param('purchase_price/a'),
+                'shipping_cost' => $data['shipping_cost'],
+                'tax_amount' => $data['tax_amount'],
+                'debugging_cost' => $data['debugging_cost'],
+                'sales_commission' => $data['sales_commission'],
+            ];
+            $profitCalc = OrderService::recalculateOrderProfit($profitCalcParams);
+
+            $MAX_WECHAT_RECEIPT_IMAGES = 10;
             $MAX_INQUIRY_ASSIGN_IMAGES = 10;
+
+            $clearWechatReceipt = (int)Request::param('clear_wechat_receipt_image', 0);
             $clearInquiryAssign = (int)Request::param('clear_inquiry_assign_image', 0);
-            $inquiryAssignRaw = Request::param('inquiry_assign_image', '');
-            $handledInquiryAssignImage = OrderService::handleInquiryImages($inquiryAssignRaw);
-            $inquiryAssignUrls = json_decode($handledInquiryAssignImage, true);
-            if (!is_array($inquiryAssignUrls)) {
-                $inquiryAssignUrls = [];
+            $hasWechatInput = request()->has('wechat_receipt_image');
+            $hasInquiryInput = request()->has('inquiry_assign_image');
+
+            $voucherValidationParams = $profitCalcParams;
+            $voucherValidationParams['clear_wechat_receipt_image'] = $clearWechatReceipt;
+            $voucherValidationParams['clear_inquiry_assign_image'] = $clearInquiryAssign;
+
+            if ($clearWechatReceipt === 1) {
+                $data['wechat_receipt_image'] = '';
+            } elseif ($hasWechatInput) {
+                $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
+                $wechatReceiptParsed = OrderService::parseImageList($wechatReceiptRaw);
+                if (count($wechatReceiptParsed) > $MAX_WECHAT_RECEIPT_IMAGES) {
+                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
+                }
+                $wechatReceiptUrls = OrderService::normalizeVoucherImages($wechatReceiptParsed, $MAX_WECHAT_RECEIPT_IMAGES);
+                if (!empty($wechatReceiptUrls)) {
+                    $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+                $voucherValidationParams['wechat_receipt_image'] = $wechatReceiptRaw;
             }
 
             if ($clearInquiryAssign === 1) {
                 $data['inquiry_assign_image'] = '';
-            } elseif (!$voucherRequired) {
-                // 利润<2000：允许为空；有新图则保存，无新图且未显式清空则保留原值
-                $count = count($inquiryAssignUrls);
-                if ($count > $MAX_INQUIRY_ASSIGN_IMAGES) {
+            } elseif ($hasInquiryInput) {
+                $inquiryAssignRaw = Request::param('inquiry_assign_image', '');
+                $inquiryAssignParsed = OrderService::parseImageList($inquiryAssignRaw);
+                if (count($inquiryAssignParsed) > $MAX_INQUIRY_ASSIGN_IMAGES) {
                     return json(['code' => 0, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
                 }
-                if ($count > 0) {
-                    $data['inquiry_assign_image'] = $handledInquiryAssignImage;
+                $inquiryAssignUrls = OrderService::normalizeVoucherImages($inquiryAssignParsed, $MAX_INQUIRY_ASSIGN_IMAGES);
+                if (!empty($inquiryAssignUrls)) {
+                    $data['inquiry_assign_image'] = json_encode($inquiryAssignUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 }
-            } else {
-                // 利润>=2000：必须上传 1~N 张
-                $count = count($inquiryAssignUrls);
-                if ($count < 1 || $count > $MAX_INQUIRY_ASSIGN_IMAGES) {
-                    return json(['code' => 0, 'msg' => '询盘来源凭证图片数量必须在 1~' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张之间']);
-                }
-                $data['inquiry_assign_image'] = $handledInquiryAssignImage;
+                $voucherValidationParams['inquiry_assign_image'] = $inquiryAssignRaw;
+            }
+
+            $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, $originalOrder);
+            if (empty($voucherValidation['ok'])) {
+                return json(['code' => 0, 'msg' => $voucherValidation['message']]);
             }
             $data['ut_time']          = date("Y-m-d H:i:s");              // 更新操作时间
 
@@ -1920,15 +1847,10 @@ class Order extends Common
                 }
             }
 
-            // 汇总订单金额、利润、利润率
-            $data['money']       = round($sumTotal, 2);
-            $shippingCost        = floatval($data['shipping_cost'] ?? 0);
-            $taxAmount           = floatval($data['tax_amount'] ?? 0);
-            $debuggingCost       = floatval($data['debugging_cost'] ?? 0);
-            $salesCommission     = floatval($data['sales_commission'] ?? 0);
-            $finalProfit         = $sumProfit - $shippingCost - $taxAmount - $debuggingCost - $salesCommission;
-            $data['profit']      = round($finalProfit, 2);
-            $data['margin_rate'] = ($sumTotal > 0) ? round($finalProfit / $sumTotal * 100, 2) : 0;
+            // 使用 Service 统一口径写回总金额/利润/利润率
+            $data['money'] = $profitCalc['sales_total'];
+            $data['profit'] = $profitCalc['profit'];
+            $data['margin_rate'] = $profitCalc['profit_rate'];
 
             // 更新主表产品名称摘要（存入第一个产品名称，多个则加"等"字样）
             if (!empty($productIds)) {

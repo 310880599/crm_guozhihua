@@ -5,6 +5,208 @@ namespace app\admin\service;
 class OrderService
 {
     /**
+     * 将任意值转换为 float，空字符串/null 统一按 0 处理
+     *
+     * @param mixed $value
+     * @return float
+     */
+    public static function toFloatAmount($value)
+    {
+        if ($value === null) {
+            return 0.0;
+        }
+
+        if (is_string($value)) {
+            $value = trim($value);
+            if ($value === '') {
+                return 0.0;
+            }
+        }
+
+        return (float)$value;
+    }
+
+    /**
+     * 统一金额字段归一化：所有金额字段转 float，空字符串/null 转 0
+     *
+     * @param array $params
+     * @return array
+     */
+    public static function normalizeAmountFields(array $params)
+    {
+        $params['shipping_cost'] = self::toFloatAmount(isset($params['shipping_cost']) ? $params['shipping_cost'] : 0);
+        $params['tax_amount'] = self::toFloatAmount(isset($params['tax_amount']) ? $params['tax_amount'] : 0);
+        $params['debugging_cost'] = self::toFloatAmount(isset($params['debugging_cost']) ? $params['debugging_cost'] : 0);
+        $params['sales_commission'] = self::toFloatAmount(isset($params['sales_commission']) ? $params['sales_commission'] : 0);
+
+        $params['qty'] = self::normalizeAmountArray(isset($params['qty']) ? $params['qty'] : []);
+        $params['unit_price'] = self::normalizeAmountArray(isset($params['unit_price']) ? $params['unit_price'] : []);
+        $params['purchase_price'] = self::normalizeAmountArray(isset($params['purchase_price']) ? $params['purchase_price'] : []);
+
+        return $params;
+    }
+
+    /**
+     * 将数组中的数值全部转换为 float
+     *
+     * @param mixed $value
+     * @return array
+     */
+    public static function normalizeAmountArray($value)
+    {
+        if (!is_array($value)) {
+            if ($value === null || $value === '') {
+                return [];
+            }
+            $value = [$value];
+        }
+
+        $result = [];
+        foreach ($value as $item) {
+            $result[] = self::toFloatAmount($item);
+        }
+
+        return $result;
+    }
+
+    /**
+     * 统一利润重算（不信任前端传入的 profit）
+     * 返回：
+     * - sales_total 销售总额
+     * - cost_total 成本总额
+     * - profit 利润
+     * - profit_rate 利润率（百分比）
+     *
+     * @param array $params
+     * @return array
+     */
+    public static function recalculateOrderProfit(array $params)
+    {
+        $params = self::normalizeAmountFields($params);
+
+        $qtyList = isset($params['qty']) ? $params['qty'] : [];
+        $unitPriceList = isset($params['unit_price']) ? $params['unit_price'] : [];
+        $purchasePriceList = isset($params['purchase_price']) ? $params['purchase_price'] : [];
+
+        $lineCount = max(count($qtyList), count($unitPriceList), count($purchasePriceList));
+
+        $salesTotal = 0.0;
+        $purchaseTotal = 0.0;
+
+        for ($i = 0; $i < $lineCount; $i++) {
+            $qty = isset($qtyList[$i]) ? self::toFloatAmount($qtyList[$i]) : 0.0;
+            $unitPrice = isset($unitPriceList[$i]) ? self::toFloatAmount($unitPriceList[$i]) : 0.0;
+            $purchasePrice = isset($purchasePriceList[$i]) ? self::toFloatAmount($purchasePriceList[$i]) : 0.0;
+
+            $salesTotal += ($qty * $unitPrice);
+            $purchaseTotal += ($qty * $purchasePrice);
+        }
+
+        $extraCost = $params['shipping_cost']
+            + $params['tax_amount']
+            + $params['debugging_cost']
+            + $params['sales_commission'];
+
+        $costTotal = $purchaseTotal + $extraCost;
+        $profit = $salesTotal - $costTotal;
+        $profitRate = $salesTotal > 0 ? (($profit / $salesTotal) * 100) : 0.0;
+
+        return [
+            'sales_total' => round($salesTotal, 2),
+            'cost_total' => round($costTotal, 2),
+            'profit' => round($profit, 2),
+            'profit_rate' => round($profitRate, 2),
+        ];
+    }
+
+    /**
+     * 利润达到阈值时，是否必须上传两类凭证
+     *
+     * @param mixed $profit
+     * @return bool
+     */
+    public static function isVoucherRequiredByProfit($profit)
+    {
+        return floatval($profit) >= 2000;
+    }
+
+    /**
+     * 统一校验凭证是否满足规则（兼容新增/编辑/旧图/删除旧图/新上传）
+     *
+     * @param array $params 请求参数（新提交数据）
+     * @param array $existing 旧数据（编辑时传入，建议包含 wechat_receipt_image / inquiry_assign_image）
+     * @return array ['ok' => bool, 'message' => string]
+     */
+    public static function validateVoucherRequirement(array $params, array $existing = [])
+    {
+        $calc = self::recalculateOrderProfit($params);
+        $profit = isset($calc['profit']) ? $calc['profit'] : 0.0;
+
+        if (!self::isVoucherRequiredByProfit($profit)) {
+            return ['ok' => true, 'message' => ''];
+        }
+
+        $wechatImages = self::resolveFinalVoucherImages(
+            'wechat_receipt_image',
+            'clear_wechat_receipt_image',
+            $params,
+            $existing
+        );
+        $inquiryImages = self::resolveFinalVoucherImages(
+            'inquiry_assign_image',
+            'clear_inquiry_assign_image',
+            $params,
+            $existing
+        );
+
+        if (count($wechatImages) < 1 && count($inquiryImages) < 1) {
+            return ['ok' => false, 'message' => '利润达到 2000 及以上时，必须上传微信沟通及付款凭证和询盘来源凭证'];
+        }
+
+        if (count($wechatImages) < 1) {
+            return ['ok' => false, 'message' => '利润达到 2000 及以上时，必须上传微信沟通及付款凭证'];
+        }
+
+        if (count($inquiryImages) < 1) {
+            return ['ok' => false, 'message' => '利润达到 2000 及以上时，必须上传询盘来源凭证'];
+        }
+
+        return ['ok' => true, 'message' => ''];
+    }
+
+    /**
+     * 解析编辑后最终生效的凭证图片列表
+     *
+     * @param string $field 图片字段名
+     * @param string $clearField 清空标记字段名
+     * @param array $params 新提交参数
+     * @param array $existing 旧数据
+     * @return array
+     */
+    public static function resolveFinalVoucherImages($field, $clearField, array $params, array $existing = [])
+    {
+        $clearFlag = isset($params[$clearField]) ? (int)$params[$clearField] : 0;
+        if ($clearFlag === 1) {
+            return [];
+        }
+
+        $existingImages = self::normalizeVoucherImages(isset($existing[$field]) ? $existing[$field] : []);
+        $hasSubmittedField = array_key_exists($field, $params);
+
+        if (!$hasSubmittedField) {
+            return $existingImages;
+        }
+
+        $submittedImages = self::normalizeVoucherImages($params[$field]);
+        if (!empty($submittedImages)) {
+            return $submittedImages;
+        }
+
+        // 编辑场景下：未显式清空且本次未上传新图时，保留旧图
+        return $existingImages;
+    }
+
+    /**
      * 历史单图兼容 + 新多图方案：统一解析为图片 URL 数组
      * 兼容输入：
      * - 数组
