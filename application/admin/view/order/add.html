@@ -516,9 +516,6 @@
                     if (result['msg']['is_success'] == 1 || result['msg']['is_success'] === true) {
                         messageHtml += '<span style="color: red;">由于该客户已成交，询盘来源请选择返单，运营端口根据实际情况选择</span>';
                     }
-                    if (customerValidated && !customerPhoneTitlesComplete) {
-                        messageHtml += '<span style="color: #FF5722;">；当前客户存在未填写职位身份的电话，提交前需先完善客户资料</span>';
-                    }
                     $('#checklabel').html(messageHtml);
                     updateEditCustomerButtonState();
                 },
