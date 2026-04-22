@@ -956,7 +956,11 @@ class Order extends Common
             );
             $itemsData = $saveBundle['items'];
 
-            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate）
+            // ★ 防御性补丁：无论 $data 之前从哪里取过值，在落库前强制剥掉
+            // profit / margin_rate / money，杜绝前端 / 其他开发者后续改动带入污染值。
+            unset($data['profit'], $data['margin_rate'], $data['money']);
+
+            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate / money）
             $data['money']       = $saveBundle['money'];
             $data['profit']      = $saveBundle['profit'];
             $data['margin_rate'] = $saveBundle['margin_rate'];
@@ -1793,7 +1797,11 @@ class Order extends Common
             );
             $itemsData = $saveBundle['items'];
 
-            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate）
+            // ★ 防御性补丁：无论 $data 之前从哪里取过值，在落库前强制剥掉
+            // profit / margin_rate / money，杜绝前端 / 其他开发者后续改动带入污染值。
+            unset($data['profit'], $data['margin_rate'], $data['money']);
+
+            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate / money）
             $data['money']       = $saveBundle['money'];
             $data['profit']      = $saveBundle['profit'];
             $data['margin_rate'] = $saveBundle['margin_rate'];
@@ -2349,7 +2357,11 @@ class Order extends Common
             );
             $itemsData = $saveBundle['items'];
 
-            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate）
+            // ★ 防御性补丁：无论 $data 之前从哪里取过值，在落库前强制剥掉
+            // profit / margin_rate / money，杜绝前端 / 其他开发者后续改动带入污染值。
+            unset($data['profit'], $data['margin_rate'], $data['money']);
+
+            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate / money）
             $data['money']       = $saveBundle['money'];
             $data['profit']      = $saveBundle['profit'];
             $data['margin_rate'] = $saveBundle['margin_rate'];
@@ -4108,7 +4120,10 @@ class Order extends Common
             'pr_user_id'         => $aid,
             'at_user'            => $currentUsername,
             'at_user_id'         => $aid,
+            // ★ 空草稿金额字段统一置 0，杜绝任何脏默认值
             'money'              => 0,
+            'profit'             => 0,
+            'margin_rate'        => 0,
             'source_port'        => '',
             'cname'              => '',
             'customer_type_flag' => 0,
@@ -4163,7 +4178,9 @@ class Order extends Common
                             'order_no' => 'DR' . date('YmdHis') . rand(100, 999),
                             'pr_user' => $currentUsername, 'pr_user_id' => $aid,
                             'at_user' => $currentUsername, 'at_user_id' => $aid,
-                            'money' => 0, 'source_port' => '', 'cname' => '', 'customer_type_flag' => 0,
+                            // ★ 空草稿：money/profit/margin_rate 统一置 0
+                            'money' => 0, 'profit' => 0, 'margin_rate' => 0,
+                            'source_port' => '', 'cname' => '', 'customer_type_flag' => 0,
                             'team_name' => $teamName, 'bank_account' => '', 'bank_account_name' => '',
                         ];
                         $newId = Db::name('crm_client_order')->insertGetId($dataInsert);
@@ -4199,7 +4216,9 @@ class Order extends Common
                             'order_no' => 'DR' . date('YmdHis') . rand(100, 999),
                             'pr_user' => $currentUsername, 'pr_user_id' => $aid,
                             'at_user' => $currentUsername, 'at_user_id' => $aid,
-                            'money' => 0, 'source_port' => '', 'cname' => '', 'customer_type_flag' => 0,
+                            // ★ 空草稿：money/profit/margin_rate 统一置 0
+                            'money' => 0, 'profit' => 0, 'margin_rate' => 0,
+                            'source_port' => '', 'cname' => '', 'customer_type_flag' => 0,
                             'team_name' => $teamName, 'bank_account' => '', 'bank_account_name' => '',
                         ];
                         $newId = Db::name('crm_client_order')->insertGetId($dataInsert);
@@ -4374,6 +4393,10 @@ class Order extends Common
             $draftId
         );
         $itemsData = $saveBundle['items'];
+
+        // ★ 防御性补丁：草稿自动保存同样剥掉 profit / margin_rate / money，
+        // 确保只有 Service 的计算结果能写进主表，杜绝前端污染。
+        unset($data['profit'], $data['margin_rate'], $data['money']);
 
         $data['money']       = $saveBundle['money'];
         $data['profit']      = $saveBundle['profit'];
