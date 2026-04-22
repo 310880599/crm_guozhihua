@@ -2,8 +2,88 @@
 
 namespace app\admin\service;
 
+use think\Db;
+
 class OrderService
 {
+    /**
+     * 校验客户主/辅电话职位身份是否完整
+     *
+     * 规则：
+     * - 必须存在主/辅电话记录（contact_type in 1,3）
+     * - 只要有电话行，则该行 position_title 必须非空
+     *
+     * @param int $clientId crm_leads.id
+     * @return array
+     * [
+     *   'ok' => bool,
+     *   'missing_count' => int,
+     *   'message' => string
+     * ]
+     */
+    public static function checkClientPhonePositionTitleComplete($clientId)
+    {
+        $clientId = (int)$clientId;
+        if ($clientId <= 0) {
+            return [
+                'ok' => false,
+                'missing_count' => 0,
+                'message' => '客户ID不能为空',
+            ];
+        }
+
+        $contacts = Db::name('crm_contacts')
+            ->where('leads_id', $clientId)
+            ->where('is_delete', 0)
+            ->whereIn('contact_type', [1, 3])
+            ->field('contact_value, position_title')
+            ->select();
+
+        if (empty($contacts)) {
+            return [
+                'ok' => false,
+                'missing_count' => 0,
+                'message' => '客户暂无可校验的电话记录',
+            ];
+        }
+
+        $phoneCount = 0;
+        $missingCount = 0;
+        foreach ($contacts as $item) {
+            $phone = trim((string)($item['contact_value'] ?? ''));
+            if ($phone === '') {
+                continue;
+            }
+            $phoneCount++;
+            $title = trim((string)($item['position_title'] ?? ''));
+            if ($title === '') {
+                $missingCount++;
+            }
+        }
+
+        if ($phoneCount <= 0) {
+            return [
+                'ok' => false,
+                'missing_count' => 0,
+                'message' => '客户暂无可校验的电话记录',
+            ];
+        }
+
+        if ($missingCount > 0) {
+            return [
+                'ok' => false,
+                'missing_count' => $missingCount,
+                'message' => '客户电话职位身份未完善',
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'missing_count' => 0,
+            'message' => '校验通过',
+        ];
+    }
+
     /**
      * 将任意值转换为 float，空字符串/null 统一按 0 处理
      *

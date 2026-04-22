@@ -194,6 +194,94 @@
     <script type="text/javascript">
         // 全局变量：存储客户验证状态
         var customerValidated = false;
+        var customerPhoneTitlesComplete = false;
+        var currentClientId = 0;
+
+        function updateEditCustomerButtonState() {
+            var enabled = parseInt(currentClientId, 10) > 0;
+            $('#editClientBtn').toggle(enabled).prop('disabled', !enabled);
+        }
+
+        function checkClientPhoneTitles(clientId, syncMode, showToast) {
+            currentClientId = parseInt(clientId || 0, 10);
+            if (!currentClientId) {
+                customerPhoneTitlesComplete = false;
+                updateEditCustomerButtonState();
+                return false;
+            }
+            var completed = false;
+            $.ajax({
+                type: "GET",
+                dataType: "json",
+                async: !!syncMode ? false : true,
+                url: "{:url('Order/checkClientPhoneTitles')}" + "?client_id=" + encodeURIComponent(currentClientId),
+                success: function (res) {
+                    completed = !!(res && res.code == 1 && res.data && res.data.can_submit === true);
+                    customerPhoneTitlesComplete = completed;
+                    if (!completed && showToast !== false) {
+                        layer.msg('客户电话职位身份未完善', { icon: 2, time: 2000 });
+                    }
+                },
+                error: function () {
+                    completed = false;
+                    customerPhoneTitlesComplete = false;
+                }
+            });
+            updateEditCustomerButtonState();
+            return completed;
+        }
+
+        function hydrateCustomerStateByContact(contact, showToast) {
+            var contactTrimmed = (contact || '').trim();
+            if (!contactTrimmed) {
+                currentClientId = 0;
+                customerPhoneTitlesComplete = false;
+                updateEditCustomerButtonState();
+                return;
+            }
+            if (currentClientId) {
+                checkClientPhoneTitles(currentClientId, false, showToast);
+                return;
+            }
+            $.ajax({
+                type: "GET",
+                dataType: "json",
+                url: "{:url('Order/changeyewu')}" + "?contact=" + encodeURIComponent(contactTrimmed),
+                success: function (result) {
+                    if (result && result['msg'] && result['msg']['code'] != 0) {
+                        currentClientId = parseInt(result['msg']['leads_id'] || 0, 10);
+                        customerValidated = true;
+                        checkClientPhoneTitles(currentClientId, false, showToast);
+                    } else {
+                        currentClientId = 0;
+                        customerPhoneTitlesComplete = false;
+                        updateEditCustomerButtonState();
+                    }
+                },
+                error: function () {
+                    currentClientId = 0;
+                    customerPhoneTitlesComplete = false;
+                    updateEditCustomerButtonState();
+                }
+            });
+        }
+
+        function openEditCustomerLayer() {
+            if (!currentClientId) {
+                layer.msg('请先输入并匹配客户联系方式', { icon: 0, time: 2000 });
+                return;
+            }
+            layer.open({
+                type: 2,
+                title: '编辑客户',
+                area: ['900px', '600px'],
+                shadeClose: false,
+                content: '/admin/client/edit?id=' + currentClientId,
+                end: function () {
+                    checkClientPhoneTitles(currentClientId, false, true);
+                }
+            });
+        }
         
         // 编辑页初始化标记：用于防止回显时触发 changeyewu 清空
         window.isEditInit = false;
@@ -251,13 +339,18 @@
                 $('#team_name').val('');
                 $('#client_company').val('');
                 customerValidated = false;
+                currentClientId = 0;
+                customerPhoneTitlesComplete = false;
                 $('#checklabel').html('').css('color', '');
+                updateEditCustomerButtonState();
                 layui.form.render('select');
                 return;
             }
             
             $('#cname').val('');
             customerValidated = false; // 重置验证状态
+            currentClientId = 0;
+            customerPhoneTitlesComplete = false;
             
             // 清空之前填充的字段
             $('#pr_user').val('{$username}');
@@ -277,6 +370,8 @@
                     if (result['msg']['code'] == 0) {
                         $('#checklabel').css('color', 'red');
                         customerValidated = false; // 客户验证失败
+                        currentClientId = 0;
+                        customerPhoneTitlesComplete = false;
                         
                         // 验证失败时，清空所有已填充的字段
                         $('#cname').val('');
@@ -323,6 +418,8 @@
                     } else {
                         $('#checklabel').css('color', 'green');
                         customerValidated = true; // 客户验证成功
+                        currentClientId = parseInt(result['msg']['leads_id'] || 0, 10);
+                        checkClientPhoneTitles(currentClientId, false, true);
                         // Fill in returned client info
                         $('#cname').val(result['msg']['custname']);
                         // 注意：不要覆盖 pr_user，pr_user 始终保持为当前登录人
@@ -454,9 +551,16 @@
                     if (result['msg']['is_success'] == 1 || result['msg']['is_success'] === true) {
                         messageHtml += '<span style="color: red;">由于该客户已成交，询盘来源请选择返单，运营端口根据实际情况选择</span>';
                     }
+                    if (customerValidated && !customerPhoneTitlesComplete) {
+                        messageHtml += '<span style="color: #FF5722;">；当前客户存在未填写职位身份的电话，提交前需先完善客户资料</span>';
+                    }
                     $('#checklabel').html(messageHtml);
+                    updateEditCustomerButtonState();
                 },
                 error: function () {
+                    currentClientId = 0;
+                    customerPhoneTitlesComplete = false;
+                    updateEditCustomerButtonState();
                     alert("异常！");
                 }
             });
@@ -470,8 +574,11 @@
             <div class="layui-form-item">
                 <label class="layui-form-label">联系方式<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <input type="text" id="contact" name="contact" lay-verify="required"
-                        placeholder="请输入客户联系方式（只能输入您的客户或协同人客户的电话）" class="layui-input">
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="contact" name="contact" lay-verify="required"
+                            placeholder="请输入客户联系方式（只能输入您的客户或协同人客户的电话）" class="layui-input" style="flex:1;">
+                        <button type="button" id="editClientBtn" class="layui-btn layui-btn-primary" onclick="openEditCustomerLayer()" style="display:none;" disabled>编辑客户</button>
+                    </div>
                 </div>
             </div>
             <div class="layui-form-item">
@@ -1429,6 +1536,8 @@
             
             // 设置客户验证状态
             customerValidated = true;
+            currentClientId = 0;
+            customerPhoneTitlesComplete = false;
             
             // 使用 form.val 批量回填主表字段
             var formData = {
@@ -1607,6 +1716,7 @@
             setTimeout(function() {
                 updateTotals();
                 window.isEditInit = false;
+                hydrateCustomerStateByContact(orderInfo.contact || '', false);
             }, 0);
         }
         
@@ -2412,7 +2522,7 @@
             }
             
             // 如果客户未验证或验证失败，先触发验证
-            if (!customerValidated) {
+            if (!customerValidated || !currentClientId) {
                 // 先触发一次 changeyewu 验证
                 var contactValue = contact.trim();
                 $.ajax({
@@ -2423,20 +2533,35 @@
                     success: function (result) {
                         if (result['msg']['code'] == 0) {
                             customerValidated = false;
+                            currentClientId = 0;
+                            customerPhoneTitlesComplete = false;
                             layer.msg(result['msg']['msg'] || '该客户不属于您的客户或协同人客户，无法添加订单', { icon: 2, time: 3000 });
                         } else {
                             customerValidated = true;
+                            currentClientId = parseInt(result['msg']['leads_id'] || 0, 10);
                         }
+                        updateEditCustomerButtonState();
                     },
                     error: function () {
                         customerValidated = false;
+                        currentClientId = 0;
+                        customerPhoneTitlesComplete = false;
+                        updateEditCustomerButtonState();
                         layer.msg('验证客户信息失败，请重试', { icon: 2, time: 2000 });
                     }
                 });
             }
+
+            if (customerValidated && currentClientId) {
+                checkClientPhoneTitles(currentClientId, true, false);
+            }
             
             // 如果验证失败，阻止提交
             if (!customerValidated) {
+                return false;
+            }
+            if (!customerPhoneTitlesComplete) {
+                layer.msg('请先完善客户职位身份', { icon: 2, time: 3000 });
                 return false;
             }
 

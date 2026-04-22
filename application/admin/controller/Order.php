@@ -641,6 +641,14 @@ class Order extends Common
                         if (!$isMyCustomer && !$isCollaboratorCustomer) {
                             return fail('该客户不属于您的客户或协同人客户，无法添加订单');
                         }
+
+                        // 订单正式提交前：客户电话职位身份必须完整（后端兜底）
+                        if (!$isDraft) {
+                            $checkResult = OrderService::checkClientPhonePositionTitleComplete($leadsId);
+                            if (!$checkResult['ok']) {
+                                return json(['code' => 0, 'msg' => '客户电话职位身份未完善']);
+                            }
+                        }
                     }
                 }
             }
@@ -1363,6 +1371,9 @@ class Order extends Common
                 }
                 
                 $res['code'] = 1;
+                $res['leads_id'] = (int)$custinfo['id'];
+                $titleCheck = OrderService::checkClientPhonePositionTitleComplete($custinfo['id']);
+                $res['position_title_completed'] = !empty($titleCheck['ok']) ? 1 : 0;
                 $res['custname'] = $custinfo['kh_name'];
                 $res['kh_username'] = $custinfo['kh_username'];
                 $res['source'] = $sourceName;  // 返回来源名称（通过端口反查的渠道）
@@ -1431,6 +1442,39 @@ class Order extends Common
 
 
         $this->success($res);
+    }
+
+    /**
+     * 接口：校验客户电话职位身份完整性
+     * 入参：client_id（crm_leads.id）
+     * 返回：
+     * {
+     *   code: 1/0,
+     *   msg: '',
+     *   data: { can_submit: true/false }
+     * }
+     */
+    public function checkClientPhoneTitles()
+    {
+        $clientId = (int)Request::param('client_id/d', 0);
+        if ($clientId <= 0) {
+            return json([
+                'code' => 0,
+                'msg' => 'client_id不能为空',
+                'data' => [
+                    'can_submit' => false,
+                ],
+            ]);
+        }
+
+        $checkResult = OrderService::checkClientPhonePositionTitleComplete($clientId);
+        return json([
+            'code' => !empty($checkResult['ok']) ? 1 : 0,
+            'msg' => (string)($checkResult['message'] ?? ''),
+            'data' => [
+                'can_submit' => !empty($checkResult['ok']),
+            ],
+        ]);
     }
 
     // 根据 pr_user 获取团队名称
@@ -1509,6 +1553,12 @@ class Order extends Common
 
                         if (!$isPrivilegedEditor && !$isMyCustomer && !$isCollaboratorCustomer) {
                             return fail('该客户不属于您的客户或协同人客户，无法添加订单');
+                        }
+
+                        // 编辑订单保存前：客户电话职位身份必须完整（后端兜底）
+                        $checkResult = OrderService::checkClientPhonePositionTitleComplete($leadsId);
+                        if (!$checkResult['ok']) {
+                            return json(['code' => 0, 'msg' => '客户电话职位身份未完善']);
                         }
                     }
                 }
