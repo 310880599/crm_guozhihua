@@ -71,11 +71,25 @@ class OrderService
 
     /**
      * 统一利润重算（不信任前端传入的 profit）
+     *
+     * 【本项目唯一口径（与前端列头"销售价合计 / 进价合计"完全一致）】
+     *  - unit_price    : 销售单价
+     *  - qty           : 数量
+     *  - total_price   : 销售价合计 = qty × unit_price
+     *  - purchase_price: 进价合计（整行成本，非单价！！！）
+     *  - sub_profit    : 行利润   = total_price - purchase_price
+     *  - sales_total   : Σ total_price
+     *  - purchase_total: Σ purchase_price            （★ 不再 × qty，历史 bug 根因）
+     *  - profit        : sales_total - purchase_total - 运费 - 税费 - 调试费 - 佣金
+     *  - profit_rate   : profit / sales_total × 100（sales_total<=0 时为 0）
+     *
      * 返回：
-     * - sales_total 销售总额
-     * - cost_total 成本总额
-     * - profit 利润
-     * - profit_rate 利润率（百分比）
+     * - sales_total    销售总额
+     * - purchase_total 进价总额
+     * - extra_cost     附加费用（运费+税费+调试费+佣金）
+     * - cost_total     成本总额（purchase_total + extra_cost）
+     * - profit         利润
+     * - profit_rate    利润率（百分比）
      *
      * @param array $params
      * @return array
@@ -96,10 +110,11 @@ class OrderService
         for ($i = 0; $i < $lineCount; $i++) {
             $qty = isset($qtyList[$i]) ? self::toFloatAmount($qtyList[$i]) : 0.0;
             $unitPrice = isset($unitPriceList[$i]) ? self::toFloatAmount($unitPriceList[$i]) : 0.0;
-            $purchasePrice = isset($purchasePriceList[$i]) ? self::toFloatAmount($purchasePriceList[$i]) : 0.0;
+            // purchase_price 语义：整行"进价合计"，绝不再 × qty
+            $purchaseLineTotal = isset($purchasePriceList[$i]) ? self::toFloatAmount($purchasePriceList[$i]) : 0.0;
 
             $salesTotal += ($qty * $unitPrice);
-            $purchaseTotal += ($qty * $purchasePrice);
+            $purchaseTotal += $purchaseLineTotal;
         }
 
         $extraCost = $params['shipping_cost']
@@ -112,10 +127,156 @@ class OrderService
         $profitRate = $salesTotal > 0 ? (($profit / $salesTotal) * 100) : 0.0;
 
         return [
-            'sales_total' => round($salesTotal, 2),
-            'cost_total' => round($costTotal, 2),
-            'profit' => round($profit, 2),
-            'profit_rate' => round($profitRate, 2),
+            'sales_total'    => round($salesTotal, 2),
+            'purchase_total' => round($purchaseTotal, 2),
+            'extra_cost'     => round($extraCost, 2),
+            'cost_total'     => round($costTotal, 2),
+            'profit'         => round($profit, 2),
+            'profit_rate'    => round($profitRate, 2),
+        ];
+    }
+
+    /**
+     * 统一构造订单保存所需的"明细行 + 主表金额"数据包
+     *
+     * 所有订单保存入口（新增/编辑/详情保存/草稿自动保存）都应走此方法，
+     * 禁止在 Controller 中各自重复一份利润公式。
+     *
+     * 口径完全等同于 recalculateOrderProfit（purchase_price = 进价合计，不再 × qty）。
+     *
+     * @param array $params   表单原始输入，支持的 key：
+     *   - product_ids (array)  产品ID数组（对应 product_name[]）
+     *   - manager_ids (array)  产品经理ID数组
+     *   - spec_models (array)  规格型号数组
+     *   - units       (array)  单位数组
+     *   - qty         (array)  数量数组
+     *   - unit_price  (array)  销售单价数组
+     *   - purchase_price (array) 进价合计数组（★整行，非单价）
+     *   - item_remarks (array) 行备注数组
+     *   - shipping_cost / tax_amount / debugging_cost / sales_commission（标量）
+     * @param array $prodMap    [pid => product_name] （产品名称快照）
+     * @param array $supIdMap   [pid => category_id]
+     * @param array $supNameMap [pid => category_name]
+     * @param int   $orderId    写入 items.order_id；新增时可先传 0，主表 insert 后再回填
+     * @return array {
+     *   items                : array  待 insertAll 的明细行
+     *   money                : float  主表 money = sales_total
+     *   profit               : float  主表 profit
+     *   margin_rate          : float  主表 margin_rate
+     *   sales_total / purchase_total / extra_cost / cost_total,
+     *   product_name_summary : string 主表 product_name 摘要（"首个产品 等"）
+     * }
+     */
+    public static function buildOrderSaveData(
+        array $params,
+        array $prodMap = [],
+        array $supIdMap = [],
+        array $supNameMap = [],
+        $orderId = 0
+    ) {
+        $getArray = function ($val) {
+            if (is_array($val)) {
+                return $val;
+            }
+            if ($val === null || $val === '') {
+                return [];
+            }
+            return [$val];
+        };
+
+        $productIds = $getArray(isset($params['product_ids']) ? $params['product_ids'] : []);
+        $managerIds = $getArray(isset($params['manager_ids']) ? $params['manager_ids'] : []);
+        $specModels = $getArray(isset($params['spec_models']) ? $params['spec_models'] : []);
+        $units      = $getArray(isset($params['units']) ? $params['units'] : []);
+        $itemRemarks = $getArray(isset($params['item_remarks']) ? $params['item_remarks'] : []);
+
+        $qtys           = self::normalizeAmountArray(isset($params['qty']) ? $params['qty'] : []);
+        $unitPrices     = self::normalizeAmountArray(isset($params['unit_price']) ? $params['unit_price'] : []);
+        $purchasePrices = self::normalizeAmountArray(isset($params['purchase_price']) ? $params['purchase_price'] : []);
+
+        $shippingCost    = self::toFloatAmount(isset($params['shipping_cost']) ? $params['shipping_cost'] : 0);
+        $taxAmount       = self::toFloatAmount(isset($params['tax_amount']) ? $params['tax_amount'] : 0);
+        $debuggingCost   = self::toFloatAmount(isset($params['debugging_cost']) ? $params['debugging_cost'] : 0);
+        $salesCommission = self::toFloatAmount(isset($params['sales_commission']) ? $params['sales_commission'] : 0);
+
+        $salesTotal    = 0.0;
+        $purchaseTotal = 0.0;
+        $items         = [];
+        $firstName     = '';
+        $validCount    = 0;
+        $orderId       = (int)$orderId;
+
+        foreach ($productIds as $index => $pid) {
+            $pid = (int)$pid;
+            if ($pid <= 0) {
+                // 跳过空行，保持与原 Controller 逻辑一致
+                continue;
+            }
+
+            $pnameText    = isset($prodMap[$pid]) ? $prodMap[$pid] : '';
+            $supplierId   = isset($supIdMap[$pid]) ? $supIdMap[$pid] : 0;
+            $supplierName = isset($supNameMap[$pid]) ? $supNameMap[$pid] : '';
+
+            $qty       = isset($qtys[$index]) ? self::toFloatAmount($qtys[$index]) : 0.0;
+            $unitPrice = isset($unitPrices[$index]) ? self::toFloatAmount($unitPrices[$index]) : 0.0;
+            // ★ 进价合计：整行成本，不再 × qty
+            $purchaseLineTotal = isset($purchasePrices[$index]) ? self::toFloatAmount($purchasePrices[$index]) : 0.0;
+
+            $lineTotal  = round($qty * $unitPrice, 2);
+            $lineProfit = round($lineTotal - $purchaseLineTotal, 2);
+
+            $salesTotal    += $lineTotal;
+            $purchaseTotal += $purchaseLineTotal;
+
+            $managerId = 0;
+            if (isset($managerIds[$index]) && $managerIds[$index] !== '' && $managerIds[$index] !== null) {
+                $managerId = (int)$managerIds[$index];
+            }
+
+            $items[] = [
+                'order_id'       => $orderId,
+                'line_no'        => $index + 1,
+                'product_id'     => (string)$pid,
+                'product_name'   => $pnameText,
+                'supplier_id'    => (string)$supplierId,
+                'supplier_name'  => $supplierName,
+                'spec_model'     => isset($specModels[$index]) ? $specModels[$index] : '',
+                'unit'           => isset($units[$index]) ? $units[$index] : '',
+                'qty'            => (int)$qty,
+                'unit_price'     => number_format($unitPrice, 2, '.', ''),
+                'total_price'    => number_format($lineTotal, 2, '.', ''),
+                'purchase_price' => number_format($purchaseLineTotal, 2, '.', ''),
+                'sub_profit'     => number_format($lineProfit, 2, '.', ''),
+                'remark'         => isset($itemRemarks[$index]) ? $itemRemarks[$index] : '',
+                'manager_id'     => $managerId,
+            ];
+
+            if ($firstName === '' && $pnameText !== '') {
+                $firstName = $pnameText;
+            }
+            $validCount++;
+        }
+
+        $extraCost  = $shippingCost + $taxAmount + $debuggingCost + $salesCommission;
+        $costTotal  = $purchaseTotal + $extraCost;
+        $profit     = $salesTotal - $costTotal;
+        $profitRate = $salesTotal > 0 ? ($profit / $salesTotal * 100) : 0.0;
+
+        $productNameSummary = '';
+        if ($firstName !== '') {
+            $productNameSummary = $firstName . ($validCount > 1 ? ' 等' : '');
+        }
+
+        return [
+            'items'                => $items,
+            'money'                => round($salesTotal, 2),
+            'profit'               => round($profit, 2),
+            'margin_rate'          => round($profitRate, 2),
+            'sales_total'          => round($salesTotal, 2),
+            'purchase_total'       => round($purchaseTotal, 2),
+            'extra_cost'           => round($extraCost, 2),
+            'cost_total'           => round($costTotal, 2),
+            'product_name_summary' => $productNameSummary,
         ];
     }
 

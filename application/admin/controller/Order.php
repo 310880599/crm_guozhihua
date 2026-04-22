@@ -792,7 +792,9 @@ class Order extends Common
             $data['amount_received']  = Request::param('amount_received'); // 已收款金额
             //$data['remark']           = Request::param('remark');         // 备注
             
-            // ====== 后端统一重算利润（禁止使用前端传入 profit）======
+            // ====== 后端统一重算利润（禁止使用前端传入 profit / margin_rate）======
+            // 口径：purchase_price = 【进价合计】（整行，非单价），详见 OrderService::recalculateOrderProfit 注释
+            // 这里只准备 params，供下方 buildOrderSaveData 与凭证校验复用
             $profitCalcParams = [
                 'qty' => Request::param('qty/a'),
                 'unit_price' => Request::param('unit_price/a'),
@@ -802,7 +804,6 @@ class Order extends Common
                 'debugging_cost' => $data['debugging_cost'],
                 'sales_commission' => $data['sales_commission'],
             ];
-            $profitCalc = OrderService::recalculateOrderProfit($profitCalcParams);
 
             // ✅草稿：可不传凭证；正式提交必须通过统一凭证校验
             if ($isDraft) {
@@ -932,67 +933,37 @@ class Order extends Common
                 }
             }
 
-            // 计算并组装明细数据（包含供应商快照信息）
-            $sumTotal = 0;
-            $sumProfit = 0;
-            $itemsData = [];
-            if (!empty($productIds) && is_array($productIds)) {
-                foreach ($productIds as $index => $pid) {
-                    $pid = (int)$pid;
-                    if ($pid <= 0) continue;  // 跳过空行
-                    // 产品名称文本（从映射获取，不使用前端传来的文本）
-                    $pnameText = $prodMap[$pid] ?? '';
-                    // 供应商ID和名称（从映射获取）
-                    $supplierId = $supIdMap[$pid] ?? 0;
-                    $supplierName = $supNameMap[$pid] ?? '';
-                    // 获取当前行的数量、价格、成本
-                    $qty    = isset($qtys[$index]) ? floatval($qtys[$index]) : 0;
-                    $price  = isset($unitPrices[$index]) ? floatval($unitPrices[$index]) : 0;
-                    $purchase = isset($purchasePrices[$index]) ? floatval($purchasePrices[$index]) : 0;
-                    // 计算行合计和利润
-                    $lineTotal  = round($qty * $price, 2);
-                    $lineProfit = round($lineTotal - $purchase, 2);
-                    $sumTotal  += $lineTotal;
-                    $sumProfit += $lineProfit;
-                    // 获取当前行的产品经理ID（如未选择则默认为0）
-                    $managerId = 0;
-                    if (!empty($managerIds[$index])) {
-                        $managerId = intval($managerIds[$index]);
-                    }
-                    // 组装该行明细数组，包括 supplier_id 和 supplier_name 快照字段
-                    $itemsData[] = [
-                        'order_id'       => 0,                   // 稍后插入主表后会回填
-                        'line_no'        => $index + 1,          // 行号
-                        'product_id'     => (string)$pid,        // 产品ID
-                        'product_name'   => $pnameText,          // 产品名称快照（从产品表查询，不使用前端文本）
-                        'supplier_id'    => (string)$supplierId, // 供应商ID快照（分类ID）
-                        'supplier_name'  => $supplierName,       // 供应商名称快照（分类名称）
-                        'spec_model'     => $specModels[$index] ?? '',
-                        'unit'           => $units[$index] ?? '',
-                        'qty'            => (int)$qty,
-                        'unit_price'     => number_format($price, 2, '.', ''),    // 保留两位小数的字符串
-                        'total_price'    => number_format($lineTotal, 2, '.', ''),
-                        'purchase_price' => number_format($purchase, 2, '.', ''),
-                        'sub_profit'     => number_format($lineProfit, 2, '.', ''),
-                        'remark'         => $itemRemarks[$index] ?? '',
-                        'manager_id'     => $managerId           // ★ 新增：产品经理（管理员）ID
-                    ];
-                }
-            }
+            // 统一由 Service 构造明细行 + 主表金额（唯一口径，杜绝 Controller 自己再算一遍）
+            $saveBundle = OrderService::buildOrderSaveData(
+                [
+                    'product_ids'      => $productIds,
+                    'manager_ids'      => $managerIds,
+                    'spec_models'      => $specModels,
+                    'units'            => $units,
+                    'qty'              => $qtys,
+                    'unit_price'       => $unitPrices,
+                    'purchase_price'   => $purchasePrices,
+                    'item_remarks'     => $itemRemarks,
+                    'shipping_cost'    => $data['shipping_cost'],
+                    'tax_amount'       => $data['tax_amount'],
+                    'debugging_cost'   => $data['debugging_cost'],
+                    'sales_commission' => $data['sales_commission'],
+                ],
+                $prodMap,
+                $supIdMap,
+                $supNameMap,
+                0 // 主表 insert 后再回填 order_id
+            );
+            $itemsData = $saveBundle['items'];
 
-            // 使用 Service 统一口径写回总金额/利润/利润率
-            $data['money'] = $profitCalc['sales_total'];
-            $data['profit'] = $profitCalc['profit'];
-            $data['margin_rate'] = $profitCalc['profit_rate'];
-
+            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate）
+            $data['money']       = $saveBundle['money'];
+            $data['profit']      = $saveBundle['profit'];
+            $data['margin_rate'] = $saveBundle['margin_rate'];
 
             // 主表 product_name（存第一个产品名称，非ID）
-            if (!empty($productIds)) {
-                $firstPid   = (int)($productIds[0] ?? 0);
-                $firstName  = $prodMap[$firstPid] ?? '';
-                if ($firstName !== '') {
-                    $data['product_name'] = $firstName . (count($productIds) > 1 ? ' 等' : '');
-                }
+            if ($saveBundle['product_name_summary'] !== '') {
+                $data['product_name'] = $saveBundle['product_name_summary'];
             }
 
             // 开启事务，插入订单主表和明细表
@@ -1659,6 +1630,7 @@ class Order extends Common
                 $originalOrder = [];
             }
 
+            // 口径：purchase_price = 【进价合计】（整行，非单价），统一走 Service
             $profitCalcParams = [
                 'qty' => Request::param('qty/a'),
                 'unit_price' => Request::param('unit_price/a'),
@@ -1668,7 +1640,6 @@ class Order extends Common
                 'debugging_cost' => $data['debugging_cost'],
                 'sales_commission' => $data['sales_commission'],
             ];
-            $profitCalc = OrderService::recalculateOrderProfit($profitCalcParams);
 
             $MAX_WECHAT_RECEIPT_IMAGES = 10;
             $MAX_INQUIRY_ASSIGN_IMAGES = 10;
@@ -1799,66 +1770,37 @@ class Order extends Common
                 }
             }
 
-            // 计算订单总金额和利润，并构建明细数据数组（包含供应商快照信息）
-            $sumTotal = 0;
-            $sumProfit = 0;
-            $itemsData = [];
-            if (!empty($productIds) && is_array($productIds)) {
-                foreach ($productIds as $index => $pid) {
-                    $pid = (int)$pid;
-                    if ($pid <= 0) continue;  // 跳过无效行（如空行）
-                    // 产品名称文本（从映射获取，不使用前端传来的文本）
-                    $pnameText = $prodMap[$pid] ?? '';
-                    // 供应商ID和名称（从映射获取）
-                    $supplierId = $supIdMap[$pid] ?? 0;
-                    $supplierName = $supNameMap[$pid] ?? '';
-                    // 当前行的数量、单价、成本
-                    $qty      = isset($qtys[$index]) ? floatval($qtys[$index]) : 0;
-                    $price    = isset($unitPrices[$index]) ? floatval($unitPrices[$index]) : 0;
-                    $purchase = isset($purchasePrices[$index]) ? floatval($purchasePrices[$index]) : 0;
-                    // 计算当前行销售合计和子项利润
-                    $lineTotal  = round($qty * $price, 2);
-                    $lineProfit = round($lineTotal - $purchase, 2);
-                    $sumTotal  += $lineTotal;
-                    $sumProfit += $lineProfit;
-                    // 当前行对应的产品经理ID（默认为0表示未选择）
-                    $managerId = 0;
-                    if (!empty($managerIds[$index])) {
-                        $managerId = intval($managerIds[$index]);
-                    }
-                    // 汇总构建当前明细行数据，包括 supplier_id 和 supplier_name 快照字段
-                    $itemsData[] = [
-                        'order_id'       => $id,                  // 关联订单ID
-                        'line_no'        => $index + 1,           // 行号
-                        'product_id'     => (string)$pid,         // 产品ID（字符串存储）
-                        'product_name'   => $pnameText,           // 产品名称快照（从产品表查询，不使用前端文本）
-                        'supplier_id'    => (string)$supplierId,  // 供应商ID快照（分类ID）
-                        'supplier_name'  => $supplierName,        // 供应商名称快照（分类名称）
-                        'spec_model'     => $specModels[$index] ?? '',
-                        'unit'           => $units[$index] ?? '',
-                        'qty'            => (int)$qty,
-                        'unit_price'     => number_format($price, 2, '.', ''),
-                        'total_price'    => number_format($lineTotal, 2, '.', ''),
-                        'purchase_price' => number_format($purchase, 2, '.', ''),
-                        'sub_profit'     => number_format($lineProfit, 2, '.', ''),
-                        'remark'         => $itemRemarks[$index] ?? '',
-                        'manager_id'     => $managerId
-                    ];
-                }
-            }
+            // 统一由 Service 构造明细行 + 主表金额（唯一口径，禁止 Controller 自己再算一遍）
+            $saveBundle = OrderService::buildOrderSaveData(
+                [
+                    'product_ids'      => $productIds,
+                    'manager_ids'      => $managerIds,
+                    'spec_models'      => $specModels,
+                    'units'            => $units,
+                    'qty'              => $qtys,
+                    'unit_price'       => $unitPrices,
+                    'purchase_price'   => $purchasePrices,
+                    'item_remarks'     => $itemRemarks,
+                    'shipping_cost'    => $data['shipping_cost'],
+                    'tax_amount'       => $data['tax_amount'],
+                    'debugging_cost'   => $data['debugging_cost'],
+                    'sales_commission' => $data['sales_commission'],
+                ],
+                $prodMap,
+                $supIdMap,
+                $supNameMap,
+                $id
+            );
+            $itemsData = $saveBundle['items'];
 
-            // 使用 Service 统一口径写回总金额/利润/利润率
-            $data['money'] = $profitCalc['sales_total'];
-            $data['profit'] = $profitCalc['profit'];
-            $data['margin_rate'] = $profitCalc['profit_rate'];
+            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate）
+            $data['money']       = $saveBundle['money'];
+            $data['profit']      = $saveBundle['profit'];
+            $data['margin_rate'] = $saveBundle['margin_rate'];
 
             // 更新主表产品名称摘要（存入第一个产品名称，多个则加"等"字样）
-            if (!empty($productIds)) {
-                $firstPid   = (int)($productIds[0] ?? 0);
-                $firstName  = $prodMap[$firstPid] ?? '';
-                if ($firstName !== '') {
-                    $data['product_name'] = $firstName . (count($productIds) > 1 ? ' 等' : '');
-                }
+            if ($saveBundle['product_name_summary'] !== '') {
+                $data['product_name'] = $saveBundle['product_name_summary'];
             }
 
             // ====== 写入数据库（使用事务处理） ======
@@ -2343,7 +2285,7 @@ class Order extends Common
             $subProfits     = Request::param('sub_profit/a');
             $itemRemarks    = Request::param('item_remark/a');
 
-            // 查询涉及的产品名称（用于获取产品名称文本及分类名）
+            // 查询涉及的产品名称/供应商快照信息
             $idArr = [];
             if (!empty($productIds) && is_array($productIds)) {
                 foreach ($productIds as $pid) {
@@ -2352,24 +2294,25 @@ class Order extends Common
                 }
                 $idArr = array_values(array_unique($idArr));
             }
-            $idNameMap = [];
+            $prodMap = [];      // pid => product_name
+            $supIdMap = [];     // pid => category_id
+            $supNameMap = [];   // pid => category_name
             if (!empty($idArr)) {
-                // 从产品表获取名称和分类，用于展示和计算
-                // 注意：这里不过滤 status，因为历史订单可能引用已删除的产品，需要保留产品名称
+                // 从产品表获取名称和分类，用于展示和计算；已删除产品不过滤 status
                 $rows = Db::name('crm_products')->alias('p')
                     ->leftJoin('crm_product_category c', 'p.category_id = c.id')
                     ->where('p.id', 'in', $idArr)
-                    ->field('p.id, p.product_name, c.category_name')
+                    ->field('p.id, p.product_name, p.category_id, c.category_name')
                     ->select();
                 foreach ($rows as $r) {
-                    // 拼接名称和分类（如需）：$r['product_name'].' ('.$r['category_name'].')'
-                    $idNameMap[$r['id']] = $r['product_name'];
+                    $prodMap[$r['id']]    = $r['product_name'];
+                    $supIdMap[$r['id']]   = $r['category_id'] ?? 0;
+                    $supNameMap[$r['id']] = $r['category_name'] ?? '';
                 }
-                
+
                 // 如果某些产品ID查询不到（可能已被删除），尝试从订单明细表中获取产品名称
                 foreach ($idArr as $pid) {
-                    if (!isset($idNameMap[$pid])) {
-                        // 尝试从订单明细表中获取该产品ID对应的产品名称（如果有历史记录）
+                    if (!isset($prodMap[$pid])) {
                         $item = Db::name('crm_order_item')
                             ->where('product_id', $pid)
                             ->where('product_name', '<>', '')
@@ -2377,72 +2320,43 @@ class Order extends Common
                             ->field('product_name')
                             ->find();
                         if ($item && !empty($item['product_name'])) {
-                            $idNameMap[$pid] = $item['product_name'];
+                            $prodMap[$pid] = $item['product_name'];
                         }
                     }
                 }
             }
 
-            // 计算订单总金额和利润，并构建明细数据数组
-            $sumTotal = 0;
-            $sumProfit = 0;
-            $itemsData = [];
-            if (!empty($productIds) && is_array($productIds)) {
-                foreach ($productIds as $index => $pid) {
-                    $pid = (int)$pid;
-                    if ($pid <= 0) continue;  // 跳过无效行（如空行）
-                    // 产品名称文本（用于主表摘要显示）
-                    $pnameText = $idNameMap[$pid] ?? '';
-                    // 当前行的数量、单价、成本
-                    $qty      = isset($qtys[$index]) ? floatval($qtys[$index]) : 0;
-                    $price    = isset($unitPrices[$index]) ? floatval($unitPrices[$index]) : 0;
-                    $purchase = isset($purchasePrices[$index]) ? floatval($purchasePrices[$index]) : 0;
-                    // 计算当前行销售合计和子项利润
-                    $lineTotal  = round($qty * $price, 2);
-                    $lineProfit = round($lineTotal - $purchase, 2);
-                    $sumTotal  += $lineTotal;
-                    $sumProfit += $lineProfit;
-                    // 当前行对应的产品经理ID（默认为0表示未选择）
-                    $managerId = 0;
-                    if (!empty($managerIds[$index])) {
-                        $managerId = intval($managerIds[$index]);
-                    }
-                    // 汇总构建当前明细行数据
-                    $itemsData[] = [
-                        'order_id'       => $id,                  // 关联订单ID
-                        'line_no'        => $index + 1,           // 行号
-                        'product_id'     => (string)$pid,         // 产品ID（字符串存储）
-                        'product_name'   => $pnameText,           // 产品名称文本
-                        'spec_model'     => $specModels[$index] ?? '',
-                        'unit'           => $units[$index] ?? '',
-                        'qty'            => (int)$qty,
-                        'unit_price'     => number_format($price, 2, '.', ''),
-                        'total_price'    => number_format($lineTotal, 2, '.', ''),
-                        'purchase_price' => number_format($purchase, 2, '.', ''),
-                        'sub_profit'     => number_format($lineProfit, 2, '.', ''),
-                        'remark'         => $itemRemarks[$index] ?? '',
-                        'manager_id'     => $managerId
-                    ];
-                }
-            }
+            // 统一由 Service 构造明细行 + 主表金额（唯一口径，禁止 Controller 自己再算一遍）
+            $saveBundle = OrderService::buildOrderSaveData(
+                [
+                    'product_ids'      => $productIds,
+                    'manager_ids'      => $managerIds,
+                    'spec_models'      => $specModels,
+                    'units'            => $units,
+                    'qty'              => $qtys,
+                    'unit_price'       => $unitPrices,
+                    'purchase_price'   => $purchasePrices,
+                    'item_remarks'     => $itemRemarks,
+                    'shipping_cost'    => $data['shipping_cost'] ?? 0,
+                    'tax_amount'       => $data['tax_amount'] ?? 0,
+                    'debugging_cost'   => $data['debugging_cost'] ?? 0,
+                    'sales_commission' => $data['sales_commission'] ?? 0,
+                ],
+                $prodMap,
+                $supIdMap,
+                $supNameMap,
+                $id
+            );
+            $itemsData = $saveBundle['items'];
 
-            // 汇总订单金额、利润、利润率
-            $data['money']       = round($sumTotal, 2);
-            $shippingCost        = floatval($data['shipping_cost'] ?? 0);
-            $taxAmount           = floatval($data['tax_amount'] ?? 0);
-            $debuggingCost       = floatval($data['debugging_cost'] ?? 0);
-            $salesCommission     = floatval($data['sales_commission'] ?? 0);
-            $finalProfit         = $sumProfit - $shippingCost - $taxAmount - $debuggingCost - $salesCommission;
-            $data['profit']      = round($finalProfit, 2);
-            $data['margin_rate'] = ($sumTotal > 0) ? round($finalProfit / $sumTotal * 100, 2) : 0;
+            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate）
+            $data['money']       = $saveBundle['money'];
+            $data['profit']      = $saveBundle['profit'];
+            $data['margin_rate'] = $saveBundle['margin_rate'];
 
-            // 更新主表产品名称摘要（存入第一个产品名称，多个则加“等”字样）
-            if (!empty($productIds)) {
-                $firstPid   = (int)($productIds[0] ?? 0);
-                $firstName  = $idNameMap[$firstPid] ?? '';
-                if ($firstName !== '') {
-                    $data['product_name'] = $firstName . (count($productIds) > 1 ? ' 等' : '');
-                }
+            // 更新主表产品名称摘要
+            if ($saveBundle['product_name_summary'] !== '') {
+                $data['product_name'] = $saveBundle['product_name_summary'];
             }
 
             // ====== 写入数据库（使用事务处理） ======
@@ -4438,45 +4352,35 @@ class Order extends Common
                 $supNameMap[$r['id']] = $r['category_name'] ?? '';
             }
         }
-        $sumTotal = 0; $sumProfit = 0; $itemsData = [];
-        if (!empty($productIds) && is_array($productIds)) {
-            foreach ($productIds as $index => $pid) {
-                $pid = (int)$pid;
-                if ($pid <= 0) continue;
-                $pnameText = $prodMap[$pid] ?? '';
-                $supplierId = $supIdMap[$pid] ?? 0;
-                $supplierName = $supNameMap[$pid] ?? '';
-                $qty = isset($qtys[$index]) ? floatval($qtys[$index]) : 0;
-                $price = isset($unitPrices[$index]) ? floatval($unitPrices[$index]) : 0;
-                $purchase = isset($purchasePrices[$index]) ? floatval($purchasePrices[$index]) : 0;
-                $lineTotal = round($qty * $price, 2);
-                $lineProfit = round($lineTotal - $purchase, 2);
-                $sumTotal += $lineTotal;
-                $sumProfit += $lineProfit;
-                $managerId = !empty($managerIds[$index]) ? intval($managerIds[$index]) : 0;
-                $itemsData[] = [
-                    'order_id' => $draftId, 'line_no' => $index + 1, 'product_id' => (string)$pid,
-                    'product_name' => $pnameText, 'supplier_id' => (string)$supplierId, 'supplier_name' => $supplierName,
-                    'spec_model' => $specModels[$index] ?? '', 'unit' => $units[$index] ?? '', 'qty' => (int)$qty,
-                    'unit_price' => number_format($price, 2, '.', ''), 'total_price' => number_format($lineTotal, 2, '.', ''),
-                    'purchase_price' => number_format($purchase, 2, '.', ''), 'sub_profit' => number_format($lineProfit, 2, '.', ''),
-                    'remark' => $itemRemarks[$index] ?? '', 'manager_id' => $managerId
-                ];
-            }
-        }
-        $data['money'] = round($sumTotal, 2);
-        $shippingCost = floatval(Request::param('shipping_cost', 0));
-        $taxAmount = floatval(Request::param('tax_amount', 0));
-        $debuggingCost = floatval(Request::param('debugging_cost', 0));
-        $salesCommission = floatval(Request::param('sales_commission', 0));
-        $finalProfit = $sumProfit - $shippingCost - $taxAmount - $debuggingCost - $salesCommission;
-        $data['profit'] = round($finalProfit, 2);
-        $data['margin_rate'] = ($sumTotal > 0) ? round($finalProfit / $sumTotal * 100, 2) : 0;
-        if (!empty($productIds)) {
-            $firstPid = (int)($productIds[0] ?? 0);
-            $firstName = $prodMap[$firstPid] ?? '';
-            $data['product_name'] = $firstName !== '' ? $firstName . (count($productIds) > 1 ? ' 等' : '') : '';
-        }
+        // 统一由 Service 构造明细行 + 主表金额（与 add/edit/details 同一口径）
+        $saveBundle = OrderService::buildOrderSaveData(
+            [
+                'product_ids'      => $productIds,
+                'manager_ids'      => $managerIds,
+                'spec_models'      => $specModels,
+                'units'            => $units,
+                'qty'              => $qtys,
+                'unit_price'       => $unitPrices,
+                'purchase_price'   => $purchasePrices,
+                'item_remarks'     => $itemRemarks,
+                'shipping_cost'    => Request::param('shipping_cost', 0),
+                'tax_amount'       => Request::param('tax_amount', 0),
+                'debugging_cost'   => Request::param('debugging_cost', 0),
+                'sales_commission' => Request::param('sales_commission', 0),
+            ],
+            $prodMap,
+            $supIdMap,
+            $supNameMap,
+            $draftId
+        );
+        $itemsData = $saveBundle['items'];
+
+        $data['money']       = $saveBundle['money'];
+        $data['profit']      = $saveBundle['profit'];
+        $data['margin_rate'] = $saveBundle['margin_rate'];
+
+        // 主表 product_name 摘要（草稿若无产品行，也写空串保持与旧行为一致）
+        $data['product_name'] = $saveBundle['product_name_summary'];
         $data['ut_time'] = $now;
         $data['oper_user'] = Session::get('username');
         $data['status'] = '草稿';
