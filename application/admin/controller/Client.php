@@ -1955,24 +1955,9 @@ class Client extends Common
     // 支持多个主电话的校验
     private function checkDataNew(&$contact)
     {
-        // 主电话（支持 数组 / JSON字符串 / 逗号或空白分隔）
-        $mainPhones = $this->parsePhones(Request::param('more_phones'));  
-        // 辅助电话（单个）
-        $aux = preg_replace('/\D/', '', (string)Request::param('phone2', ''));
-
-        // 主电话必填（至少一个）
-        if (empty($mainPhones)) {
-            return [false, '主电话不能为空'];
-        }
-
-        // 辅助电话格式校验（可选/11位）
-        if ($aux !== '' && !preg_match('/^\d{11}$/', $aux)) {
-            return [false, '辅助电话必须为11位数字'];
-        }
-
-        // 主/辅不能相同
-        if ($aux !== '' && in_array($aux, $mainPhones, true)) {
-            return [false, '主电话与辅助电话不能相同'];
+        list($ok, $errMsg, $mainContacts, $auxContact, $mainPhones, $aux) = $this->parsePhoneWithPositionTitles();
+        if (!$ok) {
+            return [false, $errMsg];
         }
 
         // 组装 contact['phone']，供后续流程使用（主多条+辅单条）
@@ -2153,6 +2138,136 @@ class Client extends Common
         })));
 
         return $phones;
+    }
+
+    // 解析主/辅电话与职位身份，确保电话与职位身份一一对应
+    private function parsePhoneWithPositionTitles(): array
+    {
+        $phonesRaw = Request::param('more_phones');
+        $titlesRaw = Request::param('more_phone_titles');
+        // 兼容旧字段名，避免影响已有调用
+        if ($titlesRaw === null) {
+            $titlesRaw = Request::param('more_position_titles');
+        }
+
+        $phones = $this->parseTextArray($phonesRaw);
+        $titles = $this->parseTextArray($titlesRaw);
+        $size = max(count($phones), count($titles));
+
+        $mainContacts = [];
+        $mainPhones = [];
+        for ($i = 0; $i < $size; $i++) {
+            $phone = preg_replace('/\D/', '', (string)($phones[$i] ?? ''));
+            $title = trim((string)($titles[$i] ?? ''));
+
+            // 空行过滤
+            if ($phone === '') {
+                continue;
+            }
+            if (!preg_match('/^\d{11}$/', $phone)) {
+                return [false, '号码应为11位纯数字', [], null, [], ''];
+            }
+            // 第1行职位身份可空；第2行开始必填
+            if ($i > 0 && $title === '') {
+                return [false, '第' . ($i + 1) . '个主电话请填写职位身份', [], null, [], ''];
+            }
+            if (in_array($phone, $mainPhones, true)) {
+                continue;
+            }
+            $mainPhones[] = $phone;
+            $mainContacts[] = [
+                'contact_type' => 1,
+                'contact_value' => $phone,
+                'position_title' => $title,
+            ];
+        }
+
+        if (empty($mainContacts)) {
+            return [false, '主电话不能为空', [], null, [], ''];
+        }
+
+        $aux = preg_replace('/\D/', '', (string)Request::param('phone2', ''));
+        $auxTitle = trim((string)Request::param('phone2_position_title', ''));
+        $auxContact = null;
+        if ($aux !== '') {
+            if (!preg_match('/^\d{11}$/', $aux)) {
+                return [false, '辅助电话必须为11位数字', [], null, [], ''];
+            }
+            if (in_array($aux, $mainPhones, true)) {
+                return [false, '主电话与辅助电话不能相同', [], null, [], ''];
+            }
+            if ($auxTitle === '') {
+                return [false, '填写辅助电话时，职位身份必填', [], null, [], ''];
+            }
+            $auxContact = [
+                'contact_type' => 3,
+                'contact_value' => $aux,
+                'position_title' => $auxTitle,
+            ];
+        }
+
+        return [true, '', $mainContacts, $auxContact, $mainPhones, $aux];
+    }
+
+    // 解析纯文本数组：支持数组 / JSON字符串 / 常见分隔符字符串
+    private function parseTextArray($raw): array
+    {
+        if (is_array($raw)) {
+            return $raw;
+        }
+        if (is_string($raw)) {
+            $str = trim($raw);
+            if ($str === '') {
+                return [];
+            }
+            if ($str[0] === '[') {
+                $tmp = json_decode($str, true);
+                return is_array($tmp) ? $tmp : [$str];
+            }
+            $str = str_replace(["，", "、", "；", ";", "|", "\r\n", "\n", "\t"], ',', $str);
+            return preg_split('/[\\s,]+/', $str);
+        }
+        if ($raw !== null) {
+            return [(string)$raw];
+        }
+        return [];
+    }
+
+    // 归一化主电话与职位身份行数据（按输入行顺序）
+    private function normalizeMainPhoneRows($phonesRaw, $titlesRaw): array
+    {
+        $phones = $this->parseTextArray($phonesRaw);
+        $titles = $this->parseTextArray($titlesRaw);
+        $size = max(count($phones), count($titles));
+        $rows = [];
+        for ($i = 0; $i < $size; $i++) {
+            $rows[] = [
+                'idx' => $i,
+                'phone' => preg_replace('/\D/', '', (string)($phones[$i] ?? '')),
+                'position_title' => trim((string)($titles[$i] ?? '')),
+            ];
+        }
+        return $rows;
+    }
+
+    // 构建主电话 => 职位身份映射（同号保留首个非空职位）
+    private function buildMainPhoneTitleMap($phonesRaw, $titlesRaw): array
+    {
+        $rows = $this->normalizeMainPhoneRows($phonesRaw, $titlesRaw);
+        $map = [];
+        foreach ($rows as $row) {
+            if (!preg_match('/^\d{11}$/', $row['phone'])) {
+                continue;
+            }
+            if (!isset($map[$row['phone']])) {
+                $map[$row['phone']] = $row['position_title'];
+                continue;
+            }
+            if ($map[$row['phone']] === '' && $row['position_title'] !== '') {
+                $map[$row['phone']] = $row['position_title'];
+            }
+        }
+        return $map;
     }
 
     // 解析运营端口：支持数组 / JSON字符串 / 逗号分隔；仅保留正整数并去重
@@ -2422,9 +2537,12 @@ class Client extends Common
                 return fail($msg);
             }
 
-            // 7) 解析主/辅电话（主电话支持多个；全部保留纯数字）
-            $mainPhones = $this->parsePhones(Request::param('more_phones'));   // 支持多个主电话输入
-            $auxPhone   = preg_replace('/\D/', '', (string)Request::param('phone2', ''));
+            // 7) 解析主/辅电话及职位身份（严格一一对应）
+            list($ok, $errMsg, $mainContacts, $auxContact, $mainPhones, $auxPhone) = $this->parsePhoneWithPositionTitles();
+            if (!$ok) {
+                $this->redisUnLock();
+                return fail($errMsg);
+            }
 
             Db::startTrans();
             try {
@@ -2439,25 +2557,27 @@ class Client extends Common
                 $now = date("Y-m-d H:i:s", time());
                 $contactsToInsert = [];
                 // 循环处理所有主电话，每个作为一条联系记录
-                foreach ($mainPhones as $mp) {
+                foreach ($mainContacts as $item) {
                     $contactsToInsert[] = [
                         'leads_id'      => $id,
-                        'contact_type'  => 1,                 // 主电话 = 1
+                        'contact_type'  => $item['contact_type'],
+                        'position_title'=> $item['position_title'],
                         'contact_extra' => '',
-                        'contact_value' => $mp,
-                        'vdigits'       => $mp,
+                        'contact_value' => $item['contact_value'],
+                        'vdigits'       => $item['contact_value'],
                         'is_delete'     => 0,
                         'created_at'    => $now,
                     ];
                 }
                 // 如果存在辅助电话，则一并加入待插入列表
-                if ($auxPhone !== '') {
+                if ($auxContact) {
                     $contactsToInsert[] = [
                         'leads_id'      => $id,
-                        'contact_type'  => 3,                 // 辅助电话 = 3
+                        'contact_type'  => $auxContact['contact_type'],
+                        'position_title'=> $auxContact['position_title'],
                         'contact_extra' => '',
-                        'contact_value' => $auxPhone,
-                        'vdigits'       => $auxPhone,
+                        'contact_value' => $auxContact['contact_value'],
+                        'vdigits'       => $auxContact['contact_value'],
                         'is_delete'     => 0,
                         'created_at'    => $now,
                     ];
@@ -2734,10 +2854,12 @@ class Client extends Common
                 return fail($msg);
             }
 
-            // 5) 获取主/辅电话（保留纯数字）
-            // [替换] 统一解析前端 more_phones[] 主电话输入，支持数组或 JSON 字符串
-            $mainPhones = $this->parsePhones(Request::param('more_phones'));   // 主电话数组（支持多个）
-            $auxPhone  = preg_replace('/\D/', '', (string)\think\facade\Request::param('phone2', ''));
+            // 5) 解析主/辅电话及职位身份（严格一一对应）
+            list($ok, $errMsg, $mainContacts, $auxContact, $mainPhones, $auxPhone) = $this->parsePhoneWithPositionTitles();
+            if (!$ok) {
+                $this->redisUnLock();
+                return fail($errMsg);
+            }
 
 
             // ** 新增：检查主电话和辅助电话在其他客户中是否存在重复（全局唯一） **
@@ -2773,109 +2895,38 @@ class Client extends Common
                 \think\Db::table('crm_leads')->where('id', $id)->update($data);
 
                 
-                // 读取当前有效（is_delete=0）的主/辅号码
-                // [替换] 获取当前所有主电话和辅电话
-                $existingMainPhones = \think\Db::table('crm_contacts')
-                    ->where('leads_id', $id)
-                    ->where('contact_type', 1)
-                    ->where('is_delete', 0)
-                    ->column('contact_value');
-                $oldAux = \think\Db::table('crm_contacts')
-                    ->where('leads_id', $id)
-                    ->where('contact_type', 3)
-                    ->where('is_delete', 0)
-                    ->value('contact_value');
-                $oldAux = $oldAux ?? '';  // 若没有辅号则设为空字符串
-
                 $now = date("Y-m-d H:i:s");
                 $contactsToInsert = [];
 
-                // 主电话更新逻辑
-                // [替换] 计算需要“硬删除”的主电话和需要新增的主电话
-                $toRemove = array_diff($existingMainPhones, $mainPhones);  // 被用户删除的旧主号码
-                $toAdd    = array_diff($mainPhones, $existingMainPhones);  // 新增的主号码
-                // [新增] 硬删除被移除的主电话（从数据库物理删除）
-                if (!empty($toRemove)) {
-                    \think\Db::table('crm_contacts')
-                        ->where('leads_id', $id)
-                        ->where('contact_type', 1)
-                        ->whereIn('contact_value', $toRemove)
-                        ->delete();
-                }
-                // [新增] 插入新增的主电话，每个号码一条记录
-                foreach ($toAdd as $newPhone) {
-                    // 如果存在已软删的相同号码，则复用更新，否则插入新记录
-                    $findDeleted = \think\Db::table('crm_contacts')
-                        ->where(['is_delete' => 1, 'contact_value' => $newPhone])
-                        ->find();
-                    if ($findDeleted) {
-                        \think\Db::table('crm_contacts')->where('id', $findDeleted['id'])->update([
-                            'leads_id'      => $id,
-                            'contact_type'  => 1,
-                            'contact_extra' => '',
-                            'contact_value' => $newPhone,
-                            'vdigits'       => $newPhone,
-                            'is_delete'     => 0,
-                            'created_at'    => $now,
-                        ]);
-                    } else {
-                        $contactsToInsert[] = [
-                            'leads_id'      => $id,
-                            'contact_type'  => 1,               // 主电话类型
-                            'contact_extra' => '',
-                            'contact_value' => $newPhone,
-                            'vdigits'       => $newPhone,
-                            'is_delete'     => 0,
-                            'created_at'    => $now,
-                        ];
-                    }
-                }
+                // 编辑按要求：删除旧联系方式（主电话/辅助电话）后重插
+                \think\Db::table('crm_contacts')
+                    ->where('leads_id', $id)
+                    ->whereIn('contact_type', [1, 3])
+                    ->delete();
 
-
-                // 辅助电话更新逻辑
-                // [替换] 处理辅助电话的删除或更新
-                if ($auxPhone === '' && $oldAux !== '') {
-                    // [新增] 用户删除了原有辅号，直接删除数据库中的辅号记录
-                    \think\Db::table('crm_contacts')
-                        ->where('leads_id', $id)
-                        ->where('contact_type', 3)
-                        ->where('is_delete', 0)
-                        ->delete();
-                } else if ($auxPhone !== '' && $auxPhone !== $oldAux) {
-                    // 用户提供了新的辅号（包括原本无辅号的情况）
-                    if ($oldAux !== '') {
-                        // [新增] 删除旧辅号记录
-                        \think\Db::table('crm_contacts')
-                            ->where('leads_id', $id)
-                            ->where('contact_type', 3)
-                            ->where('is_delete', 0)
-                            ->delete();
-                    }
-                    // [新增] 插入新辅号记录（或复用软删记录）
-                    $findDeletedAux = \think\Db::table('crm_contacts')
-                        ->where(['is_delete' => 1, 'contact_value' => $auxPhone])
-                        ->find();
-                    if ($findDeletedAux) {
-                        \think\Db::table('crm_contacts')->where('id', $findDeletedAux['id'])->update([
-                            'leads_id'      => $id,
-                            'contact_type'  => 3,
-                            'contact_extra' => '',
-                            'contact_value' => $auxPhone,
-                            'vdigits'       => $auxPhone,
-                            'is_delete'     => 0,
-                            'created_at'    => $now,
-                        ]);
-                    } else {
-                        $contactsToInsert[] = [
-                            'leads_id'      => $id,
-                            'contact_type'  => 3,               // 辅助电话类型
-                            'contact_extra' => '',
-                            'contact_value' => $auxPhone,
-                            'vdigits'       => $auxPhone,
-                            'is_delete'     => 0,
-                            'created_at'    => $now,
-                        ];
-                    }
+                foreach ($mainContacts as $item) {
+                    $contactsToInsert[] = [
+                        'leads_id'      => $id,
+                        'contact_type'  => $item['contact_type'],
+                        'position_title'=> $item['position_title'],
+                        'contact_extra' => '',
+                        'contact_value' => $item['contact_value'],
+                        'vdigits'       => $item['contact_value'],
+                        'is_delete'     => 0,
+                        'created_at'    => $now,
+                    ];
+                }
+                if ($auxContact) {
+                    $contactsToInsert[] = [
+                        'leads_id'      => $id,
+                        'contact_type'  => $auxContact['contact_type'],
+                        'position_title'=> $auxContact['position_title'],
+                        'contact_extra' => '',
+                        'contact_value' => $auxContact['contact_value'],
+                        'vdigits'       => $auxContact['contact_value'],
+                        'is_delete'     => 0,
+                        'created_at'    => $now,
+                    ];
                 }
 
                 // 批量插入新联系方式记录
@@ -2914,22 +2965,26 @@ class Client extends Common
 
         // 主/辅电话：1 主、3 辅
         // [替换] 初始化主电话数组，支持多个主号
-        $mainPhones = [];
+        $mainPhoneList = [];
         $auxPhone   = '';
+        $auxPhonePositionTitle = '';
         $contacts = \think\Db::table('crm_contacts')
             ->where('is_delete', 0)
             ->where('leads_id', $id)
             ->whereIn('contact_type', [1, 3])
             ->order('id', 'asc')
-            ->field('contact_type, contact_value')
+            ->field('contact_type, contact_value, position_title')
             ->select();
         foreach ($contacts as $c) {
             if ($c['contact_type'] == 1) {
-                // [替换] 收集所有主电话
-                $mainPhones[] = $c['contact_value'];
+                $mainPhoneList[] = [
+                    'phone' => (string)$c['contact_value'],
+                    'position_title' => trim((string)$c['position_title']),
+                ];
             }
             if ($c['contact_type'] == 3 && $auxPhone === '') {
                 $auxPhone = $c['contact_value'];
+                $auxPhonePositionTitle = trim((string)$c['position_title']);
             }
         }
 
@@ -3068,8 +3123,9 @@ class Client extends Common
 
         // 页面回填
         $this->assign('result', $result);
-        $this->assign('mainPhones', json_encode($mainPhones, JSON_UNESCAPED_UNICODE));
+        $this->assign('mainPhoneList', json_encode($mainPhoneList, JSON_UNESCAPED_UNICODE));
         $this->assign('auxPhone',  $auxPhone);
+        $this->assign('auxPhonePositionTitle',  $auxPhonePositionTitle);
 
         $channelList = Db::table('crm_inquiry')->where('status', 0)->select();
         $portList    = Db::table('crm_inquiry_port')->where('status', 0)->select();

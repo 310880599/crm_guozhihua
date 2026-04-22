@@ -81,6 +81,11 @@
             width: 100%;
         }
 
+        .position-title {
+            width: 180px;
+            flex: 0 0 180px;
+        }
+
         .phone_code {
             width: 80px;
             margin-right: 10px;
@@ -109,15 +114,24 @@
                             <input type="text" name="more_phones[]" lay-verify="phone" placeholder="电话" class="layui-input multiple_telephone">
                         </div>
                         <button type="button" class="add-btn">+</button>
+                        <div class="position-title">
+                            <input type="text" name="more_phone_titles[]" placeholder="职位身份（首个主电话可不填）" class="layui-input position-title-input">
+                        </div>
                     </div>
                 </div>
-                <div class="layui-form-mid layui-word-aux" style="margin-left:110px;">可点击“+”添加多个主电话，所有主电话都会按主电话存入。</div>
+                <div class="layui-form-mid layui-word-aux" style="margin-left:110px;">可点击“+”添加多个主电话。首个主电话职位身份可不填，新增主电话若填写号码则职位身份必填。</div>
             </div>
             <!-- 辅助电话 -->
             <div class="layui-form-item">
                 <label class="layui-form-label">辅助电话</label>
                 <div class="layui-input-4">
                     <input type="text" name="phone2" lay-verify="phone" placeholder="辅助电话" class="layui-input">
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">辅助职位</label>
+                <div class="layui-input-4">
+                    <input type="text" name="phone2_position_title" placeholder="填写辅助电话时必填职位身份" class="layui-input">
                 </div>
             </div>
             <!-- 产品名称：可搜索单选下拉（提交产品ID） -->
@@ -237,6 +251,9 @@
                             '<input type="text" name="more_phones[]" lay-verify="phone" placeholder="电话" class="layui-input multiple_telephone">' +
                         '</div>' +
                         '<button type="button" class="remove-btn">-</button>' +
+                        '<div class="position-title">' +
+                            '<input type="text" name="more_phone_titles[]" placeholder="职位身份（必填）" class="layui-input position-title-input">' +
+                        '</div>' +
                     '</div>'
                 );
                 $container.append($newRow);
@@ -358,13 +375,30 @@
 
             // 监听表单提交
             form.on('submit(submit)', function (data) {
-                // 1) 采集并清洗所有主电话
-                var phones = [];
-                $('.multiple_telephone').each(function () {
-                    var v = $.trim($(this).val()).replace(/\D/g, '');
-                    if (v) phones.push(v);
+                // 1) 采集主电话与职位身份（按行）
+                var rawPhones = [];
+                var rawTitles = [];
+                var validPhones = [];
+                var missingMainTitle = false;
+                var $rows = $('#mainPhoneBox .input-row');
+                $rows.each(function (idx) {
+                    var phone = $.trim($(this).find('.multiple_telephone').val()).replace(/\D/g, '');
+                    var title = $.trim($(this).find('.position-title-input').val());
+                    rawPhones.push(phone);
+                    rawTitles.push(title);
+                    if (phone) {
+                        validPhones.push(phone);
+                    }
+                    // 第一个主电话职位身份非必填；新增主电话填写号码时职位身份必填
+                    if (idx > 0 && phone && !title) {
+                        layer.msg('第' + (idx + 1) + '个主电话请填写职位身份');
+                        missingMainTitle = true;
+                        return false;
+                    }
                 });
-
+                if (missingMainTitle) {
+                    return false;
+                }
 
                 // console.log($('.multiple_telephone').first().val());
                 // console.log($('input[name="phone2"]').val());
@@ -372,7 +406,7 @@
 
 
                 // 去重并仅保留11位数字
-                phones = Array.from(new Set(phones.filter(function (v) { return /^\d{11}$/.test(v); })));
+                var phones = Array.from(new Set(validPhones.filter(function (v) { return /^\d{11}$/.test(v); })));
 
 
                 //至少一个有效主电话
@@ -391,6 +425,11 @@
                     layer.msg('主电话与辅助电话不能相同');
                     return false;
                 }
+                var auxTitle = $.trim($('input[name="phone2_position_title"]').val());
+                if (aux && !auxTitle) {
+                    layer.msg('填写辅助电话时，职位身份必填');
+                    return false;
+                }
 
                 // 3) 前端强校验：所属渠道/运营端口
                 var inquiryId = $.trim($('#inquiry_id').val() || '');
@@ -404,13 +443,19 @@
                     return false;
                 }
 
-                // 4) 将主电话以 JSON 数组方式提交，后端 parsePhones 支持 JSON / 数组
-                data.field.more_phones = JSON.stringify(phones);
+                // 4) 将主电话与职位身份以 JSON 数组方式提交，后端支持 JSON / 数组
+                data.field.more_phones = JSON.stringify(rawPhones);
+                data.field.more_phone_titles = JSON.stringify(rawTitles);
+                // 兼容后端当前读取字段，避免影响既有入库逻辑
+                data.field.more_position_titles = data.field.more_phone_titles;
+                data.field.phone2_position_title = auxTitle;
                 data.field.inquiry_id = inquiryId;
                 data.field.port_id = portIds;
 
                 // 5) 清理可能存在的旧字段，避免干扰（容错）
                 delete data.field['more_phones[]'];
+                delete data.field['more_phone_titles[]'];
+                delete data.field['more_position_titles[]'];
                 delete data.field['phone'];
                 delete data.field['port_id[]'];
 
