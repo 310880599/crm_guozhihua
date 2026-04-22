@@ -115,7 +115,7 @@
                         </div>
                         <button type="button" class="add-btn">+</button>
                         <div class="position-title">
-                            <input type="text" name="more_phone_titles[]" placeholder="职位身份（首个主电话可不填）" class="layui-input position-title-input">
+                            <input type="text" name="more_phone_titles[]" placeholder="职位身份（选填）" class="layui-input position-title-input">
                         </div>
                     </div>
                 </div>
@@ -125,13 +125,14 @@
             <div class="layui-form-item">
                 <label class="layui-form-label">辅助电话</label>
                 <div class="layui-input-4">
-                    <input type="text" name="phone2" lay-verify="phone" placeholder="辅助电话" class="layui-input">
-                </div>
-            </div>
-            <div class="layui-form-item">
-                <label class="layui-form-label">辅助职位</label>
-                <div class="layui-input-4">
-                    <input type="text" name="phone2_position_title" placeholder="填写辅助电话时必填职位身份" class="layui-input">
+                    <div class="input-row">
+                        <div class="phone">
+                            <input type="text" name="phone2" lay-verify="phone" placeholder="辅助电话" class="layui-input">
+                        </div>
+                        <div class="position-title">
+                            <input type="text" name="phone2_position_title" placeholder="职位身份（必填）" class="layui-input">
+                        </div>
+                    </div>
                 </div>
             </div>
             <!-- 产品名称：可搜索单选下拉（提交产品ID） -->
