@@ -15,6 +15,23 @@
     <script src="/static/plugins/layui/layui.js"></script>
     <script src="/static/admin/js/xm-select.js"></script>
     <style>
+        html,
+        body {
+            height: 100%;
+            overflow: auto;
+        }
+
+        body {
+            box-sizing: border-box;
+        }
+
+        .admin-main {
+            min-height: 100%;
+            box-sizing: border-box;
+            padding: 15px 15px 80px;
+            overflow: visible;
+        }
+
         .layui-form-pane .layui-form-label {
             width: 110px;
             padding: 8px 15px;
@@ -83,6 +100,20 @@
         .phone_code {
             width: 80px;
             margin-right: 10px;
+        }
+
+        .client-submit-bar {
+            position: sticky;
+            bottom: 0;
+            z-index: 10;
+            background: #fff;
+            border-top: 1px solid #f2f2f2;
+            margin-top: 12px;
+            padding-top: 12px;
+        }
+
+        .client-submit-bar .layui-input-block {
+            margin-left: 0;
         }
     </style>
 </head>
@@ -199,7 +230,7 @@
         </div>
 
         <!-- 提交按钮 -->
-        <div class="layui-form-item">
+        <div class="layui-form-item client-submit-bar">
             <div class="layui-input-block">
                 <button type="button" class="layui-btn" lay-submit lay-filter="submit">提交保存</button>
             </div>
