@@ -86,9 +86,67 @@
             flex: 0 0 180px;
         }
 
+        .position-label {
+            display: none;
+        }
+
+        .main-phone-tips {
+            margin-left: 110px;
+        }
+
         .phone_code {
             width: 80px;
             margin-right: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .input-row {
+                flex-wrap: wrap;
+                align-items: flex-start;
+                gap: 8px;
+            }
+
+            .input-row .phone {
+                order: 1;
+                flex: 1 1 100%;
+            }
+
+            .input-row.has-action-btn .phone {
+                flex: 1 1 calc(100% - 54px);
+            }
+
+            .input-row .add-btn,
+            .input-row .remove-btn {
+                order: 2;
+                min-width: 44px;
+                padding: 0 10px;
+            }
+
+            .mobile-position-row {
+                order: 3;
+                width: 100%;
+                flex: 0 0 100%;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .mobile-position-row .position-label {
+                display: inline-block;
+                line-height: 38px;
+                white-space: nowrap;
+                color: #666;
+                font-size: 13px;
+            }
+
+            .mobile-position-row .layui-input {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            .main-phone-tips {
+                margin-left: 0 !important;
+            }
         }
     </style>
 </head>
@@ -108,18 +166,19 @@
             <div class="layui-form-item">
                 <label class="layui-form-label">电话<span style="color:red;">*</span></label>
                 <div class="layui-input-4" id="mainPhoneBox">
-                    <div class="input-row">
+                    <div class="input-row has-action-btn">
                         <div class="phone">
                             <!-- 统一改为 more_phones[]，作为主电话数组的第一项 -->
                             <input type="text" name="more_phones[]" lay-verify="phone" placeholder="电话" class="layui-input multiple_telephone">
                         </div>
                         <button type="button" class="add-btn">+</button>
-                        <div class="position-title">
+                        <div class="position-title mobile-position-row">
+                            <span class="position-label">职位身份</span>
                             <input type="text" name="more_phone_titles[]" placeholder="职位身份（选填）" class="layui-input position-title-input">
                         </div>
                     </div>
                 </div>
-                <div class="layui-form-mid layui-word-aux" style="margin-left:110px;">可点击“+”添加多个主电话。首个主电话职位身份可不填，新增主电话若填写号码则职位身份必填。</div>
+                <div class="layui-form-mid layui-word-aux main-phone-tips">可点击“+”添加多个主电话。首个主电话职位身份可不填，新增主电话若填写号码则职位身份必填。</div>
             </div>
             <!-- 辅助电话 -->
             <div class="layui-form-item">
@@ -129,7 +188,8 @@
                         <div class="phone">
                             <input type="text" name="phone2" lay-verify="phone" placeholder="辅助电话" class="layui-input">
                         </div>
-                        <div class="position-title">
+                        <div class="position-title mobile-position-row">
+                            <span class="position-label">职位身份</span>
                             <input type="text" name="phone2_position_title" placeholder="职位身份（必填）" class="layui-input">
                         </div>
                     </div>
@@ -246,13 +306,14 @@
                 e.preventDefault();
                 var $container = $(this).closest('.layui-input-4');
                 var $newRow = $(
-                    '<div class="input-row">' +
+                    '<div class="input-row has-action-btn">' +
                         '<div class="phone">' +
                             // 额外电话不覆盖主电话 name，避免影响后端接收
                             '<input type="text" name="more_phones[]" lay-verify="phone" placeholder="电话" class="layui-input multiple_telephone">' +
                         '</div>' +
                         '<button type="button" class="remove-btn">-</button>' +
-                        '<div class="position-title">' +
+                        '<div class="position-title mobile-position-row">' +
+                            '<span class="position-label">职位身份</span>' +
                             '<input type="text" name="more_phone_titles[]" placeholder="职位身份（必填）" class="layui-input position-title-input">' +
                         '</div>' +
                     '</div>'
