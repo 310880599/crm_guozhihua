@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+    {include file="common/head"/}  <!-- 包含通用的CSS和JS -->
+    <style>
+        .filtrate-warp {
+            margin-bottom: 10px;
+        }
+        .layui-elem-field {
+            background: #fff !important;
+            border-radius: 8px !important;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+            border: 1px solid #e8e8e8 !important;
+            overflow: hidden !important;
+        }
+        .layui-elem-field legend {
+            margin-left: 20px;
+            padding: 0 10px;
+            font-size: 20px;
+            font-weight: 300;
+            background: #4285f4;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 10px;
+        }
+
+        .filtrate-warp .title {
+            padding: 5px 12px 7px 12px;
+            font-size: 14px;
+            font-weight: normal;
+            text-align: left;
+            cursor: pointer;
+            width: 90px;
+            background-color: transparent !important;
+            color: black !important;
+        }
+
+        .filtrate-warp .title:hover {
+            color: black;
+        }
+
+        .filtrate-warp .flag {
+            padding: 6px 12px 6px 12px;
+            cursor: pointer;
+        }
+
+        .filtrate-warp .flag:hover {
+            color: black;
+        }
+
+        .filtrate-warp .layui-badge:hover {
+            color: white !important;
+        }
+        .layui-form-label {
+            white-space: nowrap;   /* 不允许换行 */
+        }
+
+    </style>
+</head>
+<body class="layui-layout-body">
+<div class="admin-main layui-anim layui-anim-upbit">
+    <fieldset class="layui-elem-field ">
+        <legend>高级查询</legend>
+
+        <div class="layui-card" style="box-shadow: none;margin-top: 10px">
+            <div class="layui-form layui-card-header layuiadmin-card-header-auto"
+                style="border-bottom: transparent;height: auto">
+                <div class="layui-form-item" style="text-align: left;padding-left: 20px;">
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="margin-left: 5px">职位身份名称：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="account" name="account" placeholder="请输入职位身份名称："
+                                class="layui-input">
+                        </div>
+                    </div>
+                </div>
+                <div class="layui-inline" style="float: right;padding-bottom: 15px">
+                    <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
+                        <i class="layui-icon layui-icon-search layuiadmin-button-btn"
+                            style="vertical-align: sub;"></i>查询数据
+                    </button>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+
+    <!-- 数据列表表格 -->
+    <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+</div>
+
+<!-- 表格操作列模板 -->
+<script type="text/html" id="action">
+    <a class="layui-btn layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
+    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
+</script>
+
+<!-- 表格顶部工具栏模板：新增按钮 -->
+<script type="text/html" id="topBtn">
+  <button class="layui-btn layui-btn-success layui-btn-sm" lay-event="add">
+    <i class="layui-icon">&#xe608;</i> 添加职位身份
+  </button>
+  <button class="layui-btn layui-btn-danger layui-btn-sm" lay-event="batchDel">
+    <i class="layui-icon">&#xe640;</i> 批量删除
+  </button>
+  <button class="layui-btn layui-btn-warm layui-btn-sm" lay-event="importExcel">
+    <i class="layui-icon">&#xe67c;</i> 导入Excel
+  </button>
+  <!-- ★ 新增：下载模板 -->
+  <button class="layui-btn layui-btn-normal layui-btn-sm" lay-event="downloadTpl">
+    <i class="layui-icon">&#xe601;</i> 下载模板
+  </button>
+</script>
+
+
+{include file="common/foot"/}  <!-- 通用尾部 JS -->
+
+<script>
+layui.use(['table','form','util','jquery'], function() {
+    var table = layui.table, form = layui.form, util = layui.util, $ = layui.jquery;
+    // 渲染数据表格
+    var tableIns = table.render({
+        elem: '#table-list',
+        id: 'table-list',              // ★新增
+        url: "{:url('PositionTitle/index')}",
+        method: 'post',
+        toolbar: '#topBtn',
+        page: true,
+        cols: [[
+            {type:'checkbox', fixed: 'left'},
+            {field: 'id', title: 'ID', width: 80, sort: true},
+            {field: 'account', title: '职位身份名称',width: 180},
+            {field: 'receiver', title: '创建人',width: 100},
+            {field:'create_time', title:'创建时间',width: 180,
+                templet: function(d){
+                  var v = d.create_time;
+                  if (!v) return '';
+                  // 如果是纯数字（秒级时间戳）
+                  if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
+                  // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
+                  return v;
+                }
+            },
+            {field:'update_time', title:'修改时间',width: 180,
+                templet: function(d){
+                  var v = d.update_time;
+                  if (!v) return '';
+                  if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
+                  return v;
+                }
+            },
+            {title: '操作', width: 180, align: 'center', toolbar: '#action'}
+        ]],
+        limit: 10
+    });
+
+
+
+    // 工具栏事件监听 - 编辑或删除按钮
+    table.on('tool(table-list)', function(obj) {
+        var data = obj.data;
+        if (obj.event === 'del') {
+            layer.confirm('确认删除该职位身份吗？', function(index) {
+                $.post("{:url('PositionTitle/del')}", {id: data.id}, function(res) {
+                    if (res.code === 0) {
+                        layer.msg(res.msg, {icon:1, time:1000});
+                        tableIns.reload();  // 刷新表格:contentReference[oaicite:9]{index=9}
+                    } else {
+                        layer.msg(res.msg || '删除失败！', {icon:2, time:1500});
+                    }
+                }, 'json');
+                layer.close(index);
+            });
+        } else if (obj.event === 'edit') {
+            layer.open({
+                type: 2,
+                title: '编辑职位身份',
+                area: ['600px', '400px'],
+                shadeClose: false,
+                content: ["{:url('PositionTitle/edit')}?id=" + data.id, 'no']
+            });
+        }
+    });
+    
+    
+    
+    
+    table.on('toolbar(table-list)', function(obj){
+      if (obj.event === 'add') {
+        layer.open({
+          type: 2,
+          title: '添加职位身份',
+          area: ['600px','400px'],
+          shadeClose: true,
+          content: ["{:url('PositionTitle/add')}", 'no']
+        });
+      } else if (obj.event === 'batchDel') {
+        var rows = table.checkStatus('table-list').data || [];
+        if (!rows.length) return layer.msg('请先勾选要删除的记录', {icon:0});
+        var ids = rows.map(function(r){return r.id;});
+        layer.confirm('确认删除选中的 '+ids.length+' 条记录吗？', function(index){
+          $.post("{:url('PositionTitle/batchDel')}", {ids: ids}, function(res){
+            if (res.code === 0) {
+              layer.msg('删除成功', {icon:1, time:800});
+              tableIns.reload({page:{curr:1}});
+            } else {
+              layer.msg(res.msg || '删除失败', {icon:2});
+            }
+          }, 'json');
+          layer.close(index);
+        });
+      }else if (obj.event === 'importExcel') {
+        layer.open({
+          type: 2,
+          title: '批量导入（Excel/CSV）',
+          area: ['600px','360px'],
+          shadeClose: true,
+          content: ["{:url('PositionTitle/import')}", 'no']
+        });
+      }else if (obj.event === 'downloadTpl') {
+        // 方式一：当前窗口直接下载
+        window.location.href = "{:url('PositionTitle/tpl')}";
+    
+        // （可选）方式二：新标签下载
+        // window.open("{:url('PositionTitle/tpl')}", "_blank");
+      }
+    });
+
+    //监听搜索
+    form.on('submit(LAY-app-contlist-search)', function (data) {
+        table.reload('table-list', {
+            url: "{:url('PositionTitle/accountSearch')}",
+            where: data.field,
+            page: { curr: 1 }
+        });
+        return false;
+    });
+    
+    
+});
+</script>
+</body>
+</html>

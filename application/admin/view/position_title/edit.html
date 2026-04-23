@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    {include file="common/head"/}
+    <style>
+        /* 次要操作按钮样式：浅灰背景、深灰文字 */
+        .layui-btn-secondary {
+            background-color: #f5f5f5 !important;
+            border-color: #d2d2d2 !important;
+            color: #333 !important;
+        }
+        .layui-btn-secondary:hover {
+            background-color: #e8e8e8 !important;
+            border-color: #c0c0c0 !important;
+            color: #000 !important;
+        }
+    </style>
+</head>
+<body>
+<form class="layui-form" style="padding:15px 20px 0 20px;">
+  <div class="layui-form-item">
+    <label class="layui-form-label">职位身份名称</label>
+    <div class="layui-input-block">
+      <input type="text" name="account" value="{$entry.account|default=''}" required lay-verify="required" 
+             autocomplete="off" class="layui-input">
+    </div>
+  </div>
+  <div class="layui-form-item">
+    <label class="layui-form-label">创建人</label>
+    <div class="layui-input-block">
+      <input type="text" name="receiver" value="{$entry.receiver|default=''}" disabled
+              class="layui-input layui-bg-gray">
+    </div>
+  </div>
+  <!-- 可以选择性地显示创建时间，但不允许修改 -->
+  <div class="layui-form-item">
+    <label class="layui-form-label">创建时间</label>
+    <div class="layui-input-block">
+      <input type="text" value="{$entry.create_time|date='Y-m-d H:i:s'}" disabled class="layui-input layui-bg-gray">
+    </div>
+  </div>
+  <div class="layui-form-item">
+    <div class="layui-input-block">
+      <button type="submit" class="layui-btn" lay-submit lay-filter="formSubmit">保存修改</button>
+      <button type="button"
+        class="layui-btn layui-btn-secondary"
+        onclick="var i = parent.layer.getFrameIndex(window.name); parent.layer.close(i);">
+        取消
+      </button>
+    </div>
+  </div>
+</form>
+
+{include file="common/foot"/}
+<script>
+layui.use(['form','jquery'], function(){
+  var form = layui.form, $ = layui.jquery;
+  form.on('submit(formSubmit)', function(data){
+    $.post("{:url('PositionTitle/edit')}?id={$entry.id}", data.field, function(res){
+        if(res.code === 0){
+            layer.msg('修改成功！', {icon:1, time:1000}, function(){
+                parent.layui.table.reload('table-list');
+                var index = parent.layer.getFrameIndex(window.name);
+                parent.layer.close(index);
+            });
+        } else {
+            layer.msg(res.msg || '操作失败', {icon:2, time:1500});
+        }
+    }, 'json');
+    return false;
+  });
+});
+</script>
+</body>
+</html>
