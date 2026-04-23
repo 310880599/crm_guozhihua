@@ -3152,10 +3152,24 @@ class Client extends Common
     //单个删除客户
     public function del()
     {
-        $id = Request::post('id');
+        $id = Request::post('id', '');
+        $ids = Request::post('ids', []);
 
-        if (!$id) {
-            return json(['code' => 500, 'msg' => '请选择要删除的客户']);
+        if (is_string($ids)) {
+            $ids = explode(',', $ids);
+        }
+
+        $idsArr = [];
+        if (!empty($ids)) {
+            $idsArr = is_array($ids) ? $ids : [$ids];
+        } elseif ($id !== '' && $id !== null) {
+            $idsArr = [$id];
+        }
+
+        $idsArr = array_values(array_unique(array_filter(array_map('intval', $idsArr))));
+
+        if (empty($idsArr)) {
+            return json(['code' => 500, 'msg' => '请选择要删除的客户', 'data' => []]);
         }
 
         $username = Session::get('username');
@@ -3164,7 +3178,7 @@ class Client extends Common
         Db::startTrans();
         try {
             // 查询客户信息
-            $clientQuery = Db::name('crm_leads')->where('id', $id);
+            $clientQuery = Db::name('crm_leads')->where('id', 'in', $idsArr);
             
             // 如果不是超级管理员，需要验证权限
             if ($aid != 1) {
@@ -3174,31 +3188,81 @@ class Client extends Common
                 });
             }
             
-            $client = $clientQuery->find();
+            $clients = $clientQuery->field('id,kh_name')->select();
 
-            if (!$client) {
-                throw new \Exception('客户不存在或无权限删除');
+            if (empty($clients)) {
+                throw new \Exception(count($idsArr) > 1 ? '无权限删除选中客户或客户不存在' : '客户不存在或无权限删除');
+            }
+
+            $allowedIds = [];
+            $clientMap = [];
+            foreach ($clients as $client) {
+                $cid = (int)($client['id'] ?? 0);
+                if ($cid <= 0) {
+                    continue;
+                }
+                $allowedIds[] = $cid;
+                $clientMap[$cid] = $client;
+            }
+
+            if (empty($allowedIds)) {
+                throw new \Exception(count($idsArr) > 1 ? '无权限删除选中客户或客户不存在' : '客户不存在或无权限删除');
             }
 
             // 删除客户的联系方式
-            Db::name('crm_contacts')->where('leads_id', $id)->delete();
+            Db::name('crm_contacts')->where('leads_id', 'in', $allowedIds)->delete();
             
             // 删除客户主记录
-            Db::name('crm_leads')->where('id', $id)->delete();
+            $deletedCount = Db::name('crm_leads')->where('id', 'in', $allowedIds)->delete();
 
             Db::commit();
             
             //写入操作日志
-            $this->addOperLog(
-                $id,
-                '删除客户',
-                "$username 删除客户ID:" . $id . ', 客户名称:' . ($client['kh_name'] ?? '') . ($aid == 1 ? ' [超级管理员操作]' : '')
-            );
+            if (count($allowedIds) === 1) {
+                $onlyId = $allowedIds[0];
+                $this->addOperLog(
+                    $onlyId,
+                    '删除客户',
+                    "$username 删除客户ID:" . $onlyId . ', 客户名称:' . ($clientMap[$onlyId]['kh_name'] ?? '') . ($aid == 1 ? ' [超级管理员操作]' : '')
+                );
+            } else {
+                $this->addOperLog(
+                    null,
+                    '批量删除客户',
+                    "$username 批量删除客户:" . implode(',', $allowedIds) . ', 共' . count($allowedIds) . '条' . ($aid == 1 ? ' [超级管理员操作]' : '')
+                );
+            }
+
+            $requestCount = count($idsArr);
+            $successCount = (int)$deletedCount;
+            $failCount = max(0, $requestCount - $successCount);
+
+            if ($successCount <= 0) {
+                return json(['code' => 500, 'msg' => '删除失败', 'data' => []]);
+            }
+
+            if ($failCount > 0) {
+                return json([
+                    'code' => 0,
+                    'msg' => '成功删除' . $successCount . '个客户，' . $failCount . '个客户不存在或无权限删除',
+                    'data' => [
+                        'success_count' => $successCount,
+                        'fail_count' => $failCount
+                    ]
+                ]);
+            }
             
-            return json(['code' => 0, 'msg' => '删除成功']);
+            return json([
+                'code' => 0,
+                'msg' => (count($idsArr) > 1 ? '成功删除' . $successCount . '个客户' : '删除成功'),
+                'data' => [
+                    'success_count' => $successCount,
+                    'fail_count' => 0
+                ]
+            ]);
         } catch (\Exception $e) {
             Db::rollback();
-            return json(['code' => 500, 'msg' => $e->getMessage()]);
+            return json(['code' => 500, 'msg' => $e->getMessage(), 'data' => []]);
         }
     }
 
