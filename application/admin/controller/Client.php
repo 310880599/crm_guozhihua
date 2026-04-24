@@ -12,10 +12,13 @@ use think\facade\Cache;
 use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
 use app\admin\service\ClientFollowService;
+use app\admin\service\PositionTitleService;
 
 class Client extends Common
 {
     protected $middleware = [\app\http\middleware\TrimStrings::class];
+    /** @var array<string, array<string, bool>> */
+    private $tableColumnsCache = [];
 
 
     const CONTACT_MAP = [
@@ -2144,21 +2147,26 @@ class Client extends Common
     private function parsePhoneWithPositionTitles(): array
     {
         $phonesRaw = Request::param('more_phones');
+        $titleIdsRaw = Request::param('more_position_title_ids');
+        if ($titleIdsRaw === null) {
+            $titleIdsRaw = Request::param('more_phone_title_ids');
+        }
         $titlesRaw = Request::param('more_phone_titles');
-        // 兼容旧字段名，避免影响已有调用
         if ($titlesRaw === null) {
             $titlesRaw = Request::param('more_position_titles');
         }
 
         $phones = $this->parseTextArray($phonesRaw);
+        $titleIds = $this->parseTextArray($titleIdsRaw);
         $titles = $this->parseTextArray($titlesRaw);
-        $size = max(count($phones), count($titles));
+        $size = max(count($phones), count($titleIds), count($titles));
 
         $mainContacts = [];
         $mainPhones = [];
         for ($i = 0; $i < $size; $i++) {
             $phone = preg_replace('/\D/', '', (string)($phones[$i] ?? ''));
-            $title = trim((string)($titles[$i] ?? ''));
+            $titleIdRaw = $titleIds[$i] ?? '';
+            $legacyTitle = trim((string)($titles[$i] ?? ''));
 
             // 空行过滤
             if ($phone === '') {
@@ -2167,8 +2175,14 @@ class Client extends Common
             if (!preg_match('/^\d{11}$/', $phone)) {
                 return [false, '号码应为11位纯数字', [], null, [], ''];
             }
-            // 第1行职位身份可空；第2行开始必填
-            if ($i > 0 && $title === '') {
+
+            list($titleOk, $titleErrMsg, $titlePayload) = $this->resolvePositionTitleSelection($titleIdRaw, $legacyTitle);
+            if (!$titleOk) {
+                return [false, $titleErrMsg, [], null, [], ''];
+            }
+
+            // 第1行职位身份可空；第2行开始必填（兼容旧文本）
+            if ($i > 0 && empty($titlePayload['position_title_id']) && $titlePayload['position_title'] === '') {
                 return [false, '第' . ($i + 1) . '个主电话请填写职位身份', [], null, [], ''];
             }
             if (in_array($phone, $mainPhones, true)) {
@@ -2178,7 +2192,8 @@ class Client extends Common
             $mainContacts[] = [
                 'contact_type' => 1,
                 'contact_value' => $phone,
-                'position_title' => $title,
+                'position_title' => $titlePayload['position_title'],
+                'position_title_id' => $titlePayload['position_title_id'],
             ];
         }
 
@@ -2187,7 +2202,8 @@ class Client extends Common
         }
 
         $aux = preg_replace('/\D/', '', (string)Request::param('phone2', ''));
-        $auxTitle = trim((string)Request::param('phone2_position_title', ''));
+        $auxTitleIdRaw = Request::param('phone2_position_title_id', '');
+        $auxLegacyTitle = trim((string)Request::param('phone2_position_title', ''));
         $auxContact = null;
         if ($aux !== '') {
             if (!preg_match('/^\d{11}$/', $aux)) {
@@ -2196,13 +2212,19 @@ class Client extends Common
             if (in_array($aux, $mainPhones, true)) {
                 return [false, '主电话与辅助电话不能相同', [], null, [], ''];
             }
-            if ($auxTitle === '') {
+
+            list($auxTitleOk, $auxTitleErrMsg, $auxTitlePayload) = $this->resolvePositionTitleSelection($auxTitleIdRaw, $auxLegacyTitle);
+            if (!$auxTitleOk) {
+                return [false, $auxTitleErrMsg, [], null, [], ''];
+            }
+            if (empty($auxTitlePayload['position_title_id']) && $auxTitlePayload['position_title'] === '') {
                 return [false, '填写辅助电话时，职位身份必填', [], null, [], ''];
             }
             $auxContact = [
                 'contact_type' => 3,
                 'contact_value' => $aux,
-                'position_title' => $auxTitle,
+                'position_title' => $auxTitlePayload['position_title'],
+                'position_title_id' => $auxTitlePayload['position_title_id'],
             ];
         }
 
@@ -2233,41 +2255,106 @@ class Client extends Common
         return [];
     }
 
-    // 归一化主电话与职位身份行数据（按输入行顺序）
-    private function normalizeMainPhoneRows($phonesRaw, $titlesRaw): array
+    private function getPositionTitleService(): PositionTitleService
     {
-        $phones = $this->parseTextArray($phonesRaw);
-        $titles = $this->parseTextArray($titlesRaw);
-        $size = max(count($phones), count($titles));
-        $rows = [];
-        for ($i = 0; $i < $size; $i++) {
-            $rows[] = [
-                'idx' => $i,
-                'phone' => preg_replace('/\D/', '', (string)($phones[$i] ?? '')),
-                'position_title' => trim((string)($titles[$i] ?? '')),
-            ];
-        }
-        return $rows;
+        return new PositionTitleService();
     }
 
-    // 构建主电话 => 职位身份映射（同号保留首个非空职位）
-    private function buildMainPhoneTitleMap($phonesRaw, $titlesRaw): array
+    /**
+     * 根据职位身份ID（新字段）或职位文本（旧字段）解析标准值
+     *
+     * @param mixed $titleIdRaw
+     * @param string $legacyTitle
+     * @return array{0:bool,1:string,2:array{position_title_id:?int,position_title:string}}
+     */
+    private function resolvePositionTitleSelection($titleIdRaw, string $legacyTitle = ''): array
     {
-        $rows = $this->normalizeMainPhoneRows($phonesRaw, $titlesRaw);
-        $map = [];
-        foreach ($rows as $row) {
-            if (!preg_match('/^\d{11}$/', $row['phone'])) {
-                continue;
+        $titleId = (int)preg_replace('/\D/', '', (string)$titleIdRaw);
+        $legacyTitle = trim($legacyTitle);
+        $service = $this->getPositionTitleService();
+
+        if ($titleId > 0) {
+            list($ok, $msg, $row) = $service->validatePositionTitle($titleId);
+            if (!$ok) {
+                return [false, $msg, ['position_title_id' => null, 'position_title' => '']];
             }
-            if (!isset($map[$row['phone']])) {
-                $map[$row['phone']] = $row['position_title'];
-                continue;
+            return [true, '', [
+                'position_title_id' => (int)$row['id'],
+                'position_title' => (string)$row['name'],
+            ]];
+        }
+
+        if ($legacyTitle !== '') {
+            $matched = $service->findByName($legacyTitle);
+            if ($matched) {
+                return [true, '', [
+                    'position_title_id' => (int)$matched['id'],
+                    'position_title' => (string)$matched['name'],
+                ]];
             }
-            if ($map[$row['phone']] === '' && $row['position_title'] !== '') {
-                $map[$row['phone']] = $row['position_title'];
+            return [true, '', [
+                'position_title_id' => null,
+                'position_title' => $legacyTitle,
+            ]];
+        }
+
+        return [true, '', ['position_title_id' => null, 'position_title' => '']];
+    }
+
+    /**
+     * 提取联系方式里的职位身份字段（兼容不同库结构）
+     *
+     * @param array $contact
+     * @return array{position_title_id:?int,position_title:string}
+     */
+    private function extractContactPositionTitlePayload(array $contact): array
+    {
+        $titleId = isset($contact['position_title_id']) ? (int)$contact['position_title_id'] : 0;
+        $title = trim((string)($contact['position_title'] ?? ''));
+        if ($titleId > 0) {
+            return ['position_title_id' => $titleId, 'position_title' => $title];
+        }
+        if ($title !== '') {
+            list($ok, $msg, $resolved) = $this->resolvePositionTitleSelection('', $title);
+            if ($ok) {
+                return $resolved;
             }
         }
-        return $map;
+        return ['position_title_id' => null, 'position_title' => $title];
+    }
+
+    /**
+     * 判断表字段是否存在，避免 Unknown column
+     */
+    private function tableHasColumn(string $table, string $column): bool
+    {
+        if (!isset($this->tableColumnsCache[$table])) {
+            $this->tableColumnsCache[$table] = [];
+            try {
+                $rows = Db::query("SHOW COLUMNS FROM `{$table}`");
+                foreach ($rows as $row) {
+                    if (!empty($row['Field'])) {
+                        $this->tableColumnsCache[$table][$row['Field']] = true;
+                    }
+                }
+            } catch (\Throwable $e) {
+                $this->tableColumnsCache[$table] = [];
+            }
+        }
+        return !empty($this->tableColumnsCache[$table][$column]);
+    }
+
+    /**
+     * 按表结构追加职位身份字段
+     */
+    private function appendPositionTitleFieldsBySchema(string $table, array &$row, array $titlePayload): void
+    {
+        if ($this->tableHasColumn($table, 'position_title_id')) {
+            $row['position_title_id'] = !empty($titlePayload['position_title_id']) ? (int)$titlePayload['position_title_id'] : null;
+        }
+        if ($this->tableHasColumn($table, 'position_title')) {
+            $row['position_title'] = (string)($titlePayload['position_title'] ?? '');
+        }
     }
 
     // 解析运营端口：支持数组 / JSON字符串 / 逗号分隔；仅保留正整数并去重
@@ -2556,31 +2643,42 @@ class Client extends Common
                 // b) 新增联系方式（主电话=1，可多条；辅助=3，单条）
                 $now = date("Y-m-d H:i:s", time());
                 $contactsToInsert = [];
+                // 兼容字段：首个主电话的职位身份同步到 crm_leads（仅字段存在时）
+                $firstMainTitle = !empty($mainContacts) ? $this->extractContactPositionTitlePayload($mainContacts[0]) : ['position_title_id' => null, 'position_title' => ''];
+                $leadsTitlePatch = [];
+                $this->appendPositionTitleFieldsBySchema('crm_leads', $leadsTitlePatch, $firstMainTitle);
+                if (!empty($leadsTitlePatch)) {
+                    Db::table('crm_leads')->where('id', $id)->update($leadsTitlePatch);
+                }
                 // 循环处理所有主电话，每个作为一条联系记录
                 foreach ($mainContacts as $item) {
-                    $contactsToInsert[] = [
+                    $titlePayload = $this->extractContactPositionTitlePayload($item);
+                    $contactRow = [
                         'leads_id'      => $id,
                         'contact_type'  => $item['contact_type'],
-                        'position_title'=> $item['position_title'],
                         'contact_extra' => '',
                         'contact_value' => $item['contact_value'],
                         'vdigits'       => $item['contact_value'],
                         'is_delete'     => 0,
                         'created_at'    => $now,
                     ];
+                    $this->appendPositionTitleFieldsBySchema('crm_contacts', $contactRow, $titlePayload);
+                    $contactsToInsert[] = $contactRow;
                 }
                 // 如果存在辅助电话，则一并加入待插入列表
                 if ($auxContact) {
-                    $contactsToInsert[] = [
+                    $auxTitlePayload = $this->extractContactPositionTitlePayload($auxContact);
+                    $auxRow = [
                         'leads_id'      => $id,
                         'contact_type'  => $auxContact['contact_type'],
-                        'position_title'=> $auxContact['position_title'],
                         'contact_extra' => '',
                         'contact_value' => $auxContact['contact_value'],
                         'vdigits'       => $auxContact['contact_value'],
                         'is_delete'     => 0,
                         'created_at'    => $now,
                     ];
+                    $this->appendPositionTitleFieldsBySchema('crm_contacts', $auxRow, $auxTitlePayload);
+                    $contactsToInsert[] = $auxRow;
                 }
                 // 批量插入所有联系方式
                 if (!empty($contactsToInsert)) {
@@ -2701,10 +2799,13 @@ class Client extends Common
         $channelList = Db::table('crm_inquiry')->where('status', 0)->select();
         $portList    = Db::table('crm_inquiry_port')->where('status', 0)->select();
         $clientRankList = $this->getClientRankOptions();
+        $positionTitleList = $this->getPositionTitleService()->getActivePositionTitleList();
 
         $this->assign('channelList', $channelList);
         $this->assign('portList', $portList);
         $this->assign('clientRankList', $clientRankList);
+        $this->assign('positionTitleList', $positionTitleList);
+        $this->assign('positionTitleListJson', json_encode($positionTitleList, JSON_UNESCAPED_UNICODE));
 
         return $this->fetch('client/add');
     }  
@@ -2893,6 +2994,13 @@ class Client extends Common
 
                 // 更新主表
                 \think\Db::table('crm_leads')->where('id', $id)->update($data);
+                // 兼容字段：首个主电话职位身份同步到 crm_leads（字段存在才写）
+                $firstMainTitle = !empty($mainContacts) ? $this->extractContactPositionTitlePayload($mainContacts[0]) : ['position_title_id' => null, 'position_title' => ''];
+                $leadsTitlePatch = [];
+                $this->appendPositionTitleFieldsBySchema('crm_leads', $leadsTitlePatch, $firstMainTitle);
+                if (!empty($leadsTitlePatch)) {
+                    \think\Db::table('crm_leads')->where('id', $id)->update($leadsTitlePatch);
+                }
 
                 
                 $now = date("Y-m-d H:i:s");
@@ -2905,28 +3013,32 @@ class Client extends Common
                     ->delete();
 
                 foreach ($mainContacts as $item) {
-                    $contactsToInsert[] = [
+                    $titlePayload = $this->extractContactPositionTitlePayload($item);
+                    $contactRow = [
                         'leads_id'      => $id,
                         'contact_type'  => $item['contact_type'],
-                        'position_title'=> $item['position_title'],
                         'contact_extra' => '',
                         'contact_value' => $item['contact_value'],
                         'vdigits'       => $item['contact_value'],
                         'is_delete'     => 0,
                         'created_at'    => $now,
                     ];
+                    $this->appendPositionTitleFieldsBySchema('crm_contacts', $contactRow, $titlePayload);
+                    $contactsToInsert[] = $contactRow;
                 }
                 if ($auxContact) {
-                    $contactsToInsert[] = [
+                    $auxTitlePayload = $this->extractContactPositionTitlePayload($auxContact);
+                    $auxRow = [
                         'leads_id'      => $id,
                         'contact_type'  => $auxContact['contact_type'],
-                        'position_title'=> $auxContact['position_title'],
                         'contact_extra' => '',
                         'contact_value' => $auxContact['contact_value'],
                         'vdigits'       => $auxContact['contact_value'],
                         'is_delete'     => 0,
                         'created_at'    => $now,
                     ];
+                    $this->appendPositionTitleFieldsBySchema('crm_contacts', $auxRow, $auxTitlePayload);
+                    $contactsToInsert[] = $auxRow;
                 }
 
                 // 批量插入新联系方式记录
@@ -2968,23 +3080,34 @@ class Client extends Common
         $mainPhoneList = [];
         $auxPhone   = '';
         $auxPhonePositionTitle = '';
+        $auxPhonePositionTitleId = '';
+        $contactFields = ['contact_type', 'contact_value'];
+        if ($this->tableHasColumn('crm_contacts', 'position_title')) {
+            $contactFields[] = 'position_title';
+        }
+        if ($this->tableHasColumn('crm_contacts', 'position_title_id')) {
+            $contactFields[] = 'position_title_id';
+        }
         $contacts = \think\Db::table('crm_contacts')
             ->where('is_delete', 0)
             ->where('leads_id', $id)
             ->whereIn('contact_type', [1, 3])
             ->order('id', 'asc')
-            ->field('contact_type, contact_value, position_title')
+            ->field(implode(',', $contactFields))
             ->select();
         foreach ($contacts as $c) {
+            $titlePayload = $this->extractContactPositionTitlePayload($c);
             if ($c['contact_type'] == 1) {
                 $mainPhoneList[] = [
                     'phone' => (string)$c['contact_value'],
-                    'position_title' => trim((string)$c['position_title']),
+                    'position_title' => (string)$titlePayload['position_title'],
+                    'position_title_id' => $titlePayload['position_title_id'],
                 ];
             }
             if ($c['contact_type'] == 3 && $auxPhone === '') {
                 $auxPhone = $c['contact_value'];
-                $auxPhonePositionTitle = trim((string)$c['position_title']);
+                $auxPhonePositionTitle = (string)$titlePayload['position_title'];
+                $auxPhonePositionTitleId = $titlePayload['position_title_id'] ?: '';
             }
         }
 
@@ -3126,6 +3249,10 @@ class Client extends Common
         $this->assign('mainPhoneList', json_encode($mainPhoneList, JSON_UNESCAPED_UNICODE));
         $this->assign('auxPhone',  $auxPhone);
         $this->assign('auxPhonePositionTitle',  $auxPhonePositionTitle);
+        $this->assign('auxPhonePositionTitleId',  $auxPhonePositionTitleId);
+        $positionTitleList = $this->getPositionTitleService()->getActivePositionTitleList();
+        $this->assign('positionTitleList', $positionTitleList);
+        $this->assign('positionTitleListJson', json_encode($positionTitleList, JSON_UNESCAPED_UNICODE));
 
         $channelList = Db::table('crm_inquiry')->where('status', 0)->select();
         $portList    = Db::table('crm_inquiry_port')->where('status', 0)->select();

@@ -174,9 +174,13 @@
                 font-size: 13px;
             }
 
-            .mobile-position-row .layui-input {
+            .mobile-position-row .layui-input,
+            .mobile-position-row .layui-form-select {
                 flex: 1 1 auto;
                 min-width: 0;
+            }
+
+            .mobile-position-row .layui-input {
                 border-radius: 0 2px 2px 0;
             }
 
@@ -216,7 +220,12 @@
                     </div>
                     <div class="position-title mobile-position-row">
                         <span class="position-label">职位身份</span>
-                        <input type="text" name="more_position_titles[]" placeholder="职位身份（选填）" class="layui-input position-title-input">
+                        <select name="more_position_title_ids[]" lay-search class="position-title-select">
+                            <option value="">职位身份（选填）</option>
+                            {volist name="positionTitleList" id="vo"}
+                            <option value="{$vo.id}">{$vo.position_title}</option>
+                            {/volist}
+                        </select>
                     </div>
                     <button type="button" class="add-btn">+</button>
                 </div>
@@ -234,7 +243,12 @@
                     </div>
                     <div class="position-title mobile-position-row">
                         <span class="position-label">职位身份</span>
-                        <input type="text" name="phone2_position_title" placeholder="职位身份（必填）" class="layui-input" value="{$auxPhonePositionTitle|default=''}">
+                        <select name="phone2_position_title_id" lay-search class="position-title-select">
+                            <option value="">职位身份（必填）</option>
+                            {volist name="positionTitleList" id="vo"}
+                            <option value="{$vo.id}" {eq name="auxPhonePositionTitleId" value="$vo.id"}selected{/eq}>{$vo.position_title}</option>
+                            {/volist}
+                        </select>
                     </div>
                 </div>
             </div>
@@ -321,6 +335,7 @@ layui.use(['form', 'layer', 'jquery'], function () {
     var form = layui.form
       , layer = layui.layer
       , $ = layui.jquery;
+    var positionTitleList = {$positionTitleListJson|raw};
 
     // 协同人多选初始化
     var collaboratorData = {$collaboratorList|raw};          // [{name, value}]
@@ -345,6 +360,20 @@ layui.use(['form', 'layer', 'jquery'], function () {
         }
     });
 
+    function buildPositionTitleSelectHtml(name, placeholder, selectedId) {
+        var selected = String(selectedId || '');
+        var html = '<select name="' + name + '" lay-search class="position-title-select">';
+        html += '<option value="">' + placeholder + '</option>';
+        $.each(positionTitleList || [], function (_, item) {
+            var id = String(item.id || '');
+            var text = String(item.position_title || '');
+            var sel = (selected !== '' && selected === id) ? ' selected' : '';
+            html += '<option value="' + id + '"' + sel + '>' + text + '</option>';
+        });
+        html += '</select>';
+        return html;
+    }
+
     /* 多行（新增/删除） */
     $(document).on('click', '.add-btn', function (e) {
         e.preventDefault();
@@ -357,12 +386,13 @@ layui.use(['form', 'layer', 'jquery'], function () {
                 '</div>' +
                 '<div class="position-title mobile-position-row">' +
                     '<span class="position-label">职位身份</span>' +
-                    '<input type="text" name="more_position_titles[]" placeholder="职位身份（必填）" class="layui-input position-title-input">' +
+                    buildPositionTitleSelectHtml('more_position_title_ids[]', '职位身份（必填）', '') +
                 '</div>' +
                 '<button type="button" class="remove-btn">-</button>' +
             '</div>'
         );
         $container.append($newRow);
+        form.render('select');
     });
 
     $(document).on('click', '.remove-btn', function (e) {
@@ -406,7 +436,7 @@ layui.use(['form', 'layer', 'jquery'], function () {
 
     /* =========================
     [新增] 编辑页主电话“回填渲染”
-    要求：后端把 $mainPhoneList 以 JSON 传入（phone + position_title）
+    要求：后端把 $mainPhoneList 以 JSON 传入（phone + position_title + position_title_id）
     ========================= */
     (function prefillMainPhones(){
         var initMainPhoneList = {$mainPhoneList|raw}; // 形如 [{phone:'138...', position_title:'经理'}]
@@ -417,19 +447,19 @@ layui.use(['form', 'layer', 'jquery'], function () {
         var $box = $('#mainPhoneBox');
         var $firstRow   = $box.find('.input-row').first();
         var $firstInput = $firstRow.find('.multiple_telephone').first();
-        var $firstTitle = $firstRow.find('.position-title-input').first();
+        var $firstTitle = $firstRow.find('.position-title-select').first();
 
         if (initMainPhoneList.length > 0) {
             // 第一个主电话填入第一行
             $firstInput.val(initMainPhoneList[0].phone || '');
-            $firstTitle.val(initMainPhoneList[0].position_title || '');
+            $firstTitle.val(String(initMainPhoneList[0].position_title_id || ''));
         }
 
         // 其余主电话一行一个，并带“-”删除按钮
         for (var i = 1; i < initMainPhoneList.length; i++) {
             var item = initMainPhoneList[i] || {};
             var phone = item.phone || '';
-            var title = item.position_title || '';
+            var titleId = item.position_title_id || '';
             var $row = $(
                 '<div class="input-row has-action-btn">' +
                     '<div class="phone">' +
@@ -437,13 +467,14 @@ layui.use(['form', 'layer', 'jquery'], function () {
                     '</div>' +
                     '<div class="position-title mobile-position-row">' +
                         '<span class="position-label">职位身份</span>' +
-                        '<input type="text" name="more_position_titles[]" placeholder="职位身份（必填）" class="layui-input position-title-input" value="' + title + '">' +
+                        buildPositionTitleSelectHtml('more_position_title_ids[]', '职位身份（必填）', titleId) +
                     '</div>' +
                     '<button type="button" class="remove-btn">-</button>' +
                 '</div>'
             );
             $box.append($row);
         }
+        form.render('select');
     })();
 
 
@@ -502,20 +533,20 @@ layui.use(['form', 'layer', 'jquery'], function () {
 
         // 1) 采集主电话与职位身份（按行）
         var rawPhones = [];
-        var rawTitles = [];
+        var rawTitleIds = [];
         var validPhones = [];
         var missingMainTitle = false;
         var $rows = $('#mainPhoneBox .input-row');
         $rows.each(function (idx) {
             var phone = $.trim($(this).find('.multiple_telephone').val()).replace(/\D/g, '');
-            var title = $.trim($(this).find('.position-title-input').val());
+            var titleId = $.trim($(this).find('.position-title-select').val() || '');
             rawPhones.push(phone);
-            rawTitles.push(title);
+            rawTitleIds.push(titleId);
             if (phone) {
                 validPhones.push(phone);
             }
             // 第一个主电话职位身份非必填；新增主电话填写号码时职位身份必填
-            if (idx > 0 && phone && !title) {
+            if (idx > 0 && phone && !titleId) {
                 layer.msg('第' + (idx + 1) + '个主电话请填写职位身份');
                 missingMainTitle = true;
                 return false;
@@ -551,8 +582,8 @@ layui.use(['form', 'layer', 'jquery'], function () {
             layer.msg('主电话与辅助电话不能相同');
             return false;
         }
-        var auxTitle = $.trim($('input[name="phone2_position_title"]').val());
-        if (aux && !auxTitle) {
+        var auxTitleId = $.trim($('select[name="phone2_position_title_id"]').val() || '');
+        if (aux && !auxTitleId) {
             layer.msg('填写辅助电话时，职位身份必填');
             return false;
         }
@@ -571,14 +602,15 @@ layui.use(['form', 'layer', 'jquery'], function () {
 
         // 4) 将主电话与职位身份以 JSON 数组方式提交，后端支持 JSON / 数组
         data.field.more_phones = JSON.stringify(rawPhones);
-        data.field.more_position_titles = JSON.stringify(rawTitles);
-        data.field.phone2_position_title = auxTitle;
+        data.field.more_position_title_ids = JSON.stringify(rawTitleIds);
+        data.field.more_phone_title_ids = data.field.more_position_title_ids;
+        data.field.phone2_position_title_id = auxTitleId;
         data.field.inquiry_id = inquiryId;
         data.field.port_id = portIds;
 
         // 5) 清理可能存在的旧字段，避免干扰（容错）
         delete data.field['more_phones[]'];
-        delete data.field['more_position_titles[]'];
+        delete data.field['more_position_title_ids[]'];
         delete data.field['phone'];
         delete data.field['port_id[]'];
 

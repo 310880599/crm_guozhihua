@@ -9,9 +9,9 @@ class PositionTitle extends Model
     protected $table = 'crm_position_title';
     protected $pk    = 'id';
 
-    // 用 int 时间戳写入/读取；字段名对应你的表
-    protected $autoWriteTimestamp = 'int';
+    // datetime 字段统一由 Service 层显式写入，避免 int 时间戳写入导致 SQL 报错
+    protected $autoWriteTimestamp = false;
     protected $createTime = 'create_time';
     protected $updateTime = 'update_time';
-    protected $dateFormat = false;  // 不让 TP 在取出时自动格式化
+    protected $dateFormat = 'Y-m-d H:i:s';
 }

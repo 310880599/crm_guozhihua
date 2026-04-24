@@ -7,6 +7,150 @@ use think\Db;
 
 class PositionTitleService
 {
+    /** @var array<string, array<string, bool>> */
+    private static $tableColumnsCache = [];
+
+    /**
+     * 获取用于下拉框的职位身份列表（仅有效数据）
+     *
+     * @return array<int, array{id:int,position_title:string}>
+     */
+    public function getActivePositionTitleList(): array
+    {
+        $nameField = $this->getNameField();
+        $query = PositionTitleModel::where('id', '>', 0);
+        $this->applyActiveFilter($query);
+        $rows = $query->field('id,' . $nameField)->order('id asc')->select();
+
+        $result = [];
+        foreach ($rows as $row) {
+            $name = trim((string)($row[$nameField] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $result[] = [
+                'id' => (int)$row['id'],
+                'position_title' => $name,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * 验证职位身份ID并返回规范化数据
+     *
+     * @param mixed $id
+     * @return array{0:bool,1:string,2:?array{id:int,name:string}}
+     */
+    public function validatePositionTitle($id): array
+    {
+        $id = (int)$id;
+        if ($id <= 0) {
+            return [true, '', null];
+        }
+
+        $nameField = $this->getNameField();
+        $query = PositionTitleModel::where('id', $id);
+        $this->applyActiveFilter($query);
+        $row = $query->field('id,' . $nameField)->find();
+        if (!$row) {
+            return [false, '所选职位身份不存在或已禁用，请重新选择', null];
+        }
+
+        return [true, '', [
+            'id' => (int)$row['id'],
+            'name' => trim((string)$row[$nameField]),
+        ]];
+    }
+
+    /**
+     * 通过名称反查职位身份（用于旧数据兼容）
+     *
+     * @param string $name
+     * @return array{id:int,name:string}|null
+     */
+    public function findByName(string $name): ?array
+    {
+        $name = trim($name);
+        if ($name === '') {
+            return null;
+        }
+
+        $nameField = $this->getNameField();
+        $query = PositionTitleModel::where($nameField, $name);
+        $this->applyActiveFilter($query);
+        $row = $query->field('id,' . $nameField)->find();
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int)$row['id'],
+            'name' => trim((string)$row[$nameField]),
+        ];
+    }
+
+    /**
+     * 从表结构中识别职位名称字段（title_name / position_title）
+     */
+    private function getNameField(): string
+    {
+        if ($this->hasColumn('title_name')) {
+            return 'title_name';
+        }
+        if ($this->hasColumn('position_title')) {
+            return 'position_title';
+        }
+        return 'title_name';
+    }
+
+    /**
+     * 根据现有字段套用“有效数据”过滤条件
+     *
+     * @param \think\db\Query $query
+     * @return void
+     */
+    private function applyActiveFilter($query): void
+    {
+        if ($this->hasColumn('is_deleted')) {
+            $query->where('is_deleted', 0);
+        } elseif ($this->hasColumn('is_delete')) {
+            $query->where('is_delete', 0);
+        }
+
+        if ($this->hasColumn('status') && !$this->hasColumn('is_deleted') && !$this->hasColumn('is_delete')) {
+            $query->where('status', 0);
+        }
+    }
+
+    private function hasColumn(string $column): bool
+    {
+        if (!isset(self::$tableColumnsCache['crm_position_title'])) {
+            self::$tableColumnsCache['crm_position_title'] = $this->loadTableColumns('crm_position_title');
+        }
+        return !empty(self::$tableColumnsCache['crm_position_title'][$column]);
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    private function loadTableColumns(string $table): array
+    {
+        try {
+            $rows = Db::query("SHOW COLUMNS FROM `{$table}`");
+            $map = [];
+            foreach ($rows as $row) {
+                if (!empty($row['Field'])) {
+                    $map[$row['Field']] = true;
+                }
+            }
+            return $map;
+        } catch (\Throwable $e) {
+            return [];
+        }
+    }
+
     /**
      * 获取详情（仅未删除）
      *
@@ -62,6 +206,7 @@ class PositionTitleService
         $data = is_array($data) ? $data : [];
         $titleName = trim((string)($data['title_name'] ?? ''));
         $createdBy = trim((string)($data['created_by'] ?? ''));
+        $now = date('Y-m-d H:i:s');
 
         if ($titleName === '') {
             return ['code' => -200, 'msg' => '职位身份名称不能为空'];
@@ -82,7 +227,7 @@ class PositionTitleService
             $existsDeleted->deleted_time = null;
             $existsDeleted->deleted_by = null;
             $existsDeleted->created_by = $createdBy;
-            $existsDeleted->update_time = time();
+            $existsDeleted->update_time = $now;
             $res = $existsDeleted->save();
             return $res ? ['code' => 0, 'msg' => '添加成功！'] : ['code' => -200, 'msg' => '添加失败！'];
         }
@@ -93,6 +238,8 @@ class PositionTitleService
             'is_deleted' => 0,
             'deleted_time' => null,
             'deleted_by' => null,
+            'create_time' => $now,
+            'update_time' => $now,
         ];
         $res = PositionTitleModel::create($insertData);
         return $res ? ['code' => 0, 'msg' => '添加成功！'] : ['code' => -200, 'msg' => '添加失败！'];
@@ -119,6 +266,7 @@ class PositionTitleService
 
         $data = is_array($data) ? $data : [];
         $updateData = [];
+        $now = date('Y-m-d H:i:s');
 
         if (array_key_exists('title_name', $data)) {
             $titleName = trim((string)$data['title_name']);
@@ -146,6 +294,7 @@ class PositionTitleService
             return ['code' => -200, 'msg' => '没有可修改的数据'];
         }
 
+        $updateData['update_time'] = $now;
         $aff = PositionTitleModel::where('id', $id)->where('is_deleted', 0)->update($updateData);
         return $aff ? ['code' => 0, 'msg' => '修改成功！'] : ['code' => -200, 'msg' => '修改失败！'];
     }
@@ -163,13 +312,15 @@ class PositionTitleService
         if ($id <= 0) {
             return ['code' => -200, 'msg' => '参数错误'];
         }
+        $now = date('Y-m-d H:i:s');
 
         $aff = PositionTitleModel::where('id', $id)
             ->where('is_deleted', 0)
             ->update([
                 'is_deleted' => 1,
-                'deleted_time' => date('Y-m-d H:i:s'),
+                'deleted_time' => $now,
                 'deleted_by' => (int)$deletedBy,
+                'update_time' => $now,
             ]);
 
         return $aff ? ['code' => 0, 'msg' => '删除成功！'] : ['code' => -200, 'msg' => '删除失败！'];
@@ -191,6 +342,7 @@ class PositionTitleService
         if (empty($ids)) {
             return ['code' => -200, 'msg' => '未选择任何记录'];
         }
+        $now = date('Y-m-d H:i:s');
 
         Db::startTrans();
         try {
@@ -198,8 +350,9 @@ class PositionTitleService
                 ->where('is_deleted', 0)
                 ->update([
                     'is_deleted' => 1,
-                    'deleted_time' => date('Y-m-d H:i:s'),
+                    'deleted_time' => $now,
                     'deleted_by' => (int)$deletedBy,
+                    'update_time' => $now,
                 ]);
             Db::commit();
 
@@ -257,7 +410,7 @@ class PositionTitleService
                 $existingMap[$item['title_name']] = $item;
             }
 
-            $now = time();
+            $now = date('Y-m-d H:i:s');
             $toInsert = [];
             $skipCount = 0;
             $reviveCount = 0;
