@@ -80,7 +80,7 @@
                     <div class="layui-inline">
                         <label class="layui-form-label">职位身份名称：</label>
                         <div class="layui-input-inline">
-                            <input type="text" id="account" name="account" placeholder="请输入职位身份名称："
+                            <input type="text" id="title_name" name="title_name" placeholder="请输入职位身份名称："
                                 class="layui-input">
                         </div>
                     </div>
@@ -139,8 +139,8 @@ layui.use(['table','form','util','jquery'], function() {
         cols: [[
             {type:'checkbox', fixed: 'left'},
             {field: 'id', title: 'ID', width: 80, sort: true},
-            {field: 'account', title: '职位身份名称',width: 180},
-            {field: 'receiver', title: '创建人',width: 100},
+            {field: 'title_name', title: '职位身份名称',width: 180},
+            {field: 'created_by', title: '创建人',width: 100},
             {field:'create_time', title:'创建时间',width: 180,
                 templet: function(d){
                   var v = d.create_time;

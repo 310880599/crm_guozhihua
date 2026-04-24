@@ -38,7 +38,7 @@ class PositionTitle extends Common
     public function accountSearch()
     {
         $params = [
-            'account' => input('account', ''),
+            'title_name' => input('title_name', ''),
             'page' => input('page/d', 1),
             'limit' => input('limit/d', 10),
         ];
@@ -49,7 +49,7 @@ class PositionTitle extends Common
     public function add()
     {
         if (Request::isPost()) {
-            $data = Request::only(['account','receiver'], 'post');
+            $data = Request::only(['title_name','created_by'], 'post');
             $result = $this->service()->add($data);
             return json($result);
         }
@@ -66,7 +66,7 @@ class PositionTitle extends Common
         }
 
         if (Request::isAjax()) {
-            $data = Request::only(['account', 'receiver'], 'post');
+            $data = Request::only(['title_name', 'created_by'], 'post');
             $result = $this->service()->edit($id, $data);
             return json($result);
         }
@@ -134,7 +134,7 @@ class PositionTitle extends Common
         $ext      = strtolower($info->getExtension());
     
         // 3) 解析
-        $rows = [];  // 每个元素：[ 'account'=>..., 'receiver'=>...]
+        $rows = [];  // 每个元素：[ 'title_name'=>..., 'created_by'=>...]
         try {
             if ($ext === 'csv') {
                 // ---- 解析 CSV ----
@@ -162,8 +162,8 @@ class PositionTitle extends Common
                     // 兼容列数量不足
                     $data = array_pad($data, 2, '');
                     $rows[] = [
-                        'account'       => trim((string)$data[0]),
-                        'receiver'     => trim((string)$data[1]),
+                        'title_name' => trim((string)$data[0]),
+                        'created_by' => trim((string)$data[1]),
                     ];
                 }
                 fclose($tmp);
@@ -183,12 +183,15 @@ class PositionTitle extends Common
     
                     $start = $hasHeader ? 2 : 1;
                     for ($r = $start; $r <= $highestRow; $r++) {
-                        $account       = trim((string)$sheet->getCell("A{$r}")->getValue());
-                        $receiver     = trim((string)$sheet->getCell("B{$r}")->getValue());
-                        if ($account === '' && $receiver === '') {
+                        $titleName = trim((string)$sheet->getCell("A{$r}")->getValue());
+                        $createdBy = trim((string)$sheet->getCell("B{$r}")->getValue());
+                        if ($titleName === '' && $createdBy === '') {
                             continue; // 跳过空行
                         }
-                        $rows[] = compact('account','receiver');
+                        $rows[] = [
+                            'title_name' => $titleName,
+                            'created_by' => $createdBy,
+                        ];
                     }
                 } else {
                     return json([

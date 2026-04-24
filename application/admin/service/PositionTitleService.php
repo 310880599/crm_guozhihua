@@ -31,13 +31,13 @@ class PositionTitleService
     public function getList($params = [])
     {
         $params = is_array($params) ? $params : [];
-        $account = trim((string)($params['account'] ?? ''));
+        $titleName = trim((string)($params['title_name'] ?? ''));
         $page = max(1, (int)($params['page'] ?? 1));
         $limit = max(1, (int)($params['limit'] ?? 10));
 
         $query = PositionTitleModel::where('is_deleted', 0)->order('id desc');
-        if ($account !== '') {
-            $query->where('account', 'like', "%{$account}%");
+        if ($titleName !== '') {
+            $query->where('title_name', 'like', "%{$titleName}%");
         }
 
         $list = $query->paginate(['list_rows' => $limit, 'page' => $page])->toArray();
@@ -60,36 +60,36 @@ class PositionTitleService
     public function add($data = [])
     {
         $data = is_array($data) ? $data : [];
-        $account = trim((string)($data['account'] ?? ''));
-        $receiver = trim((string)($data['receiver'] ?? ''));
+        $titleName = trim((string)($data['title_name'] ?? ''));
+        $createdBy = trim((string)($data['created_by'] ?? ''));
 
-        if ($account === '') {
+        if ($titleName === '') {
             return ['code' => -200, 'msg' => '职位身份名称不能为空'];
         }
 
-        $existsActive = PositionTitleModel::where('account', $account)
+        $existsActive = PositionTitleModel::where('title_name', $titleName)
             ->where('is_deleted', 0)
             ->find();
         if ($existsActive) {
             return ['code' => -200, 'msg' => '职位身份已存在'];
         }
 
-        $existsDeleted = PositionTitleModel::where('account', $account)
+        $existsDeleted = PositionTitleModel::where('title_name', $titleName)
             ->where('is_deleted', 1)
             ->find();
         if ($existsDeleted) {
             $existsDeleted->is_deleted = 0;
             $existsDeleted->deleted_time = null;
             $existsDeleted->deleted_by = null;
-            $existsDeleted->receiver = $receiver;
+            $existsDeleted->created_by = $createdBy;
             $existsDeleted->update_time = time();
             $res = $existsDeleted->save();
             return $res ? ['code' => 0, 'msg' => '添加成功！'] : ['code' => -200, 'msg' => '添加失败！'];
         }
 
         $insertData = [
-            'account' => $account,
-            'receiver' => $receiver,
+            'title_name' => $titleName,
+            'created_by' => $createdBy,
             'is_deleted' => 0,
             'deleted_time' => null,
             'deleted_by' => null,
@@ -120,14 +120,14 @@ class PositionTitleService
         $data = is_array($data) ? $data : [];
         $updateData = [];
 
-        if (array_key_exists('account', $data)) {
-            $account = trim((string)$data['account']);
-            if ($account === '') {
+        if (array_key_exists('title_name', $data)) {
+            $titleName = trim((string)$data['title_name']);
+            if ($titleName === '') {
                 return ['code' => -200, 'msg' => '职位身份名称不能为空'];
             }
 
-            if ($account !== (string)$entry->account) {
-                $exists = PositionTitleModel::where('account', $account)
+            if ($titleName !== (string)$entry->title_name) {
+                $exists = PositionTitleModel::where('title_name', $titleName)
                     ->where('is_deleted', 0)
                     ->where('id', '<>', $id)
                     ->find();
@@ -135,11 +135,11 @@ class PositionTitleService
                     return ['code' => -200, 'msg' => '职位身份名称已存在'];
                 }
             }
-            $updateData['account'] = $account;
+            $updateData['title_name'] = $titleName;
         }
 
-        if (array_key_exists('receiver', $data)) {
-            $updateData['receiver'] = trim((string)$data['receiver']);
+        if (array_key_exists('created_by', $data)) {
+            $updateData['created_by'] = trim((string)$data['created_by']);
         }
 
         if (empty($updateData)) {
@@ -227,16 +227,16 @@ class PositionTitleService
 
         $normalizedRows = [];
         foreach ($rows as $r) {
-            $account = trim((string)($r['account'] ?? ''));
-            $receiver = trim((string)($r['receiver'] ?? ''));
-            if ($account === '') {
+            $titleName = trim((string)($r['title_name'] ?? ''));
+            $createdBy = trim((string)($r['created_by'] ?? ''));
+            if ($titleName === '') {
                 continue;
             }
             // 同一文件内重复名称，仅保留首次出现的一条
-            if (!isset($normalizedRows[$account])) {
-                $normalizedRows[$account] = [
-                    'account' => $account,
-                    'receiver' => $receiver,
+            if (!isset($normalizedRows[$titleName])) {
+                $normalizedRows[$titleName] = [
+                    'title_name' => $titleName,
+                    'created_by' => $createdBy,
                 ];
             }
         }
@@ -246,15 +246,15 @@ class PositionTitleService
         }
 
         try {
-            $accounts = array_keys($normalizedRows);
-            $existing = PositionTitleModel::whereIn('account', $accounts)
-                ->field('id,account,is_deleted')
+            $titleNames = array_keys($normalizedRows);
+            $existing = PositionTitleModel::whereIn('title_name', $titleNames)
+                ->field('id,title_name,is_deleted')
                 ->select()
                 ->toArray();
 
             $existingMap = [];
             foreach ($existing as $item) {
-                $existingMap[$item['account']] = $item;
+                $existingMap[$item['title_name']] = $item;
             }
 
             $now = time();
@@ -265,10 +265,10 @@ class PositionTitleService
 
             Db::startTrans();
             foreach ($normalizedRows as $row) {
-                $account = $row['account'];
-                $receiver = $row['receiver'];
-                if (isset($existingMap[$account])) {
-                    $exists = $existingMap[$account];
+                $titleName = $row['title_name'];
+                $createdBy = $row['created_by'];
+                if (isset($existingMap[$titleName])) {
+                    $exists = $existingMap[$titleName];
                     if ((int)$exists['is_deleted'] === 0) {
                         $skipCount++;
                         continue;
@@ -278,7 +278,7 @@ class PositionTitleService
                         'is_deleted' => 0,
                         'deleted_time' => null,
                         'deleted_by' => null,
-                        'receiver' => $receiver,
+                        'created_by' => $createdBy,
                         'update_time' => $now,
                     ]);
                     $reviveCount++;
@@ -286,8 +286,8 @@ class PositionTitleService
                 }
 
                 $toInsert[] = [
-                    'account' => $account,
-                    'receiver' => $receiver,
+                    'title_name' => $titleName,
+                    'created_by' => $createdBy,
                     'is_deleted' => 0,
                     'deleted_time' => null,
                     'deleted_by' => null,
