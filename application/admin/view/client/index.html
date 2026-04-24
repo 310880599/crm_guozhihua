@@ -821,6 +821,15 @@
             var tableIn = null;
             var lastSnapshot = {};
 
+            function personclientEscapeHtml(s) {
+                if (s == null) return '';
+                return String(s)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+
             // 表格列定义（先定义，再在 restoreColWidth 后渲染）
             var cols = [[
                     { checkbox: true, fixed: true , width: 50},
@@ -833,6 +842,22 @@
                     { field: 'product_name', title: '产品名称', width:180 }, 
                     { field: 'inquiry_name', title: '所属渠道', width:180 },
                     { field: 'port_name', title: '运营端口', width:180 },
+                    {
+                        field: 'main_phone_position_titles',
+                        title: '主电话职位身份',
+                        width: 220,
+                        templet: function(d){
+                            return personclientEscapeHtml(d.main_phone_position_titles || '');
+                        }
+                    },
+                    {
+                        field: 'aux_phone_position_titles',
+                        title: '辅助电话职位身份',
+                        width: 220,
+                        templet: function(d){
+                            return personclientEscapeHtml(d.aux_phone_position_titles || '');
+                        }
+                    },
                     { field: 'main_phone', title: '主电话', width: 180 },
                     { field: 'aux_phone', title: '辅助电话', width: 180 },
                     { field: 'pr_user', title: '负责人', width:180 },

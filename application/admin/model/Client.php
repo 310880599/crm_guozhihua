@@ -713,10 +713,21 @@ class Client extends Model
     {
         $result = $this->buildClientSearchAllBaseQuery((array)$keyword)
             ->leftJoin('crm_contacts c', "c.leads_id = l.id AND c.is_delete = 0 AND c.contact_type IN (1,3)")
+            ->leftJoin('crm_position_title pt', 'pt.id = c.position_title_id AND pt.is_deleted = 0')
             ->field([
                 'l.*',
                 "GROUP_CONCAT(DISTINCT IF(c.contact_type = 1, c.contact_value, NULL) ORDER BY c.id SEPARATOR ',') AS main_phone",
                 "GROUP_CONCAT(DISTINCT IF(c.contact_type = 3, c.contact_value, NULL) ORDER BY c.id SEPARATOR '<br>') AS aux_phone",
+                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 1, CONCAT(c.contact_value, '-', CASE
+                    WHEN c.position_title_id IS NOT NULL AND c.position_title_id <> 0 AND pt.title_name IS NOT NULL AND pt.title_name <> '' THEN pt.title_name
+                    WHEN (c.position_title_id IS NULL OR c.position_title_id = 0) AND c.position_title IS NOT NULL AND c.position_title <> '' THEN c.position_title
+                    ELSE '未填写'
+                END), NULL) ORDER BY c.id SEPARATOR ',') AS main_phone_position_titles",
+                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 3, CONCAT(c.contact_value, '-', CASE
+                    WHEN c.position_title_id IS NOT NULL AND c.position_title_id <> 0 AND pt.title_name IS NOT NULL AND pt.title_name <> '' THEN pt.title_name
+                    WHEN (c.position_title_id IS NULL OR c.position_title_id = 0) AND c.position_title IS NOT NULL AND c.position_title <> '' THEN c.position_title
+                    ELSE '未填写'
+                END), NULL) ORDER BY c.id SEPARATOR ',') AS aux_phone_position_titles",
             ])
             ->group('l.id')
             ->order('l.at_time desc')

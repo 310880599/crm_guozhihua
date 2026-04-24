@@ -282,6 +282,10 @@ class Client extends Common
             $row['product_name'] = isset($productNameMap[$row['product_name']]) 
                                     ? $productNameMap[$row['product_name']] 
                                     : (string)$row['product_name'];
+            $row['main_phone_position_titles'] = $row['main_phone_position_titles'] ?? '';
+            $row['aux_phone_position_titles'] = $row['aux_phone_position_titles'] ?? '';
+            $auxParts = array_values(array_filter(explode(',', $row['aux_phone_position_titles'])));
+            $row['aux_phone_position_titles'] = $auxParts[0] ?? '';
         }
         unset($row);    
         $this->appendKhRankDisplayForRows($rows);
