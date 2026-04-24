@@ -54,6 +54,17 @@
         .layui-form-label {
             white-space: nowrap;   /* 不允许换行 */
         }
+        .position-title-search .layui-form-label {
+            width: 120px;
+            padding-left: 0;
+            padding-right: 10px;
+            box-sizing: border-box;
+            text-align: right;
+        }
+        .position-title-search .layui-input-inline {
+            margin-left: 0;
+            width: 180px;
+        }
 
     </style>
 </head>
@@ -65,9 +76,9 @@
         <div class="layui-card" style="box-shadow: none;margin-top: 10px">
             <div class="layui-form layui-card-header layuiadmin-card-header-auto"
                 style="border-bottom: transparent;height: auto">
-                <div class="layui-form-item" style="text-align: left;padding-left: 20px;">
+                <div class="layui-form-item position-title-search" style="text-align: left;padding-left: 20px;">
                     <div class="layui-inline">
-                        <label class="layui-form-label" style="margin-left: 5px">职位身份名称：</label>
+                        <label class="layui-form-label">职位身份名称：</label>
                         <div class="layui-input-inline">
                             <input type="text" id="account" name="account" placeholder="请输入职位身份名称："
                                 class="layui-input">
