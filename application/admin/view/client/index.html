@@ -815,15 +815,14 @@
                 bindToggle: bindAdvancedSearchToggle
             };
 
-            // 表格初始化（默认不加任何筛选条件）
-            var tableIn = table.render({
-                elem: '#table-list',
-                id: 'table-list',
-                url: "{:url('index')}",
-                method: 'post',
-                toolbar: '#topBtn',
-                defaultToolbar: ['filter', 'print', 'exports'],
-                cols: [[
+            var tableId = 'table-list';
+            var pageKey = 'client_index_table';
+            var columnWidthKey = 'layui_col_width_' + pageKey + '_{:session("aid")}';
+            var tableIn = null;
+            var lastSnapshot = {};
+
+            // 表格列定义（先定义，再在 restoreColWidth 后渲染）
+            var cols = [[
                     { checkbox: true, fixed: true , width: 50},
                     { field: 'id', title: 'ID', hide: true },
                     {
@@ -872,20 +871,137 @@
                         }
                     },
                     { width: 420, align: 'center', toolbar: '#action' }
-                ]],
-                limit: 10,
-                page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
-                parseData: function(res) {
-                    // 给每行数据添加aid字段，用于判断权限
-                    var aid = '{:session("aid")}';
-                    if (res.data && res.data.length > 0) {
-                        res.data.forEach(function(item) {
-                            item.aid = aid;
-                        });
+            ]];
+
+            function restoreColWidth(colArr, callback) {
+                var dbWidths = {};
+                try {
+                    var localWidths = JSON.parse(localStorage.getItem(columnWidthKey) || '{}') || {};
+                    $.ajax({
+                        url: "{:url('Client/getColWidths')}",
+                        type: 'GET',
+                        dataType: 'json',
+                        data: {
+                            page_key: pageKey,
+                            table_id: tableId
+                        },
+                        success: function (res) {
+                            if (res && res.code === 0 && res.data && typeof res.data === 'object') {
+                                dbWidths = res.data;
+                            }
+                        },
+                        error: function () {
+                            console.warn('[colwidth] read db widths failed, fallback to localStorage');
+                        },
+                        complete: function () {
+                            var finalWidths = Object.assign({}, localWidths, dbWidths);
+                            try {
+                                if (Object.keys(finalWidths).length) {
+                                    localStorage.setItem(columnWidthKey, JSON.stringify(finalWidths));
+                                }
+                            } catch (e) {}
+
+                            (colArr || []).forEach(function (c) {
+                                if (!c || !c.field || c.field === '0') {
+                                    return;
+                                }
+                                var w = parseInt(finalWidths[c.field], 10);
+                                if (w >= 30 && w <= 3000) {
+                                    c.width = w;
+                                }
+                            });
+                            if (typeof callback === 'function') {
+                                callback(colArr || []);
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.warn('[colwidth] restore failed', e);
+                    if (typeof callback === 'function') {
+                        callback(colArr || []);
                     }
-                    return res;
                 }
-            });
+            }
+
+            function getCurrentWidthsSnapshot() {
+                var snapshot = {};
+                try {
+                    var $view = $('#' + tableId).next('.layui-table-view');
+                    if (!$view.length) {
+                        return snapshot;
+                    }
+                    var $headerTable = $view.find('.layui-table-header table').eq(0);
+                    var $ths = $headerTable.find('thead tr th');
+                    $ths.each(function () {
+                        var $th = $(this);
+                        var field = $th.attr('data-field');
+                        if (!field || field === '0') {
+                            return;
+                        }
+                        var w = parseInt($th.width(), 10);
+                        if (w >= 30 && w <= 3000) {
+                            snapshot[field] = w;
+                        }
+                    });
+                } catch (e) {
+                    console.warn('[colwidth] get snapshot failed', e);
+                }
+                return snapshot;
+            }
+
+            function saveWidths(widthMap) {
+                try {
+                    var widths = widthMap || getCurrentWidthsSnapshot();
+                    if (!widths || !Object.keys(widths).length) {
+                        return;
+                    }
+
+                    // localStorage 兜底
+                    localStorage.setItem(columnWidthKey, JSON.stringify(widths));
+
+                    $.ajax({
+                        url: "{:url('Client/saveColWidths')}",
+                        type: 'POST',
+                        dataType: 'json',
+                        data: {
+                            page_key: pageKey,
+                            table_id: tableId,
+                            widths: JSON.stringify(widths)
+                        },
+                        success: function (res) {
+                            if (!res || res.code !== 0) {
+                                console.warn('[colwidth] save db widths failed:', (res && res.msg) || 'unknown');
+                            }
+                        },
+                        error: function () {
+                            console.warn('[colwidth] save db widths failed: network');
+                        }
+                    });
+                } catch (e) {
+                    console.warn('[colwidth] save failed', e);
+                }
+            }
+
+            function bindResizeSave() {
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if (!$view.length) {
+                    return;
+                }
+                $(document).off('mouseup.client_colwidth touchend.client_colwidth');
+                lastSnapshot = getCurrentWidthsSnapshot();
+                $(document).on('mouseup.client_colwidth touchend.client_colwidth', function () {
+                    setTimeout(function () {
+                        var newSnapshot = getCurrentWidthsSnapshot();
+                        if (!Object.keys(newSnapshot).length) {
+                            return;
+                        }
+                        if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
+                            saveWidths(newSnapshot);
+                            lastSnapshot = newSnapshot;
+                        }
+                    }, 120);
+                });
+            }
 
             // 清空表格勾选状态：表格 DOM + 表头 + layui 缓存，避免多次搜索后拿到旧 ids
             function clearTableCheckState(tableId) {
@@ -907,7 +1023,10 @@
                 }
             }
 
-            function reloadKeepColWidth() {
+            function reloadKeepColWidth(reloadOptions) {
+                if (!tableIn || typeof tableIn.reload !== 'function') {
+                    return;
+                }
                 var snapshot = {};
                 if (typeof getCurrentWidthsSnapshot === 'function') {
                     snapshot = getCurrentWidthsSnapshot() || {};
@@ -928,10 +1047,42 @@
                     localStorage.setItem(columnWidthKey, JSON.stringify(snapshot));
                 }
 
-                console.log('[colwidth] reloadKeepColWidth snapshot', snapshot);
-                tableIn.reload();
+                if (snapshot && Object.keys(snapshot).length) {
+                    saveWidths(snapshot);
+                }
+
+                var options = reloadOptions || {};
+                tableIn.reload(options);
                 setTimeout(function () { clearTableCheckState('table-list'); }, 80);
             }
+
+            restoreColWidth(cols[0], function (finalCols) {
+                // 表格初始化（默认不加任何筛选条件）
+                tableIn = table.render({
+                    elem: '#table-list',
+                    id: tableId,
+                    url: "{:url('index')}",
+                    method: 'post',
+                    toolbar: '#topBtn',
+                    defaultToolbar: ['filter', 'print', 'exports'],
+                    cols: [finalCols],
+                    limit: 10,
+                    page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
+                    parseData: function(res) {
+                        // 给每行数据添加aid字段，用于判断权限
+                        var aid = '{:session("aid")}';
+                        if (res.data && res.data.length > 0) {
+                            res.data.forEach(function(item) {
+                                item.aid = aid;
+                            });
+                        }
+                        return res;
+                    },
+                    done: function () {
+                        bindResizeSave();
+                    }
+                });
+            });
             // 打开跟进弹窗
             function openFollowDialog(clientId) {
                 // 显示加载提示
@@ -1345,7 +1496,7 @@
                             layer.close(loading);
                             if (res.code === 0) {
                                 layer.msg(res.msg, { time: 1000, icon: 1 });
-                                tableIn.reload();
+                                reloadKeepColWidth();
                             } else {
                                 layer.msg('操作失败！', { time: 1000, icon: 2 });
                             }
@@ -1368,7 +1519,7 @@
                         $.post("{:url('Client/chengjiao')}", { ids: data.id }, function (res) {
                             if (res.code === 0) {
                                 layer.msg(res.msg, { time: 1000, icon: 1 });
-                                tableIn.reload();
+                                reloadKeepColWidth();
                             } else {
                                 layer.msg('操作失败！', { time: 1000, icon: 2 });
                             }
@@ -1465,7 +1616,7 @@
                                 $.post("{:url('Client/chengjiao')}", { ids: ids }, function (res) {
                                     if (res.code === 0) {
                                         layer.msg(res.msg, { time: 1000, icon: 1 });
-                                        tableIn.reload();
+                                        reloadKeepColWidth();
                                     } else {
                                         layer.msg('操作失败！', { time: 1000, icon: 2 });
                                     }
@@ -1486,7 +1637,7 @@
                                     layer.close(loading);
                                     if (res.code === 0) {
                                         layer.msg(res.msg, { time: 1000, icon: 1 });
-                                        tableIn.reload();
+                                        reloadKeepColWidth();
                                     } else {
                                         layer.msg(res.msg || '删除失败', { time: 1500, icon: 2 });
                                     }
@@ -1503,12 +1654,13 @@
                 var keyword = data.field;
                 console.log('[客户列表-搜索] keyword', keyword);
                 clearTableCheckState('table-list');
-                table.reload('table-list', {
+                reloadKeepColWidth({
                     url: "{:url('index')}",
                     method: 'post',
                     where: { keyword: keyword },
                     page: { curr: 1 },
                     done: function () {
+                        bindResizeSave();
                         clearTableCheckState('table-list');
                         console.log('[客户列表-reload] 查询完成，已清空勾选');
                     }
