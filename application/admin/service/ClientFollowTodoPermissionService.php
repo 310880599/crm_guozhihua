@@ -20,23 +20,18 @@ class ClientFollowTodoPermissionService
     /**
      * 获取当前登录管理员基础身份信息。
      *
-     * @return array{
-     *   admin_id:int,
-     *   username:string,
-     *   group_id:int,
-     *   team_name:string,
-     *   position:int,
-     *   is_super:bool
-     * }
+     * @return array
      */
     private function getCurrentAdminIdentity()
     {
-        $current = Admin::getMyInfo();
+        $current = (array)Admin::getMyInfo();
         $adminId = (int)($current['admin_id'] ?? 0);
         $username = trim((string)($current['username'] ?? ''));
         $groupId = (int)($current['group_id'] ?? 0);
         $teamName = trim((string)($current['team_name'] ?? ''));
         $position = (int)($current['position'] ?? 0);
+        $parentId = (int)($current['parent_id'] ?? 0);
+        $roleId = (int)($current['role_id'] ?? 0);
 
         return [
             'admin_id' => $adminId,
@@ -44,6 +39,8 @@ class ClientFollowTodoPermissionService
             'group_id' => $groupId,
             'team_name' => $teamName,
             'position' => $position,
+            'parent_id' => $parentId,
+            'role_id' => $roleId,
             'is_super' => ($adminId === 1 || $groupId === 1),
         ];
     }
@@ -82,8 +79,12 @@ class ClientFollowTodoPermissionService
     public function getScopeForTodoManage()
     {
         $identity = $this->getCurrentAdminIdentity();
+        $isTeamLeader = $this->isTeamLeader($identity);
+
         if (!empty($identity['is_super'])) {
-            return $this->buildScopeResult(true, [], $identity['admin_id'], $identity['username']);
+            $scope = $this->buildScopeResult(true, [], $identity['admin_id'], $identity['username']);
+            $this->debugScope(self::SCENE_TODO_MANAGE, $identity, $scope, $isTeamLeader);
+            return $scope;
         }
 
         $usernames = [];
@@ -91,7 +92,9 @@ class ClientFollowTodoPermissionService
             $usernames[] = $identity['username'];
         }
 
-        return $this->buildScopeResult(false, $usernames, $identity['admin_id'], $identity['username']);
+        $scope = $this->buildScopeResult(false, $usernames, $identity['admin_id'], $identity['username']);
+        $this->debugScope(self::SCENE_TODO_MANAGE, $identity, $scope, $isTeamLeader);
+        return $scope;
     }
 
     /**
@@ -105,36 +108,29 @@ class ClientFollowTodoPermissionService
     public function getScopeForTeamTodo()
     {
         $identity = $this->getCurrentAdminIdentity();
-        if (!empty($identity['is_super'])) {
-            return $this->buildScopeResult(true, [], $identity['admin_id'], $identity['username']);
-        }
+        $isTeamLeader = $this->isTeamLeader($identity);
 
-        $adminId = (int)$identity['admin_id'];
-        $username = (string)$identity['username'];
-        $teamName = (string)$identity['team_name'];
-        $position = (int)$identity['position'];
+        if (!empty($identity['is_super'])) {
+            $scope = $this->buildScopeResult(true, [], $identity['admin_id'], $identity['username']);
+            $this->debugScope(self::SCENE_TEAM_TODO, $identity, $scope, $isTeamLeader);
+            return $scope;
+        }
 
         $usernames = [];
-        if ($position === 2) {
-            if ($teamName !== '') {
-                $usernames = Db::name('admin')
-                    ->where('team_name', $teamName)
-                    ->where('username', '<>', '')
-                    ->column('username');
-            } elseif ($adminId > 0) {
-                $usernames = Db::name('admin')
-                    ->where(function ($q) use ($adminId) {
-                        $q->where('admin_id', $adminId)
-                            ->whereOr('parent_id', $adminId);
-                    })
-                    ->where('username', '<>', '')
-                    ->column('username');
-            }
-        } elseif ($username !== '') {
-            $usernames = [$username];
+        if ($isTeamLeader) {
+            $usernames = $this->getTeamUsernames($identity);
+        } elseif ((string)$identity['username'] !== '') {
+            $usernames = [(string)$identity['username']];
         }
 
-        return $this->buildScopeResult(false, (array)$usernames, $adminId, $username);
+        $scope = $this->buildScopeResult(
+            false,
+            (array)$usernames,
+            (int)$identity['admin_id'],
+            (string)$identity['username']
+        );
+        $this->debugScope(self::SCENE_TEAM_TODO, $identity, $scope, $isTeamLeader);
+        return $scope;
     }
 
     /**
@@ -197,6 +193,94 @@ class ClientFollowTodoPermissionService
     }
 
     /**
+     * 是否具备团队主管视角（用于 team_todo 场景）。
+     *
+     * 判定规则：
+     * 1) 超管不走“主管”逻辑（超管直接 unrestricted）
+     * 2) 同 team_name 存在其他员工 -> 具备团队范围
+     * 3) 存在 parent_id = 当前 admin_id 的员工 -> 具备团队范围
+     * 4) position=2 作为兼容补充（非唯一依据）
+     *
+     * @param array $identity
+     * @return bool
+     */
+    private function isTeamLeader(array $identity)
+    {
+        if (!empty($identity['is_super'])) {
+            return false;
+        }
+
+        $adminId = (int)($identity['admin_id'] ?? 0);
+        $teamName = trim((string)($identity['team_name'] ?? ''));
+        $position = (int)($identity['position'] ?? 0);
+
+        $hasTeamPeers = false;
+        if ($teamName !== '') {
+            $peerQuery = Db::name('admin')
+                ->where('team_name', $teamName)
+                ->where('username', '<>', '');
+            if ($adminId > 0) {
+                $peerQuery->where('admin_id', '<>', $adminId);
+            }
+            $hasTeamPeers = ((int)$peerQuery->count('admin_id') > 0);
+        }
+
+        $hasChildren = false;
+        if ($adminId > 0) {
+            $hasChildren = ((int)Db::name('admin')
+                    ->where('parent_id', $adminId)
+                    ->where('username', '<>', '')
+                    ->count('admin_id') > 0);
+        }
+
+        // 兼容历史结构：position=2 常表示主管，但不是唯一判定依据。
+        $matchesLegacyPosition = ($position === 2);
+
+        return $hasTeamPeers || $hasChildren || $matchesLegacyPosition;
+    }
+
+    /**
+     * 获取团队可见负责人用户名（自己 + team_name + parent_id 下属）。
+     *
+     * @param array $identity
+     * @return string[]
+     */
+    private function getTeamUsernames(array $identity)
+    {
+        $adminId = (int)($identity['admin_id'] ?? 0);
+        $username = trim((string)($identity['username'] ?? ''));
+        $teamName = trim((string)($identity['team_name'] ?? ''));
+
+        $usernames = [];
+        if ($username !== '') {
+            $usernames[] = $username;
+        }
+
+        if ($teamName !== '') {
+            $teamUsers = Db::name('admin')
+                ->where('team_name', $teamName)
+                ->where('username', '<>', '')
+                ->column('username');
+            $usernames = array_merge($usernames, (array)$teamUsers);
+        }
+
+        if ($adminId > 0) {
+            $childUsers = Db::name('admin')
+                ->where('parent_id', $adminId)
+                ->where('username', '<>', '')
+                ->column('username');
+            $usernames = array_merge($usernames, (array)$childUsers);
+        }
+
+        $usernames = array_values(array_unique(array_filter(array_map('trim', $usernames))));
+        if (empty($usernames) && $username !== '') {
+            $usernames = [$username];
+        }
+
+        return $usernames;
+    }
+
+    /**
      * 协同人匹配：兼容 JSON 数组与逗号分隔两种存储格式。
      *
      * @param \think\db\Query $q
@@ -225,5 +309,92 @@ class ClientFollowTodoPermissionService
                 ->whereOr($field, 'like', '%,' . $sid)
                 ->whereOr($field, '=', $sid);
         });
+    }
+
+    /**
+     * 调试输出：记录当前 scene 的权限计算结果。
+     *
+     * @param string $scene
+     * @param array $identity
+     * @param array $scope
+     * @param bool $isTeamLeader
+     * @return void
+     */
+    private function debugScope($scene, array $identity, array $scope, $isTeamLeader)
+    {
+        if (!$this->isDebugLogEnabled()) {
+            return;
+        }
+
+        $payload = [
+            'scene' => (string)$scene,
+            'admin_id' => (int)($identity['admin_id'] ?? 0),
+            'username' => (string)($identity['username'] ?? ''),
+            'group_id' => (int)($identity['group_id'] ?? 0),
+            'team_name' => (string)($identity['team_name'] ?? ''),
+            'position' => (int)($identity['position'] ?? 0),
+            'role_id' => (int)($identity['role_id'] ?? 0),
+            'parent_id' => (int)($identity['parent_id'] ?? 0),
+            'is_super' => !empty($identity['is_super']),
+            'is_team_leader' => (bool)$isTeamLeader,
+            'unrestricted' => !empty($scope['unrestricted']),
+            'pr_usernames' => array_values((array)($scope['pr_usernames'] ?? [])),
+        ];
+
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            $json = '{}';
+        }
+
+        $this->writeDebugLog('todo permission scene=' . (string)$scene . ' scope=' . $json);
+    }
+
+    /**
+     * 调试日志开关：
+     * - 优先读取 config('todo_permission_debug')
+     * - 未配置时回退 config('app_debug')
+     *
+     * @return bool
+     */
+    private function isDebugLogEnabled()
+    {
+        $switch = config('todo_permission_debug');
+        if ($switch === null) {
+            $switch = config('app_debug');
+        }
+
+        if ($switch === true || $switch === 1 || $switch === '1') {
+            return true;
+        }
+        if (is_string($switch)) {
+            $s = strtolower(trim($switch));
+            return in_array($s, ['true', 'yes', 'on'], true);
+        }
+
+        return false;
+    }
+
+    /**
+     * 兼容 TP5.1 的日志写法（facade / think\Log）。
+     *
+     * @param string $message
+     * @return void
+     */
+    private function writeDebugLog($message)
+    {
+        try {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write((string)$message, 'debug');
+                return;
+            }
+        } catch (\Throwable $e) {
+        }
+
+        try {
+            if (class_exists('\\think\\Log')) {
+                \think\Log::record((string)$message, 'debug');
+            }
+        } catch (\Throwable $e) {
+        }
     }
 }
