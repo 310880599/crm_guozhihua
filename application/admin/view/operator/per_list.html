@@ -351,8 +351,7 @@
 
                         </div>
                         <div class="layui-inline" style="float: right;padding-bottom: 15px">
-                            <button type="button" class="layui-btn"
-                                onclick="javascript:document.getElementById('searchForm').reset()">重置</button>
+                            <button type="button" class="layui-btn" onclick="resetSearch()">重置</button>
                             <button class="layui-btn layuiadmin-btn-list" lay-submit
                                 lay-filter="LAY-app-contlist-search">
                                 <i class="layui-icon layui-icon-search layuiadmin-button-btn"
@@ -371,7 +370,7 @@
 
     <script type="text/html" id="action">
 
-    <a class="layui-btn layui-btn-info layui-btn-xs"  href="{:url('dialogue')}?id={{d.id}}"><i class="layui-icon">&#xe649;</i>查看跟进</a>
+    <a class="layui-btn layui-btn-info layui-btn-xs" lay-event="dialogue"><i class="layui-icon">&#xe649;</i>查看跟进</a>
 </script>
     <script type="text/html" id="topBtn">
          <div class="layui-btn-container">
@@ -390,10 +389,120 @@
                 upload = layui.upload,
                 util = layui.util;
 
-            /* ===== 1. localStorage KEY ===== */
+            /* ===== 1. localStorage / sessionStorage KEY ===== */
             var currentUsername = "{$Think.session.username}" || "default";
             var columnWidthKey = "crm_table_column_widths_" + currentUsername;
+            var searchStateKey = "crm_operator_perlist_search_state_" + currentUsername;
             var tableId = "table-list";
+            var defaultKeyword = { timebucket: 'today' };
+            var currentPage = 1;
+            var currentLimit = 10;
+
+            function safeParseInt(value, fallback) {
+                var num = parseInt(value, 10);
+                return isNaN(num) ? fallback : num;
+            }
+
+            function sanitizeKeyword(raw) {
+                raw = raw || {};
+                var keyword = {
+                    status: raw.status || '',
+                    contact: raw.contact || '',
+                    product_name: raw.product_name || '',
+                    kh_name: raw.kh_name || '',
+                    pr_user: raw.pr_user || '',
+                    team_name: raw.team_name || '',
+                    timebucket: raw.timebucket === undefined || raw.timebucket === null ? '' : raw.timebucket,
+                    at_time: raw.at_time || ''
+                };
+
+                // 非自定义日期时，仅传 timebucket，避免与 at_time 叠加条件
+                if (keyword.timebucket) {
+                    keyword.at_time = '';
+                }
+
+                if (!keyword.timebucket && !keyword.at_time) {
+                    keyword.timebucket = 'today';
+                }
+
+                return keyword;
+            }
+
+            function getKeywordFromForm() {
+                return sanitizeKeyword({
+                    status: $('#kh_status').val(),
+                    contact: $('#contact').val(),
+                    product_name: $('#product_name').val(),
+                    kh_name: $('#kh_name').val(),
+                    pr_user: $('#pr_user').val(),
+                    team_name: $('#team_name').val(),
+                    timebucket: $('#dateRange').val(),
+                    at_time: $('#at_time').val()
+                });
+            }
+
+            function applyKeywordToForm(keyword) {
+                keyword = sanitizeKeyword(keyword);
+                $('#kh_status').val(keyword.status || '');
+                $('#contact').val(keyword.contact || '');
+                $('#product_name').val(keyword.product_name || '');
+                $('#kh_name').val(keyword.kh_name || '');
+                $('#pr_user').val(keyword.pr_user || '');
+                $('#team_name').val(keyword.team_name || '');
+                $('#dateRange').val(keyword.timebucket || '');
+                $('#at_time').val(keyword.at_time || '');
+
+                var isCustom = !keyword.timebucket;
+                $('#at_time').toggle(isCustom);
+                form.render('select');
+            }
+
+            function readSearchState() {
+                try {
+                    var text = sessionStorage.getItem(searchStateKey);
+                    if (!text) {
+                        return null;
+                    }
+                    var parsed = JSON.parse(text);
+                    if (!parsed || typeof parsed !== 'object') {
+                        return null;
+                    }
+                    return parsed;
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            function saveSearchState(options) {
+                options = options || {};
+                var keyword = sanitizeKeyword(options.keyword || getKeywordFromForm());
+                var page = safeParseInt(options.page, currentPage);
+                var limit = safeParseInt(options.limit, currentLimit);
+                var state = {
+                    keyword: keyword,
+                    page: page,
+                    limit: limit
+                };
+                try {
+                    sessionStorage.setItem(searchStateKey, JSON.stringify(state));
+                } catch (e) { }
+                return state;
+            }
+
+            var savedSearchState = readSearchState();
+            var initKeyword = defaultKeyword;
+            var initPage = 1;
+            var initLimit = 10;
+
+            if (savedSearchState && savedSearchState.keyword) {
+                initKeyword = sanitizeKeyword(savedSearchState.keyword);
+                initPage = safeParseInt(savedSearchState.page, 1);
+                initLimit = safeParseInt(savedSearchState.limit, 10);
+            }
+
+            currentPage = initPage;
+            currentLimit = initLimit;
+            applyKeywordToForm(initKeyword);
 
             /* ===== 2. 列配置，先喂宽度 ===== */
             var cols = [[
@@ -401,7 +510,7 @@
                 { field: 'team_name', title: '团队' },
                 {
                     field: 'kh_name', title: '客户名称', sort: true, templet: function (res) {
-                        return "<a href='{:url('dialogue')}?id=" + res.id + "'>" + res.kh_name + "</a>";
+                        return "<a href='javascript:void(0);' onclick='saveAndGoDialogue(" + res.id + ")'>" + res.kh_name + "</a>";
                     }
                 },
                 { field: 'product_name', width: 80, title: '产品' },
@@ -452,11 +561,59 @@
                 method: 'post',
                 toolbar: '#topBtn',
                 defaultToolbar: ['filter', 'print'],
-                where: { keyword: { "timebucket": "today"} },
-                page: true,
-                limit: 10,
+                where: { keyword: initKeyword },
+                page: { curr: initPage },
+                limit: initLimit,
                 cols: cols,
-                done: bindResizeSave     // 表格完成后绑定监听
+                done: function (res, curr) {
+                    bindResizeSave(); // 表格完成后绑定监听
+                    currentPage = safeParseInt(curr, 1);
+                    currentLimit = safeParseInt((this && this.limit), currentLimit);
+                    saveSearchState({
+                        keyword: getKeywordFromForm(),
+                        page: currentPage,
+                        limit: currentLimit
+                    });
+                }
+            });
+            window.saveAndGoDialogue = function (id) {
+                saveSearchState({
+                    keyword: getKeywordFromForm(),
+                    page: currentPage,
+                    limit: currentLimit
+                });
+                window.location.href = '{:url("dialogue")}?id=' + id;
+            };
+            window.resetSearch = function () {
+                sessionStorage.removeItem(searchStateKey);
+                document.getElementById('searchForm').reset();
+                $('#kh_status').val('');
+                $('#contact').val('');
+                $('#product_name').val('');
+                $('#kh_name').val('');
+                $('#pr_user').val('');
+                $('#team_name').val('');
+                $('#dateRange').val('today');
+                $('#at_time').val('').hide();
+                form.render();
+                currentPage = 1;
+                currentLimit = 10;
+                table.reload('table-list', {
+                    url: "{:url('Operator/perSearch')}",
+                    where: { keyword: { timebucket: 'today' } },
+                    page: { curr: 1 },
+                    limit: currentLimit
+                });
+            };
+            table.on('tool(table-list)', function (obj) {
+                if (obj.event === 'dialogue') {
+                    saveSearchState({
+                        keyword: getKeywordFromForm(),
+                        page: currentPage,
+                        limit: currentLimit
+                    });
+                    window.location.href = '{:url("dialogue")}?id=' + obj.data.id;
+                }
             });
            table.on('toolbar(table-list)', function(obj) {
   if(obj.event === 'exportAll') {
@@ -512,10 +669,18 @@
 
             // 搜索表单
             form.on('submit(LAY-app-contlist-search)', function (data) {
+                var keyword = sanitizeKeyword(data.field);
+                currentPage = 1;
+                saveSearchState({
+                    keyword: keyword,
+                    page: 1,
+                    limit: currentLimit
+                });
                 table.reload('table-list', {
                     url: "{:url('Operator/perSearch')}",
-                    where: { keyword: data.field },
-                    page: { curr: 1 }
+                    where: { keyword: keyword },
+                    page: { curr: 1 },
+                    limit: currentLimit
                 });
                 return false;
             });
@@ -534,10 +699,12 @@
                 if (!isCustom) {
                     $('#at_time').val('');
                 }
+                saveSearchState({
+                    keyword: getKeywordFromForm(),
+                    page: currentPage,
+                    limit: currentLimit
+                });
             });
-
-            // 初始隐藏日期范围选择框
-            $('#at_time').hide();
         });
         const products = new EditableSelect(document.getElementById('product_name'), {$productList|raw}, '产品');
         // 公共弹窗方法
