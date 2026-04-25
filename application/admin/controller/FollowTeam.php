@@ -5,12 +5,11 @@ use app\admin\service\ClientFollowService;
 use think\Db;
 
 /**
- * 待办跟进管理。
+ * 团队跟进管理。
  *
  * 访问控制：沿用 Common::initialize() 的登录与 auth_rule 菜单权限。
- * 列表数据范围：由 ClientFollowTodoPermissionService 与客户列表口径对齐，并包含协同人。
  */
-class ClientFollow extends Common
+class FollowTeam extends Common
 {
     public function index()
     {
@@ -25,7 +24,7 @@ class ClientFollow extends Common
     }
 
     /**
-     * 待办列表（layui table POST）
+     * 团队跟进列表（layui table POST）
      */
     public function followSearch()
     {
@@ -44,7 +43,7 @@ class ClientFollow extends Common
         ];
 
         $service = new ClientFollowService();
-        return json($service->getTodoFollowTableData($page, $limit, $keyword, [], 'todo_manage'));
+        return json($service->getTodoFollowTableData($page, $limit, $keyword, [], 'team_todo'));
     }
 
     /**

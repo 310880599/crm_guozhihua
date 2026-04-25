@@ -20,11 +20,12 @@ class ClientFollow extends Model
      * @param int $limit
      * @param array $keyword 可选：kh_name、phone、pr_user、next_up_start、next_up_end、inquiry_id、port_id、only_overdue
      * @param array $currentAdmin 预留（与 Session 扩展一致）；当前可见范围仍以登录用户为准，由 ClientFollowTodoPermissionService 处理
+     * @param string $scene todo_manage|team_todo
      * @return array|null 与 getClientSearchListAll 一致，无数据时返回 null
      */
-    public function getTodoFollowList($page, $limit, $keyword = [], $currentAdmin = [])
+    public function getTodoFollowList($page, $limit, $keyword = [], $currentAdmin = [], $scene = 'todo_manage')
     {
-        $query = $this->buildTodoFollowBaseQuery((array)$keyword, $currentAdmin);
+        $query = $this->buildTodoFollowBaseQuery((array)$keyword, $currentAdmin, $scene);
 
         $result = $query
             ->leftJoin('crm_contacts c', "c.leads_id = l.id AND c.is_delete = 0 AND c.contact_type IN (1,3)")
@@ -55,9 +56,10 @@ class ClientFollow extends Model
      *
      * @param array $keyword kh_name、phone、pr_user、next_up_start、next_up_end、inquiry_id、port_id、only_overdue
      * @param array $currentAdmin
+     * @param string $scene todo_manage|team_todo
      * @return \think\db\Query
      */
-    public function buildTodoFollowBaseQuery(array $keyword = [], $currentAdmin = [])
+    public function buildTodoFollowBaseQuery(array $keyword = [], $currentAdmin = [], $scene = 'todo_manage')
     {
         $now = date('Y-m-d H:i:s');
 
@@ -144,7 +146,7 @@ class ClientFollow extends Model
             }
         }
 
-        (new ClientFollowTodoPermissionService())->applyLeadsVisibilityScope($query, 'l');
+        (new ClientFollowTodoPermissionService())->applyLeadsVisibilityScope($query, 'l', $scene);
 
         return $query;
     }

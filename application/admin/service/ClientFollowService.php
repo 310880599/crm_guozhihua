@@ -345,15 +345,16 @@ class ClientFollowService
      * @param int $limit
      * @param array $keyword 与 ClientFollow::buildTodoFollowBaseQuery 一致
      * @param array $currentAdmin 预留，透传 Model
+     * @param string $scene todo_manage|team_todo
      * @return array{code:int,msg:string,data:array,count:int,rel:int}
      */
-    public function getTodoFollowTableData($page, $limit, $keyword = [], $currentAdmin = [])
+    public function getTodoFollowTableData($page, $limit, $keyword = [], $currentAdmin = [], $scene = 'todo_manage')
     {
         $page = max(1, (int)$page);
         $limit = max(1, (int)$limit);
         $keyword = $this->normalizeTodoSearchKeyword($keyword);
 
-        $list = (new ClientFollow())->getTodoFollowList($page, $limit, $keyword, $currentAdmin);
+        $list = (new ClientFollow())->getTodoFollowList($page, $limit, $keyword, $currentAdmin, $scene);
         if ($list === null || empty($list['data'])) {
             return [
                 'code' => 0,

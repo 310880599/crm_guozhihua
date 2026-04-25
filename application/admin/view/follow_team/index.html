@@ -2,7 +2,7 @@
 <html>
 <head>
     {include file="common/head"/}
-    <title>客户跟进管理 - {:config('sys_name')}</title>
+    <title>客户跟进团队 - {:config('sys_name')}</title>
     <style>
         script[type="text/html"] { display: none !important; }
         .filtrate-warp { margin-bottom: 15px; }
@@ -178,9 +178,9 @@
 <body class="layui-layout-body">
 <div class="admin-main layui-anim layui-anim-upbit filtrate-warp">
     <fieldset class="layui-elem-field">
-        <legend>【客户跟进管理】</legend>
+        <legend>【客户跟进团队】</legend>
         <div class="todo-page-hint">
-            当前页面用于查看本人待跟进客户；超级管理员可查看全部。
+            当前页面用于团队待跟进管理；超级管理员可查看全部，团队主管可查看本团队，普通员工仅查看本人。
         </div>
         <div class="todo-quick-bar">
             <span class="todo-quick-label">快捷筛选</span>
@@ -343,7 +343,7 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     var todoFollowReloadPending = false;
     var currentUsername = "{$Think.session.username}" || "default";
     var tableId = 'table-todo-follow';
-    var pageKey = 'client_follow_manage';
+    var pageKey = 'follow_team_manage';
     var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
     var lastSnapshot = {};
     var resizeSaveTimer = null;
@@ -638,7 +638,7 @@ layui.use(['table', 'form', 'jquery', 'laydate', 'layer'], function () {
     tableIns = table.render({
         elem: '#' + tableId,
         id: tableId,
-        url: "{:url('ClientFollow/index')}",
+        url: "{:url('FollowTeam/index')}",
         method: 'post',
         page: true,
         limits: [10, 20, 50, 100],
