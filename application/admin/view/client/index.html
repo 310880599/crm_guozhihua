@@ -840,6 +840,8 @@
                         }
                     },
                     { field: 'product_name', title: '产品名称', width:180 }, 
+                    { field: 'main_phone', title: '主电话', width: 180 },
+                    { field: 'aux_phone', title: '辅助电话', width: 180 },
                     { field: 'inquiry_name', title: '所属渠道', width:180 },
                     { field: 'port_name', title: '运营端口', width:180 },
                     {
@@ -858,8 +860,6 @@
                             return personclientEscapeHtml(d.aux_phone_position_titles || '');
                         }
                     },
-                    { field: 'main_phone', title: '主电话', width: 180 },
-                    { field: 'aux_phone', title: '辅助电话', width: 180 },
                     { field: 'pr_user', title: '负责人', width:180 },
                     {
                         field: 'kh_rank_text', title: '客户级别', width: 120, templet: function(d) {
