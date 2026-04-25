@@ -1770,8 +1770,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             var name = res.kh_name || '';
             return '<a href="javascript:;" class="js-client-edit-link" data-id="' + res.id + '">' + name + '</a>';
         }},
-         { field: 'product_name', title: '产品名称',  width: 120 }, 
-         { field: 'main_phone', title: '主电话', width: 120 },
+        { field: 'product_name', title: '产品名称',  width: 120 }, 
          { field: 'last_up_records', title: '最新跟进记录', width: 120, templet: function (d) {
              var raw = d.last_up_records;
              if (raw == null) {
@@ -1790,9 +1789,26 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
              var v = normalizeNextUpTimeDisplay(d.next_up_time, '');
              return personclientEscapeHtml(v);
          }},
-         { field: 'aux_phone', title: '辅助电话', width: 120 },
          { field: 'inquiry_name', title: '所属渠道', width: 120},     // 原"询盘来源"列
          { field: 'port_name', title: '运营端口', width: 120 },       // 原"来源端口"列
+        {
+            field: 'main_phone_position_titles',
+            title: '主电话职位身份',
+            width: 220,
+            templet: function(d){
+                return personclientEscapeHtml(d.main_phone_position_titles || '');
+            }
+        },
+        {
+            field: 'aux_phone_position_titles',
+            title: '辅助电话职位身份',
+            width: 220,
+            templet: function(d){
+                return personclientEscapeHtml(d.aux_phone_position_titles || '');
+            }
+        },
+        { field: 'main_phone', title: '主电话', width: 120 },
+        { field: 'aux_phone', title: '辅助电话', width: 120 },
          { field: 'joint_person_names', title: '协同人', width: 120 },
          { field: 'issuccess', title: '成交状态', width: 120, templet: function(res){ return res.issuccess == 1 ? '已成交' : '未成交'; } },
          { field: 'pr_user', title: '负责人', width: 120 },
@@ -1838,6 +1854,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             ut_time: 150,
             inquiry_name: 120,
             port_name: 120,
+            main_phone_position_titles: 220,
+            aux_phone_position_titles: 220,
             joint_person_names: 120,
             pr_user: 100,
             issuccess: 90,

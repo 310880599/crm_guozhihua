@@ -343,19 +343,37 @@ class Client extends Common
                 }
             }
 
-            // 一次性取出所有客户的主/辅电话：1=主电话，3=辅助电话
-            $phoneMap = []; // leads_id => ['main'=>'', 'aux'=>'']
+            // 一次性取出所有客户的主/辅电话及职位身份：1=主电话，3=辅助电话
+            $phoneMap = []; // leads_id => ['main'=>'', 'aux'=>'', 'main_position_titles'=>'', 'aux_position_titles'=>'']
             if (!empty($leadIds)) {
                 $contacts = Db::table('crm_contacts')
-                    ->where('is_delete', 0)
-                    ->whereIn('leads_id', $leadIds)
-                    ->whereIn('contact_type', [1, 3])
-                    ->order('id', 'asc')
-                    ->field('leads_id, contact_type, contact_value')
+                    ->alias('c')
+                    ->leftJoin('crm_position_title pt', 'pt.id = c.position_title_id AND pt.is_deleted = 0')
+                    ->where('c.is_delete', 0)
+                    ->whereIn('c.leads_id', $leadIds)
+                    ->whereIn('c.contact_type', [1, 3])
+                    ->order('c.id', 'asc')
+                    ->field('c.leads_id, c.contact_type, c.contact_value, c.position_title_id, c.position_title, pt.title_name as pt_title_name')
                     ->select();
                 foreach ($contacts as $c) {
                     $lid = $c['leads_id'];
-                    if (!isset($phoneMap[$lid])) $phoneMap[$lid] = ['main' => '', 'aux' => ''];
+                    if (!isset($phoneMap[$lid])) {
+                        $phoneMap[$lid] = [
+                            'main' => '',
+                            'aux' => '',
+                            'main_position_titles' => '',
+                            'aux_position_titles' => ''
+                        ];
+                    }
+
+                    $positionTitleName = trim((string)($c['pt_title_name'] ?? ''));
+                    if ($positionTitleName === '') {
+                        $positionTitleName = trim((string)($c['position_title'] ?? ''));
+                    }
+                    if ($positionTitleName === '') {
+                        $positionTitleName = '未填写';
+                    }
+                    $phoneAndTitle = (string)$c['contact_value'] . '-' . $positionTitleName;
 
                     if ($c['contact_type'] == 1) {
                         if ($phoneMap[$lid]['main'] === '') {
@@ -363,8 +381,14 @@ class Client extends Common
                         } else {
                             $phoneMap[$lid]['main'] .= ',' . $c['contact_value'];
                         }
+                        if ($phoneMap[$lid]['main_position_titles'] === '') {
+                            $phoneMap[$lid]['main_position_titles'] = $phoneAndTitle;
+                        } else {
+                            $phoneMap[$lid]['main_position_titles'] .= ',' . $phoneAndTitle;
+                        }
                     } elseif ($c['contact_type'] == 3 && $phoneMap[$lid]['aux'] === '') {
                         $phoneMap[$lid]['aux'] = $c['contact_value'];
+                        $phoneMap[$lid]['aux_position_titles'] = $phoneAndTitle;
                     }
 
                 }
@@ -396,6 +420,8 @@ class Client extends Common
                 // 主/辅电话
                 $row['main_phone'] = $phoneMap[$row['id']]['main'] ?? '';
                 $row['aux_phone']  = $phoneMap[$row['id']]['aux'] ?? '';
+                $row['main_phone_position_titles'] = $phoneMap[$row['id']]['main_position_titles'] ?? '';
+                $row['aux_phone_position_titles'] = $phoneMap[$row['id']]['aux_position_titles'] ?? '';
 
                 // 协同人ID解析（支持 JSON 数组或逗号分隔）
                 $idsArr = [];
