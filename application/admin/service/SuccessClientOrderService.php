@@ -281,6 +281,9 @@ class SuccessClientOrderService
                     ->whereOr('o.delete_time', '0');
             });
         }
+        if ($this->hasOrderColumn('check_status')) {
+            $query->where('o.check_status', 2);
+        }
     }
 
     private function mapCheckStatusText($checkStatus): string
