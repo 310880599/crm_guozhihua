@@ -625,6 +625,7 @@
 <!-- 操作栏模板：仅保留“写跟进”按钮 -->
 <script type="text/html" id="action">
     <a class="layui-btn layui-btn-primary layui-btn-xs follow-btn" href="javascript:void(0);" data-id="{{d.id}}"><i class="layui-icon">&#xe654;</i>写跟进</a>
+    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="orders"><i class="layui-icon">&#xe60a;</i>查看订单</a>
     
     <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
     {{# if(d.aid == 1) { }}
@@ -716,6 +717,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         { field: 'aux_phone', title: '辅助电话' , width:180},
         { field: 'joint_person_names', title: '协同人' , width:180},
         { field: 'issuccess', title: '成交状态', templet: function(res){ return res.issuccess == 1 ? '已成交' : '未成交'; } , width:180},
+        { field: 'order_summary_text', title: '关联订单', width: 220, templet: function(d){
+                if (!d.order_count || parseInt(d.order_count, 10) <= 0) {
+                    return '<span style="color:#999;">暂无订单</span>';
+                }
+                return '<span style="color:#16baaa;font-weight:bold;">' + layui.util.escape(d.order_summary_text || '') + '</span>';
+            }
+        },
         { field: 'last_up_records', title: '最新跟进记录', width:180 },
         { field: 'pr_user', title: '负责人', width:180 },
         { field: 'kh_rank_text', title: '客户级别', width:180 },
@@ -736,7 +744,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                 return v;
             }
         },
-        { fixed: 'right', width: 280, align: 'center', toolbar: '#action' }
+        { fixed: 'right', width: 380, align: 'center', toolbar: '#action' }
     ]];
     // 恢复列宽设置（如果有存储）
     // if(typeof restoreColWidth === "function"){ restoreColWidth(cols[0]); }
@@ -797,6 +805,29 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                 maxmin: false,
                 content: ["{:url('Client/edit')}?id=" + data.id]
             });
+        } else if (obj.event === 'orders') {
+            openSuccessClientOrdersDialog(data);
+        }
+    });
+
+    table.on('tool(success-client-order-table)', function (obj) {
+        var data = obj.data || {};
+        if (obj.event === 'detail') {
+            if (!data.id) {
+                layer.msg('订单ID缺失');
+                return;
+            }
+            layer.open({
+                type: 2,
+                title: '订单详情',
+                closeBtn: 1,
+                area: ['100%', '86%'],
+                anim: 2,
+                shadeClose: false,
+                maxmin: true,
+                content: ["{:url('Order/details')}?id=" + data.id]
+            });
+            // 若后续路由调整，可改为其它详情地址，如 Order/orderDetail。
         }
     });
 
@@ -922,6 +953,73 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             console.warn('获取列宽快照失败:', e);
         }
         return snapshot;
+    }
+
+    function openSuccessClientOrdersDialog(data) {
+        var clientId = data && data.id ? data.id : 0;
+        var clientName = data && data.kh_name ? data.kh_name : '';
+        if (!clientId) {
+            layer.msg('缺少客户ID');
+            return;
+        }
+
+        var containerId = 'success-client-order-table-wrap-' + clientId;
+        var tableElemId = 'success-client-order-table';
+        var contentHtml = ''
+            + '<div style="padding: 10px 12px;">'
+            + '  <table id="' + tableElemId + '" lay-filter="success-client-order-table"></table>'
+            + '</div>';
+
+        layer.open({
+            type: 1,
+            title: '关联订单 - ' + (clientName || '未命名客户'),
+            area: ['95%', '85%'],
+            shadeClose: false,
+            maxmin: true,
+            content: '<div id="' + containerId + '">' + contentHtml + '</div>',
+            success: function () {
+                table.render({
+                    elem: '#' + tableElemId,
+                    id: tableElemId,
+                    url: "{:url('Client/getSuccessClientOrders')}",
+                    method: 'post',
+                    where: { id: clientId },
+                    page: true,
+                    limit: 10,
+                    limits: [10, 20, 50, 100],
+                    text: { none: '暂无关联订单' },
+                    cols: [[
+                        { field: 'order_no', title: '订单编号', minWidth: 170 },
+                        { field: 'phone', title: '联系电话', minWidth: 130 },
+                        { field: 'product_name', title: '产品名称', minWidth: 140 },
+                        { field: 'inquiry_name', title: '所属渠道', minWidth: 120, templet: function(d){ return d.inquiry_name || d.inquiry_id || ''; } },
+                        { field: 'port_name', title: '运营端口', minWidth: 120, templet: function(d){ return d.port_name || d.port_id || ''; } },
+                        { field: 'order_amount', title: '订单金额', minWidth: 110, templet: function(d){ return '¥' + (d.order_amount || 0); } },
+                        { field: 'profit', title: '利润', minWidth: 100, templet: function(d){ return '¥' + (d.profit || 0); } },
+                        { field: 'check_status_text', title: '审核状态', minWidth: 100 },
+                        { field: 'order_time', title: '下单时间', minWidth: 160 },
+                        { field: 'sales_user', title: '业务员', minWidth: 110 },
+                        { title: '操作', width: 100, fixed: 'right', align: 'center', templet: function(){
+                                return '<a class="layui-btn layui-btn-xs" lay-event="detail">查看详情</a>';
+                            }
+                        }
+                    ]],
+                    parseData: function(res) {
+                        return {
+                            code: res.code || 0,
+                            msg: res.msg || '',
+                            count: res.count || 0,
+                            data: res.data || []
+                        };
+                    },
+                    done: function(res) {
+                        if (res.code !== 0) {
+                            layer.msg(res.msg || '获取订单失败');
+                        }
+                    }
+                });
+            }
+        });
     }
 
     // 点击写跟进按钮打开弹窗

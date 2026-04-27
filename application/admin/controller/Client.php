@@ -13,6 +13,7 @@ use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
 use app\admin\service\ClientFollowService;
 use app\admin\service\PositionTitleService;
+use app\admin\service\SuccessClientOrderService;
 
 class Client extends Common
 {
@@ -1267,6 +1268,40 @@ class Client extends Common
    // ====== 新增 enrichLeadsRows 结束 ======
 
     /**
+     * 批量补充成交客户关联订单汇总字段
+     *
+     * @param array $rows
+     * @return void
+     */
+    private function appendSuccessClientOrderSummary(array &$rows): void
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', array_column($rows, 'id')))));
+        if (empty($leadIds)) {
+            return;
+        }
+
+        $summaryMap = (new SuccessClientOrderService())->getOrderSummaryByLeadIds($leadIds);
+        foreach ($rows as &$row) {
+            $leadId = (int)($row['id'] ?? 0);
+            $summary = $summaryMap[$leadId] ?? [
+                'order_count' => 0,
+                'order_amount_total' => 0,
+                'profit_total' => 0,
+                'order_summary_text' => '0单 / ¥0 / 利润¥0',
+            ];
+            $row['order_count'] = (int)($summary['order_count'] ?? 0);
+            $row['order_amount_total'] = (float)($summary['order_amount_total'] ?? 0);
+            $row['profit_total'] = (float)($summary['profit_total'] ?? 0);
+            $row['order_summary_text'] = (string)($summary['order_summary_text'] ?? '0单 / ¥0 / 利润¥0');
+        }
+        unset($row);
+    }
+
+    /**
      * 跟进筛选参数归一（follow_filter + follow_days -> __follow_*）
      */
     private function normalizeFollowFilterKeyword(array $keyword): array
@@ -1310,6 +1345,7 @@ class Client extends Common
             // 提取结果集并调用数据加工方法
             $rows = &$list['data'];
             $this->enrichLeadsRows($rows);
+            $this->appendSuccessClientOrderSummary($rows);
             // ====== 修改 successCliList 结束 ======
             // 返回数据列表
             return [
@@ -4388,9 +4424,51 @@ class Client extends Common
             return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
         }
         $this->enrichLeadsRows($list['data']);
+        $this->appendSuccessClientOrderSummary($list['data']);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
     }
     // ====== 修改 chengjiaoClientSearch 结束 ======
+
+    /**
+     * 成交客户 - 关联订单明细
+     */
+    public function getSuccessClientOrders()
+    {
+        $id = (int)Request::param('id/d', 0);
+        $page = (int)Request::param('page/d', 1);
+        $limit = (int)Request::param('limit/d', 10);
+
+        if ($id <= 0) {
+            return json(['code' => 500, 'msg' => '缺少成交客户ID', 'count' => 0, 'data' => []]);
+        }
+
+        $client = model('client')->getSuccessClientById($id);
+        if (empty($client) || (int)($client['issuccess'] ?? 0) !== 1) {
+            return json(['code' => 500, 'msg' => '成交客户不存在', 'count' => 0, 'data' => []]);
+        }
+
+        $aid = (int)Session::get('aid');
+        $username = trim((string)Session::get('username'));
+        if ($aid !== 1) {
+            $canView = false;
+            if ($username !== '') {
+                $canView = ((string)($client['pr_user'] ?? '') === $username) || ((string)($client['pr_user_bef'] ?? '') === $username);
+            }
+            if (!$canView) {
+                return json(['code' => 500, 'msg' => '无权限查看该成交客户订单', 'count' => 0, 'data' => []]);
+            }
+        }
+
+        $service = new SuccessClientOrderService();
+        $result = $service->getOrderDetailsByLeadId($id, $page, $limit);
+
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'count' => (int)($result['count'] ?? 0),
+            'data' => $result['data'] ?? [],
+        ]);
+    }
 
     //兼容旧地址：转发到正式保存接口
     public function comment()

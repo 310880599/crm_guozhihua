@@ -101,6 +101,19 @@ class Client extends Model
             ->find();
     }
 
+    /**
+     * 成交客户基础信息（用于关联订单权限校验）
+     */
+    public function getSuccessClientById($clientId)
+    {
+        return Db::table('crm_leads')
+            ->where('id', (int)$clientId)
+            ->where('issuccess', 1)
+            ->where('status', 1)
+            ->field('id,kh_name,issuccess,status,pr_user,pr_user_bef')
+            ->find();
+    }
+
     //查询
     public function getClientSearchList($page, $limit, $keyword)
     {
