@@ -702,8 +702,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
     var pageKey = location.pathname;
     // localStorage 的 key（用于兜底）
     var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
+    var tableIns = null;
+    var lastSnapshot = {};
+    var resizeSaveTimer = null;
+
     // 定义表格列
-    var cols = [[
+    var mainCols = [[
         { type: 'checkbox', fixed: true , width: 50},
         { field: 'id', title: 'ID', width: 80, hide: true, fixed: true },
         { field: 'kh_name', title: '客户名称', sort: true, templet: function(res){
@@ -746,32 +750,87 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         },
         { fixed: 'right', width: 380, align: 'center', toolbar: '#action' }
     ]];
-    // 恢复列宽设置（如果有存储）
-    // if(typeof restoreColWidth === "function"){ restoreColWidth(cols[0]); }
-    // 初始化表格
-    var tableIns = table.render({
-        elem: '#' + tableId,
-        id: tableId,
-        url: "{:url('successCliList')}",
-        method: 'post',
-        toolbar: '#topBtn',
-        defaultToolbar: ['filter'],
-        page: true,
-        limit: 30,
-        cols: cols,
-        limit: 10,
-        page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
-        parseData: function(res) {
-            // 给每行数据添加aid字段，用于判断权限
-            var aid = '{:session("aid")}';
-            if (res.data && res.data.length > 0) {
-                res.data.forEach(function(item) {
-                    item.aid = aid;
-                });
+
+    function applySavedWidthsToCols(cols, widths) {
+        if (!cols || !cols[0] || !widths) return;
+        cols[0].forEach(function (col) {
+            if (!col || !col.field) return;
+            if (!Object.prototype.hasOwnProperty.call(widths, col.field)) return;
+            var w = parseInt(widths[col.field], 10);
+            if (w >= 30 && w <= 3000) {
+                col.width = w;
             }
-            return res;
-        }
-        // done: bindResizeSave  // 列宽拖动事件绑定（在 common/foot 脚本中定义）
+        });
+    }
+
+    function loadSavedColWidths(callback) {
+        $.ajax({
+            url: "{:url('Client/getColWidths')}",
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                page_key: pageKey,
+                table_id: tableId
+            },
+            success: function (res) {
+                var widths = {};
+                if (res.code === 0 && res.data && Object.keys(res.data).length > 0) {
+                    widths = res.data;
+                } else {
+                    try {
+                        widths = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
+                    } catch (e) {
+                        widths = {};
+                    }
+                }
+                if (typeof callback === 'function') callback(widths);
+            },
+            error: function () {
+                var widths = {};
+                try {
+                    widths = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
+                } catch (e) {
+                    widths = {};
+                }
+                if (typeof callback === 'function') callback(widths);
+            }
+        });
+    }
+
+    // 初始化表格（先读取列宽，再渲染）
+    loadSavedColWidths(function(savedWidths){
+        applySavedWidthsToCols(mainCols, savedWidths);
+        tableIns = table.render({
+            elem: '#' + tableId,
+            id: tableId,
+            url: "{:url('successCliList')}",
+            method: 'post',
+            toolbar: '#topBtn',
+            defaultToolbar: ['filter'],
+            page: true,
+            limit: 30,
+            cols: mainCols,
+            limit: 10,
+            page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
+            parseData: function(res) {
+                // 给每行数据添加aid字段，用于判断权限
+                var aid = '{:session("aid")}';
+                if (res.data && res.data.length > 0) {
+                    res.data.forEach(function(item) {
+                        item.aid = aid;
+                    });
+                }
+                return res;
+            },
+            done: function () {
+                bindResizeSave();
+                var snapshot = getCurrentWidthsSnapshot();
+                if (Object.keys(snapshot).length > 0) {
+                    lastSnapshot = snapshot;
+                }
+            }
+        });
+        window.tableIns = tableIns;
     });
 
     // 监听表格操作列事件
@@ -909,7 +968,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             localStorage.setItem(columnWidthKey, JSON.stringify(snapshot));
         }
 
-        // 4) 关键：刷新列表（两种写法二选一）
+        // 4) 尽快同步到数据库，避免 reload 后仅本地生效
+        if (snapshot && Object.keys(snapshot).length && typeof saveWidths === 'function') {
+            saveWidths();
+        }
+
+        // 5) 关键：刷新列表（两种写法二选一）
         // 写法A：用实例 reload（推荐）
         if (window.tableIns) {
             tableIns.reload();
@@ -953,6 +1017,58 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             console.warn('获取列宽快照失败:', e);
         }
         return snapshot;
+    }
+
+    function saveWidths() {
+        try {
+            var widths = {};
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if (!$view.length) return;
+
+            // 只取主表头，不取 fixed 固定列
+            var $headerTable = $view.find('.layui-table-header table').eq(0);
+            $headerTable.find('thead tr th').each(function () {
+                var $th = $(this);
+                var field = $th.attr('data-field');
+                if (!field || field === '0') return;
+                var w = parseInt($th.width(), 10);
+                if (w >= 30 && w <= 3000) {
+                    widths[field] = w;
+                }
+            });
+
+            if (!Object.keys(widths).length) return;
+            localStorage.setItem(columnWidthKey, JSON.stringify(widths));
+
+            $.ajax({
+                url: "{:url('Client/saveColWidths')}",
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    page_key: pageKey,
+                    table_id: tableId,
+                    widths: JSON.stringify(widths)
+                }
+            });
+        } catch (e) {
+            console.warn('保存列宽失败:', e);
+        }
+    }
+
+    function bindResizeSave() {
+        $(document).off('mouseup.successClientColWidth').on('mouseup.successClientColWidth', function () {
+            if (resizeSaveTimer) {
+                clearTimeout(resizeSaveTimer);
+            }
+            resizeSaveTimer = setTimeout(function () {
+                var newSnapshot = getCurrentWidthsSnapshot();
+                if (!Object.keys(newSnapshot).length) return;
+                if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
+                    saveWidths();
+                    lastSnapshot = newSnapshot;
+                }
+            }, 100);
+        });
     }
 
     function openSuccessClientOrdersDialog(data) {
@@ -1197,24 +1313,6 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             }
         });
     });
-    // 拖拽列宽后的保存
-    // function bindResizeSave() {
-    //     $(document).off('mouseup.saveWidth').on('mouseup.saveWidth', function () {
-    //         setTimeout(saveWidths, 10);
-    //     });
-    // }
-    // function saveWidths() {
-    //     var widths = {};
-    //     $('#' + tableId).next('.layui-table-view').find('th').each(function () {
-    //         var field = $(this).data('field');
-    //         if (field) widths[field] = $(this).outerWidth();
-    //     });
-    //     localStorage.setItem(columnWidthKey, JSON.stringify(widths));
-    // }
-    // function restoreColWidth(colArr) {
-    //     var saved = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
-    //     colArr.forEach(function (c) { if (saved[c.field]) c.width = saved[c.field]; });
-    // }
     // 高级搜索表单提交
     form.on('submit(LAY-app-contlist-search)', function(data) {
         table.reload('table-list', {
