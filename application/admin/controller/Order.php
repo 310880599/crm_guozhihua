@@ -771,6 +771,8 @@ class Order extends Common
                     ]);
                 }
             }
+            // 最终入库前以后端规则统一修正 source / order_type
+            $data = OrderService::applyOrderTypeByReturnRule($data, 0);
             // 强制覆盖 team_name 为当前登录人的团队名称
             $currentUsername = Session::get('username');
             $loginTeamName = '';
@@ -1743,6 +1745,8 @@ class Order extends Common
                     'msg' => (string)($returnRuleCheck['message'] ?? '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。'),
                 ]);
             }
+            // 最终入库前以后端规则统一修正 source / order_type
+            $data = OrderService::applyOrderTypeByReturnRule($data, $id);
             
             $data['order_time']       = Request::param('order_time');     // 成交时间
             $data['shipping_cost']    = Request::param('shipping_cost');  // 估算运费

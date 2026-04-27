@@ -427,6 +427,37 @@ class OrderService
     }
 
     /**
+     * 按返单规则统一修正 source / order_type（以后端为准）
+     *
+     * 规则：
+     * - 命中客户 + 客户任意主/辅电话存在审核通过订单 => 强制返单（order_type=2）
+     * - 其他情况 => 新单（order_type=1）
+     *
+     * @param array $data
+     * @param int $excludeOrderId 编辑场景排除当前订单
+     * @return array
+     */
+    public static function applyOrderTypeByReturnRule(array $data, $excludeOrderId = 0)
+    {
+        $contact = trim((string)($data['contact'] ?? ''));
+        $leadsId = self::getClientIdByContact($contact);
+        if ($leadsId <= 0) {
+            $data['order_type'] = 1;
+            return $data;
+        }
+
+        $hasApproved = self::checkClientHasApprovedOrderByAnyPhone($leadsId, $excludeOrderId);
+        if ($hasApproved) {
+            $data['source'] = '返单';
+            $data['order_type'] = 2;
+            return $data;
+        }
+
+        $data['order_type'] = 1;
+        return $data;
+    }
+
+    /**
      * 匹配联系方式并返回客户、命中电话
      *
      * @param string $contact
