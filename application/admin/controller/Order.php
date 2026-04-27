@@ -593,6 +593,8 @@ class Order extends Common
             // ✅新增：区分“提交保存 / 保存草稿”
             $saveType = Request::param('save_type', 'submit');
             $isDraft = ($saveType === 'draft');
+            $adminInfo = \app\admin\model\Admin::getMyInfo();
+            $canManageAllOrders = OrderService::canManageAllOrders($adminInfo);
 
             // ====== 验证客户是否属于当前用户或协同人 ======
             $contact = Request::param('contact');
@@ -638,7 +640,7 @@ class Order extends Common
                         }
                         
                         // 如果客户既不是我的客户，也不是协同人客户，则不允许添加订单
-                        if (!$isMyCustomer && !$isCollaboratorCustomer) {
+                        if (!$canManageAllOrders && !$isMyCustomer && !$isCollaboratorCustomer) {
                             return fail('该客户不属于您的客户或协同人客户，无法添加订单');
                         }
 
@@ -1238,6 +1240,8 @@ class Order extends Common
     {
         $data  = Request::param();
         $custphone = $data['contact'];
+        $adminInfo = \app\admin\model\Admin::getMyInfo();
+        $canManageAllOrders = OrderService::canManageAllOrders($adminInfo);
         // $where=[];
         // $where['phone'] = $custphone;
         // $custinfo = Db::name('crm_leads')->where($where)->find();
@@ -1288,7 +1292,7 @@ class Order extends Common
                 }
                 
                 // 如果客户既不是我的客户，也不是协同人客户，则不允许添加订单
-                if (!$isMyCustomer && !$isCollaboratorCustomer) {
+                if (!$canManageAllOrders && !$isMyCustomer && !$isCollaboratorCustomer) {
                     $res['code'] = 0;
                     $res['msg'] = "该客户不属于您的客户或协同人客户，无法添加订单";
                     $this->success($res);
@@ -1579,11 +1583,11 @@ class Order extends Common
             $contact = Request::param('contact');
             $leadsId = null;
             $custinfo = null;
+            $adminInfo = \app\admin\model\Admin::getMyInfo();
+            $canManageAllOrders = OrderService::canManageAllOrders($adminInfo);
             if (!empty($contact)) {
                 $currentUsername = Session::get('username');
                 $currentAdminId = Session::get('aid');
-                $currentGroupId = Session::get('gid');
-                $isPrivilegedEditor = ($currentAdminId == 1 || $currentGroupId == 15); // 超管/财务专员可编辑所有订单
                 $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($contact) {
                     $_contact = trim(preg_replace('/[+\-\s]/', '', $contact));
                     $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$contact}'")
@@ -1617,7 +1621,7 @@ class Order extends Common
                             }
                         }
 
-                        if (!$isPrivilegedEditor && !$isMyCustomer && !$isCollaboratorCustomer) {
+                        if (!$canManageAllOrders && !$isMyCustomer && !$isCollaboratorCustomer) {
                             return fail('该客户不属于您的客户或协同人客户，无法添加订单');
                         }
 
@@ -2773,11 +2777,34 @@ class Order extends Common
      */
     public function del()
     {
+        $id = (int)Request::param('id');
+        if ($id <= 0) {
+            return json(['code' => -200, 'msg' => '参数错误']);
+        }
+        $adminInfo = \app\admin\model\Admin::getMyInfo();
+        $canManageAllOrders = OrderService::canManageAllOrders($adminInfo);
+        $order = Db::table('crm_client_order')
+            ->where('id', $id)
+            ->field('id,pr_user,at_user')
+            ->find();
+        if (empty($order)) {
+            return json(['code' => -200, 'msg' => '订单不存在']);
+        }
+        if (!$canManageAllOrders) {
+            $currentUsername = (string)Session::get('username');
+            $canDeleteCurrent = $currentUsername !== ''
+                && (
+                    ($order['pr_user'] ?? '') === $currentUsername
+                    || ($order['at_user'] ?? '') === $currentUsername
+                );
+            if (!$canDeleteCurrent) {
+                return json(['code' => -200, 'msg' => '无权限删除该订单']);
+            }
+        }
+
         // 开启事务
         Db::startTrans();
         try {
-            // 获取请求中的订单ID
-            $id = Request::param('id');
             // 查询订单信息，获取客户手机号
             // $order = Db::table('crm_client_order')->where('id', $id)->find();
             // if (!$order) {
@@ -3252,7 +3279,8 @@ class Order extends Common
         $client_where = [];
         //判断权限
         $user = \app\admin\model\Admin::getMyInfo();
-        $team_name = $user['team_name'] ?? '';
+        $canManageAllOrders = OrderService::canManageAllOrders($user);
+        $team_name = $canManageAllOrders ? '' : ($user['team_name'] ?? '');
         if ($team_name) $where[] = ['team_name', '=', $team_name];
         $page = input('page') ?? 1;
         $limit = input('limit') ?? config('pageSize');
@@ -3328,7 +3356,7 @@ class Order extends Common
             $team_name = $keyword['team_name'];
         }
         $org_where = [];
-        if ($user['org']) {
+        if (!$canManageAllOrders && $user['org']) {
             $org_where[] =  $this->getOrgWhere($user['org']);
         }
         if (!empty($keyword['org'])) {

@@ -7,6 +7,32 @@ use think\Db;
 class OrderService
 {
     /**
+     * 是否具备订单全量管理权限（查看/编辑/删除/跳过归属拦截）
+     *
+     * 规则：
+     * - 超级管理员 aid=1
+     * - admin 用户
+     * - group_id in [13, 15]
+     *
+     * @param array|null $adminInfo
+     * @return bool
+     */
+    public static function canManageAllOrders($adminInfo = null)
+    {
+        if ($adminInfo === null) {
+            $adminInfo = \app\admin\model\Admin::getMyInfo();
+        }
+
+        $aid = (int)session('aid');
+        $gid = (int)($adminInfo['group_id'] ?? session('gid'));
+        $username = (string)($adminInfo['username'] ?? session('username') ?? '');
+
+        return $aid === 1
+            || $username === 'admin'
+            || in_array($gid, [13, 15], true);
+    }
+
+    /**
      * 校验客户主/辅电话职位身份是否完整
      *
      * 规则：

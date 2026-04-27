@@ -626,7 +626,7 @@
 
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
         <div id="row-action-panel" class="row-action-panel">
-            {if condition="session('aid') eq 1 OR session('gid') eq 15"}
+            {if condition="session('aid') eq 1 OR session('gid') eq 13 OR session('gid') eq 15"}
             <button type="button" class="layui-btn layui-btn-xs" data-action="edit"><i class="layui-icon">&#xe642;</i>编辑</button>
             <button type="button" class="layui-btn layui-btn-danger layui-btn-xs" data-action="del"><i class="layui-icon">&#xe640;</i>删除</button>
             {/if}
@@ -636,7 +636,7 @@
         <!-- 是否审核通过 -->
     <!-- {//if $Think.session.aid == 1} -->
     <!-- <a class="layui-btn  layui-btn-xs" lay-event="shenhe"><i class="layui-icon">&#xe642;</i>审核通过</a> -->
-    {if condition="session('aid') eq 1 OR session('gid') eq 15"}
+    {if condition="session('aid') eq 1 OR session('gid') eq 13 OR session('gid') eq 15"}
     <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
     <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
     {/if}
