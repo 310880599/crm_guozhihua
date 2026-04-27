@@ -85,6 +85,424 @@ class OrderService
     }
 
     /**
+     * 标准化联系方式（仅去掉 +、-、空白字符）
+     *
+     * @param string $contact
+     * @return string
+     */
+    public static function normalizeContact($contact)
+    {
+        $contact = trim((string)$contact);
+        if ($contact === '') {
+            return '';
+        }
+        return (string)preg_replace('/[+\-\s]/u', '', $contact);
+    }
+
+    /**
+     * 根据联系方式匹配客户ID（leads_id）
+     *
+     * 兼容：
+     * - contact_value = 输入值
+     * - CONCAT(contact_extra, contact_value) = 输入值
+     * - 去除 + - 空格后的归一化匹配
+     *
+     * @param string $contact
+     * @return int
+     */
+    public static function getClientIdByContact($contact)
+    {
+        $match = self::matchContactRecord($contact);
+        return (int)($match['leads_id'] ?? 0);
+    }
+
+    /**
+     * 获取客户全部未删除主/辅电话（contact_type in 1,3）
+     *
+     * @param int $leadsId
+     * @return array
+     */
+    public static function getClientAllPhones($leadsId)
+    {
+        $leadsId = (int)$leadsId;
+        if ($leadsId <= 0) {
+            return [];
+        }
+
+        $rows = Db::name('crm_contacts')
+            ->where('leads_id', $leadsId)
+            ->where('is_delete', 0)
+            ->whereIn('contact_type', [1, 3])
+            ->field('contact_value')
+            ->select();
+
+        if (empty($rows)) {
+            return [];
+        }
+
+        $phones = [];
+        $seen = [];
+        foreach ($rows as $row) {
+            $raw = trim((string)($row['contact_value'] ?? ''));
+            if ($raw !== '' && !isset($seen[$raw])) {
+                $phones[] = $raw;
+                $seen[$raw] = 1;
+            }
+            $normalized = self::normalizeContact($raw);
+            if ($normalized !== '' && !isset($seen[$normalized])) {
+                $phones[] = $normalized;
+                $seen[$normalized] = 1;
+            }
+        }
+
+        return $phones;
+    }
+
+    /**
+     * 判断客户名下任意电话是否存在审核通过订单
+     *
+     * @param int $leadsId
+     * @param int $excludeOrderId 编辑场景排除当前订单
+     * @return bool
+     */
+    public static function checkClientHasApprovedOrderByAnyPhone($leadsId, $excludeOrderId = 0)
+    {
+        $leadsId = (int)$leadsId;
+        if ($leadsId <= 0) {
+            return false;
+        }
+
+        $phones = self::getClientAllPhones($leadsId);
+        if (empty($phones)) {
+            return false;
+        }
+
+        $normalizedPhones = [];
+        foreach ($phones as $phone) {
+            $normalized = self::normalizeContact($phone);
+            if ($normalized !== '') {
+                $normalizedPhones[] = $normalized;
+            }
+        }
+        $normalizedPhones = array_values(array_unique($normalizedPhones));
+        $normalizedSql = "'" . implode("','", array_map('addslashes', $normalizedPhones)) . "'";
+
+        $query = Db::name('crm_client_order')
+            ->where('check_status', 2)
+            ->where(function ($q) use ($phones, $normalizedSql) {
+                $q->whereIn('contact', $phones);
+                if (!empty($normalizedSql) && $normalizedSql !== "''") {
+                    $q->whereOrRaw("REPLACE(REPLACE(REPLACE(IFNULL(contact, ''), '+', ''), '-', ''), ' ', '') IN (" . $normalizedSql . ")");
+                }
+            });
+
+        $excludeOrderId = (int)$excludeOrderId;
+        if ($excludeOrderId > 0) {
+            $query->where('id', '<>', $excludeOrderId);
+        }
+
+        return !empty($query->field('id')->find());
+    }
+
+    /**
+     * 根据联系方式返回“是否必须返单”的完整规则
+     *
+     * @param string $contact
+     * @param int $excludeOrderId 编辑场景排除当前订单
+     * @return array
+     */
+    public static function getReturnOrderRuleByContact($contact, $excludeOrderId = 0)
+    {
+        $result = [
+            'must_return' => false,
+            'leads_id' => 0,
+            'phones' => [],
+            'matched_contact' => '',
+            'suggest_source_name' => '返单',
+            'suggest_port_name' => '',
+            'suggest_source_id' => 0,
+            'suggest_port_id' => 0,
+            'message' => '',
+        ];
+
+        $contact = trim((string)$contact);
+        if ($contact === '') {
+            $result['message'] = '联系方式为空，无法判定返单规则';
+            return $result;
+        }
+
+        $match = self::matchContactRecord($contact);
+        $leadsId = (int)($match['leads_id'] ?? 0);
+        if ($leadsId <= 0) {
+            $result['message'] = '未匹配到客户信息，不触发返单锁定';
+            return $result;
+        }
+
+        $result['leads_id'] = $leadsId;
+        $result['matched_contact'] = (string)($match['matched_contact'] ?? '');
+        $result['phones'] = self::getClientAllPhones($leadsId);
+
+        $hasApproved = self::checkClientHasApprovedOrderByAnyPhone($leadsId, $excludeOrderId);
+        if (!$hasApproved) {
+            $result['message'] = '该客户暂无审核通过订单，不强制返单';
+            return $result;
+        }
+
+        $result['must_return'] = true;
+        $result['message'] = '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。';
+
+        $returnSource = Db::name('crm_inquiry')
+            ->where('inquiry_name', '返单')
+            ->field('id, inquiry_name')
+            ->find();
+        if (!empty($returnSource['id'])) {
+            $result['suggest_source_id'] = (int)$returnSource['id'];
+        } else {
+            $result['message'] = '检测到必须返单，但系统未配置“返单”询盘来源，请先在字典中补充后再提交。';
+        }
+
+        $leads = Db::name('crm_leads')
+            ->where('id', $leadsId)
+            ->field('id, inquiry_id, port_id, kh_status, source_port')
+            ->find();
+
+        $guessedPortName = self::guessReturnPortNameByLeads($leads);
+        if ($guessedPortName !== '') {
+            $result['suggest_port_name'] = $guessedPortName;
+        }
+
+        $portInfo = self::resolveReturnPortInfo($result['suggest_source_id'], $result['suggest_port_name']);
+        if (!empty($portInfo['id'])) {
+            $result['suggest_port_id'] = (int)$portInfo['id'];
+            $result['suggest_port_name'] = (string)$portInfo['port_name'];
+        } elseif (!empty($portInfo['port_name']) && $result['suggest_port_name'] === '') {
+            $result['suggest_port_name'] = (string)$portInfo['port_name'];
+        }
+
+        if ($result['suggest_port_id'] <= 0 && $result['suggest_port_name'] === '') {
+            $result['message'] = '检测到必须返单，但系统未找到返单运营端口（如“竞价返单/C端返单/抖音返单/B2B返单”），请先补充端口字典后再提交。';
+        }
+
+        return $result;
+    }
+
+    /**
+     * 校验提交的来源/端口是否符合返单强规则
+     *
+     * @param string $contact
+     * @param string $sourceName
+     * @param string $sourcePortInput
+     * @param int $excludeOrderId
+     * @return array ['ok'=>bool,'message'=>string,'rule'=>array]
+     */
+    public static function validateReturnOrderSelection($contact, $sourceName, $sourcePortInput, $excludeOrderId = 0)
+    {
+        $rule = self::getReturnOrderRuleByContact($contact, $excludeOrderId);
+        if (empty($rule['must_return'])) {
+            return ['ok' => true, 'message' => '', 'rule' => $rule];
+        }
+
+        if ((int)($rule['suggest_source_id'] ?? 0) <= 0) {
+            return [
+                'ok' => false,
+                'message' => (string)($rule['message'] ?: '检测到必须返单，但系统未配置“返单”来源，请先补充字典。'),
+                'rule' => $rule,
+            ];
+        }
+
+        $sourceName = trim((string)$sourceName);
+        if ($sourceName !== '返单') {
+            return [
+                'ok' => false,
+                'message' => '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。',
+                'rule' => $rule,
+            ];
+        }
+
+        $sourcePortInput = trim((string)$sourcePortInput);
+        $sourcePortName = '';
+        if ($sourcePortInput !== '') {
+            $isNumericId = ctype_digit($sourcePortInput) || (is_numeric($sourcePortInput) && (int)$sourcePortInput > 0);
+            if ($isNumericId) {
+                $portInfo = Db::name('crm_inquiry_port')->where('id', (int)$sourcePortInput)->field('id, port_name')->find();
+                if ($portInfo && !empty($portInfo['port_name'])) {
+                    $sourcePortName = (string)$portInfo['port_name'];
+                }
+            }
+            if ($sourcePortName === '') {
+                $sourcePortName = $sourcePortInput;
+            }
+        }
+
+        $suggestPortId = (int)($rule['suggest_port_id'] ?? 0);
+        if ($suggestPortId > 0) {
+            if ((int)$sourcePortInput !== $suggestPortId) {
+                return [
+                    'ok' => false,
+                    'message' => '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。',
+                    'rule' => $rule,
+                ];
+            }
+        } else {
+            if ($sourcePortName === '' || mb_stripos($sourcePortName, '返单') === false) {
+                return [
+                    'ok' => false,
+                    'message' => '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。',
+                    'rule' => $rule,
+                ];
+            }
+        }
+
+        return ['ok' => true, 'message' => '', 'rule' => $rule];
+    }
+
+    /**
+     * 匹配联系方式并返回客户、命中电话
+     *
+     * @param string $contact
+     * @return array
+     */
+    private static function matchContactRecord($contact)
+    {
+        $contact = trim((string)$contact);
+        $normalized = self::normalizeContact($contact);
+        if ($contact === '') {
+            return ['leads_id' => 0, 'matched_contact' => ''];
+        }
+
+        $record = Db::name('crm_contacts')
+            ->where('is_delete', 0)
+            ->where(function ($query) use ($contact, $normalized) {
+                $query->where('contact_value', $contact)
+                    ->whereOrRaw("CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')) = '" . addslashes($contact) . "'");
+                if ($normalized !== '' && $normalized !== $contact) {
+                    $query->whereOr('contact_value', $normalized)
+                        ->whereOrRaw("CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')) = '" . addslashes($normalized) . "'")
+                        ->whereOrRaw("REPLACE(REPLACE(REPLACE(IFNULL(contact_value,''), '+', ''), '-', ''), ' ', '') = '" . addslashes($normalized) . "'")
+                        ->whereOrRaw("REPLACE(REPLACE(REPLACE(CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')), '+', ''), '-', ''), ' ', '') = '" . addslashes($normalized) . "'");
+                }
+            })
+            ->field('leads_id, contact_value, contact_extra')
+            ->find();
+
+        if (empty($record)) {
+            return ['leads_id' => 0, 'matched_contact' => ''];
+        }
+
+        $matched = trim((string)($record['contact_value'] ?? ''));
+        if ($matched === '') {
+            $matched = trim((string)($record['contact_extra'] ?? '')) . trim((string)($record['contact_value'] ?? ''));
+        }
+
+        return [
+            'leads_id' => (int)($record['leads_id'] ?? 0),
+            'matched_contact' => $matched,
+        ];
+    }
+
+    /**
+     * 根据客户历史渠道信息推断返单端口名称
+     *
+     * @param array $leads
+     * @return string
+     */
+    private static function guessReturnPortNameByLeads(array $leads = [])
+    {
+        if (empty($leads)) {
+            return '';
+        }
+
+        $candidates = [];
+        if (!empty($leads['source_port'])) {
+            $candidates[] = (string)$leads['source_port'];
+        }
+        if (!empty($leads['kh_status'])) {
+            $candidates[] = (string)$leads['kh_status'];
+        }
+
+        $inquiryId = (int)($leads['inquiry_id'] ?? 0);
+        if ($inquiryId > 0) {
+            $inquiry = Db::name('crm_inquiry')->where('id', $inquiryId)->field('inquiry_name')->find();
+            if (!empty($inquiry['inquiry_name'])) {
+                $candidates[] = (string)$inquiry['inquiry_name'];
+            }
+        }
+
+        $portIdsRaw = trim((string)($leads['port_id'] ?? ''));
+        if ($portIdsRaw !== '') {
+            $portIds = array_values(array_filter(array_map('trim', explode(',', $portIdsRaw)), function ($v) {
+                return $v !== '';
+            }));
+            if (!empty($portIds)) {
+                $ports = Db::name('crm_inquiry_port')
+                    ->where('id', 'in', $portIds)
+                    ->field('port_name')
+                    ->select();
+                foreach ($ports as $p) {
+                    if (!empty($p['port_name'])) {
+                        $candidates[] = (string)$p['port_name'];
+                    }
+                }
+            }
+        }
+
+        $joinedText = mb_strtolower(implode(' ', $candidates), 'UTF-8');
+        if ($joinedText === '') {
+            return '';
+        }
+
+        if (mb_strpos($joinedText, '竞价') !== false) {
+            return '竞价返单';
+        }
+        if (mb_strpos($joinedText, '抖音') !== false) {
+            return '抖音返单';
+        }
+        if (mb_strpos($joinedText, 'c端') !== false || mb_strpos($joinedText, 'c 端') !== false) {
+            return 'C端返单';
+        }
+        if (mb_strpos($joinedText, 'b2b') !== false) {
+            return 'B2B返单';
+        }
+
+        return '';
+    }
+
+    /**
+     * 查询返单端口（先精确，再模糊）
+     *
+     * @param int $returnSourceId
+     * @param string $guessPortName
+     * @return array
+     */
+    private static function resolveReturnPortInfo($returnSourceId, $guessPortName)
+    {
+        $returnSourceId = (int)$returnSourceId;
+        $guessPortName = trim((string)$guessPortName);
+
+        if ($guessPortName !== '') {
+            $query = Db::name('crm_inquiry_port')->where('port_name', $guessPortName);
+            if ($returnSourceId > 0) {
+                $query->where('inquiry_id', $returnSourceId);
+            }
+            $exact = $query->field('id, port_name')->find();
+            if (!empty($exact)) {
+                return $exact;
+            }
+        }
+
+        $likeQuery = Db::name('crm_inquiry_port')->where('port_name', 'like', '%返单%');
+        if ($returnSourceId > 0) {
+            $likeQuery->where('inquiry_id', $returnSourceId);
+        }
+        $likeRow = $likeQuery->order('id', 'asc')->field('id, port_name')->find();
+        if (!empty($likeRow)) {
+            return $likeRow;
+        }
+
+        return [];
+    }
+
+    /**
      * 将任意值转换为 float，空字符串/null 统一按 0 处理
      *
      * @param mixed $value

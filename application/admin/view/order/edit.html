@@ -196,6 +196,79 @@
         var customerValidated = false;
         var customerPhoneTitlesComplete = false;
         var currentClientId = 0;
+        var returnOrderRule = null;
+
+        function clearReturnRuleHint() {
+            $('#returnRuleHint').remove();
+        }
+
+        function renderReturnRuleHint(rule) {
+            clearReturnRuleHint();
+            if (!rule || !rule.must_return) {
+                return;
+            }
+            var hint = '该客户已有审核通过订单，系统已自动锁定为返单。本次订单不可选择 C端、抖音、竞价、B2B 等非返单来源。';
+            if (rule.message) {
+                hint += '<br>' + rule.message;
+            }
+            $('#checklabel').append('<div id="returnRuleHint" style="color:#d9534f;font-weight:600;margin-top:6px;">' + hint + '</div>');
+        }
+
+        function resetReturnOrderRuleUI() {
+            returnOrderRule = null;
+            clearReturnRuleHint();
+        }
+
+        function checkReturnOrderRuleByContact(contact, orderId, callback, syncMode) {
+            var done = (typeof callback === 'function') ? callback : function () {};
+            var contactTrimmed = (contact || '').trim();
+            if (!contactTrimmed) {
+                resetReturnOrderRuleUI();
+                done(null);
+                return null;
+            }
+            var latestRule = null;
+            var oid = parseInt(orderId || $('input[name="id"]').val() || 0, 10) || 0;
+            $.ajax({
+                type: "GET",
+                dataType: "json",
+                async: !!syncMode ? false : true,
+                url: "{:url('Order/checkReturnOrderRule')}" + "?contact=" + encodeURIComponent(contactTrimmed) + "&order_id=" + encodeURIComponent(oid),
+                success: function (res) {
+                    if (res && res.code == 1 && res.data) {
+                        latestRule = res.data;
+                    } else {
+                        latestRule = null;
+                    }
+                },
+                error: function () {
+                    latestRule = null;
+                },
+                complete: function () {
+                    if (latestRule && latestRule.must_return) {
+                        returnOrderRule = latestRule;
+                        var lockSource = latestRule.suggest_source_name || '返单';
+                        if ($('#source option[value="' + lockSource + '"]').length > 0) {
+                            $('#source').val(lockSource);
+                        }
+                        if (typeof window.fillSourcePortBySourceName === 'function') {
+                            window.fillSourcePortBySourceName(lockSource);
+                        }
+                        if (latestRule.suggest_port_id && typeof window.setSourcePortByAnyValue === 'function') {
+                            window.setSourcePortByAnyValue(lockSource, '', latestRule.suggest_port_id, function () {});
+                        } else if (latestRule.suggest_port_name && typeof window.setSourcePortByAnyValue === 'function') {
+                            window.setSourcePortByAnyValue(lockSource, latestRule.suggest_port_name, '', function () {});
+                        }
+                        layui.form.render('select');
+                        renderReturnRuleHint(latestRule);
+                    } else {
+                        resetReturnOrderRuleUI();
+                    }
+                    done(latestRule);
+                }
+            });
+            return latestRule;
+        }
 
         function updateEditCustomerButtonState() {
             var enabled = parseInt(currentClientId, 10) > 0;
@@ -236,6 +309,7 @@
             if (!contactTrimmed) {
                 currentClientId = 0;
                 customerPhoneTitlesComplete = false;
+                resetReturnOrderRuleUI();
                 updateEditCustomerButtonState();
                 return;
             }
@@ -255,12 +329,14 @@
                     } else {
                         currentClientId = 0;
                         customerPhoneTitlesComplete = false;
+                        resetReturnOrderRuleUI();
                         updateEditCustomerButtonState();
                     }
                 },
                 error: function () {
                     currentClientId = 0;
                     customerPhoneTitlesComplete = false;
+                    resetReturnOrderRuleUI();
                     updateEditCustomerButtonState();
                 }
             });
@@ -363,6 +439,7 @@
                 currentClientId = 0;
                 customerPhoneTitlesComplete = false;
                 $('#checklabel').html('').css('color', '');
+                resetReturnOrderRuleUI();
                 updateEditCustomerButtonState();
                 layui.form.render('select');
                 return;
@@ -436,6 +513,7 @@
                         
                         // 显示错误提示
                         layer.msg(result['msg']['msg'] || '该客户不属于您的客户或协同人客户，无法添加订单', { icon: 2, time: 3000 });
+                        resetReturnOrderRuleUI();
                     } else {
                         $('#checklabel').css('color', 'green');
                         customerValidated = true; // 客户验证成功
@@ -573,11 +651,13 @@
                         messageHtml += '<span style="color: red;">由于该客户已成交，询盘来源请选择返单，运营端口根据实际情况选择</span>';
                     }
                     $('#checklabel').html(messageHtml);
+                    checkReturnOrderRuleByContact(contactTrimmed, $('input[name="id"]').val());
                     updateEditCustomerButtonState();
                 },
                 error: function () {
                     currentClientId = 0;
                     customerPhoneTitlesComplete = false;
+                    resetReturnOrderRuleUI();
                     updateEditCustomerButtonState();
                     alert("异常！");
                 }
@@ -1392,6 +1472,18 @@
         };
         
         form.on('select(kh_status)', function (data) {
+            if (returnOrderRule && returnOrderRule.must_return) {
+                var pickedSource = (data.value || '').trim();
+                if (pickedSource !== '返单') {
+                    layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
+                    $('#source').val('返单');
+                    if (typeof window.fillSourcePortBySourceName === 'function') {
+                        window.fillSourcePortBySourceName('返单');
+                    }
+                    form.render('select');
+                    return;
+                }
+            }
             var sourceName = $(data.elem).find("option:selected").text();
             var users = yyList[sourceName] || [];
             var $oper = $('select[name="oper_user"]');
@@ -1735,6 +1827,7 @@
                 updateTotals();
                 window.isEditInit = false;
                 hydrateCustomerStateByContact(orderInfo.contact || '', false);
+                checkReturnOrderRuleByContact(orderInfo.contact || '', orderInfo.id || $('input[name="id"]').val());
             }, 0);
         }
         
@@ -2572,6 +2665,27 @@
 
             if (customerValidated && currentClientId) {
                 checkClientPhoneTitles(currentClientId, true, false);
+            }
+
+            var latestReturnRule = checkReturnOrderRuleByContact(contact.trim(), $('input[name="id"]').val(), null, true);
+            if (latestReturnRule && latestReturnRule.must_return) {
+                var selectedSource = ($('#source').val() || '').trim();
+                if (selectedSource !== '返单') {
+                    layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
+                    return false;
+                }
+                if (String(latestReturnRule.suggest_port_id || '') !== '') {
+                    if (String($('#source_port').val() || '') !== String(latestReturnRule.suggest_port_id)) {
+                        layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
+                        return false;
+                    }
+                } else {
+                    var sourcePortText = ($('#source_port option:selected').text() || '').trim();
+                    if (!sourcePortText || sourcePortText.indexOf('返单') === -1) {
+                        layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
+                        return false;
+                    }
+                }
             }
             
             // 如果验证失败，阻止提交

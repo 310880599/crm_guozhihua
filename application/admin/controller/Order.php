@@ -751,6 +751,23 @@ class Order extends Common
                     $data['source_port'] = mb_substr($sourcePortId, 0, 100, 'UTF-8');
                 }
             }
+
+            // 返单强规则（仅正式提交校验，草稿不拦截）
+            if (!$isDraft) {
+                $returnRuleCheck = OrderService::validateReturnOrderSelection(
+                    $data['contact'],
+                    $data['source'],
+                    $sourcePortId,
+                    0
+                );
+                if (empty($returnRuleCheck['ok'])) {
+                    $this->redisUnLock();
+                    return json([
+                        'code' => 0,
+                        'msg' => (string)($returnRuleCheck['message'] ?? '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。'),
+                    ]);
+                }
+            }
             // 强制覆盖 team_name 为当前登录人的团队名称
             $currentUsername = Session::get('username');
             $loginTeamName = '';
@@ -1477,6 +1494,50 @@ class Order extends Common
         ]);
     }
 
+    /**
+     * AJAX：根据联系方式检查是否必须返单（添加/编辑页共用）
+     *
+     * 入参：
+     * - contact: 联系方式
+     * - order_id: 当前订单ID（编辑页传，排除自身）
+     *
+     * 返回：
+     * {
+     *   code: 1,
+     *   msg: '',
+     *   data: {...}
+     * }
+     */
+    public function checkReturnOrderRule()
+    {
+        $contact = trim((string)Request::param('contact', ''));
+        $orderId = (int)Request::param('order_id/d', 0);
+        if ($contact === '') {
+            return json([
+                'code' => 1,
+                'msg' => '联系方式为空',
+                'data' => [
+                    'must_return' => false,
+                    'leads_id' => 0,
+                    'phones' => [],
+                    'matched_contact' => '',
+                    'suggest_source_name' => '返单',
+                    'suggest_port_name' => '',
+                    'suggest_source_id' => 0,
+                    'suggest_port_id' => 0,
+                    'message' => '联系方式为空，无法判定返单规则',
+                ],
+            ]);
+        }
+
+        $rule = OrderService::getReturnOrderRuleByContact($contact, $orderId);
+        return json([
+            'code' => 1,
+            'msg' => (string)($rule['message'] ?? ''),
+            'data' => $rule,
+        ]);
+    }
+
     // 根据 pr_user 获取团队名称
     public function getTeamByPrUser()
     {
@@ -1656,6 +1717,20 @@ class Order extends Common
                 if ($portInfo && !empty($portInfo['port_name'])) {
                     $data['source_port'] = $portInfo['port_name'];  // 保存端口名称（文字）
                 }
+            }
+
+            // 编辑保存返单强规则（排除当前订单自身）
+            $returnRuleCheck = OrderService::validateReturnOrderSelection(
+                $data['contact'],
+                $data['source'],
+                $sourcePortId,
+                $id
+            );
+            if (empty($returnRuleCheck['ok'])) {
+                return json([
+                    'code' => 0,
+                    'msg' => (string)($returnRuleCheck['message'] ?? '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。'),
+                ]);
             }
             
             $data['order_time']       = Request::param('order_time');     // 成交时间
