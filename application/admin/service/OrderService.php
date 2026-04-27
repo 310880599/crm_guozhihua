@@ -287,31 +287,127 @@ class OrderService
     }
 
     /**
+     * 标准化来源名称（支持来源名称或来源ID）
+     *
+     * @param mixed $sourceInput
+     * @return string
+     */
+    public static function normalizeSourceName($sourceInput)
+    {
+        $sourceInput = trim((string)$sourceInput);
+        if ($sourceInput === '') {
+            return '';
+        }
+
+        if ($sourceInput === '返单') {
+            return '返单';
+        }
+
+        $isNumericId = ctype_digit($sourceInput) || (is_numeric($sourceInput) && (int)$sourceInput > 0);
+        if ($isNumericId) {
+            $inquiry = Db::name('crm_inquiry')
+                ->where('id', (int)$sourceInput)
+                ->field('inquiry_name')
+                ->find();
+            if (!empty($inquiry['inquiry_name'])) {
+                return trim((string)$inquiry['inquiry_name']);
+            }
+        }
+
+        return $sourceInput;
+    }
+
+    /**
+     * 解析端口名称（支持端口名称或端口ID）
+     *
+     * @param mixed $sourcePortInput
+     * @return string
+     */
+    public static function resolvePortName($sourcePortInput)
+    {
+        $sourcePortInput = trim((string)$sourcePortInput);
+        if ($sourcePortInput === '') {
+            return '';
+        }
+
+        $isNumericId = ctype_digit($sourcePortInput) || (is_numeric($sourcePortInput) && (int)$sourcePortInput > 0);
+        if ($isNumericId) {
+            $portInfo = Db::name('crm_inquiry_port')
+                ->where('id', (int)$sourcePortInput)
+                ->field('port_name')
+                ->find();
+            if ($portInfo && !empty($portInfo['port_name'])) {
+                return trim((string)$portInfo['port_name']);
+            }
+            return '';
+        }
+
+        return $sourcePortInput;
+    }
+
+    /**
+     * 返单端口匹配校验（支持 ID/名称/已保存名称）
+     *
+     * @param mixed $sourcePortInput
+     * @param array $rule
+     * @param string $sourcePortName
+     * @return bool
+     */
+    public static function isReturnPortMatched($sourcePortInput, array $rule = [], $sourcePortName = '')
+    {
+        $sourcePortRaw = trim((string)$sourcePortInput);
+        $sourcePortName = trim((string)$sourcePortName);
+        $resolvedPortName = self::resolvePortName($sourcePortRaw);
+        if ($sourcePortName === '' && $resolvedPortName !== '') {
+            $sourcePortName = $resolvedPortName;
+        }
+        if ($sourcePortName === '' && $sourcePortRaw !== '' && !ctype_digit($sourcePortRaw)) {
+            $sourcePortName = $sourcePortRaw;
+        }
+
+        $suggestPortId = (int)($rule['suggest_port_id'] ?? 0);
+        $suggestPortName = trim((string)($rule['suggest_port_name'] ?? ''));
+
+        $sourcePortId = 0;
+        $isNumericId = ctype_digit($sourcePortRaw) || (is_numeric($sourcePortRaw) && (int)$sourcePortRaw > 0);
+        if ($isNumericId) {
+            $sourcePortId = (int)$sourcePortRaw;
+        }
+
+        if ($sourcePortId > 0 && $suggestPortId > 0 && $sourcePortId === $suggestPortId) {
+            return true;
+        }
+
+        if ($sourcePortName !== '' && $suggestPortName !== '' && $sourcePortName === $suggestPortName) {
+            return true;
+        }
+
+        if ($sourcePortName !== '' && mb_stripos($sourcePortName, '返单') !== false) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * 校验提交的来源/端口是否符合返单强规则
      *
      * @param string $contact
-     * @param string $sourceName
-     * @param string $sourcePortInput
+     * @param mixed $sourceInput
+     * @param mixed $sourcePortInput
      * @param int $excludeOrderId
+     * @param string $sourcePortName
      * @return array ['ok'=>bool,'message'=>string,'rule'=>array]
      */
-    public static function validateReturnOrderSelection($contact, $sourceName, $sourcePortInput, $excludeOrderId = 0)
+    public static function validateReturnOrderSelection($contact, $sourceInput, $sourcePortInput, $excludeOrderId = 0, $sourcePortName = '')
     {
         $rule = self::getReturnOrderRuleByContact($contact, $excludeOrderId);
         if (empty($rule['must_return'])) {
             return ['ok' => true, 'message' => '', 'rule' => $rule];
         }
 
-        if ((int)($rule['suggest_source_id'] ?? 0) <= 0) {
-            return [
-                'ok' => false,
-                'message' => (string)($rule['message'] ?: '检测到必须返单，但系统未配置“返单”来源，请先补充字典。'),
-                'rule' => $rule,
-            ];
-        }
-
-        $sourceName = trim((string)$sourceName);
-        if ($sourceName !== '返单') {
+        $normalizedSourceName = self::normalizeSourceName($sourceInput);
+        if ($normalizedSourceName !== '返单') {
             return [
                 'ok' => false,
                 'message' => '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。',
@@ -319,38 +415,12 @@ class OrderService
             ];
         }
 
-        $sourcePortInput = trim((string)$sourcePortInput);
-        $sourcePortName = '';
-        if ($sourcePortInput !== '') {
-            $isNumericId = ctype_digit($sourcePortInput) || (is_numeric($sourcePortInput) && (int)$sourcePortInput > 0);
-            if ($isNumericId) {
-                $portInfo = Db::name('crm_inquiry_port')->where('id', (int)$sourcePortInput)->field('id, port_name')->find();
-                if ($portInfo && !empty($portInfo['port_name'])) {
-                    $sourcePortName = (string)$portInfo['port_name'];
-                }
-            }
-            if ($sourcePortName === '') {
-                $sourcePortName = $sourcePortInput;
-            }
-        }
-
-        $suggestPortId = (int)($rule['suggest_port_id'] ?? 0);
-        if ($suggestPortId > 0) {
-            if ((int)$sourcePortInput !== $suggestPortId) {
-                return [
-                    'ok' => false,
-                    'message' => '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。',
-                    'rule' => $rule,
-                ];
-            }
-        } else {
-            if ($sourcePortName === '' || mb_stripos($sourcePortName, '返单') === false) {
-                return [
-                    'ok' => false,
-                    'message' => '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。',
-                    'rule' => $rule,
-                ];
-            }
+        if (!self::isReturnPortMatched($sourcePortInput, $rule, $sourcePortName)) {
+            return [
+                'ok' => false,
+                'message' => '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。',
+                'rule' => $rule,
+            ];
         }
 
         return ['ok' => true, 'message' => '', 'rule' => $rule];

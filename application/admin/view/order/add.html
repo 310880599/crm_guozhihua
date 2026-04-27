@@ -219,6 +219,79 @@
             clearReturnRuleHint();
         }
 
+        function isReturnSourceSelected() {
+            var sourceValue = ($('#source').val() || '').trim();
+            var sourceText = ($('#source option:selected').text() || '').trim();
+            return sourceValue === '返单' || sourceText === '返单';
+        }
+
+        function isReturnPortSelected(rule) {
+            var selectedPortValue = String($('#source_port').val() || '').trim();
+            var selectedPortText = ($('#source_port option:selected').text() || '').trim();
+            var suggestPortId = String((rule && rule.suggest_port_id) || '').trim();
+            var suggestPortName = String((rule && rule.suggest_port_name) || '').trim();
+
+            if (suggestPortId && selectedPortValue === suggestPortId) {
+                return true;
+            }
+            if (suggestPortName && selectedPortText === suggestPortName) {
+                return true;
+            }
+            if (selectedPortText && selectedPortText.indexOf('返单') !== -1) {
+                return true;
+            }
+            if (selectedPortValue && selectedPortValue.indexOf('返单') !== -1) {
+                return true;
+            }
+
+            return false;
+        }
+
+        function applyReturnOrderRule(rule, done) {
+            var callback = (typeof done === 'function') ? done : function () {};
+            if (!rule || !rule.must_return) {
+                callback();
+                return;
+            }
+            returnOrderRule = rule;
+            var lockSource = (rule.suggest_source_name || '返单').trim() || '返单';
+            if ($('#source option[value="' + lockSource + '"]').length > 0) {
+                $('#source').val(lockSource);
+            } else if ($('#source option[value="返单"]').length > 0) {
+                $('#source').val('返单');
+                lockSource = '返单';
+            }
+
+            if (typeof window.fillSourcePortBySourceName === 'function') {
+                window.fillSourcePortBySourceName(lockSource);
+            }
+
+            var preferId = String(rule.suggest_port_id || '').trim();
+            var anyValue = String(rule.suggest_port_name || '').trim();
+            setTimeout(function () {
+                if (typeof window.setSourcePortByAnyValue === 'function') {
+                    window.setSourcePortByAnyValue(lockSource, anyValue, preferId, function () {
+                        layui.form.render('select');
+                        callback();
+                    });
+                    return;
+                }
+
+                if (preferId) {
+                    $('#source_port').val(preferId);
+                } else if (anyValue) {
+                    $('#source_port option').each(function () {
+                        if (($(this).text() || '').trim() === anyValue) {
+                            $('#source_port').val($(this).val());
+                            return false;
+                        }
+                    });
+                }
+                layui.form.render('select');
+                callback();
+            }, 160);
+        }
+
         function checkReturnOrderRuleByContact(contact, callback, syncMode) {
             var done = (typeof callback === 'function') ? callback : function () {};
             var contactTrimmed = (contact || '').trim();
@@ -245,23 +318,7 @@
                 },
                 complete: function () {
                     if (latestRule && latestRule.must_return) {
-                        returnOrderRule = latestRule;
-                        var lockSource = latestRule.suggest_source_name || '返单';
-                        if ($('#source option[value="' + lockSource + '"]').length > 0) {
-                            $('#source').val(lockSource);
-                        }
-                        if (typeof window.fillSourcePortBySourceName === 'function') {
-                            window.fillSourcePortBySourceName(lockSource);
-                        }
-                        if (latestRule.suggest_port_id) {
-                            setTimeout(function () {
-                                $('#source_port').val(String(latestRule.suggest_port_id));
-                                layui.form.render('select');
-                            }, 220);
-                        } else if (latestRule.suggest_port_name && typeof window.setSourcePortByPortName === 'function') {
-                            window.setSourcePortByPortName(lockSource, latestRule.suggest_port_name, function () {});
-                        }
-                        layui.form.render('select');
+                        applyReturnOrderRule(latestRule);
                         renderReturnRuleHint(latestRule);
                     } else {
                         resetReturnOrderRuleUI();
@@ -1699,17 +1756,55 @@
             }, 300);
         }
         window.setSourcePortByPortName = setSourcePortByPortName;
+
+        // 运营端口健壮回填：支持端口ID或端口名称
+        window.setSourcePortByAnyValue = function(sourceName, anyValue, preferId, done) {
+            done = done || function() {};
+            if (!sourceName) {
+                done();
+                return;
+            }
+            window.fillSourcePortBySourceName(sourceName);
+            setTimeout(function() {
+                var $sourcePort = $('#source_port');
+                if (preferId !== undefined && preferId !== null && String(preferId).trim() !== '') {
+                    $sourcePort.val(String(preferId).trim());
+                } else if (anyValue !== undefined && anyValue !== null && String(anyValue).trim() !== '') {
+                    var target = String(anyValue).trim();
+                    var matched = false;
+                    $sourcePort.find('option').each(function() {
+                        var optVal = String($(this).val() || '').trim();
+                        var optText = String($(this).text() || '').trim();
+                        if (optVal === target || optText === target) {
+                            $sourcePort.val($(this).val());
+                            matched = true;
+                            return false;
+                        }
+                    });
+                    if (!matched && target.indexOf('返单') !== -1) {
+                        $sourcePort.find('option').each(function() {
+                            var optText = String($(this).text() || '').trim();
+                            if (optText.indexOf('返单') !== -1) {
+                                $sourcePort.val($(this).val());
+                                return false;
+                            }
+                        });
+                    }
+                }
+                form.render('select');
+                setTimeout(function() {
+                    form.render('select');
+                    done();
+                }, 50);
+            }, 200);
+        };
         
         form.on('select(kh_status)', function (data) {
             if (returnOrderRule && returnOrderRule.must_return) {
-                var pickedSource = (data.value || '').trim();
+                var pickedSource = String(data.value || '').trim();
                 if (pickedSource !== '返单') {
                     layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
-                    $('#source').val('返单');
-                    if (typeof window.fillSourcePortBySourceName === 'function') {
-                        window.fillSourcePortBySourceName('返单');
-                    }
-                    form.render('select');
+                    applyReturnOrderRule(returnOrderRule);
                     return;
                 }
             }
@@ -2658,19 +2753,19 @@
 
             var latestReturnRule = checkReturnOrderRuleByContact(contact.trim(), null, true);
             if (latestReturnRule && latestReturnRule.must_return) {
-                var selectedSource = ($('#source').val() || '').trim();
-                if (selectedSource !== '返单') {
+                if (!isReturnSourceSelected()) {
                     layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
                     return false;
                 }
-                if (String(latestReturnRule.suggest_port_id || '') !== '') {
-                    if (String($('#source_port').val() || '') !== String(latestReturnRule.suggest_port_id)) {
-                        layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
-                        return false;
+
+                if (!isReturnPortSelected(latestReturnRule)) {
+                    var suggestPortId = String(latestReturnRule.suggest_port_id || '').trim();
+                    if (suggestPortId && !String($('#source_port').val() || '').trim() && $('#source_port option[value="' + suggestPortId + '"]').length > 0) {
+                        $('#source_port').val(suggestPortId);
+                        layui.form.render('select');
                     }
-                } else {
-                    var sourcePortText = ($('#source_port option:selected').text() || '').trim();
-                    if (!sourcePortText || sourcePortText.indexOf('返单') === -1) {
+                    if (!isReturnPortSelected(latestReturnRule)) {
+                        applyReturnOrderRule(latestReturnRule);
                         layer.msg('该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。', { icon: 2, time: 2500 });
                         return false;
                     }

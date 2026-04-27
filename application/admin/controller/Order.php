@@ -736,20 +736,22 @@ class Order extends Common
             // ✅审核状态：草稿=0，提交=1（待审核）
             $data['check_status']     = $isDraft ? 0 : 1;
 
-            // 处理运营端口：端口ID查 port_name 保存；非数字或查不到时兜底为端口名称直接保存
-            $sourcePortId = trim((string)Request::param('source_port', ''));
+            // 处理运营端口：优先识别端口ID并反查名称；查不到时按名称兜底
+            $sourcePortInput = trim((string)Request::param('source_port', ''));
+            $sourcePortName = '';
             $data['source_port'] = '';
-            if ($sourcePortId !== '') {
-                $isNumericId = ctype_digit($sourcePortId) || (is_numeric($sourcePortId) && (int)$sourcePortId > 0);
+            if ($sourcePortInput !== '') {
+                $isNumericId = ctype_digit($sourcePortInput) || (is_numeric($sourcePortInput) && (int)$sourcePortInput > 0);
                 if ($isNumericId) {
-                    $portInfo = Db::name('crm_inquiry_port')->where('id', $sourcePortId)->field('port_name')->find();
-                    if ($portInfo && !empty($portInfo['port_name'])) {
-                        $data['source_port'] = $portInfo['port_name'];
+                    $portInfo = Db::name('crm_inquiry_port')->where('id', (int)$sourcePortInput)->field('id, port_name')->find();
+                    if (!empty($portInfo['port_name'])) {
+                        $sourcePortName = trim((string)$portInfo['port_name']);
                     }
                 }
-                if ($data['source_port'] === '' && $sourcePortId !== '') {
-                    $data['source_port'] = mb_substr($sourcePortId, 0, 100, 'UTF-8');
+                if ($sourcePortName === '') {
+                    $sourcePortName = mb_substr($sourcePortInput, 0, 100, 'UTF-8');
                 }
+                $data['source_port'] = $sourcePortName;
             }
 
             // 返单强规则（仅正式提交校验，草稿不拦截）
@@ -757,8 +759,9 @@ class Order extends Common
                 $returnRuleCheck = OrderService::validateReturnOrderSelection(
                     $data['contact'],
                     $data['source'],
-                    $sourcePortId,
-                    0
+                    $sourcePortInput,
+                    0,
+                    $sourcePortName
                 );
                 if (empty($returnRuleCheck['ok'])) {
                     $this->redisUnLock();
@@ -1705,26 +1708,34 @@ class Order extends Common
             $data['pr_user']          = Request::param('pr_user') ?: Session::get('username'); // 客户负责人（默认当前用户）
             $data['team_name']        = Request::param('team_name');      // 团队名称
             
-            // 处理运营端口：将端口ID转换为端口名称（文字）保存
-            $sourcePortId = Request::param('source_port', '');
-            $data['source_port'] = '';  // 默认为空
-            if (!empty($sourcePortId)) {
-                // 从 crm_inquiry_port 表获取端口名称
-                $portInfo = Db::name('crm_inquiry_port')
-                    ->where('id', $sourcePortId)
-                    ->field('port_name')
-                    ->find();
-                if ($portInfo && !empty($portInfo['port_name'])) {
-                    $data['source_port'] = $portInfo['port_name'];  // 保存端口名称（文字）
+            // 处理运营端口：优先识别端口ID并反查名称；查不到时按名称兜底
+            $sourcePortInput = trim((string)Request::param('source_port', ''));
+            $sourcePortName = '';
+            $data['source_port'] = '';
+            if ($sourcePortInput !== '') {
+                $isNumericId = ctype_digit($sourcePortInput) || (is_numeric($sourcePortInput) && (int)$sourcePortInput > 0);
+                if ($isNumericId) {
+                    $portInfo = Db::name('crm_inquiry_port')
+                        ->where('id', (int)$sourcePortInput)
+                        ->field('id, port_name')
+                        ->find();
+                    if (!empty($portInfo['port_name'])) {
+                        $sourcePortName = trim((string)$portInfo['port_name']);
+                    }
                 }
+                if ($sourcePortName === '') {
+                    $sourcePortName = mb_substr($sourcePortInput, 0, 100, 'UTF-8');
+                }
+                $data['source_port'] = $sourcePortName;
             }
 
             // 编辑保存返单强规则（排除当前订单自身）
             $returnRuleCheck = OrderService::validateReturnOrderSelection(
                 $data['contact'],
                 $data['source'],
-                $sourcePortId,
-                $id
+                $sourcePortInput,
+                $id,
+                $sourcePortName
             );
             if (empty($returnRuleCheck['ok'])) {
                 return json([
