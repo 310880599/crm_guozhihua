@@ -12,6 +12,7 @@ use think\facade\Cache;
 use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
 use app\admin\service\ClientFollowService;
+use app\admin\service\OrderService;
 use app\admin\service\PositionTitleService;
 use app\admin\service\SuccessClientOrderService;
 
@@ -20,6 +21,48 @@ class Client extends Common
     protected $middleware = [\app\http\middleware\TrimStrings::class];
     /** @var array<string, array<string, bool>> */
     private $tableColumnsCache = [];
+
+    /**
+     * 订单编辑流程中的客户编辑放行能力：
+     * - 超级管理员 aid=1
+     * - admin 用户
+     * - group_id in [13, 15]
+     */
+    private function canEditAnyClientForOrder()
+    {
+        $adminInfo = Admin::getMyInfo();
+        return OrderService::canManageAllOrders($adminInfo);
+    }
+
+    /**
+     * 原有客户编辑权限：本人负责人或协同人
+     */
+    private function canEditClientByOwnership(array $clientRow)
+    {
+        $currentUsername = trim((string)Session::get('username'));
+        $currentAid = (string)((int)Session::get('aid'));
+
+        if ($currentUsername !== '' && trim((string)($clientRow['pr_user'] ?? '')) === $currentUsername) {
+            return true;
+        }
+
+        $jp = (string)($clientRow['joint_person'] ?? '');
+        if ($jp === '') {
+            return false;
+        }
+
+        $jpIds = [];
+        if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
+            $tmp = json_decode($jp, true);
+            if (is_array($tmp)) {
+                $jpIds = $tmp;
+            }
+        } else {
+            $jpIds = array_values(array_filter(explode(',', $jp)));
+        }
+
+        return in_array($currentAid, array_map('strval', $jpIds), true);
+    }
 
 
     const CONTACT_MAP = [
@@ -2891,6 +2934,21 @@ class Client extends Common
                 return fail('参数错误：缺少ID');
             }
 
+            $clientForPermission = Db::table('crm_leads')
+                ->where('id', $id)
+                ->field('id,pr_user,joint_person')
+                ->find();
+            if (!$clientForPermission) {
+                $this->redisUnLock();
+                return fail('客户不存在');
+            }
+
+            $canEditAnyClient = $this->canEditAnyClientForOrder();
+            if (!$canEditAnyClient && !$this->canEditClientByOwnership($clientForPermission)) {
+                $this->redisUnLock();
+                return fail('您无此操作权限');
+            }
+
             $kh_name = Request::param('kh_name');
 
             // 检查除当前记录外是否存在相同客户名称
@@ -3140,6 +3198,14 @@ class Client extends Common
         if (!$id) return $this->fetch('client/edit'); // 防御
 
         $result = \think\Db::table('crm_leads')->where(['id' => $id])->find();
+        if (!$result) {
+            return $this->error('客户不存在');
+        }
+
+        $canEditAnyClient = $this->canEditAnyClientForOrder();
+        if (!$canEditAnyClient && !$this->canEditClientByOwnership($result)) {
+            return $this->error('您无此操作权限');
+        }
 
         // 主/辅电话：1 主、3 辅
         // [替换] 初始化主电话数组，支持多个主号
