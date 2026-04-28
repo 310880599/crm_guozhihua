@@ -429,7 +429,7 @@
                 resize: true,
                 offset: '10px',
                 shadeClose: false,
-                content: '/admin/client/edit?id=' + currentClientId,
+                content: "{:url('Client/edit')}" + '?id=' + encodeURIComponent(currentClientId) + '&from_order=1',
                 success: function (layero) {
                     layerApi.setTop(layero);
                     layero.find('iframe').attr('scrolling', 'auto');

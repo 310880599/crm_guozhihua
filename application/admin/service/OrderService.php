@@ -23,7 +23,7 @@ class OrderService
             $adminInfo = \app\admin\model\Admin::getMyInfo();
         }
 
-        $aid = (int)session('aid');
+        $aid = (int)($adminInfo['admin_id'] ?? session('aid'));
         $gid = (int)($adminInfo['group_id'] ?? session('gid'));
         $username = (string)($adminInfo['username'] ?? session('username') ?? '');
 

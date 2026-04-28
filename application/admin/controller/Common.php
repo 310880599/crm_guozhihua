@@ -42,17 +42,19 @@ class Common extends Controller
         //权限管理
         //当前操作权限ID
         if (session('aid') != 1) {
-            $this->HrefId = db('auth_rule')->where('href', MODULE_NAME . '/' . ACTION_NAME)->value('id');
-            //当前管理员权限
-            $map['a.admin_id'] = session('aid');
-            $rules = Db::table(config('database.prefix') . 'admin')->alias('a')
-                ->join(config('database.prefix') . 'auth_group ag', 'a.group_id = ag.group_id', 'left')
-                ->where($map)
-                ->value('ag.rules');
-            $this->adminRules = explode(',', $rules);
-            if ($this->HrefId) {
-                if (!in_array($this->HrefId, $this->adminRules)) {
-                    $this->error('您无此操作权限');
+            if (!$this->shouldBypassClientEditAuth()) {
+                $this->HrefId = db('auth_rule')->where('href', MODULE_NAME . '/' . ACTION_NAME)->value('id');
+                //当前管理员权限
+                $map['a.admin_id'] = session('aid');
+                $rules = Db::table(config('database.prefix') . 'admin')->alias('a')
+                    ->join(config('database.prefix') . 'auth_group ag', 'a.group_id = ag.group_id', 'left')
+                    ->where($map)
+                    ->value('ag.rules');
+                $this->adminRules = explode(',', $rules);
+                if ($this->HrefId) {
+                    if (!in_array($this->HrefId, $this->adminRules)) {
+                        $this->error('您无此操作权限');
+                    }
                 }
             }
         }
@@ -68,6 +70,27 @@ class Common extends Controller
         $this->mod = cache('Mod');
         $this->rule = cache('AuthRule');
         $this->cm = cache('cm');
+    }
+
+    /**
+     * 统一权限拦截放行：
+     * 财务专员(group_id=15)允许访问 Client/edit（仅编辑客户，不扩大删除等权限）。
+     *
+     * @return bool
+     */
+    protected function shouldBypassClientEditAuth()
+    {
+        $currentController = strtolower((string)request()->controller());
+        $currentAction = strtolower((string)request()->action());
+
+        if ($currentController !== 'client' || $currentAction !== 'edit') {
+            return false;
+        }
+
+        $currentAdmin = Admin::getMyInfo();
+        $gid = (int)($currentAdmin['group_id'] ?? session('gid'));
+
+        return $gid === 15;
     }
     //空操作
     public function _empty()

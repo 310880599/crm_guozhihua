@@ -3202,8 +3202,20 @@ class Client extends Common
             return $this->error('客户不存在');
         }
 
+        $clientForPermission = [
+            'id' => (int)($result['id'] ?? 0),
+            'pr_user' => (string)($result['pr_user'] ?? ''),
+            'joint_person' => (string)($result['joint_person'] ?? ''),
+        ];
         $canEditAnyClient = $this->canEditAnyClientForOrder();
-        if (!$canEditAnyClient && !$this->canEditClientByOwnership($result)) {
+        Log::write(
+            'Client/edit permission debug: aid=' . session('aid')
+            . ', gid=' . session('gid')
+            . ', canEditAny=' . ($canEditAnyClient ? '1' : '0')
+            . ', id=' . $id,
+            'info'
+        );
+        if (!$canEditAnyClient && !$this->canEditClientByOwnership($clientForPermission)) {
             return $this->error('您无此操作权限');
         }
 
