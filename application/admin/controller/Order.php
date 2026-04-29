@@ -3559,11 +3559,77 @@ class Order extends Common
      * @param string $field 要统计的字段
      * @return float 字段总和
      */
-    private function getSum($where, $field)
+    private function getSum($where, $field, array $slowLogContext = [], $slowStep = '')
     {
-        return Db::table('crm_client_order')
+        $start = microtime(true);
+        $sum = Db::table('crm_client_order')
             ->where($where)
             ->sum($field);
+        if (!empty($slowLogContext) && $slowStep !== '') {
+            $elapsedMs = round((microtime(true) - $start) * 1000, 2);
+            $this->writePendingOrderSlowLog($slowStep, $elapsedMs, $slowLogContext);
+        }
+        return $sum;
+    }
+
+    /**
+     * 待审核订单页线上临时 SQL 耗时埋点
+     * 日志写入失败不得影响业务流程
+     */
+    private function writePendingOrderSlowLog($step, $elapsedMs, array $context = [])
+    {
+        try {
+            $username = isset($context['username']) ? (string)$context['username'] : '';
+            $aid = isset($context['aid']) ? (string)$context['aid'] : '';
+            $page = isset($context['page']) ? (string)$context['page'] : '';
+            $limit = isset($context['limit']) ? (string)$context['limit'] : '';
+            $keywordRaw = $context['keyword'] ?? [];
+            $keywordJson = json_encode($keywordRaw, JSON_UNESCAPED_UNICODE);
+            if ($keywordJson === false) {
+                $keywordJson = '{}';
+            }
+            // 线上临时埋点：避免日志过大，限制关键词输出长度
+            if (strlen($keywordJson) > 500) {
+                $keywordJson = substr($keywordJson, 0, 500) . '...';
+            }
+
+            $line = sprintf(
+                "[%s] username=%s aid=%s page=%s limit=%s keyword=%s step=%s elapsed_ms=%.2f%s",
+                date('Y-m-d H:i:s'),
+                $username,
+                $aid,
+                $page,
+                $limit,
+                $keywordJson,
+                (string)$step,
+                (float)$elapsedMs,
+                PHP_EOL
+            );
+
+            if (function_exists('runtime_path')) {
+                $runtimeDir = rtrim(str_replace('\\', '/', runtime_path()), '/');
+            } elseif (defined('RUNTIME_PATH')) {
+                $runtimeDir = rtrim(str_replace('\\', '/', RUNTIME_PATH), '/');
+            } else {
+                $projectRoot = dirname(dirname(dirname(__DIR__)));
+                $runtimeDir = rtrim(str_replace('\\', '/', $projectRoot . DIRECTORY_SEPARATOR . 'runtime'), '/');
+            }
+            $logDir = $runtimeDir . '/log';
+            $logPathInDir = $logDir . '/pending_order_slow.log';
+            $logPathInRuntime = $runtimeDir . '/pending_order_slow.log';
+
+            if (!is_dir($logDir)) {
+                @mkdir($logDir, 0777, true);
+            }
+
+            if (is_dir($logDir)) {
+                @file_put_contents($logPathInDir, $line, FILE_APPEND);
+            } else {
+                @file_put_contents($logPathInRuntime, $line, FILE_APPEND);
+            }
+        } catch (\Throwable $e) {
+            // 写日志失败时静默，不影响页面
+        }
     }
 
     /**
@@ -4825,6 +4891,7 @@ class Order extends Common
 
     public function pendingClientSearch()
     {
+        $pendingStart = microtime(true);
         $where = [];
         $client_where = [];
         $aid = Session::get('aid');
@@ -4854,6 +4921,13 @@ class Order extends Common
         $keyword = Request::param('keyword');
         // 过滤掉 null 元素
         if ($keyword) $keyword = array_filter($keyword);
+        $slowLogContext = [
+            'username' => $pr_user,
+            'aid' => $aid,
+            'page' => $page,
+            'limit' => $limit,
+            'keyword' => $keyword ?: [],
+        ];
 
         // 表头排序：只允许白名单字段和 asc/desc，否则默认 create_time desc, id desc
         $sortField = input('field/s', '');
@@ -4922,10 +4996,16 @@ class Order extends Common
             $query->order('create_time', 'desc')->order('id', 'desc');
         }
 
+        $paginateStart = microtime(true);
         $list = $query->paginate([
                 'list_rows' => $limit,
                 'page' => $page
             ])->toArray();
+        $this->writePendingOrderSlowLog(
+            'paginate 查询总耗时',
+            round((microtime(true) - $paginateStart) * 1000, 2),
+            $slowLogContext
+        );
 
         // 本页订单ID，批量查 crm_order_item 聚合成 item_* 多行字符串（避免 N+1）
         $orderIds = array_column($list['data'], 'id');
@@ -5024,12 +5104,23 @@ class Order extends Common
 
         //成单率
 
+        $inquiriesStart = microtime(true);
         $totalInquiries = Db::table('crm_leads')->where('status', 1)->where($client_where)->count();
+        $this->writePendingOrderSlowLog(
+            'totalInquiries = crm_leads count 查询耗时',
+            round((microtime(true) - $inquiriesStart) * 1000, 2),
+            $slowLogContext
+        );
 
         $successOrders = $list['total'];
         $successRate = $totalInquiries > 0 ? ($successOrders / $totalInquiries * 100) : 0;
-        $totalMoney = $this->getSum($where, 'money');
-        $totalProfit = $this->getSum($where, 'profit');
+        $totalMoney = $this->getSum($where, 'money', $slowLogContext, 'totalMoney = getSum($where,\'money\') 查询耗时');
+        $totalProfit = $this->getSum($where, 'profit', $slowLogContext, 'totalProfit = getSum($where,\'profit\') 查询耗时');
+        $this->writePendingOrderSlowLog(
+            '整个 pendingClientSearch 总耗时',
+            round((microtime(true) - $pendingStart) * 1000, 2),
+            $slowLogContext
+        );
         return $result = [
             'code' => 0,
             'msg' => '获取成功!',
