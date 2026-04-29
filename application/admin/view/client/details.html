@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{:config('sys_name')} 后台管理</title>
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <link rel="stylesheet" href="/static/plugins/layui/css/layui.css" media="all" />
+    <link rel="stylesheet" href="/static/admin/css/global.css" media="all">
+    <link rel="stylesheet" href="/static/common/css/font.css" media="all">
+    <script src="/static/plugins/layui/layui.js"></script>
+    <script src="/static/admin/js/xm-select.js"></script>
+    <style>
+        html,
+        body {
+            height: 100%;
+            overflow: auto;
+        }
+
+        body {
+            box-sizing: border-box;
+        }
+
+        .admin-main {
+            min-height: 100%;
+            box-sizing: border-box;
+            padding: 15px 15px 80px;
+            overflow: visible;
+        }
+
+        .layui-form-pane .layui-form-label {
+            width: 110px;
+            padding: 8px 15px;
+            height: 38px;
+            line-height: 20px;
+            border-width: 0px;
+            border-style: none;
+            border-radius: 2px 0 0 2px;
+            text-align: center;
+            background-color: #FBFBFB;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        /* 确保“电话输入 + 加号按钮”的总宽度 = 客户名称输入框宽度 */
+        .input-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;           /* 控制输入框与按钮间距 */
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+
+        .add-btn {
+            background-color: #009688;
+            color: #fff;
+        }
+
+        .layui-layer-btn .layui-layer-btn0 {
+            background-color: #009688 !important;
+        }
+
+        .remove-btn {
+            background-color: #FF5722;
+            color: #fff;
+        }
+
+        .add-btn,
+        .remove-btn {
+            height: 38px;        /* 与 .layui-input 高度一致 */
+            line-height: 38px;
+            padding: 0 12px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .phone {
+            display: flex;
+            align-items: center;
+            flex: 1 1 auto;      /* 占满剩余空间 */
+            min-width: 0;        /* 防止在 flex 布局里溢出 */
+        }
+
+        .phone .layui-input {
+            width: 100%;
+        }
+
+        .position-title {
+            width: 180px;
+            flex: 0 0 180px;
+        }
+
+        .position-label {
+            display: none;
+        }
+
+        .main-phone-tips {
+            margin-left: 110px;
+        }
+
+        .layui-disabled,
+        .layui-disabled:hover {
+            color: #333 !important;
+            opacity: 1;
+        }
+
+        .phone_code {
+            width: 80px;
+            margin-right: 10px;
+        }
+
+        .client-submit-bar {
+            position: sticky;
+            bottom: 0;
+            z-index: 10;
+            background: #fff;
+            border-top: 1px solid #f2f2f2;
+            margin-top: 12px;
+            padding-top: 12px;
+        }
+
+        .client-submit-bar .layui-input-block {
+            margin-left: 0;
+        }
+
+        @media (max-width: 768px) {
+            .input-row {
+                flex-wrap: wrap;
+                align-items: flex-start;
+                gap: 8px;
+            }
+
+            .input-row .phone {
+                order: 1;
+                flex: 1 1 100%;
+            }
+
+            .input-row.has-action-btn .phone {
+                flex: 1 1 calc(100% - 54px);
+            }
+
+            .input-row .add-btn,
+            .input-row .remove-btn {
+                order: 2;
+                min-width: 44px;
+                padding: 0 10px;
+            }
+
+            .mobile-position-row {
+                order: 3;
+                width: 100%;
+                flex: 0 0 100%;
+                display: flex;
+                align-items: stretch;
+                gap: 0;
+            }
+
+            .mobile-position-row .position-label {
+                display: flex;
+                flex: 0 0 84px;
+                width: 84px;
+                align-items: center;
+                justify-content: center;
+                background: #FBFBFB;
+                box-sizing: border-box;
+                border: 1px solid #e6e6e6;
+                border-right: 0;
+                border-radius: 2px 0 0 2px;
+                height: 38px;
+                line-height: 38px;
+                white-space: nowrap;
+                color: #666;
+                font-size: 13px;
+            }
+
+            .mobile-position-row .layui-input,
+            .mobile-position-row .layui-form-select {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            .mobile-position-row .layui-input {
+                border-radius: 0 2px 2px 0;
+            }
+
+            .position-title.mobile-position-row {
+                width: 100%;
+                flex: 0 0 100%;
+            }
+
+            .main-phone-tips {
+                margin-left: 0 !important;
+            }
+        }
+    </style>
+</head>
+<body class="skin-<?php echo !empty($_COOKIE['skin'])?$_COOKIE['skin']:'0'; setcookie('skin','0'); ?>">
+
+<div class="admin-main layui-anim layui-anim-upbit">
+    <form class="layui-form layui-form-pane" action="" method="post">
+        <input type="hidden" name="id" value="{$result.id}" />
+
+        <!-- 客户名称 -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">客户名称<span style="color:red;">*</span></label>
+            <div class="layui-input-4">
+                <input type="text" name="kh_name" placeholder="请输入客户名称" class="layui-input" value="{$result.kh_name|default=''}" readonly>
+            </div>
+        </div>
+
+        <!-- 主电话 -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">电话<span style="color:red;">*</span></label>
+            <div class="layui-input-4" id="mainPhoneBox">
+                <div class="input-row has-action-btn">
+                    <div class="phone">
+                        <!-- 统一改为 more_phones[]，作为主电话数组的第一项 -->
+                        <input type="text" name="more_phones[]" placeholder="电话" class="layui-input multiple_telephone" readonly>
+                    </div>
+                    <div class="position-title mobile-position-row">
+                        <span class="position-label">职位身份</span>
+                        <select name="more_position_title_ids[]" lay-search class="position-title-select" disabled>
+                            <option value="">职位身份（选填）</option>
+                            {volist name="positionTitleList" id="vo"}
+                            <option value="{$vo.id}">{$vo.position_title}</option>
+                            {/volist}
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="layui-form-mid layui-word-aux main-phone-tips">主电话仅用于查看，详情页不支持新增或删除。</div>
+        </div>
+
+        <!-- 辅助电话 -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">辅助电话</label>
+            <div class="layui-input-4">
+                <div class="input-row">
+                    <div class="phone">
+                        <input type="text" name="phone2" placeholder="辅助电话" class="layui-input" value="{$auxPhone|default=''}" readonly>
+                    </div>
+                    <div class="position-title mobile-position-row">
+                        <span class="position-label">职位身份</span>
+                        <select name="phone2_position_title_id" lay-search class="position-title-select" disabled>
+                            <option value="">职位身份（必填）</option>
+                            {volist name="positionTitleList" id="vo"}
+                            <option value="{$vo.id}" {eq name="auxPhonePositionTitleId" value="$vo.id"}selected{/eq}>{$vo.position_title}</option>
+                            {/volist}
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 产品名称 -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">产品名称<span style="color:red;">*</span></label>
+            <div class="layui-input-4">
+                <select name="product_name" lay-search disabled>
+                    <option value="">请选择产品名称</option>
+                    {volist name="productList" id="vo"}
+                    <option value="{$vo.id}" {eq name="result.product_name" value="$vo.id"}selected{/eq}>{$vo.product_name} ({$vo.category_name|default='无'})</option>
+                    {/volist}
+                </select>
+            </div>
+        </div>
+
+        <!-- 所属渠道 inquiry_id 下拉框 -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">所属渠道<span style="color:red;">*</span></label>
+            <div class="layui-input-4">
+                <select name="inquiry_id" id="inquiry_id" disabled>
+                    <option value="">请选择所属渠道</option>
+                    {volist name="channelList" id="ch"} 
+                        <option value="{$ch.id}" {if isset($result) && $result.inquiry_id == $ch.id}selected{/if}>{$ch.inquiry_name}</option>
+                    {/volist}
+                </select>
+            </div>
+        </div>
+        <!-- 运营端口 port_id 下拉框（多选） -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">运营端口<span style="color:red;">*</span></label>
+            <div class="layui-input-4">
+                <select name="port_id[]" id="port_id" multiple lay-search disabled>
+                    <option value="">请选择运营端口（支持搜索）</option>
+                    {volist name="portList" id="pt"} 
+                        <option value="{$pt.id}" {if isset($selectedPorts) && in_array($pt.id, $selectedPorts)}selected{/if}>{$pt.port_name}</option>
+                    {/volist}
+                </select>
+            </div>
+        </div>
+        <!-- 协同人（多选） -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">协同人</label>
+            <div class="layui-input-4">
+                <div id="collaboratorSelect"></div>
+            </div>
+        </div>
+        <!-- 客户级别（可搜索单选下拉，非必填） -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">客户级别</label>
+            <div class="layui-input-4">
+                <select name="kh_rank" id="kh_rank" lay-search disabled>
+                    <option value="">请选择客户级别</option>
+                    {volist name="clientRankList" id="vo"}
+                    <option value="{$vo.id}" {eq name="khRankValue" value="$vo.id"}selected{/eq}>{$vo.rank_name_display|default=$vo.rank_name}</option>
+                    {/volist}
+                </select>
+            </div>
+        </div>
+
+        <!-- 其他信息 -->
+        <div class="layui-form-item">
+            <label class="layui-form-label">其他信息</label>
+            <div class="layui-input-4">
+                <textarea name="remark" class="layui-textarea" placeholder="请输入其他信息" readonly>{$result.remark|default=''}</textarea>
+            </div>
+        </div>
+
+        <!-- 关闭按钮 -->
+        <div class="layui-form-item client-submit-bar">
+            <div class="layui-input-block">
+                <button type="button" class="layui-btn layui-btn-primary" id="closeBtn">关闭</button>
+            </div>
+        </div>
+    </form>
+</div>
+
+{include file="common/foot"/}
+
+<script>
+layui.use(['form', 'layer', 'jquery'], function () {
+    var form = layui.form
+      , layer = layui.layer
+      , $ = layui.jquery;
+    var positionTitleList = {$positionTitleListJson|raw};
+
+    var collaboratorData = {$collaboratorList|raw};          // [{name, value}]
+    var jointPersonInit = {$jointPersonInit|raw};            // [id, id, ...]
+    xmSelect.render({
+        el: '#collaboratorSelect',
+        name: 'joint_person',
+        layVerify: '',
+        tips: '协同人员',
+        filterable: true,
+        clickClose: false,
+        disabled: true,
+        initValue: jointPersonInit,
+        data: collaboratorData
+    });
+
+    function buildPositionTitleSelectHtml(name, placeholder, selectedId) {
+        var selected = String(selectedId || '');
+        var html = '<select name="' + name + '" lay-search class="position-title-select" disabled>';
+        html += '<option value="">' + placeholder + '</option>';
+        $.each(positionTitleList || [], function (_, item) {
+            var id = String(item.id || '');
+            var text = String(item.position_title || '');
+            var sel = (selected !== '' && selected === id) ? ' selected' : '';
+            html += '<option value="' + id + '"' + sel + '>' + text + '</option>';
+        });
+        html += '</select>';
+        return html;
+    }
+    (function prefillMainPhones(){
+        var initMainPhoneList = {$mainPhoneList|raw};
+        if (!Array.isArray(initMainPhoneList)) {
+            try { initMainPhoneList = JSON.parse(initMainPhoneList || '[]'); } catch (e) { initMainPhoneList = []; }
+        }
+
+        var $box = $('#mainPhoneBox');
+        var $firstRow   = $box.find('.input-row').first();
+        var $firstInput = $firstRow.find('.multiple_telephone').first();
+        var $firstTitle = $firstRow.find('.position-title-select').first();
+
+        if (initMainPhoneList.length > 0) {
+            $firstInput.val(initMainPhoneList[0].phone || '');
+            $firstTitle.val(String(initMainPhoneList[0].position_title_id || ''));
+        }
+
+        for (var i = 1; i < initMainPhoneList.length; i++) {
+            var item = initMainPhoneList[i] || {};
+            var phone = item.phone || '';
+            var titleId = item.position_title_id || '';
+            var $row = $(
+                '<div class="input-row has-action-btn">' +
+                    '<div class="phone">' +
+                        '<input type="text" name="more_phones[]" placeholder="电话" class="layui-input multiple_telephone" value="' + phone + '" readonly>' +
+                    '</div>' +
+                    '<div class="position-title mobile-position-row">' +
+                        '<span class="position-label">职位身份</span>' +
+                        buildPositionTitleSelectHtml('more_position_title_ids[]', '职位身份（必填）', titleId) +
+                    '</div>' +
+                '</div>'
+            );
+            $box.append($row);
+        }
+        form.render('select');
+    })();
+
+    form.render('select');
+
+    $('#closeBtn').on('click', function () {
+        var index = parent.layer.getFrameIndex(window.name);
+        parent.layer.close(index);
+    });
+});
+</script>
+</body>
+</html>

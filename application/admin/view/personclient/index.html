@@ -1369,6 +1369,7 @@
     <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a>
     <!-- ✅新增：全部跟进 -->
     <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="全部跟进" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i></a>
+    <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="details" lay-tips="详情" lay-offset="0,-8"><i class="layui-icon">&#xe60b;</i></a>
     <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a>
     <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i></a>
     <!-- {if session('aid') eq 1}
@@ -3045,6 +3046,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             });
         } else if (event === 'edit') {
             layer_add("编辑客户", "{:url('Client/edit')}?id=" + id);
+        } else if (event === 'details') {
+            layer.open({
+                type: 2,
+                title: '客户详情',
+                area: ['90%', '90%'],
+                content: "{:url('Client/details')}?id=" + id
+            });
         } else if (event === 'alter') {
             layer_add("转移客户", "{:url('Client/alterPrUserPri')}?ids=" + id);
         } else if (event === 'chengjiao') {

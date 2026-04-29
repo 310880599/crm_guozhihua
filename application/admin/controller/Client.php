@@ -11,6 +11,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use think\facade\Cache;
 use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
+use app\admin\service\ClientDetailService;
 use app\admin\service\ClientFollowService;
 use app\admin\service\OrderService;
 use app\admin\service\PositionTitleService;
@@ -2369,6 +2370,11 @@ class Client extends Common
         return new PositionTitleService();
     }
 
+    private function getClientDetailService()
+    {
+        return new ClientDetailService();
+    }
+
     /**
      * 根据职位身份ID（新字段）或职位文本（旧字段）解析标准值
      *
@@ -3417,6 +3423,41 @@ class Client extends Common
         $this->assign('selectedPorts', $selectedPorts);
         
         return $this->fetch('client/edit');
+    }
+
+    // 客户详情（只读）
+    public function details()
+    {
+        if (request()->isPost()) {
+            return $this->error('请求方式错误');
+        }
+
+        $id = (int)\think\facade\Request::param('id', 0);
+        if ($id <= 0) {
+            return $this->error('参数错误');
+        }
+
+        $client = model('Client')->getClientDetailById($id);
+        if (!$client) {
+            return $this->error('客户不存在或已删除');
+        }
+
+        $clientForPermission = [
+            'id' => (int)($client['id'] ?? 0),
+            'pr_user' => (string)($client['pr_user'] ?? ''),
+            'joint_person' => (string)($client['joint_person'] ?? ''),
+        ];
+        $canEditAnyClient = $this->canEditAnyClientForOrder();
+        if (!$canEditAnyClient && !$this->canEditClientByOwnership($clientForPermission)) {
+            return $this->error('您无此操作权限');
+        }
+
+        $viewData = $this->getClientDetailService()->buildDetailViewData($client);
+        foreach ($viewData as $key => $value) {
+            $this->assign($key, $value);
+        }
+
+        return $this->fetch('client/details');
     }
 
 

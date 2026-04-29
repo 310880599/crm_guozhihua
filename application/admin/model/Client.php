@@ -102,6 +102,18 @@ class Client extends Model
     }
 
     /**
+     * 客户详情页数据
+     */
+    public function getClientDetailById($clientId)
+    {
+        return Db::table('crm_leads')
+            ->where('id', (int)$clientId)
+            ->where('status', 1)
+            ->field('*')
+            ->find();
+    }
+
+    /**
      * 成交客户基础信息（用于关联订单权限校验）
      */
     public function getSuccessClientById($clientId)
