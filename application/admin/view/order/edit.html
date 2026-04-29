@@ -1161,6 +1161,11 @@
                 $ = layui.jquery,
                 laydate = layui.laydate,
                 upload = layui.upload;
+            // ===== 防重复提交：BEGIN =====
+            window.__ORDER_SUBMITTING__ = false;
+            var __ORDER_SUBMIT_LOADING_INDEX__ = null;
+            var __ORDER_SUBMIT_BTN_TEXT__ = '';
+            // ===== 防重复提交：END =====
             // 日期控件初始化
             laydate.render({
                 elem: '#orderTime',
@@ -2810,6 +2815,20 @@
             if (window.__editFromParam) {
                 data.field.from = window.__editFromParam;
             }
+            // ===== 防重复提交：BEGIN =====
+            if (window.__ORDER_SUBMITTING__ === true) {
+                layer.msg('订单正在提交中，请勿重复点击', { icon: 0, time: 1800 });
+                return false;
+            }
+
+            var $submitBtn = $('button[lay-filter="submit"]').first();
+            window.__ORDER_SUBMITTING__ = true;
+            if ($submitBtn.length) {
+                __ORDER_SUBMIT_BTN_TEXT__ = $submitBtn.text();
+                $submitBtn.attr('disabled', true).addClass('layui-btn-disabled').text('提交中...');
+            }
+            __ORDER_SUBMIT_LOADING_INDEX__ = layer.load(1, { shade: [0.15, '#fff'] });
+            // ===== 防重复提交：END =====
             $.post("{:url('Order/edit')}", data.field, function (res) {
                 if (res.code === 0) {
                     layer.msg(res.msg, { time: 2000 }, function () {
@@ -2818,9 +2837,31 @@
                         if (parent.layui && parent.layui.table) parent.layui.table.reload('table-list');
                     });
                 } else {
+                    // ===== 防重复提交：BEGIN =====
+                    window.__ORDER_SUBMITTING__ = false;
+                    if (__ORDER_SUBMIT_LOADING_INDEX__ !== null) {
+                        layer.close(__ORDER_SUBMIT_LOADING_INDEX__);
+                        __ORDER_SUBMIT_LOADING_INDEX__ = null;
+                    }
+                    if ($submitBtn.length) {
+                        $submitBtn.attr('disabled', false).removeClass('layui-btn-disabled').text(__ORDER_SUBMIT_BTN_TEXT__ || '提交保存');
+                    }
+                    // ===== 防重复提交：END =====
                     layer.msg(res.msg, { time: 2000 });
                 }
-            }, 'json');
+            }, 'json').fail(function () {
+                // ===== 防重复提交：BEGIN =====
+                window.__ORDER_SUBMITTING__ = false;
+                if (__ORDER_SUBMIT_LOADING_INDEX__ !== null) {
+                    layer.close(__ORDER_SUBMIT_LOADING_INDEX__);
+                    __ORDER_SUBMIT_LOADING_INDEX__ = null;
+                }
+                if ($submitBtn.length) {
+                    $submitBtn.attr('disabled', false).removeClass('layui-btn-disabled').text(__ORDER_SUBMIT_BTN_TEXT__ || '提交保存');
+                }
+                // ===== 防重复提交：END =====
+                layer.msg('订单提交失败：网络错误，请重试', { icon: 2, time: 2000 });
+            });
             return false;
         });
         }); // 闭合 layui.use

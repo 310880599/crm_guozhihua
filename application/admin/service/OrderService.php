@@ -1146,4 +1146,289 @@ class OrderService
         $json = json_encode($images, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         return $json === false ? '[]' : $json;
     }
+
+    // ===== 防重复提交：BEGIN =====
+    /**
+     * 获取订单正式提交幂等锁（Redis 可用时启用；异常时降级放行）
+     *
+     * @param array $data
+     * @param int $ttl
+     * @return array
+     */
+    public static function acquireSubmitLock(array $data, $ttl = 8)
+    {
+        $ttl = (int)$ttl;
+        if ($ttl <= 0) {
+            $ttl = 8;
+        }
+
+        $fingerprintData = self::buildSubmitFingerprintData($data);
+        $fingerprintJson = json_encode($fingerprintData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $lockKey = 'crm:order:submit_lock:' . md5($fingerprintJson === false ? serialize($fingerprintData) : $fingerprintJson);
+
+        $redis = self::getRedisHandlerFromCache();
+        if (!$redis) {
+            self::logSubmitLock('[OrderSubmitLock] redis handler unavailable, skip lock. key=' . $lockKey);
+            return [
+                'ok' => true,
+                'key' => $lockKey,
+                'msg' => '',
+            ];
+        }
+
+        try {
+            $acquired = false;
+
+            if ($redis instanceof \Redis) {
+                $setResult = $redis->set($lockKey, '1', ['nx', 'ex' => $ttl]);
+                if ($setResult === true || $setResult === 'OK') {
+                    $acquired = true;
+                } else {
+                    $acquired = (bool)$redis->setnx($lockKey, '1');
+                    if ($acquired) {
+                        $redis->expire($lockKey, $ttl);
+                    }
+                }
+            } else {
+                if (method_exists($redis, 'set')) {
+                    $setResult = $redis->set($lockKey, '1', 'EX', $ttl, 'NX');
+                    if ($setResult === true || $setResult === 'OK') {
+                        $acquired = true;
+                    }
+                }
+                if (!$acquired && method_exists($redis, 'setnx')) {
+                    $acquired = (bool)$redis->setnx($lockKey, '1');
+                    if ($acquired && method_exists($redis, 'expire')) {
+                        $redis->expire($lockKey, $ttl);
+                    }
+                }
+            }
+
+            if (!$acquired) {
+                return [
+                    'ok' => false,
+                    'key' => $lockKey,
+                    'msg' => '请勿重复提交，订单正在处理中',
+                ];
+            }
+
+            return [
+                'ok' => true,
+                'key' => $lockKey,
+                'msg' => '',
+            ];
+        } catch (\Throwable $e) {
+            self::logSubmitLock('[OrderSubmitLock] acquire failed, skip lock. key=' . $lockKey . ' err=' . $e->getMessage());
+            return [
+                'ok' => true,
+                'key' => $lockKey,
+                'msg' => '',
+            ];
+        }
+    }
+
+    /**
+     * 释放订单正式提交幂等锁
+     *
+     * @param string $lockKey
+     * @return void
+     */
+    public static function releaseSubmitLock($lockKey)
+    {
+        $lockKey = trim((string)$lockKey);
+        if ($lockKey === '') {
+            return;
+        }
+
+        $redis = self::getRedisHandlerFromCache();
+        if (!$redis) {
+            return;
+        }
+
+        try {
+            if (method_exists($redis, 'del')) {
+                $redis->del($lockKey);
+            } elseif (method_exists($redis, 'delete')) {
+                $redis->delete($lockKey);
+            }
+        } catch (\Throwable $e) {
+            self::logSubmitLock('[OrderSubmitLock] release failed. key=' . $lockKey . ' err=' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 构建正式提交指纹数据（稳定顺序，保证同次提交 key 一致）
+     *
+     * @param array $data
+     * @return array
+     */
+    private static function buildSubmitFingerprintData(array $data)
+    {
+        $aid = (int)($data['aid'] ?? session('aid') ?? 0);
+        $username = trim((string)($data['username'] ?? session('username') ?? ''));
+        $contact = self::normalizeContact((string)($data['contact'] ?? ''));
+        $money = self::normalizeFingerprintNumber($data['money'] ?? 0);
+        $profit = self::normalizeFingerprintNumber($data['profit'] ?? 0);
+        $source = trim((string)($data['source'] ?? ''));
+        $sourcePort = trim((string)($data['source_port'] ?? ''));
+        $orderTime = trim((string)($data['order_time'] ?? ''));
+        $orderId = (int)($data['order_id'] ?? 0);
+        $products = self::buildSubmitFingerprintProducts($data);
+
+        return [
+            'aid' => $aid,
+            'username' => $username,
+            'contact' => $contact,
+            'money' => $money,
+            'profit' => $profit,
+            'source' => $source,
+            'source_port' => $sourcePort,
+            'order_time' => $orderTime,
+            'order_id' => $orderId,
+            'products' => $products,
+        ];
+    }
+
+    /**
+     * 归一化产品明细指纹（排序后返回）
+     *
+     * @param array $data
+     * @return array
+     */
+    private static function buildSubmitFingerprintProducts(array $data)
+    {
+        $details = [];
+
+        if (!empty($data['product_details']) && is_array($data['product_details'])) {
+            foreach ($data['product_details'] as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $details[] = [
+                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'qty' => self::normalizeFingerprintNumber($row['qty'] ?? 0),
+                    'unit_price' => self::normalizeFingerprintNumber($row['unit_price'] ?? 0),
+                    'purchase_price' => self::normalizeFingerprintNumber($row['purchase_price'] ?? 0),
+                    'product_manager' => trim((string)($row['product_manager'] ?? '')),
+                ];
+            }
+        } else {
+            $productNames = is_array($data['product_name'] ?? null) ? $data['product_name'] : [];
+            $qtyList = is_array($data['qty'] ?? null) ? $data['qty'] : [];
+            $unitPriceList = is_array($data['unit_price'] ?? null) ? $data['unit_price'] : [];
+            $purchasePriceList = is_array($data['purchase_price'] ?? null) ? $data['purchase_price'] : [];
+            $managerList = is_array($data['product_manager'] ?? null) ? $data['product_manager'] : [];
+
+            $maxCount = max(
+                count($productNames),
+                count($qtyList),
+                count($unitPriceList),
+                count($purchasePriceList),
+                count($managerList)
+            );
+
+            for ($i = 0; $i < $maxCount; $i++) {
+                $item = [
+                    'product_name' => trim((string)($productNames[$i] ?? '')),
+                    'qty' => self::normalizeFingerprintNumber($qtyList[$i] ?? 0),
+                    'unit_price' => self::normalizeFingerprintNumber($unitPriceList[$i] ?? 0),
+                    'purchase_price' => self::normalizeFingerprintNumber($purchasePriceList[$i] ?? 0),
+                    'product_manager' => trim((string)($managerList[$i] ?? '')),
+                ];
+
+                if (
+                    $item['product_name'] === ''
+                    && $item['qty'] === '0'
+                    && $item['unit_price'] === '0'
+                    && $item['purchase_price'] === '0'
+                    && $item['product_manager'] === ''
+                ) {
+                    continue;
+                }
+
+                $details[] = $item;
+            }
+        }
+
+        usort($details, function ($a, $b) {
+            $aKey = implode('|', [
+                $a['product_name'] ?? '',
+                $a['qty'] ?? '',
+                $a['unit_price'] ?? '',
+                $a['purchase_price'] ?? '',
+                $a['product_manager'] ?? '',
+            ]);
+            $bKey = implode('|', [
+                $b['product_name'] ?? '',
+                $b['qty'] ?? '',
+                $b['unit_price'] ?? '',
+                $b['purchase_price'] ?? '',
+                $b['product_manager'] ?? '',
+            ]);
+            return strcmp($aKey, $bKey);
+        });
+
+        return $details;
+    }
+
+    /**
+     * 将数值归一化为稳定字符串
+     *
+     * @param mixed $value
+     * @return string
+     */
+    private static function normalizeFingerprintNumber($value)
+    {
+        $num = self::toFloatAmount($value);
+        $formatted = rtrim(rtrim(sprintf('%.6F', $num), '0'), '.');
+        return $formatted === '' ? '0' : $formatted;
+    }
+
+    /**
+     * 从缓存组件中提取 Redis handler（兼容 TP5.1）
+     *
+     * @return mixed|null
+     */
+    private static function getRedisHandlerFromCache()
+    {
+        try {
+            if (class_exists('\\think\\facade\\Cache')) {
+                $cacheStore = \think\facade\Cache::store('redis');
+                if (is_object($cacheStore) && method_exists($cacheStore, 'handler')) {
+                    $handler = $cacheStore->handler();
+                    if (is_object($handler)) {
+                        return $handler;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            self::logSubmitLock('[OrderSubmitLock] get redis store failed: ' . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    /**
+     * 记录提交幂等锁日志（日志失败不影响主流程）
+     *
+     * @param string $message
+     * @return void
+     */
+    private static function logSubmitLock($message)
+    {
+        $message = (string)$message;
+        try {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write($message, 'error');
+                return;
+            }
+        } catch (\Throwable $e) {
+        }
+
+        try {
+            \think\Log::record($message, 'error');
+        } catch (\Throwable $e) {
+        }
+    }
+    // ===== 防重复提交：END =====
 }

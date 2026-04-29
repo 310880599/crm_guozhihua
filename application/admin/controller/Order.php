@@ -593,6 +593,7 @@ class Order extends Common
             // ✅新增：区分“提交保存 / 保存草稿”
             $saveType = Request::param('save_type', 'submit');
             $isDraft = ($saveType === 'draft');
+            $submitLockKey = '';
             $adminInfo = \app\admin\model\Admin::getMyInfo();
             $canManageAllOrders = OrderService::canManageAllOrders($adminInfo);
 
@@ -1002,6 +1003,30 @@ class Order extends Common
                 $data['product_name'] = $saveBundle['product_name_summary'];
             }
 
+            // ===== 防重复提交：BEGIN =====
+            if (!$isDraft) {
+                $lockResult = OrderService::acquireSubmitLock([
+                    'aid' => Session::get('aid'),
+                    'username' => Session::get('username'),
+                    'contact' => $data['contact'] ?? '',
+                    'money' => $data['money'] ?? 0,
+                    'profit' => $data['profit'] ?? 0,
+                    'source' => $data['source'] ?? '',
+                    'source_port' => $data['source_port'] ?? '',
+                    'order_time' => $data['order_time'] ?? '',
+                    'product_name' => is_array($productIds) ? $productIds : [],
+                    'qty' => is_array($qtys) ? $qtys : [],
+                    'unit_price' => is_array($unitPrices) ? $unitPrices : [],
+                    'purchase_price' => is_array($purchasePrices) ? $purchasePrices : [],
+                    'product_manager' => is_array($managerIds) ? $managerIds : [],
+                ], 8);
+                if (empty($lockResult['ok'])) {
+                    return json(['code' => 0, 'msg' => '请勿重复提交，订单正在处理中']);
+                }
+                $submitLockKey = (string)($lockResult['key'] ?? '');
+            }
+            // ===== 防重复提交：END =====
+
             // 开启事务，插入订单主表和明细表
             Db::startTrans();
             try {
@@ -1106,6 +1131,11 @@ class Order extends Common
                 return json(['code' => 0, 'msg' => '添加成功！']);
             } catch (\Exception $e) {
                 Db::rollback();
+                // ===== 防重复提交：BEGIN =====
+                if (!$isDraft && $submitLockKey !== '') {
+                    OrderService::releaseSubmitLock($submitLockKey);
+                }
+                // ===== 防重复提交：END =====
                 return json(['code' => -200, 'msg' => '添加失败！' . $e->getMessage()]);
             }
         }
@@ -1575,6 +1605,7 @@ class Order extends Common
         if (request()->isPost()) {
             // 获取订单ID
             $id = Request::param('id/d');
+            $submitLockKey = '';
             if (!$id) {
                 return json(['code' => -200, 'msg' => '缺少订单ID参数']);
             }
@@ -1955,6 +1986,29 @@ class Order extends Common
                 $data['product_name'] = $saveBundle['product_name_summary'];
             }
 
+            // ===== 防重复提交：BEGIN =====
+            $lockResult = OrderService::acquireSubmitLock([
+                'aid' => Session::get('aid'),
+                'username' => Session::get('username'),
+                'contact' => $data['contact'] ?? '',
+                'money' => $data['money'] ?? 0,
+                'profit' => $data['profit'] ?? 0,
+                'source' => $data['source'] ?? '',
+                'source_port' => $data['source_port'] ?? '',
+                'order_time' => $data['order_time'] ?? '',
+                'order_id' => $id,
+                'product_name' => is_array($productIds) ? $productIds : [],
+                'qty' => is_array($qtys) ? $qtys : [],
+                'unit_price' => is_array($unitPrices) ? $unitPrices : [],
+                'purchase_price' => is_array($purchasePrices) ? $purchasePrices : [],
+                'product_manager' => is_array($managerIds) ? $managerIds : [],
+            ], 8);
+            if (empty($lockResult['ok'])) {
+                return json(['code' => 0, 'msg' => '请勿重复提交，订单正在处理中']);
+            }
+            $submitLockKey = (string)($lockResult['key'] ?? '');
+            // ===== 防重复提交：END =====
+
             // ====== 写入数据库（使用事务处理） ======
             Db::startTrans();
             try {
@@ -1999,6 +2053,11 @@ class Order extends Common
                 return json(['code' => 0, 'msg' => '编辑成功！']);
             } catch (\Exception $e) {
                 Db::rollback();
+                // ===== 防重复提交：BEGIN =====
+                if ($submitLockKey !== '') {
+                    OrderService::releaseSubmitLock($submitLockKey);
+                }
+                // ===== 防重复提交：END =====
                 return json(['code' => -200, 'msg' => '编辑失败！' . $e->getMessage()]);
             }
         }
