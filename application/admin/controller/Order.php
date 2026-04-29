@@ -5076,7 +5076,7 @@ class Order extends Common
         $pageContacts = array_values(array_unique($pageContacts));
         $clientIdMap = OrderService::getClientIdMapByContacts($pageContacts);
         $loopStart = microtime(true);
-        $contactMatchTotalMs = (microtime(true) - $contactBatchMatchStart) * 1000;
+        $batchContactMatchElapsedMs = (microtime(true) - $contactBatchMatchStart) * 1000;
         $accountNameTotalMs = 0.0;
         $imageParseTotalMs = 0.0;
         $productConcatTotalMs = 0.0;
@@ -5093,7 +5093,7 @@ class Order extends Common
             } else {
                 $order['client_id'] = 0;
             }
-            $contactMatchTotalMs += (microtime(true) - $contactMatchStart) * 1000;
+            $batchContactMatchElapsedMs += (microtime(true) - $contactMatchStart) * 1000;
 
             // 待审核列表：补充前端预览图结构字段，不影响原有图片字段
             $imageParseStart = microtime(true);
@@ -5157,7 +5157,7 @@ class Order extends Common
             '循环处理list[data]整体耗时',
             round((microtime(true) - $loopStart) * 1000, 2)
         );
-        $safeSlowLog('批量联系方式匹配耗时', round($contactMatchTotalMs, 2));
+        $safeSlowLog('批量联系方式匹配耗时', round($batchContactMatchElapsedMs, 2));
         $safeSlowLog('accountNameTotalMs', round($accountNameTotalMs, 2));
         $safeSlowLog('imageParseTotalMs', round($imageParseTotalMs, 2));
         $safeSlowLog('productNameConcatTotalMs', round($productConcatTotalMs, 2));
