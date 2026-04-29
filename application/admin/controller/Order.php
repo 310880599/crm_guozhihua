@@ -4904,8 +4904,14 @@ class Order extends Common
             $adminMap = Db::name('admin')->whereIn('admin_id', $allAdminIds)->column('username', 'admin_id');
         }
         
+        $clientIdCache = [];
         foreach ($list['data'] as &$order) {
             $rows = $itemMap[$order['id']] ?? [];
+            $contactKey = trim((string)($order['contact'] ?? ''));
+            if (!array_key_exists($contactKey, $clientIdCache)) {
+                $clientIdCache[$contactKey] = $contactKey !== '' ? (int)OrderService::getClientIdByContact($contactKey) : 0;
+            }
+            $order['client_id'] = (int)$clientIdCache[$contactKey];
             // 待审核列表：补充前端预览图结构字段，不影响原有图片字段
             $order['wechat_images'] = OrderService::buildPreviewImageItems($order['wechat_receipt_image'] ?? '');
             $order['inquiry_images'] = OrderService::buildPreviewImageItems($order['inquiry_assign_image'] ?? '');

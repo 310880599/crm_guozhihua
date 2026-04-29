@@ -1385,7 +1385,19 @@
                 // ====== 你当前已存在的常用列（保持默认显示）======
                 { field: 'id', title: 'ID', width: 180, fixed: true, hide: true }, // ID 默认仍隐藏，但可在面板里勾出来
                 { field: 'order_no', title: '订单编号', totalRowText: '合计：', width: 180 },
-                { field: 'cname', title: '客户名称', width: 180 },
+                {
+                    field: 'cname',
+                    title: '客户名称',
+                    width: 180,
+                    templet: function (d) {
+                        var name = d.cname || '';
+                        var clientId = parseInt(d.client_id, 10) || 0;
+                        if (clientId <= 0 || !name) {
+                            return escapeHtml(name) || '--';
+                        }
+                        return '<a href="javascript:;" class="client-detail" data-id="' + clientId + '" style="color:#1E9FFF;">' + escapeHtml(name) + '</a>';
+                    }
+                },
                 { field: 'contact', title: '联系方式', width: 180 },
                 { field: 'customer_type_flag', title: '用户属性', width: 180, templet: function (res) {
                     return res.customer_type_flag == 1 ? '个人' : '公司';
@@ -2141,6 +2153,25 @@
                 var imgSrc = $(this).data('full') || $(this).attr('src');
                 if (!imgSrc) return;
                 openZoomPreview(imgSrc);
+            });
+
+            // 待审核列表：点击客户名称弹出客户详情
+            var clientDetailBaseUrl = "{:url('Client/details')}";
+            $(document).on('click', '.client-detail', function () {
+                var id = parseInt($(this).data('id'), 10) || 0;
+                if (id <= 0) {
+                    layer.msg('客户信息缺失', { icon: 2, time: 1500 });
+                    return;
+                }
+                layer.open({
+                    type: 2,
+                    title: '客户详情',
+                    closeBtn: 1,
+                    area: ['90%', '90%'],
+                    shadeClose: false,
+                    maxmin: true,
+                    content: [clientDetailBaseUrl + '?id=' + id]
+                });
             });
             // === 图片预览功能（支持缩放/拖拽）结束 ===
 
