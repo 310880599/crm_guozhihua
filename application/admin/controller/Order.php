@@ -1021,7 +1021,7 @@ class Order extends Common
                     'product_manager' => is_array($managerIds) ? $managerIds : [],
                 ], 8);
                 if (empty($lockResult['ok'])) {
-                    return json(['code' => 0, 'msg' => '请勿重复提交，订单正在处理中']);
+                    return json(['code' => 1, 'msg' => '请勿重复提交，订单正在处理中']);
                 }
                 $submitLockKey = (string)($lockResult['key'] ?? '');
             }
@@ -2004,7 +2004,7 @@ class Order extends Common
                 'product_manager' => is_array($managerIds) ? $managerIds : [],
             ], 8);
             if (empty($lockResult['ok'])) {
-                return json(['code' => 0, 'msg' => '请勿重复提交，订单正在处理中']);
+                return json(['code' => 1, 'msg' => '请勿重复提交，订单正在处理中']);
             }
             $submitLockKey = (string)($lockResult['key'] ?? '');
             // ===== 防重复提交：END =====
