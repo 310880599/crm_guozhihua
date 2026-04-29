@@ -742,7 +742,7 @@
                 const { event } = obj;
 
                 if (event === 'del') {
-                    layer.confirm('您确定要删除这个客户吗？', { icon: 3, title: '提示' }, (index) => {
+                    layer.confirm('您确定要删除这个订单吗？', { icon: 3, title: '提示' }, (index) => {
                         const loading = layer.load(1, { shade: [0.1, '#fff'] });
                         $.post("{:url('del')}", { id: data.id }, (res) => {
                             layer.close(loading);
