@@ -143,6 +143,143 @@ class OrderService
     }
 
     /**
+     * 批量根据联系方式匹配客户ID（leads_id）
+     *
+     * 兼容规则：
+     * - contact_value = 输入值
+     * - CONCAT(contact_extra, contact_value) = 输入值
+     * - 去除 + - 空格后的归一化匹配
+     * - 仅匹配未删除联系人（is_delete = 0）
+     *
+     * @param array $contacts
+     * @return array
+     * [
+     *   '原始联系方式' => leads_id,
+     *   '归一化联系方式' => leads_id
+     * ]
+     */
+    public static function getClientIdMapByContacts(array $contacts)
+    {
+        $contactMap = [];
+        $rawContacts = [];
+        foreach ($contacts as $contact) {
+            $raw = trim((string)$contact);
+            if ($raw === '') {
+                continue;
+            }
+            if (!isset($contactMap[$raw])) {
+                $contactMap[$raw] = self::normalizeContact($raw);
+                $rawContacts[] = $raw;
+            }
+        }
+
+        if (empty($rawContacts)) {
+            return [];
+        }
+
+        $normalizedContacts = [];
+        foreach ($contactMap as $raw => $normalized) {
+            if ($normalized !== '') {
+                $normalizedContacts[] = $normalized;
+            }
+        }
+        $normalizedContacts = array_values(array_unique($normalizedContacts));
+
+        $candidateValues = array_values(array_unique(array_merge($rawContacts, $normalizedContacts)));
+        if (empty($candidateValues)) {
+            return [];
+        }
+
+        $records = [];
+        $rowKeySet = [];
+
+        $valueRows = Db::name('crm_contacts')
+            ->where('is_delete', 0)
+            ->whereIn('contact_value', $candidateValues)
+            ->field('leads_id, contact_value, contact_extra')
+            ->select();
+        foreach ($valueRows as $row) {
+            $rowKey = (string)($row['leads_id'] ?? 0) . '|' . (string)($row['contact_extra'] ?? '') . '|' . (string)($row['contact_value'] ?? '');
+            if (!isset($rowKeySet[$rowKey])) {
+                $records[] = $row;
+                $rowKeySet[$rowKey] = 1;
+            }
+        }
+
+        $inSql = "'" . implode("','", array_map('addslashes', $candidateValues)) . "'";
+        if ($inSql !== "''") {
+            $concatRows = Db::name('crm_contacts')
+                ->where('is_delete', 0)
+                ->whereRaw("CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')) IN (" . $inSql . ")")
+                ->field('leads_id, contact_value, contact_extra')
+                ->select();
+            foreach ($concatRows as $row) {
+                $rowKey = (string)($row['leads_id'] ?? 0) . '|' . (string)($row['contact_extra'] ?? '') . '|' . (string)($row['contact_value'] ?? '');
+                if (!isset($rowKeySet[$rowKey])) {
+                    $records[] = $row;
+                    $rowKeySet[$rowKey] = 1;
+                }
+            }
+        }
+
+        if (empty($records)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($contactMap as $rawContact => $normalizedContact) {
+            $bestScore = 999;
+            $bestLeadsId = 0;
+
+            foreach ($records as $row) {
+                $rowLeadsId = (int)($row['leads_id'] ?? 0);
+                if ($rowLeadsId <= 0) {
+                    continue;
+                }
+
+                $rowValue = trim((string)($row['contact_value'] ?? ''));
+                $rowConcat = trim((string)($row['contact_extra'] ?? '')) . $rowValue;
+                $rowValueNormalized = self::normalizeContact($rowValue);
+                $rowConcatNormalized = self::normalizeContact($rowConcat);
+
+                $score = 999;
+                if ($rowValue !== '' && $rowValue === $rawContact) {
+                    $score = 1;
+                } elseif ($rowConcat !== '' && $rowConcat === $rawContact) {
+                    $score = 2;
+                } elseif ($normalizedContact !== '' && $rowValue !== '' && $rowValue === $normalizedContact) {
+                    $score = 3;
+                } elseif ($normalizedContact !== '' && $rowConcat !== '' && $rowConcat === $normalizedContact) {
+                    $score = 4;
+                } elseif ($normalizedContact !== '' && $rowValueNormalized !== '' && $rowValueNormalized === $normalizedContact) {
+                    $score = 5;
+                } elseif ($normalizedContact !== '' && $rowConcatNormalized !== '' && $rowConcatNormalized === $normalizedContact) {
+                    $score = 6;
+                }
+
+                if ($score < $bestScore) {
+                    $bestScore = $score;
+                    $bestLeadsId = $rowLeadsId;
+                    if ($score === 1) {
+                        break;
+                    }
+                }
+            }
+
+            if ($bestLeadsId > 0) {
+                if (!isset($result[$rawContact])) {
+                    $result[$rawContact] = $bestLeadsId;
+                }
+                if ($normalizedContact !== '' && !isset($result[$normalizedContact])) {
+                    $result[$normalizedContact] = $bestLeadsId;
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * 获取客户全部未删除主/辅电话（contact_type in 1,3）
      *
      * @param int $leadsId

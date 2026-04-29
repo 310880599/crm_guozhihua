@@ -5065,9 +5065,18 @@ class Order extends Common
             round((microtime(true) - $adminBatchMapStart) * 1000, 2)
         );
         
-        $clientIdCache = [];
+        $contactBatchMatchStart = microtime(true);
+        $pageContacts = [];
+        foreach ($list['data'] as $order) {
+            $contactValue = trim((string)($order['contact'] ?? ''));
+            if ($contactValue !== '') {
+                $pageContacts[] = $contactValue;
+            }
+        }
+        $pageContacts = array_values(array_unique($pageContacts));
+        $clientIdMap = OrderService::getClientIdMapByContacts($pageContacts);
         $loopStart = microtime(true);
-        $contactMatchTotalMs = 0.0;
+        $contactMatchTotalMs = (microtime(true) - $contactBatchMatchStart) * 1000;
         $accountNameTotalMs = 0.0;
         $imageParseTotalMs = 0.0;
         $productConcatTotalMs = 0.0;
@@ -5075,11 +5084,15 @@ class Order extends Common
         foreach ($list['data'] as &$order) {
             $rows = $itemMap[$order['id']] ?? [];
             $contactKey = trim((string)($order['contact'] ?? ''));
+            $contactNormalizedKey = $contactKey === '' ? '' : OrderService::normalizeContact($contactKey);
             $contactMatchStart = microtime(true);
-            if (!array_key_exists($contactKey, $clientIdCache)) {
-                $clientIdCache[$contactKey] = $contactKey !== '' ? (int)OrderService::getClientIdByContact($contactKey) : 0;
+            if ($contactKey !== '' && isset($clientIdMap[$contactKey])) {
+                $order['client_id'] = (int)$clientIdMap[$contactKey];
+            } elseif ($contactNormalizedKey !== '' && isset($clientIdMap[$contactNormalizedKey])) {
+                $order['client_id'] = (int)$clientIdMap[$contactNormalizedKey];
+            } else {
+                $order['client_id'] = 0;
             }
-            $order['client_id'] = (int)$clientIdCache[$contactKey];
             $contactMatchTotalMs += (microtime(true) - $contactMatchStart) * 1000;
 
             // 待审核列表：补充前端预览图结构字段，不影响原有图片字段
