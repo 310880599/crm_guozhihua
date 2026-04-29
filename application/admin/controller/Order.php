@@ -4928,6 +4928,13 @@ class Order extends Common
             'limit' => $limit,
             'keyword' => $keyword ?: [],
         ];
+        $safeSlowLog = function ($step, $elapsedMs) use ($slowLogContext) {
+            try {
+                $this->writePendingOrderSlowLog($step, $elapsedMs, $slowLogContext);
+            } catch (\Throwable $e) {
+                // 写日志失败时静默，不影响页面
+            }
+        };
 
         // 表头排序：只允许白名单字段和 asc/desc，否则默认 create_time desc, id desc
         $sortField = input('field/s', '');
@@ -5001,15 +5008,21 @@ class Order extends Common
                 'list_rows' => $limit,
                 'page' => $page
             ])->toArray();
-        $this->writePendingOrderSlowLog(
+        $safeSlowLog(
             'paginate 查询总耗时',
-            round((microtime(true) - $paginateStart) * 1000, 2),
-            $slowLogContext
+            round((microtime(true) - $paginateStart) * 1000, 2)
         );
+        $listAssembleStart = microtime(true);
+        $orderIdsExtractStart = microtime(true);
 
         // 本页订单ID，批量查 crm_order_item 聚合成 item_* 多行字符串（避免 N+1）
         $orderIds = array_column($list['data'], 'id');
+        $safeSlowLog(
+            'paginate结束到orderIds提取完成耗时',
+            round((microtime(true) - $orderIdsExtractStart) * 1000, 2)
+        );
         $itemMap = [];
+        $orderItemGroupStart = microtime(true);
         if (!empty($orderIds)) {
             $itemRows = Db::table('crm_order_item')
                 ->whereIn('order_id', $orderIds)
@@ -5026,8 +5039,13 @@ class Order extends Common
                 $itemMap[$row['order_id']][] = $row;
             }
         }
+        $safeSlowLog(
+            'OrderItem::getProductNamesGroupedByOrderIds($orderIds) 耗时',
+            round((microtime(true) - $orderItemGroupStart) * 1000, 2)
+        );
         
         // 协同人：收集 joint_person 中的 admin_id，批量查 admin 表得到 username 映射
+        $adminBatchMapStart = microtime(true);
         $allAdminIds = [];
         foreach ($list['data'] as $order) {
             if (!empty($order['joint_person'])) {
@@ -5042,22 +5060,39 @@ class Order extends Common
         if (!empty($allAdminIds)) {
             $adminMap = Db::name('admin')->whereIn('admin_id', $allAdminIds)->column('username', 'admin_id');
         }
+        $safeSlowLog(
+            '批量查询admin用户映射耗时',
+            round((microtime(true) - $adminBatchMapStart) * 1000, 2)
+        );
         
         $clientIdCache = [];
+        $loopStart = microtime(true);
+        $contactMatchTotalMs = 0.0;
+        $accountNameTotalMs = 0.0;
+        $imageParseTotalMs = 0.0;
+        $productConcatTotalMs = 0.0;
+        $operatorSalesAssignTotalMs = 0.0;
         foreach ($list['data'] as &$order) {
             $rows = $itemMap[$order['id']] ?? [];
             $contactKey = trim((string)($order['contact'] ?? ''));
+            $contactMatchStart = microtime(true);
             if (!array_key_exists($contactKey, $clientIdCache)) {
                 $clientIdCache[$contactKey] = $contactKey !== '' ? (int)OrderService::getClientIdByContact($contactKey) : 0;
             }
             $order['client_id'] = (int)$clientIdCache[$contactKey];
+            $contactMatchTotalMs += (microtime(true) - $contactMatchStart) * 1000;
+
             // 待审核列表：补充前端预览图结构字段，不影响原有图片字段
+            $imageParseStart = microtime(true);
             $order['wechat_images'] = OrderService::buildPreviewImageItems($order['wechat_receipt_image'] ?? '');
             $order['inquiry_images'] = OrderService::buildPreviewImageItems($order['inquiry_assign_image'] ?? '');
             // 与图片字段一一对应的列宽，供前端表格动态渲染
             $order['wechat_width'] = OrderService::calcImageColumnWidth($order['wechat_receipt_image'] ?? '');
             $order['inquiry_width'] = OrderService::calcImageColumnWidth($order['inquiry_assign_image'] ?? '');
+            $imageParseTotalMs += (microtime(true) - $imageParseStart) * 1000;
+
             // 回填子表聚合字段（多行用 \n 连接，前端 renderMultiline 换行展示）
+            $productConcatStart = microtime(true);
             $order['item_product_name'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['product_name'] ?? ''); }, $rows)) : '';
             $order['item_spec_model'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['spec_model'] ?? ''); }, $rows)) : '';
             $order['item_unit'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['unit'] ?? ''); }, $rows)) : '';
@@ -5078,8 +5113,10 @@ class Order extends Common
                     }
                 }
             }
+            $productConcatTotalMs += (microtime(true) - $productConcatStart) * 1000;
             
             // 转换收款账户ID为账户名称
+            $accountNameStart = microtime(true);
             if (!empty($order['bank_account'])) {
                 $accountInfo = Db::name('crm_receive_account')
                     ->where('id', $order['bank_account'])
@@ -5089,8 +5126,10 @@ class Order extends Common
                     $order['bank_account_name'] = $accountInfo['account'];
                 }
             }
+            $accountNameTotalMs += (microtime(true) - $accountNameStart) * 1000;
             
             // 协同人ID转 username（assist_username 供前端“协同人”列展示，空则前端显示 --）
+            $operatorSalesAssignStart = microtime(true);
             if (!empty($order['joint_person'])) {
                 $names = [];
                 foreach (array_filter(array_map('trim', explode(',', $order['joint_person']))) as $id) {
@@ -5098,28 +5137,40 @@ class Order extends Common
                 }
                 $order['assist_username'] = $names ? implode(',', $names) : '';
             }
+            $operatorSalesAssignTotalMs += (microtime(true) - $operatorSalesAssignStart) * 1000;
         }
         unset($order);
+        $safeSlowLog(
+            '循环处理list[data]整体耗时',
+            round((microtime(true) - $loopStart) * 1000, 2)
+        );
+        $safeSlowLog('contactMatchTotalMs', round($contactMatchTotalMs, 2));
+        $safeSlowLog('accountNameTotalMs', round($accountNameTotalMs, 2));
+        $safeSlowLog('imageParseTotalMs', round($imageParseTotalMs, 2));
+        $safeSlowLog('productNameConcatTotalMs', round($productConcatTotalMs, 2));
+        $safeSlowLog('operatorSalesAssignTotalMs', round($operatorSalesAssignTotalMs, 2));
+        $safeSlowLog(
+            'totalInquiries之前列表组装总耗时',
+            round((microtime(true) - $listAssembleStart) * 1000, 2)
+        );
 
 
         //成单率
 
         $inquiriesStart = microtime(true);
         $totalInquiries = Db::table('crm_leads')->where('status', 1)->where($client_where)->count();
-        $this->writePendingOrderSlowLog(
+        $safeSlowLog(
             'totalInquiries = crm_leads count 查询耗时',
-            round((microtime(true) - $inquiriesStart) * 1000, 2),
-            $slowLogContext
+            round((microtime(true) - $inquiriesStart) * 1000, 2)
         );
 
         $successOrders = $list['total'];
         $successRate = $totalInquiries > 0 ? ($successOrders / $totalInquiries * 100) : 0;
         $totalMoney = $this->getSum($where, 'money', $slowLogContext, 'totalMoney = getSum($where,\'money\') 查询耗时');
         $totalProfit = $this->getSum($where, 'profit', $slowLogContext, 'totalProfit = getSum($where,\'profit\') 查询耗时');
-        $this->writePendingOrderSlowLog(
+        $safeSlowLog(
             '整个 pendingClientSearch 总耗时',
-            round((microtime(true) - $pendingStart) * 1000, 2),
-            $slowLogContext
+            round((microtime(true) - $pendingStart) * 1000, 2)
         );
         return $result = [
             'code' => 0,
