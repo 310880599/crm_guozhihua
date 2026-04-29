@@ -5157,7 +5157,7 @@ class Order extends Common
             '循环处理list[data]整体耗时',
             round((microtime(true) - $loopStart) * 1000, 2)
         );
-        $safeSlowLog('contactMatchTotalMs', round($contactMatchTotalMs, 2));
+        $safeSlowLog('批量联系方式匹配耗时', round($contactMatchTotalMs, 2));
         $safeSlowLog('accountNameTotalMs', round($accountNameTotalMs, 2));
         $safeSlowLog('imageParseTotalMs', round($imageParseTotalMs, 2));
         $safeSlowLog('productNameConcatTotalMs', round($productConcatTotalMs, 2));
