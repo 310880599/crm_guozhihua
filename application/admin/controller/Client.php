@@ -610,7 +610,13 @@ class Client extends Common
     {
         $adminId = (int) Session::get('aid');
         $groupId = (int) Session::get('group_id');
-        return ($adminId === 1 || $groupId === 1);
+        $specialAdminIds = [395, 350, 375, 387];
+
+        return (
+            $adminId === 1
+            || $groupId === 1
+            || in_array($adminId, $specialAdminIds, true)
+        );
     }
 
     //（检查客户）
