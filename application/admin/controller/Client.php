@@ -554,9 +554,9 @@ class Client extends Common
 
         // 角色相关常量
         $specialAdminIds     = [1, 395, 350, 375, 387];
-        $allVisibleGroupIds  = [10, 11, 14, 17, 18];
+        $allVisibleGroupIds  = [10, 11, 14, 17, 18 ,19, 21, 22]; 
         $teamVisibleGroupIds = [17, 18];
-        $selfVisibleGroupIds = [10, 11, 14];
+        $selfVisibleGroupIds = [10, 11, 14 ,19, 21, 22]; 
 
         $allowed = [];
 
