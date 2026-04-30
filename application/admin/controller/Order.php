@@ -3559,77 +3559,12 @@ class Order extends Common
      * @param string $field 要统计的字段
      * @return float 字段总和
      */
-    private function getSum($where, $field, array $slowLogContext = [], $slowStep = '')
+    private function getSum($where, $field)
     {
-        $start = microtime(true);
         $sum = Db::table('crm_client_order')
             ->where($where)
             ->sum($field);
-        if (!empty($slowLogContext) && $slowStep !== '') {
-            $elapsedMs = round((microtime(true) - $start) * 1000, 2);
-            $this->writePendingOrderSlowLog($slowStep, $elapsedMs, $slowLogContext);
-        }
         return $sum;
-    }
-
-    /**
-     * 待审核订单页线上临时 SQL 耗时埋点
-     * 日志写入失败不得影响业务流程
-     */
-    private function writePendingOrderSlowLog($step, $elapsedMs, array $context = [])
-    {
-        try {
-            $username = isset($context['username']) ? (string)$context['username'] : '';
-            $aid = isset($context['aid']) ? (string)$context['aid'] : '';
-            $page = isset($context['page']) ? (string)$context['page'] : '';
-            $limit = isset($context['limit']) ? (string)$context['limit'] : '';
-            $keywordRaw = $context['keyword'] ?? [];
-            $keywordJson = json_encode($keywordRaw, JSON_UNESCAPED_UNICODE);
-            if ($keywordJson === false) {
-                $keywordJson = '{}';
-            }
-            // 线上临时埋点：避免日志过大，限制关键词输出长度
-            if (strlen($keywordJson) > 500) {
-                $keywordJson = substr($keywordJson, 0, 500) . '...';
-            }
-
-            $line = sprintf(
-                "[%s] username=%s aid=%s page=%s limit=%s keyword=%s step=%s elapsed_ms=%.2f%s",
-                date('Y-m-d H:i:s'),
-                $username,
-                $aid,
-                $page,
-                $limit,
-                $keywordJson,
-                (string)$step,
-                (float)$elapsedMs,
-                PHP_EOL
-            );
-
-            if (function_exists('runtime_path')) {
-                $runtimeDir = rtrim(str_replace('\\', '/', runtime_path()), '/');
-            } elseif (defined('RUNTIME_PATH')) {
-                $runtimeDir = rtrim(str_replace('\\', '/', RUNTIME_PATH), '/');
-            } else {
-                $projectRoot = dirname(dirname(dirname(__DIR__)));
-                $runtimeDir = rtrim(str_replace('\\', '/', $projectRoot . DIRECTORY_SEPARATOR . 'runtime'), '/');
-            }
-            $logDir = $runtimeDir . '/log';
-            $logPathInDir = $logDir . '/pending_order_slow.log';
-            $logPathInRuntime = $runtimeDir . '/pending_order_slow.log';
-
-            if (!is_dir($logDir)) {
-                @mkdir($logDir, 0777, true);
-            }
-
-            if (is_dir($logDir)) {
-                @file_put_contents($logPathInDir, $line, FILE_APPEND);
-            } else {
-                @file_put_contents($logPathInRuntime, $line, FILE_APPEND);
-            }
-        } catch (\Throwable $e) {
-            // 写日志失败时静默，不影响页面
-        }
     }
 
     /**
@@ -4891,7 +4826,6 @@ class Order extends Common
 
     public function pendingClientSearch()
     {
-        $pendingStart = microtime(true);
         $where = [];
         $client_where = [];
         $aid = Session::get('aid');
@@ -4921,20 +4855,6 @@ class Order extends Common
         $keyword = Request::param('keyword');
         // 过滤掉 null 元素
         if ($keyword) $keyword = array_filter($keyword);
-        $slowLogContext = [
-            'username' => $pr_user,
-            'aid' => $aid,
-            'page' => $page,
-            'limit' => $limit,
-            'keyword' => $keyword ?: [],
-        ];
-        $safeSlowLog = function ($step, $elapsedMs) use ($slowLogContext) {
-            try {
-                $this->writePendingOrderSlowLog($step, $elapsedMs, $slowLogContext);
-            } catch (\Throwable $e) {
-                // 写日志失败时静默，不影响页面
-            }
-        };
 
         // 表头排序：只允许白名单字段和 asc/desc，否则默认 create_time desc, id desc
         $sortField = input('field/s', '');
@@ -5003,26 +4923,14 @@ class Order extends Common
             $query->order('create_time', 'desc')->order('id', 'desc');
         }
 
-        $paginateStart = microtime(true);
         $list = $query->paginate([
                 'list_rows' => $limit,
                 'page' => $page
             ])->toArray();
-        $safeSlowLog(
-            'paginate 查询总耗时',
-            round((microtime(true) - $paginateStart) * 1000, 2)
-        );
-        $listAssembleStart = microtime(true);
-        $orderIdsExtractStart = microtime(true);
 
         // 本页订单ID，批量查 crm_order_item 聚合成 item_* 多行字符串（避免 N+1）
         $orderIds = array_column($list['data'], 'id');
-        $safeSlowLog(
-            'paginate结束到orderIds提取完成耗时',
-            round((microtime(true) - $orderIdsExtractStart) * 1000, 2)
-        );
         $itemMap = [];
-        $orderItemGroupStart = microtime(true);
         if (!empty($orderIds)) {
             $itemRows = Db::table('crm_order_item')
                 ->whereIn('order_id', $orderIds)
@@ -5039,13 +4947,8 @@ class Order extends Common
                 $itemMap[$row['order_id']][] = $row;
             }
         }
-        $safeSlowLog(
-            'OrderItem::getProductNamesGroupedByOrderIds($orderIds) 耗时',
-            round((microtime(true) - $orderItemGroupStart) * 1000, 2)
-        );
         
         // 协同人：收集 joint_person 中的 admin_id，批量查 admin 表得到 username 映射
-        $adminBatchMapStart = microtime(true);
         $allAdminIds = [];
         foreach ($list['data'] as $order) {
             if (!empty($order['joint_person'])) {
@@ -5060,12 +4963,7 @@ class Order extends Common
         if (!empty($allAdminIds)) {
             $adminMap = Db::name('admin')->whereIn('admin_id', $allAdminIds)->column('username', 'admin_id');
         }
-        $safeSlowLog(
-            '批量查询admin用户映射耗时',
-            round((microtime(true) - $adminBatchMapStart) * 1000, 2)
-        );
         
-        $contactBatchMatchStart = microtime(true);
         $pageContacts = [];
         foreach ($list['data'] as $order) {
             $contactValue = trim((string)($order['contact'] ?? ''));
@@ -5075,17 +4973,10 @@ class Order extends Common
         }
         $pageContacts = array_values(array_unique($pageContacts));
         $clientIdMap = OrderService::getClientIdMapByContacts($pageContacts);
-        $loopStart = microtime(true);
-        $batchContactMatchElapsedMs = (microtime(true) - $contactBatchMatchStart) * 1000;
-        $accountNameTotalMs = 0.0;
-        $imageParseTotalMs = 0.0;
-        $productConcatTotalMs = 0.0;
-        $operatorSalesAssignTotalMs = 0.0;
         foreach ($list['data'] as &$order) {
             $rows = $itemMap[$order['id']] ?? [];
             $contactKey = trim((string)($order['contact'] ?? ''));
             $contactNormalizedKey = $contactKey === '' ? '' : OrderService::normalizeContact($contactKey);
-            $contactMatchStart = microtime(true);
             if ($contactKey !== '' && isset($clientIdMap[$contactKey])) {
                 $order['client_id'] = (int)$clientIdMap[$contactKey];
             } elseif ($contactNormalizedKey !== '' && isset($clientIdMap[$contactNormalizedKey])) {
@@ -5093,19 +4984,15 @@ class Order extends Common
             } else {
                 $order['client_id'] = 0;
             }
-            $batchContactMatchElapsedMs += (microtime(true) - $contactMatchStart) * 1000;
 
             // 待审核列表：补充前端预览图结构字段，不影响原有图片字段
-            $imageParseStart = microtime(true);
             $order['wechat_images'] = OrderService::buildPreviewImageItems($order['wechat_receipt_image'] ?? '');
             $order['inquiry_images'] = OrderService::buildPreviewImageItems($order['inquiry_assign_image'] ?? '');
             // 与图片字段一一对应的列宽，供前端表格动态渲染
             $order['wechat_width'] = OrderService::calcImageColumnWidth($order['wechat_receipt_image'] ?? '');
             $order['inquiry_width'] = OrderService::calcImageColumnWidth($order['inquiry_assign_image'] ?? '');
-            $imageParseTotalMs += (microtime(true) - $imageParseStart) * 1000;
 
             // 回填子表聚合字段（多行用 \n 连接，前端 renderMultiline 换行展示）
-            $productConcatStart = microtime(true);
             $order['item_product_name'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['product_name'] ?? ''); }, $rows)) : '';
             $order['item_spec_model'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['spec_model'] ?? ''); }, $rows)) : '';
             $order['item_unit'] = $rows ? implode("\n", array_map(function ($r) { return (string)($r['unit'] ?? ''); }, $rows)) : '';
@@ -5126,10 +5013,8 @@ class Order extends Common
                     }
                 }
             }
-            $productConcatTotalMs += (microtime(true) - $productConcatStart) * 1000;
             
             // 转换收款账户ID为账户名称
-            $accountNameStart = microtime(true);
             if (!empty($order['bank_account'])) {
                 $accountInfo = Db::name('crm_receive_account')
                     ->where('id', $order['bank_account'])
@@ -5139,10 +5024,8 @@ class Order extends Common
                     $order['bank_account_name'] = $accountInfo['account'];
                 }
             }
-            $accountNameTotalMs += (microtime(true) - $accountNameStart) * 1000;
             
             // 协同人ID转 username（assist_username 供前端“协同人”列展示，空则前端显示 --）
-            $operatorSalesAssignStart = microtime(true);
             if (!empty($order['joint_person'])) {
                 $names = [];
                 foreach (array_filter(array_map('trim', explode(',', $order['joint_person']))) as $id) {
@@ -5150,41 +5033,18 @@ class Order extends Common
                 }
                 $order['assist_username'] = $names ? implode(',', $names) : '';
             }
-            $operatorSalesAssignTotalMs += (microtime(true) - $operatorSalesAssignStart) * 1000;
         }
         unset($order);
-        $safeSlowLog(
-            '循环处理list[data]整体耗时',
-            round((microtime(true) - $loopStart) * 1000, 2)
-        );
-        $safeSlowLog('批量联系方式匹配耗时', round($batchContactMatchElapsedMs, 2));
-        $safeSlowLog('accountNameTotalMs', round($accountNameTotalMs, 2));
-        $safeSlowLog('imageParseTotalMs', round($imageParseTotalMs, 2));
-        $safeSlowLog('productNameConcatTotalMs', round($productConcatTotalMs, 2));
-        $safeSlowLog('operatorSalesAssignTotalMs', round($operatorSalesAssignTotalMs, 2));
-        $safeSlowLog(
-            'totalInquiries之前列表组装总耗时',
-            round((microtime(true) - $listAssembleStart) * 1000, 2)
-        );
 
 
         //成单率
 
-        $inquiriesStart = microtime(true);
         $totalInquiries = Db::table('crm_leads')->where('status', 1)->where($client_where)->count();
-        $safeSlowLog(
-            'totalInquiries = crm_leads count 查询耗时',
-            round((microtime(true) - $inquiriesStart) * 1000, 2)
-        );
 
         $successOrders = $list['total'];
         $successRate = $totalInquiries > 0 ? ($successOrders / $totalInquiries * 100) : 0;
-        $totalMoney = $this->getSum($where, 'money', $slowLogContext, 'totalMoney = getSum($where,\'money\') 查询耗时');
-        $totalProfit = $this->getSum($where, 'profit', $slowLogContext, 'totalProfit = getSum($where,\'profit\') 查询耗时');
-        $safeSlowLog(
-            '整个 pendingClientSearch 总耗时',
-            round((microtime(true) - $pendingStart) * 1000, 2)
-        );
+        $totalMoney = $this->getSum($where, 'money');
+        $totalProfit = $this->getSum($where, 'profit');
         return $result = [
             'code' => 0,
             'msg' => '获取成功!',
