@@ -492,7 +492,9 @@ class Client extends Model
                             ->value('admin_id');
 
                         if ($adminId) {
-                            $q->whereOrRaw("FIND_IN_SET('" . (int)$adminId . "', l.joint_person)");
+                            $adminId = (int)$adminId;
+                            $q->whereOrRaw("FIND_IN_SET('{$adminId}', l.joint_person)")
+                              ->whereOrRaw("FIND_IN_SET('{$adminId}', REPLACE(REPLACE(REPLACE(l.joint_person, '[', ''), ']', ''), '\"', ''))");
                         }
                     }
                 });
