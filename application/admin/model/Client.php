@@ -444,7 +444,7 @@ class Client extends Model
         $baseKeyword['pr_user'] = '';
 
         // 基础口径对齐“客户列表”查询链路
-        $query = $this->buildClientSearchAllBaseQuery($baseKeyword);
+        $query = $this->buildClientSearchAllBaseQuery($baseKeyword, $isSuperAdmin);
 
         // 检查客户扩展筛选：运营人员
         if (!empty($keyword['oper_user'])) {
@@ -511,13 +511,6 @@ class Client extends Model
             }
             $query->where('l.pr_user', '=', $selectedPrUser);
         }
-
-        Log::info('checkClient 权限调试', [
-            'admin' => $currentUser,
-            'visibleUsers' => $visibleUsers,
-            'isSuper' => $isSuperAdmin,
-            'selectedPrUser' => $selectedPrUser
-        ]);
 
         $total = (int)(clone $query)->distinct(true)->count('l.id');
         if ($total === 0) {
@@ -655,7 +648,7 @@ class Client extends Model
      * - 不负责分页
      * - 不负责展示字段格式化
      */
-    public function buildClientSearchAllBaseQuery(array $keyword = [])
+    public function buildClientSearchAllBaseQuery(array $keyword = [], bool $skipOrgUserLimit = false)
     {
         $keyword = array_merge([
             'timebucket' => '',
@@ -705,10 +698,7 @@ class Client extends Model
             $usernames = Db::name('admin')->where('team_name', $team_name)->where($a_where)->column('username');
         }
 
-        return Db::table('crm_leads')->alias('l')
-            ->where(function ($query) use ($usernames) {
-                if ($usernames) $query->whereIn('l.pr_user', $usernames);
-            })
+        $query = Db::table('crm_leads')->alias('l')
             ->where($mapPhone)
             ->where($mapKhName)
             ->where($mapKhStatus)
@@ -718,6 +708,16 @@ class Client extends Model
             ->where($mapPort)
             ->where($mapAtTime)
             ->where($mapPrUser);
+
+        if (!$skipOrgUserLimit) {
+            $query->where(function ($subQuery) use ($usernames) {
+                if ($usernames) {
+                    $subQuery->whereIn('l.pr_user', $usernames);
+                }
+            });
+        }
+
+        return $query;
     }
 
     /**
