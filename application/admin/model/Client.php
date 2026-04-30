@@ -427,141 +427,123 @@ class Client extends Model
     }
 
     //检查客户
-    public function getCheckClientSearchList($page, $limit, $keyword, array $visibleUsers = [])
+    public function getCheckClientSearchList($page, $limit, $keyword, array $visibleUsers = [], array $currentAdmin = [])
     {
-        $mapAtTime   = []; // 添加时间
-        $mapKhRank   = []; // 客户级别
-        $mapKhStatus = []; // 客户状态
-        $mapPhone    = []; // 手机号模糊查询
-        $mapKhName   = []; // 客户名称
-        $mapXsSource = []; // 线索/客户来源
-        $mapPrUser   = []; // 业务员/负责人（精确匹配）
-        $where       = [];
-        $mapInquiry  = [];
-        $mapPort     = [];
+        $page  = max(1, (int)$page);
+        $limit = max(1, (int)$limit);
 
-        if (!empty($keyword['timebucket'])) {
-            $mapAtTime[] = $keyword['timebucket'];
-        }
+        $adminId       = isset($currentAdmin['admin_id']) ? (int)$currentAdmin['admin_id'] : (int)session('aid');
+        $adminGroupId  = isset($currentAdmin['group_id']) ? (int)$currentAdmin['group_id'] : (int)session('group_id');
+        $currentUser   = isset($currentAdmin['username']) ? trim((string)$currentAdmin['username']) : trim((string)session('username'));
+        $isSuperAdmin  = ($adminId === 1 || $adminGroupId === 1 || !empty($currentAdmin['is_super_admin']));
 
-        if ($keyword['kh_rank'] != '') {
-            $mapKhRank = $this->buildKhRankCompatWhere($keyword['kh_rank'], 'kh_rank');
-        }
+        // “检查客户”使用业务员精确筛选；先从基础 keyword 移除，避免被客户列表基础查询中的 like 影响
+        $selectedPrUser = isset($keyword['pr_user']) ? trim((string)$keyword['pr_user']) : '';
+        $baseKeyword = (array)$keyword;
+        $baseKeyword['pr_user'] = '';
 
-        if ($keyword['kh_status'] != '') {
-            $mapKhStatus = ['kh_status' => $keyword['kh_status']];
-        }
+        // 基础口径对齐“客户列表”查询链路
+        $query = $this->buildClientSearchAllBaseQuery($baseKeyword);
 
-        if ($keyword['inquiry_id'] != '') {
-            $mapInquiry = ['inquiry_id' => $keyword['inquiry_id']];
-        }
-
-        if ($keyword['phone'] != '') {
-            $mapPhone = $this->getContactSearch($keyword['phone']);
-        }
-
+        // 检查客户扩展筛选：运营人员
         if (!empty($keyword['oper_user'])) {
-            $where[] = ['oper_user', 'like', '%' . $keyword['oper_user'] . '%'];
+            $query->where('l.oper_user', 'like', '%' . trim((string)$keyword['oper_user']) . '%');
         }
 
-        if ($keyword['kh_name'] != '') {
-            $mapKhName = [['kh_name', 'like', '%' . $keyword['kh_name'] . '%']];
-        }
-
-        if ($keyword['xs_source'] != '') {
-            $mapXsSource = ['xs_source' => $keyword['xs_source']];
-        }
-
-        if ($keyword['port_id'] != '') {
-            $mapPort = ['port_id' => $keyword['port_id']];
-        }
-
-        $mapSourcePort = []; // 来源端口
-        if (!empty($keyword['source_port'])) {
-            $mapSourcePort = ['source_port' => $keyword['source_port']];
-        }
-
-        // 【新增-跟进筛选】最新跟进时间筛选条件
-        $mapFollow      = [];
-        $followNoFlag   = false; // recent_no_follow 标记
-        $followBoundary = '';    // 边界时间（用于 recent_no_follow）
-
-        // 【新增-跟进筛选】处理最新跟进时间筛选
+        // 检查客户扩展筛选：跟进类型 + 天数
+        $followNoFlag = false;
+        $followBoundary = '';
         if (!empty($keyword['__follow_filter']) && !empty($keyword['__follow_boundary'])) {
-            $ff = $keyword['__follow_filter'];
-            $bd = $keyword['__follow_boundary'];
-
+            $ff = (string)$keyword['__follow_filter'];
+            $bd = (string)$keyword['__follow_boundary'];
             if ($ff === 'recent_follow') {
-                // 最近有跟进：last_up_time >= 边界
-                $mapFollow = [['last_up_time', '>=', $bd]];
+                $query->where('l.last_up_time', '>=', $bd);
             } elseif ($ff === 'recent_no_follow') {
-                // 最近无跟进（反选）：last_up_time IS NULL OR last_up_time < 边界
-                // 需要用闭包实现 OR 条件，此处设置标记
-                $followNoFlag   = true;
+                $followNoFlag = true;
                 $followBoundary = $bd;
             }
         }
 
-        // 统一清洗可见用户名列表，并做兜底（当前登录人）
-        $visibleUsers = array_values(array_unique(array_filter(array_map('trim', $visibleUsers))));
-        $currentUsername = trim((string) session('username'));
-        if (empty($visibleUsers) && $currentUsername !== '') {
-            $visibleUsers = [$currentUsername];
+        if ($followNoFlag) {
+            $query->where(function ($q) use ($followBoundary) {
+                $q->whereNull('l.last_up_time')
+                  ->whereOr('l.last_up_time', '<', $followBoundary);
+            });
         }
 
-        // 业务员精确筛选 + 权限校验
-        $selectedPrUser = '';
-        if (isset($keyword['pr_user'])) {
-            $selectedPrUser = trim((string) $keyword['pr_user']);
-        }
-        if ($selectedPrUser !== '') {
-            // 若前端传入的业务员不在可见范围内，直接返回空结果，防止越权
-            if (empty($visibleUsers) || !in_array($selectedPrUser, $visibleUsers, true)) {
+        // 检查客户权限：仅非超级管理员叠加负责人可见范围
+        $visibleUsers = array_values(array_unique(array_filter(array_map('trim', (array)$visibleUsers))));
+        if (!$isSuperAdmin) {
+            if (empty($visibleUsers) && $currentUser !== '') {
+                $visibleUsers = [$currentUser];
+            }
+            if (!empty($visibleUsers)) {
+                $query->whereIn('l.pr_user', $visibleUsers);
+            } elseif ($currentUser !== '') {
+                $query->where('l.pr_user', $currentUser);
+            } else {
                 return null;
             }
-            // 精确匹配指定业务员
-            $mapPrUser = ['pr_user' => $selectedPrUser];
         }
 
-        $result  = Db::table('crm_leads')
-            ->where($mapPhone)
-            ->where($mapKhName)
-            ->where($mapInquiry)     // 使用所属渠道筛选
-            ->where($mapKhRank)
-            ->where($mapXsSource)
-            ->where($mapPort)        // 使用运营端口筛选
-            ->where($mapPrUser)      // 精确业务员筛选（若有）
-            ->where($mapAtTime)
-            ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
-            ->where($where)
-            ->where(['status' => 1]) //0 线索，1客户，2公海；不再限制成交状态，已成交+未成交都可见
-            // 负责人：团队可见 / 个人可见（整体可见范围限制始终保留）
-            ->where(function ($q) use ($visibleUsers, $currentUsername) {
-                if (!empty($visibleUsers)) {
-                    $q->whereIn('pr_user', $visibleUsers);
-                } elseif ($currentUsername !== '') {
-                    // 极端情况兜底：只看自己
-                    $q->where('pr_user', $currentUsername);
-                }
-            })
-            ->where(function($q) use ($followNoFlag, $followBoundary) {
-                // 【新增-跟进反选】最近无跟进：last_up_time IS NULL OR last_up_time < 边界
-                if ($followNoFlag) {
-                    $q->whereNull('last_up_time')
-                        ->whereOr('last_up_time', '<', $followBoundary);
-                }
-            })
-            ->order('at_time desc')
-            ->paginate(array('list_rows' => $limit, 'page' => $page))
-            ->toArray();
+        // 业务员筛选：精确匹配，并校验非超级管理员的权限范围
+        if ($selectedPrUser !== '') {
+            if (!$isSuperAdmin && (empty($visibleUsers) || !in_array($selectedPrUser, $visibleUsers, true))) {
+                return null;
+            }
+            $query->where('l.pr_user', '=', $selectedPrUser);
+        }
 
-        //数据集判断方式
-        //if($result->isEmpty()){return null;}
-        if ($result['total'] == 0) {
+        $total = (int)(clone $query)->distinct(true)->count('l.id');
+        if ($total === 0) {
             return null;
-        } else {
-            return $result;
         }
+
+        $rows = (clone $query)
+            ->field('l.*')
+            ->order('l.at_time desc')
+            ->page($page, $limit)
+            ->select();
+        if (is_object($rows) && method_exists($rows, 'toArray')) {
+            $rows = $rows->toArray();
+        } elseif (!is_array($rows)) {
+            $rows = [];
+        }
+
+        // 兼容检查客户页面展示字段：主/辅电话
+        $leadIds = array_values(array_unique(array_filter(array_column($rows, 'id'))));
+        $phoneMap = [];
+        if (!empty($leadIds)) {
+            $contacts = Db::table('crm_contacts')
+                ->where('is_delete', 0)
+                ->whereIn('leads_id', $leadIds)
+                ->whereIn('contact_type', [1, 3])
+                ->order('id', 'asc')
+                ->field('leads_id, contact_type, contact_value')
+                ->select();
+            foreach ($contacts as $c) {
+                $lid = (int)$c['leads_id'];
+                if (!isset($phoneMap[$lid])) {
+                    $phoneMap[$lid] = ['main' => '', 'aux' => ''];
+                }
+                if ((int)$c['contact_type'] === 1 && $phoneMap[$lid]['main'] === '') {
+                    $phoneMap[$lid]['main'] = (string)$c['contact_value'];
+                } elseif ((int)$c['contact_type'] === 3 && $phoneMap[$lid]['aux'] === '') {
+                    $phoneMap[$lid]['aux'] = (string)$c['contact_value'];
+                }
+            }
+        }
+        foreach ($rows as &$row) {
+            $lid = (int)$row['id'];
+            $row['main_phone'] = isset($phoneMap[$lid]) ? $phoneMap[$lid]['main'] : '';
+            $row['aux_phone']  = isset($phoneMap[$lid]) ? $phoneMap[$lid]['aux'] : '';
+        }
+        unset($row);
+
+        return [
+            'data'  => $rows,
+            'total' => $total,
+        ];
     }
 
 
