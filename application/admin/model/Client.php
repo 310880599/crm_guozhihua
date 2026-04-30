@@ -736,30 +736,109 @@ class Client extends Model
     // 查询（客户列表页用）
     public function getClientSearchListAll($page, $limit, $keyword)
     {
-        $result = $this->buildClientSearchAllBaseQuery((array)$keyword)
-            ->leftJoin('crm_contacts c', "c.leads_id = l.id AND c.is_delete = 0 AND c.contact_type IN (1,3)")
-            ->leftJoin('crm_position_title pt', 'pt.id = c.position_title_id AND pt.is_deleted = 0')
-            ->field([
-                'l.*',
-                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 1, c.contact_value, NULL) ORDER BY c.id SEPARATOR ',') AS main_phone",
-                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 3, c.contact_value, NULL) ORDER BY c.id SEPARATOR '<br>') AS aux_phone",
-                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 1, CONCAT(c.contact_value, '-', CASE
-                    WHEN c.position_title_id IS NOT NULL AND c.position_title_id <> 0 AND pt.title_name IS NOT NULL AND pt.title_name <> '' THEN pt.title_name
-                    WHEN (c.position_title_id IS NULL OR c.position_title_id = 0) AND c.position_title IS NOT NULL AND c.position_title <> '' THEN c.position_title
-                    ELSE '未填写'
-                END), NULL) ORDER BY c.id SEPARATOR ',') AS main_phone_position_titles",
-                "GROUP_CONCAT(DISTINCT IF(c.contact_type = 3, CONCAT(c.contact_value, '-', CASE
-                    WHEN c.position_title_id IS NOT NULL AND c.position_title_id <> 0 AND pt.title_name IS NOT NULL AND pt.title_name <> '' THEN pt.title_name
-                    WHEN (c.position_title_id IS NULL OR c.position_title_id = 0) AND c.position_title IS NOT NULL AND c.position_title <> '' THEN c.position_title
-                    ELSE '未填写'
-                END), NULL) ORDER BY c.id SEPARATOR ',') AS aux_phone_position_titles",
-            ])
-            ->group('l.id')
-            ->order('l.at_time desc')
-            ->paginate(['list_rows' => $limit, 'page' => $page])
-            ->toArray();
+        $page = max(1, (int)$page);
+        $limit = max(1, (int)$limit);
 
-        return ($result['total'] == 0) ? null : $result;
+        // 1) 仅按 leads 主表筛选统计，避免 contacts 一对多放大 total
+        $baseQuery = $this->buildClientSearchAllBaseQuery((array)$keyword);
+        $total = (int)(clone $baseQuery)->distinct(true)->count('l.id');
+        if ($total === 0) {
+            return null;
+        }
+
+        // 2) 分页只查 leads 当前页
+        $rows = (clone $baseQuery)
+            ->field('l.*')
+            ->order('l.at_time desc')
+            ->page($page, $limit)
+            ->select();
+        if (is_object($rows) && method_exists($rows, 'toArray')) {
+            $rows = $rows->toArray();
+        } elseif (!is_array($rows)) {
+            $rows = [];
+        }
+
+        // 3) 批量查询当前页 contacts（主/辅电话 + 职位身份）
+        $leadIds = array_values(array_unique(array_filter(array_column($rows, 'id'))));
+        $phoneMap = [];
+        if (!empty($leadIds)) {
+            $contacts = Db::table('crm_contacts')
+                ->alias('c')
+                ->leftJoin('crm_position_title pt', 'pt.id = c.position_title_id AND pt.is_deleted = 0')
+                ->where('c.is_delete', 0)
+                ->whereIn('c.leads_id', $leadIds)
+                ->whereIn('c.contact_type', [1, 3])
+                ->order('c.id asc')
+                ->field('c.leads_id,c.contact_type,c.contact_value,c.position_title_id,c.position_title,pt.title_name as pt_title_name')
+                ->select();
+            if (is_object($contacts) && method_exists($contacts, 'toArray')) {
+                $contacts = $contacts->toArray();
+            }
+
+            foreach ($contacts as $c) {
+                $lid = (int)$c['leads_id'];
+                if (!isset($phoneMap[$lid])) {
+                    $phoneMap[$lid] = [
+                        'main_phones' => [],
+                        'aux_phones' => [],
+                        'main_titles' => [],
+                        'aux_title_first' => '',
+                    ];
+                }
+
+                $contactValue = trim((string)$c['contact_value']);
+                if ($contactValue === '') {
+                    continue;
+                }
+
+                // 职位身份：优先 title_name，其次 position_title，最后“未填写”
+                $positionTitleName = trim((string)($c['pt_title_name'] ?? ''));
+                if ($positionTitleName === '') {
+                    $positionTitleName = trim((string)($c['position_title'] ?? ''));
+                }
+                if ($positionTitleName === '') {
+                    $positionTitleName = '未填写';
+                }
+                $phoneAndTitle = $contactValue . '-' . $positionTitleName;
+
+                if ((int)$c['contact_type'] === 1) {
+                    if (!in_array($contactValue, $phoneMap[$lid]['main_phones'], true)) {
+                        $phoneMap[$lid]['main_phones'][] = $contactValue;
+                    }
+                    if (!in_array($phoneAndTitle, $phoneMap[$lid]['main_titles'], true)) {
+                        $phoneMap[$lid]['main_titles'][] = $phoneAndTitle;
+                    }
+                } elseif ((int)$c['contact_type'] === 3) {
+                    if (!in_array($contactValue, $phoneMap[$lid]['aux_phones'], true)) {
+                        $phoneMap[$lid]['aux_phones'][] = $contactValue;
+                    }
+                    // 辅助电话职位身份只保留第一条
+                    if ($phoneMap[$lid]['aux_title_first'] === '') {
+                        $phoneMap[$lid]['aux_title_first'] = $phoneAndTitle;
+                    }
+                }
+            }
+        }
+
+        // 4) 合并回当前页 rows，保持返回字段结构不变
+        foreach ($rows as &$row) {
+            $lid = (int)$row['id'];
+            $mainPhones = isset($phoneMap[$lid]['main_phones']) ? $phoneMap[$lid]['main_phones'] : [];
+            $auxPhones = isset($phoneMap[$lid]['aux_phones']) ? $phoneMap[$lid]['aux_phones'] : [];
+            $mainTitles = isset($phoneMap[$lid]['main_titles']) ? $phoneMap[$lid]['main_titles'] : [];
+            $auxTitleFirst = isset($phoneMap[$lid]['aux_title_first']) ? $phoneMap[$lid]['aux_title_first'] : '';
+
+            $row['main_phone'] = !empty($mainPhones) ? implode(',', $mainPhones) : '';
+            $row['aux_phone'] = !empty($auxPhones) ? implode('<br>', $auxPhones) : '';
+            $row['main_phone_position_titles'] = !empty($mainTitles) ? implode(',', $mainTitles) : '';
+            $row['aux_phone_position_titles'] = $auxTitleFirst;
+        }
+        unset($row);
+
+        return [
+            'data' => $rows,
+            'total' => $total,
+        ];
     }
 
 
