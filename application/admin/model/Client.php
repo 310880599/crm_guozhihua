@@ -6,6 +6,7 @@ use app\admin\controller\Client as ControllerClient;
 use think\Model;
 use think\Db;
 use app\admin\model\Contacts;
+use think\facade\Log;
 
 
 class Client extends Model
@@ -477,10 +478,24 @@ class Client extends Model
             if (empty($visibleUsers) && $currentUser !== '') {
                 $visibleUsers = [$currentUser];
             }
-            if (!empty($visibleUsers)) {
-                $query->whereIn('l.pr_user', $visibleUsers);
-            } elseif ($currentUser !== '') {
-                $query->where('l.pr_user', $currentUser);
+            if (!empty($visibleUsers) || $currentUser !== '') {
+                $query->where(function ($q) use ($visibleUsers, $currentUser) {
+                    // 负责人
+                    if (!empty($visibleUsers)) {
+                        $q->whereIn('l.pr_user', $visibleUsers);
+                    }
+
+                    // 协同人（支持 joint_person JSON 或逗号）
+                    if ($currentUser !== '') {
+                        $adminId = Db::name('admin')
+                            ->where('username', $currentUser)
+                            ->value('admin_id');
+
+                        if ($adminId) {
+                            $q->whereOrRaw("FIND_IN_SET('" . (int)$adminId . "', l.joint_person)");
+                        }
+                    }
+                });
             } else {
                 return null;
             }
@@ -489,10 +504,18 @@ class Client extends Model
         // 业务员筛选：精确匹配，并校验非超级管理员的权限范围
         if ($selectedPrUser !== '') {
             if (!$isSuperAdmin && (empty($visibleUsers) || !in_array($selectedPrUser, $visibleUsers, true))) {
-                return null;
+                // 不返回 null，避免分页异常
+                $query->where('l.id', -1);
             }
             $query->where('l.pr_user', '=', $selectedPrUser);
         }
+
+        Log::info('checkClient 权限调试', [
+            'admin' => $currentUser,
+            'visibleUsers' => $visibleUsers,
+            'isSuper' => $isSuperAdmin,
+            'selectedPrUser' => $selectedPrUser
+        ]);
 
         $total = (int)(clone $query)->distinct(true)->count('l.id');
         if ($total === 0) {
