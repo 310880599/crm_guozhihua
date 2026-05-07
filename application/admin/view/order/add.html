@@ -112,6 +112,18 @@
             width: 200px !important;   /* 或 220px，看你整体布局 */
         }
 
+        .profit-rate-label {
+            width: 110px !important;
+            min-width: 110px !important;
+            white-space: nowrap;
+            overflow: visible;
+            text-overflow: clip;
+        }
+
+        .profit-rate-inline {
+            width: 110px;
+        }
+
         /**************** 产品明细区域布局优化 ****************/
 
         /* 让产品明细整体占满 */
@@ -646,7 +658,9 @@
                                     clickClose: true,
                                     initValue: singleJp ? [singleJp] : [],
                                     on: function () {
-                                        enforceProfitRatesWhenNoCollaborator();
+                                        if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                                            window.enforceProfitRatesWhenNoCollaborator();
+                                        }
                                     },
                                     data: window.collaboratorData || []
                                 });
@@ -796,8 +810,8 @@
                         class="layui-input" readonly>
                     <input type="hidden" id="login_admin_id" value="{$Think.session.aid}">
                 </div>
-                <label class="layui-form-label" style="width: 90px;">负责人占比</label>
-                <div class="layui-input-inline" style="width: 120px;">
+                <label class="layui-form-label profit-rate-label">负责人占比</label>
+                <div class="layui-input-inline profit-rate-inline">
                     <select name="owner_profit_rate" id="owner_profit_rate" lay-filter="owner_profit_rate">
                         <option value="0">0%</option>
                         <option value="10">10%</option>
@@ -818,8 +832,8 @@
                 <div class="layui-input-inline" style="width: 240px;">
                     <div id="collaboratorSelect"></div>
                 </div>
-                <label class="layui-form-label" style="width: 90px;">协同人占比</label>
-                <div class="layui-input-inline" style="width: 120px;">
+                <label class="layui-form-label profit-rate-label">协同人占比</label>
+                <div class="layui-input-inline profit-rate-inline">
                     <select name="collaborator_profit_rate" id="collaborator_profit_rate" lay-filter="collaborator_profit_rate">
                         <option value="0" selected>0%</option>
                         <option value="10">10%</option>
@@ -1250,20 +1264,43 @@
                 setProfitRates(100 - collaboratorRate, collaboratorRate);
             }
 
-            function enforceProfitRatesWhenNoCollaborator() {
-                if (!getSelectedJointPerson()) {
+            window.enforceProfitRatesWhenNoCollaborator = function () {
+                var selectedJointPerson = getSelectedJointPerson();
+                var ownerRate = parseInt(normalizeProfitRate($('#owner_profit_rate').val(), 100), 10);
+                var collaboratorRate = parseInt(normalizeProfitRate($('#collaborator_profit_rate').val(), 0), 10);
+
+                if (!selectedJointPerson) {
                     setProfitRates(100, 0);
+                    return;
                 }
-            }
+
+                if (isNaN(ownerRate)) ownerRate = 100;
+                if (isNaN(collaboratorRate)) collaboratorRate = 0;
+                if (ownerRate < 0) ownerRate = 0;
+                if (ownerRate > 100) ownerRate = 100;
+                if (collaboratorRate < 0) collaboratorRate = 0;
+                if (collaboratorRate > 100) collaboratorRate = 100;
+
+                if ((ownerRate + collaboratorRate) !== 100) {
+                    collaboratorRate = 100 - ownerRate;
+                    if (collaboratorRate < 0) collaboratorRate = 0;
+                    if (collaboratorRate > 100) collaboratorRate = 100;
+                    setProfitRates(ownerRate, collaboratorRate);
+                }
+            };
 
             form.on('select(owner_profit_rate)', function () {
                 syncByOwnerRate();
-                enforceProfitRatesWhenNoCollaborator();
+                if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                    window.enforceProfitRatesWhenNoCollaborator();
+                }
             });
 
             form.on('select(collaborator_profit_rate)', function () {
                 syncByCollaboratorRate();
-                enforceProfitRatesWhenNoCollaborator();
+                if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                    window.enforceProfitRatesWhenNoCollaborator();
+                }
             });
 
             // 初始化协同人单选下拉
@@ -1280,11 +1317,15 @@
                 radio: true,
                 clickClose: true,
                 on: function () {
-                    enforceProfitRatesWhenNoCollaborator();
+                    if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                        window.enforceProfitRatesWhenNoCollaborator();
+                    }
                 },
                 data: collaboratorData
             });
-            enforceProfitRatesWhenNoCollaborator();
+            if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                window.enforceProfitRatesWhenNoCollaborator();
+            }
             // 渲染现有的下拉框（包括产品名称、询盘来源等）
             form.render('select');
 
@@ -1400,7 +1441,9 @@
                         window.collaboratorSelectInstance.setValue(singleJp ? [singleJp] : []);
                     } catch (e) { console.debug('joint_person setValue:', e); }
                 }
-                enforceProfitRatesWhenNoCollaborator();
+                if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                    window.enforceProfitRatesWhenNoCollaborator();
+                }
                 if (Array.isArray(formData.order_items) && formData.order_items.length > 0) {
                     var $tbody = $('#productTableBody');
                     var cache = window.__optCache;
@@ -2816,6 +2859,9 @@
             data.field.margin_rate = $('#margin_rate').val() || '0';
             var selectedJointPerson = getSelectedJointPerson();
             data.field.joint_person = selectedJointPerson;
+            if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                window.enforceProfitRatesWhenNoCollaborator();
+            }
             data.field.owner_profit_rate = normalizeProfitRate($('#owner_profit_rate').val(), 100);
             data.field.collaborator_profit_rate = normalizeProfitRate($('#collaborator_profit_rate').val(), 0);
             if (!selectedJointPerson) {
@@ -2825,17 +2871,27 @@
             }
             var ownerRateInt = parseInt(data.field.owner_profit_rate, 10);
             var collaboratorRateInt = parseInt(data.field.collaborator_profit_rate, 10);
-            if (PROFIT_RATE_VALUES.indexOf(data.field.owner_profit_rate) === -1 || PROFIT_RATE_VALUES.indexOf(data.field.collaborator_profit_rate) === -1) {
-                layer.msg('利润占比只能按10%递增选择', { icon: 2, time: 2000 });
-                return false;
-            }
-            if ((ownerRateInt + collaboratorRateInt) !== 100) {
-                layer.msg('负责人和协同人利润占比合计必须等于100%', { icon: 2, time: 2000 });
-                return false;
-            }
             if (!selectedJointPerson && (ownerRateInt !== 100 || collaboratorRateInt !== 0)) {
                 layer.msg('未选择协同人时，负责人占比必须为100%，协同人占比必须为0%', { icon: 2, time: 2000 });
                 return false;
+            }
+            if (selectedJointPerson) {
+                if (!isFinite(ownerRateInt) || !isFinite(collaboratorRateInt)) {
+                    layer.msg('负责人占比和协同人占比必须是数字', { icon: 2, time: 2000 });
+                    return false;
+                }
+                if (ownerRateInt < 0 || ownerRateInt > 100 || collaboratorRateInt < 0 || collaboratorRateInt > 100) {
+                    layer.msg('负责人占比和协同人占比必须在0到100之间', { icon: 2, time: 2000 });
+                    return false;
+                }
+                if (PROFIT_RATE_VALUES.indexOf(data.field.owner_profit_rate) === -1 || PROFIT_RATE_VALUES.indexOf(data.field.collaborator_profit_rate) === -1) {
+                    layer.msg('利润占比只能按10%递增选择', { icon: 2, time: 2000 });
+                    return false;
+                }
+                if ((ownerRateInt + collaboratorRateInt) !== 100) {
+                    layer.msg('负责人和协同人利润占比合计必须等于100%', { icon: 2, time: 2000 });
+                    return false;
+                }
             }
 
             // 检查联系方式是否已填写
