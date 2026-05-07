@@ -186,6 +186,24 @@
             cursor: not-allowed;
         }
 
+        .profit-rate-label {
+            width: 90px !important;
+            text-align: right !important;
+            padding-right: 10px !important;
+        }
+
+        .profit-rate-inline {
+            width: 120px;
+        }
+
+        .legacy-collaborator-warning {
+            margin-top: 6px;
+            color: #ff5722;
+            font-weight: 600;
+            line-height: 1.5;
+            display: none;
+        }
+
     </style>
 </head>
 
@@ -443,6 +461,8 @@
         // 编辑页初始化标记：用于防止回显时触发 changeyewu 清空
         window.isEditInit = false;
         window.originalContact = '';
+        window.hasLegacyMultipleCollaborators = false;
+        window.legacyCollaboratorResolved = true;
 
         // 编辑页：后端传入的订单及明细数据
         var orderInfo = {:json_encode($orderInfo ?? [], JSON_UNESCAPED_UNICODE)};
@@ -495,6 +515,12 @@
                 $('#source_port').val('');
                 $('#team_name').val('');
                 $('#client_company').val('');
+                if (window.collaboratorSelectInstance) {
+                    window.collaboratorSelectInstance.setValue([]);
+                }
+                window.hasLegacyMultipleCollaborators = false;
+                window.legacyCollaboratorResolved = true;
+                $('#legacyCollaboratorWarning').hide();
                 customerValidated = false;
                 currentClientId = 0;
                 customerPhoneTitlesComplete = false;
@@ -546,6 +572,9 @@
                         if (window.collaboratorSelectInstance) {
                             window.collaboratorSelectInstance.setValue([]);
                         }
+                        window.hasLegacyMultipleCollaborators = false;
+                        window.legacyCollaboratorResolved = true;
+                        $('#legacyCollaboratorWarning').hide();
                         
                         // 清空产品明细表格
                         var $tbody = $('#productTableBody');
@@ -662,12 +691,21 @@
                                     //layVerify: 'required',
                                     tips: '请选择协同人员',
                                     filterable: true,
-                                    clickClose: false,
-                                    initValue: jp,
+                                    radio: true,
+                                    clickClose: true,
+                                    initValue: jp.length > 0 ? [jp[0]] : [],
+                                    on: function () {
+                                        if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                                            window.enforceProfitRatesWhenNoCollaborator();
+                                        }
+                                    },
                                     data: window.collaboratorData || []
                                 });
                             }
                         }, 200);
+                        window.hasLegacyMultipleCollaborators = false;
+                        window.legacyCollaboratorResolved = true;
+                        $('#legacyCollaboratorWarning').hide();
                         
                         // 无论客户是否成交，都不自动填充历史订单产品信息，让用户手动选择产品
                         // 确保产品明细表格始终保持只有一行空行的初始状态
@@ -805,10 +843,49 @@
             </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">客户负责人<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
+                <div class="layui-input-inline" style="width: 240px;">
                     <input type="text" id="pr_user" name="pr_user" lay-verify="required" value="{$username}"
                         class="layui-input" readonly>
                     <input type="hidden" id="login_admin_id" value="{$Think.session.aid}">
+                </div>
+                <label class="layui-form-label profit-rate-label">负责人占比</label>
+                <div class="layui-input-inline profit-rate-inline">
+                    <select name="owner_profit_rate" id="owner_profit_rate" lay-filter="owner_profit_rate">
+                        <option value="0">0%</option>
+                        <option value="10">10%</option>
+                        <option value="20">20%</option>
+                        <option value="30">30%</option>
+                        <option value="40">40%</option>
+                        <option value="50">50%</option>
+                        <option value="60">60%</option>
+                        <option value="70">70%</option>
+                        <option value="80">80%</option>
+                        <option value="90">90%</option>
+                        <option value="100" selected>100%</option>
+                    </select>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">协同人</label>
+                <div class="layui-input-inline" style="width: 240px;">
+                    <div id="collaboratorSelect"></div>
+                    <div id="legacyCollaboratorWarning" class="legacy-collaborator-warning">该订单存在历史多人协同人数据，请重新选择 1 个协同人后再保存。</div>
+                </div>
+                <label class="layui-form-label profit-rate-label">协同人占比</label>
+                <div class="layui-input-inline profit-rate-inline">
+                    <select name="collaborator_profit_rate" id="collaborator_profit_rate" lay-filter="collaborator_profit_rate">
+                        <option value="0" selected>0%</option>
+                        <option value="10">10%</option>
+                        <option value="20">20%</option>
+                        <option value="30">30%</option>
+                        <option value="40">40%</option>
+                        <option value="50">50%</option>
+                        <option value="60">60%</option>
+                        <option value="70">70%</option>
+                        <option value="80">80%</option>
+                        <option value="90">90%</option>
+                        <option value="100">100%</option>
+                    </select>
                 </div>
             </div>
             <!-- 询盘来源 -->
@@ -845,13 +922,6 @@
                 </div>
             </div>
 
-            <!-- 协同人多选下拉 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">协同人</label>
-                <div class="layui-input-4">
-                    <div id="collaboratorSelect"></div>
-                </div>
-            </div>
             <!-- 团队名称 -->
             <div class="layui-form-item">
                 <label class="layui-form-label">团队名称<span style="color:red;">*</span></label>
@@ -1191,7 +1261,126 @@
                     }
                 }
             });
-            // 初始化协同人多选下拉
+            var PROFIT_RATE_VALUES = ['0', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100'];
+
+            function normalizeProfitRate(value, fallback) {
+                var val = String(value == null ? '' : value).replace('%', '').trim();
+                if (PROFIT_RATE_VALUES.indexOf(val) === -1) return String(fallback);
+                return val;
+            }
+
+            function setProfitRates(ownerRate, collaboratorRate) {
+                $('#owner_profit_rate').val(String(ownerRate));
+                $('#collaborator_profit_rate').val(String(collaboratorRate));
+                form.render('select');
+            }
+
+            function syncByOwnerRate() {
+                var ownerRate = parseInt(normalizeProfitRate($('#owner_profit_rate').val(), 100), 10);
+                setProfitRates(ownerRate, 100 - ownerRate);
+            }
+
+            function syncByCollaboratorRate() {
+                var collaboratorRate = parseInt(normalizeProfitRate($('#collaborator_profit_rate').val(), 0), 10);
+                setProfitRates(100 - collaboratorRate, collaboratorRate);
+            }
+
+            function getSelectedJointPersonList() {
+                if (!window.collaboratorSelectInstance || typeof window.collaboratorSelectInstance.getValue !== 'function') {
+                    return [];
+                }
+                var jpVals = window.collaboratorSelectInstance.getValue('value');
+                if (!Array.isArray(jpVals) || jpVals.length < 1) return [];
+                return jpVals.map(function (id) {
+                    return String(id || '').trim();
+                }).filter(function (id) {
+                    return id !== '';
+                });
+            }
+
+            function getSelectedJointPerson() {
+                var selected = getSelectedJointPersonList();
+                return selected.length > 0 ? selected[0] : '';
+            }
+
+            function renderLegacyCollaboratorWarning(show) {
+                var $warning = $('#legacyCollaboratorWarning');
+                if (!$warning.length) return;
+                if (show) {
+                    $warning.show();
+                } else {
+                    $warning.hide();
+                }
+            }
+
+            function parseJointPersonToUniqueArray(rawValue) {
+                var values = [];
+                if (Array.isArray(rawValue)) {
+                    values = rawValue;
+                } else if (rawValue == null) {
+                    values = [];
+                } else if (typeof rawValue === 'string') {
+                    var text = rawValue.trim();
+                    if (!text) {
+                        values = [];
+                    } else if (text.charAt(0) === '[') {
+                        try {
+                            var parsed = JSON.parse(text);
+                            values = Array.isArray(parsed) ? parsed : [text];
+                        } catch (e) {
+                            values = text.indexOf(',') > -1 ? text.split(',') : [text];
+                        }
+                    } else if (text.indexOf(',') > -1) {
+                        values = text.split(',');
+                    } else {
+                        values = [text];
+                    }
+                } else {
+                    values = [rawValue];
+                }
+                return Array.from(new Set(values.map(function (item) {
+                    return String(item == null ? '' : item).trim();
+                }).filter(function (item) {
+                    return item !== '';
+                })));
+            }
+
+            function resolveEditJointPersonInitValue(rawJointPerson) {
+                var parsed = parseJointPersonToUniqueArray(rawJointPerson);
+                if (parsed.length > 1) {
+                    window.hasLegacyMultipleCollaborators = true;
+                    window.legacyCollaboratorResolved = false;
+                    renderLegacyCollaboratorWarning(true);
+                    return [];
+                }
+                window.hasLegacyMultipleCollaborators = false;
+                window.legacyCollaboratorResolved = true;
+                renderLegacyCollaboratorWarning(false);
+                return parsed.length === 1 ? [parsed[0]] : [];
+            }
+
+            window.enforceProfitRatesWhenNoCollaborator = function () {
+                var selectedJointPerson = getSelectedJointPerson();
+                if (!selectedJointPerson) {
+                    setProfitRates(100, 0);
+                }
+            };
+
+            form.on('select(owner_profit_rate)', function () {
+                syncByOwnerRate();
+                if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                    window.enforceProfitRatesWhenNoCollaborator();
+                }
+            });
+
+            form.on('select(collaborator_profit_rate)', function () {
+                syncByCollaboratorRate();
+                if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                    window.enforceProfitRatesWhenNoCollaborator();
+                }
+            });
+
+            // 初始化协同人单选下拉
             var collaboratorData = {$collaboratorList|raw};
             // 将协同人数据保存到全局，以便 changeyewu 函数可以访问
             window.collaboratorData = collaboratorData;
@@ -1202,7 +1391,23 @@
                 // layVerify: 'required',
                 tips: '请选择协同人员',
                 filterable: true,
-                clickClose: false,
+                radio: true,
+                clickClose: true,
+                on: function () {
+                    var selected = getSelectedJointPersonList();
+                    if (window.hasLegacyMultipleCollaborators) {
+                        if (selected.length === 1) {
+                            window.legacyCollaboratorResolved = true;
+                            renderLegacyCollaboratorWarning(false);
+                        } else {
+                            window.legacyCollaboratorResolved = false;
+                            renderLegacyCollaboratorWarning(true);
+                        }
+                    }
+                    if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
+                        window.enforceProfitRatesWhenNoCollaborator();
+                    }
+                },
                 data: collaboratorData
             });
             // 渲染现有的下拉框（包括产品名称、询盘来源等）
@@ -1717,6 +1922,8 @@
                 country: orderInfo.country || '',
                 client_company: orderInfo.client_company || '',
                 pr_user: orderInfo.pr_user || '{$username}',
+                owner_profit_rate: normalizeProfitRate(orderInfo.owner_profit_rate, 100),
+                collaborator_profit_rate: normalizeProfitRate(orderInfo.collaborator_profit_rate, 0),
                 team_name: orderInfo.team_name || '',
                 kh_username: orderInfo.kh_username || '',
                 source: orderInfo.source || '',
@@ -1791,33 +1998,14 @@
                 }
             }
             
-            // 协同人回显（xm-select）
-            if (orderInfo.joint_person && window.collaboratorSelectInstance) {
-                var jpArr = [];
-                if (typeof orderInfo.joint_person === 'string') {
-                    // 可能是 JSON 数组字符串或逗号分隔字符串
-                    var jpStr = orderInfo.joint_person.trim();
-                    if (jpStr[0] === '[') {
-                        try {
-                            jpArr = JSON.parse(jpStr);
-                        } catch(e) {
-                            jpArr = jpStr.split(',').filter(function(v) { return v !== ''; });
-                        }
-                    } else {
-                        jpArr = jpStr.split(',').filter(function(v) { return v !== ''; });
+            // 协同人回显（xm-select，兼容历史多人数据）
+            if (window.collaboratorSelectInstance) {
+                var initJointPersonValue = resolveEditJointPersonInitValue(orderInfo.joint_person);
+                setTimeout(function() {
+                    if (window.collaboratorSelectInstance && window.collaboratorSelectInstance.setValue) {
+                        window.collaboratorSelectInstance.setValue(initJointPersonValue);
                     }
-                } else if (Array.isArray(orderInfo.joint_person)) {
-                    jpArr = orderInfo.joint_person;
-                }
-                // 转换为字符串数组
-                jpArr = jpArr.map(function(id) { return String(id); }).filter(function(id) { return id !== ''; });
-                if (jpArr.length > 0) {
-                    setTimeout(function() {
-                        if (window.collaboratorSelectInstance && window.collaboratorSelectInstance.setValue) {
-                            window.collaboratorSelectInstance.setValue(jpArr);
-                        }
-                    }, 300);
-                }
+                }, 300);
             }
             
             // 产品明细回显
@@ -2653,6 +2841,40 @@
             data.field.money = $('#money').val() || '0';
             data.field.profit = $('#profit').val() || '0';
             data.field.margin_rate = $('#margin_rate').val() || '0';
+            var selectedJointPersons = getSelectedJointPersonList();
+            if (selectedJointPersons.length > 1) {
+                layer.msg('一个订单只能选择一个协同人，请重新选择后保存', { icon: 2, time: 2000 });
+                return false;
+            }
+            var selectedJointPerson = selectedJointPersons.length === 1 ? selectedJointPersons[0] : '';
+            data.field.joint_person = selectedJointPerson;
+            if (window.hasLegacyMultipleCollaborators && !window.legacyCollaboratorResolved) {
+                layer.msg('该订单存在历史多人协同人数据，请重新选择 1 个协同人后再保存。', { icon: 2, time: 2200 });
+                return false;
+            }
+            data.field.owner_profit_rate = normalizeProfitRate($('#owner_profit_rate').val(), 100);
+            data.field.collaborator_profit_rate = normalizeProfitRate($('#collaborator_profit_rate').val(), 0);
+            if (PROFIT_RATE_VALUES.indexOf(data.field.owner_profit_rate) === -1 || PROFIT_RATE_VALUES.indexOf(data.field.collaborator_profit_rate) === -1) {
+                layer.msg('利润占比只能按10%递增选择', { icon: 2, time: 2000 });
+                return false;
+            }
+            var ownerRateInt = parseInt(data.field.owner_profit_rate, 10);
+            var collaboratorRateInt = parseInt(data.field.collaborator_profit_rate, 10);
+            if (!selectedJointPerson) {
+                data.field.owner_profit_rate = '100';
+                data.field.collaborator_profit_rate = '0';
+                setProfitRates(100, 0);
+                ownerRateInt = 100;
+                collaboratorRateInt = 0;
+            }
+            if ((ownerRateInt + collaboratorRateInt) !== 100) {
+                layer.msg('负责人和协同人利润占比合计必须等于100%', { icon: 2, time: 2000 });
+                return false;
+            }
+            if (!selectedJointPerson && (ownerRateInt !== 100 || collaboratorRateInt !== 0)) {
+                layer.msg('未选择协同人时，负责人占比必须为100%，协同人占比必须为0%', { icon: 2, time: 2000 });
+                return false;
+            }
 
             // 检查联系方式是否已填写
             var contact = $("#contact").val();

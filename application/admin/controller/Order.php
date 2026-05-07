@@ -1903,7 +1903,7 @@ class Order extends Common
             }
             $data['ut_time']          = date("Y-m-d H:i:s");              // 更新操作时间
 
-            // 解析协同人 joint_person 字段（支持数组/JSON/逗号分隔字符串）
+            // 解析协同人 joint_person 字段（支持空字符串/单值/数组/JSON 数组/逗号分隔字符串）
             $jpRaw = Request::param('joint_person');
             $jpIds = [];
             if (is_array($jpRaw)) {
@@ -1912,27 +1912,53 @@ class Order extends Common
                 $jpRaw = trim($jpRaw);
                 if ($jpRaw !== '') {
                     if ($jpRaw[0] === '[') {
-                        // JSON 字符串
                         $tmp = json_decode($jpRaw, true);
                         if (is_array($tmp)) $jpIds = $tmp;
                     } else {
-                        // 逗号分隔字符串
-                        $jpIds = explode(',', $jpRaw);
+                        $jpIds = strpos($jpRaw, ',') !== false ? explode(',', $jpRaw) : [$jpRaw];
                     }
                 }
             }
-            // 保留数字字符并去重
+            // 保留数字字符并去重、去空
             $jpIds = array_values(array_unique(array_filter(array_map(function ($v) {
                 return preg_replace('/\D/', '', (string)$v);
             }, $jpIds), function ($v) {
                 return $v !== '';
             })));
-            $jpStr = implode(',', $jpIds);
-            // 若协同人超出字段长度限制则报错
-            if (strlen($jpStr) > 30) {
-                return json(['code' => -200, 'msg' => '协同人选择过多，超出存储限制']);
+
+            if (count($jpIds) > 1) {
+                return json(['code' => 0, 'msg' => '一个订单只能选择一个协同人，请重新选择后保存']);
             }
-            $data['joint_person'] = $jpStr;
+            $singleJointPerson = $jpIds[0] ?? '';
+            $data['joint_person'] = $singleJointPerson;
+
+            $allowedRates = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+            $ownerRateRaw = Request::param('owner_profit_rate', 100);
+            $collaboratorRateRaw = Request::param('collaborator_profit_rate', 0);
+
+            $ownerRateText = trim(str_replace('%', '', (string)$ownerRateRaw));
+            $collaboratorRateText = trim(str_replace('%', '', (string)$collaboratorRateRaw));
+            if (!is_numeric($ownerRateText) || !is_numeric($collaboratorRateText)) {
+                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+            }
+            $ownerRateFloat = (float)$ownerRateText;
+            $collaboratorRateFloat = (float)$collaboratorRateText;
+            if (abs($ownerRateFloat - round($ownerRateFloat)) > 0.000001 || abs($collaboratorRateFloat - round($collaboratorRateFloat)) > 0.000001) {
+                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+            }
+            $ownerRate = (int)round($ownerRateFloat);
+            $collaboratorRate = (int)round($collaboratorRateFloat);
+            if (!in_array($ownerRate, $allowedRates, true) || !in_array($collaboratorRate, $allowedRates, true)) {
+                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+            }
+            if (($ownerRate + $collaboratorRate) !== 100) {
+                return json(['code' => 0, 'msg' => '负责人和协同人利润占比合计必须等于100%']);
+            }
+            if ($singleJointPerson === '' && ($ownerRate !== 100 || $collaboratorRate !== 0)) {
+                return json(['code' => 0, 'msg' => '未选择协同人时，负责人占比必须为100%，协同人占比必须为0%']);
+            }
+            $data['owner_profit_rate'] = number_format($ownerRate, 2, '.', '');
+            $data['collaborator_profit_rate'] = number_format($collaboratorRate, 2, '.', '');
 
             // ====== 获取并处理明细表字段（产品明细多行） ======
             $productIds     = Request::param('product_name/a');    // ★ 产品ID数组（对应每行产品）
