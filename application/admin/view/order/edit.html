@@ -187,7 +187,11 @@
         }
 
         .profit-rate-label {
-            width: 90px !important;
+            width: 110px !important;
+            min-width: 110px !important;
+            white-space: nowrap;
+            overflow: visible;
+            text-overflow: clip;
             text-align: right !important;
             padding-right: 10px !important;
         }
@@ -1313,6 +1317,18 @@
                 }
             }
 
+            function syncLegacyCollaboratorStateBySelection(selectedJointPersons) {
+                var selected = Array.isArray(selectedJointPersons) ? selectedJointPersons : getSelectedJointPersonList();
+                var selectedLen = selected.length;
+                window.legacyCollaboratorResolved = selectedLen === 1;
+                if (window.hasLegacyMultipleCollaborators) {
+                    renderLegacyCollaboratorWarning(selectedLen !== 1);
+                } else if (selectedLen === 1) {
+                    renderLegacyCollaboratorWarning(false);
+                }
+                return selected;
+            }
+
             function parseJointPersonToUniqueArray(rawValue) {
                 var values = [];
                 if (Array.isArray(rawValue)) {
@@ -1395,15 +1411,7 @@
                 clickClose: true,
                 on: function () {
                     var selected = getSelectedJointPersonList();
-                    if (window.hasLegacyMultipleCollaborators) {
-                        if (selected.length === 1) {
-                            window.legacyCollaboratorResolved = true;
-                            renderLegacyCollaboratorWarning(false);
-                        } else {
-                            window.legacyCollaboratorResolved = false;
-                            renderLegacyCollaboratorWarning(true);
-                        }
-                    }
+                    syncLegacyCollaboratorStateBySelection(selected);
                     if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
                         window.enforceProfitRatesWhenNoCollaborator();
                     }
@@ -2842,16 +2850,17 @@
             data.field.profit = $('#profit').val() || '0';
             data.field.margin_rate = $('#margin_rate').val() || '0';
             var selectedJointPersons = getSelectedJointPersonList();
+            syncLegacyCollaboratorStateBySelection(selectedJointPersons);
             if (selectedJointPersons.length > 1) {
                 layer.msg('一个订单只能选择一个协同人，请重新选择后保存', { icon: 2, time: 2000 });
                 return false;
             }
-            var selectedJointPerson = selectedJointPersons.length === 1 ? selectedJointPersons[0] : '';
-            data.field.joint_person = selectedJointPerson;
-            if (window.hasLegacyMultipleCollaborators && !window.legacyCollaboratorResolved) {
+            if (window.hasLegacyMultipleCollaborators && selectedJointPersons.length !== 1) {
                 layer.msg('该订单存在历史多人协同人数据，请重新选择 1 个协同人后再保存。', { icon: 2, time: 2200 });
                 return false;
             }
+            var selectedJointPerson = selectedJointPersons.length === 1 ? selectedJointPersons[0] : '';
+            data.field.joint_person = selectedJointPersons.length === 1 ? selectedJointPersons[0] : '';
             data.field.owner_profit_rate = normalizeProfitRate($('#owner_profit_rate').val(), 100);
             data.field.collaborator_profit_rate = normalizeProfitRate($('#collaborator_profit_rate').val(), 0);
             if (PROFIT_RATE_VALUES.indexOf(data.field.owner_profit_rate) === -1 || PROFIT_RATE_VALUES.indexOf(data.field.collaborator_profit_rate) === -1) {
@@ -3054,9 +3063,26 @@
             $.post("{:url('Order/edit')}", data.field, function (res) {
                 if (res.code === 0) {
                     layer.msg(res.msg, { time: 2000 }, function () {
-                        var idx = parent.layer.getFrameIndex(window.name);
-                        if (idx >= 0) parent.layer.close(idx);
-                        if (parent.layui && parent.layui.table) parent.layui.table.reload('table-list');
+                        var parentLayer = parent && parent.layer ? parent.layer : null;
+                        var parentLayui = parent && parent.layui ? parent.layui : null;
+
+                        if (parentLayui && parentLayui.table && typeof parentLayui.table.reload === 'function') {
+                            try {
+                                parentLayui.table.reload('table-list');
+                            } catch (e) {
+                                console.warn('父页面表格刷新失败，改用页面刷新兜底', e);
+                                if (parent && parent.location) parent.location.reload();
+                            }
+                        } else if (parent && parent.location) {
+                            parent.location.reload();
+                        }
+
+                        if (parentLayer) {
+                            var index = parentLayer.getFrameIndex(window.name);
+                            if (typeof index === 'number' && index >= 0) {
+                                parentLayer.close(index);
+                            }
+                        }
                     });
                 } else {
                     // ===== 防重复提交：BEGIN =====
