@@ -881,7 +881,7 @@ class Order extends Common
             $data['order_no']         = date("YmdHis") . rand(1000, 9999);
 
 
-            // 3) 解析并写入协同人（joint_person），支持 数组 / JSON / 逗号分隔
+            // 3) 解析并写入协同人（joint_person），兼容数组/JSON/逗号分隔，但仅允许 0/1 人
             $jpRaw = Request::param('joint_person');
             $jpIds = [];
             if (is_array($jpRaw)) {
@@ -903,13 +903,48 @@ class Order extends Common
             }, $jpIds), function ($v) {
                 return $v !== '';
             })));
-            $jpStr = implode(',', $jpIds);
-            // 若你的 joint_person 仍为 varchar(30)，做长度保护（推荐把字段扩为 varchar(255)）
-            if (strlen($jpStr) > 30) {
+
+            if (count($jpIds) > 1) {
                 $this->redisUnLock();
-                return fail('协同人过多，超出存储限制（请减少选择或扩大 joint_person 字段长度）');
+                return json(['code' => 0, 'msg' => '一个订单只能选择一个协同人']);
             }
-            $data['joint_person'] = $jpStr;
+            $singleJointPerson = $jpIds[0] ?? '';
+            $data['joint_person'] = $singleJointPerson;
+
+            $allowedRates = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+            $ownerRateRaw = Request::param('owner_profit_rate', 100);
+            $collaboratorRateRaw = Request::param('collaborator_profit_rate', 0);
+
+            $ownerRateText = trim(str_replace('%', '', (string)$ownerRateRaw));
+            $collaboratorRateText = trim(str_replace('%', '', (string)$collaboratorRateRaw));
+            if (!is_numeric($ownerRateText) || !is_numeric($collaboratorRateText)) {
+                $this->redisUnLock();
+                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+            }
+            $ownerRateFloat = (float)$ownerRateText;
+            $collaboratorRateFloat = (float)$collaboratorRateText;
+            if (abs($ownerRateFloat - round($ownerRateFloat)) > 0.000001 || abs($collaboratorRateFloat - round($collaboratorRateFloat)) > 0.000001) {
+                $this->redisUnLock();
+                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+            }
+            $ownerRate = (int)round($ownerRateFloat);
+            $collaboratorRate = (int)round($collaboratorRateFloat);
+
+            if (!in_array($ownerRate, $allowedRates, true) || !in_array($collaboratorRate, $allowedRates, true)) {
+                $this->redisUnLock();
+                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+            }
+            if (($ownerRate + $collaboratorRate) !== 100) {
+                $this->redisUnLock();
+                return json(['code' => 0, 'msg' => '负责人和协同人利润占比合计必须等于100%']);
+            }
+            if ($singleJointPerson === '' && ($ownerRate !== 100 || $collaboratorRate !== 0)) {
+                $this->redisUnLock();
+                return json(['code' => 0, 'msg' => '未选择协同人时，负责人占比必须为100%，协同人占比必须为0%']);
+            }
+
+            $data['owner_profit_rate'] = number_format($ownerRate, 2, '.', '');
+            $data['collaborator_profit_rate'] = number_format($collaboratorRate, 2, '.', '');
 
 
 

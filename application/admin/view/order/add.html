@@ -582,9 +582,26 @@
                         var custPrUserId = String(result['msg']['pr_user_id'] || '');
                         var jointPersonIds = result['msg']['joint_person'] || [];
                         var isLoginCollaborator = String(result['msg']['is_login_collaborator'] || '0');
+
+                        var jointPersonList = [];
+                        if (Array.isArray(jointPersonIds)) {
+                            jointPersonList = jointPersonIds;
+                        } else if (typeof jointPersonIds === 'string') {
+                            var jpText = jointPersonIds.trim();
+                            if (jpText) {
+                                if (jpText.charAt(0) === '[') {
+                                    try {
+                                        var parsedJp = JSON.parse(jpText);
+                                        if (Array.isArray(parsedJp)) jointPersonList = parsedJp;
+                                    } catch (e) {}
+                                } else {
+                                    jointPersonList = jpText.split(',');
+                                }
+                            }
+                        }
                         
                         // 把 jointPersonIds 全部转 string，并过滤空
-                        var jp = (jointPersonIds || []).map(function(x) {
+                        var jp = (jointPersonList || []).map(function(x) {
                             return String(x);
                         }).filter(function(x) {
                             return x && x !== '';
@@ -605,9 +622,13 @@
                         // 最后去重
                         jp = Array.from(new Set(jp));
                         
-                        // 使用处理后的协同人列表渲染 xmSelect（即使为空也渲染，确保组件正常）
+                        // 使用处理后的协同人列表渲染 xmSelect（单选）
                         // 使用 setTimeout 确保 xmSelect 已初始化
                         setTimeout(function() {
+                            var singleJp = '';
+                            if (jp.length > 0) {
+                                singleJp = jp[0];
+                            }
                             // 重新渲染 xmSelect 组件，设置初始值
                             if (window.collaboratorSelectInstance) {
                                 // 销毁旧实例
@@ -621,8 +642,12 @@
                                     //layVerify: 'required',
                                     tips: '请选择协同人员',
                                     filterable: true,
-                                    clickClose: false,
-                                    initValue: jp,
+                                    radio: true,
+                                    clickClose: true,
+                                    initValue: singleJp ? [singleJp] : [],
+                                    on: function () {
+                                        enforceProfitRatesWhenNoCollaborator();
+                                    },
                                     data: window.collaboratorData || []
                                 });
                             }
@@ -766,10 +791,48 @@
             </div>
             <div class="layui-form-item">
                 <label class="layui-form-label">客户负责人<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
+                <div class="layui-input-inline" style="width: 240px;">
                     <input type="text" id="pr_user" name="pr_user" lay-verify="required" value="{$username}"
                         class="layui-input" readonly>
                     <input type="hidden" id="login_admin_id" value="{$Think.session.aid}">
+                </div>
+                <label class="layui-form-label" style="width: 90px;">负责人占比</label>
+                <div class="layui-input-inline" style="width: 120px;">
+                    <select name="owner_profit_rate" id="owner_profit_rate" lay-filter="owner_profit_rate">
+                        <option value="0">0%</option>
+                        <option value="10">10%</option>
+                        <option value="20">20%</option>
+                        <option value="30">30%</option>
+                        <option value="40">40%</option>
+                        <option value="50">50%</option>
+                        <option value="60">60%</option>
+                        <option value="70">70%</option>
+                        <option value="80">80%</option>
+                        <option value="90">90%</option>
+                        <option value="100" selected>100%</option>
+                    </select>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">协同人</label>
+                <div class="layui-input-inline" style="width: 240px;">
+                    <div id="collaboratorSelect"></div>
+                </div>
+                <label class="layui-form-label" style="width: 90px;">协同人占比</label>
+                <div class="layui-input-inline" style="width: 120px;">
+                    <select name="collaborator_profit_rate" id="collaborator_profit_rate" lay-filter="collaborator_profit_rate">
+                        <option value="0" selected>0%</option>
+                        <option value="10">10%</option>
+                        <option value="20">20%</option>
+                        <option value="30">30%</option>
+                        <option value="40">40%</option>
+                        <option value="50">50%</option>
+                        <option value="60">60%</option>
+                        <option value="70">70%</option>
+                        <option value="80">80%</option>
+                        <option value="90">90%</option>
+                        <option value="100">100%</option>
+                    </select>
                 </div>
             </div>
             <!-- 询盘来源 -->
@@ -806,13 +869,6 @@
                 </div>
             </div>
            
-            <!-- 协同人多选下拉 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">协同人</label>
-                <div class="layui-input-4">
-                    <div id="collaboratorSelect"></div>
-                </div>
-            </div>
             <!-- 团队名称 -->
             <div class="layui-form-item">
                 <label class="layui-form-label">团队名称<span style="color:red;">*</span></label>
@@ -1161,7 +1217,56 @@
                     }
                 }
             });
-            // 初始化协同人多选下拉
+            var PROFIT_RATE_VALUES = ['0', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100'];
+
+            function normalizeProfitRate(value, fallback) {
+                var val = String(value == null ? '' : value).replace('%', '').trim();
+                if (PROFIT_RATE_VALUES.indexOf(val) === -1) return String(fallback);
+                return val;
+            }
+
+            function getSelectedJointPerson() {
+                if (!window.collaboratorSelectInstance || typeof window.collaboratorSelectInstance.getValue !== 'function') {
+                    return '';
+                }
+                var jpVals = window.collaboratorSelectInstance.getValue('value');
+                if (!Array.isArray(jpVals) || jpVals.length < 1) return '';
+                return String(jpVals[0] || '').trim();
+            }
+
+            function setProfitRates(ownerRate, collaboratorRate) {
+                $('#owner_profit_rate').val(String(ownerRate));
+                $('#collaborator_profit_rate').val(String(collaboratorRate));
+                form.render('select');
+            }
+
+            function syncByOwnerRate() {
+                var ownerRate = parseInt(normalizeProfitRate($('#owner_profit_rate').val(), 100), 10);
+                setProfitRates(ownerRate, 100 - ownerRate);
+            }
+
+            function syncByCollaboratorRate() {
+                var collaboratorRate = parseInt(normalizeProfitRate($('#collaborator_profit_rate').val(), 0), 10);
+                setProfitRates(100 - collaboratorRate, collaboratorRate);
+            }
+
+            function enforceProfitRatesWhenNoCollaborator() {
+                if (!getSelectedJointPerson()) {
+                    setProfitRates(100, 0);
+                }
+            }
+
+            form.on('select(owner_profit_rate)', function () {
+                syncByOwnerRate();
+                enforceProfitRatesWhenNoCollaborator();
+            });
+
+            form.on('select(collaborator_profit_rate)', function () {
+                syncByCollaboratorRate();
+                enforceProfitRatesWhenNoCollaborator();
+            });
+
+            // 初始化协同人单选下拉
             var collaboratorData = {$collaboratorList|raw};
             // 将协同人数据保存到全局，以便 changeyewu 函数可以访问
             window.collaboratorData = collaboratorData;
@@ -1172,9 +1277,14 @@
                 // layVerify: 'required',
                 tips: '请选择协同人员',
                 filterable: true,
-                clickClose: false,
+                radio: true,
+                clickClose: true,
+                on: function () {
+                    enforceProfitRatesWhenNoCollaborator();
+                },
                 data: collaboratorData
             });
+            enforceProfitRatesWhenNoCollaborator();
             // 渲染现有的下拉框（包括产品名称、询盘来源等）
             form.render('select');
 
@@ -1266,14 +1376,31 @@
                 if (formData.invoice_type) $('select[name="invoice_type"]').val(formData.invoice_type);
                 if (formData.team_name) $('select[name="team_name"]').val(formData.team_name);
                 if (formData.order_time) $('#orderTime').val(formData.order_time);
+                if (formData.owner_profit_rate !== undefined) {
+                    $('#owner_profit_rate').val(normalizeProfitRate(formData.owner_profit_rate, 100));
+                }
+                if (formData.collaborator_profit_rate !== undefined) {
+                    $('#collaborator_profit_rate').val(normalizeProfitRate(formData.collaborator_profit_rate, 0));
+                }
                 form.render('select');
                 updateCustomerTypeUI($('select[name="customer_type_flag"]').val());
                 updateInvoiceUI($('select[name="invoice_type"]').val());
-                if (window.collaboratorSelectInstance && Array.isArray(formData.joint_person)) {
+                if (window.collaboratorSelectInstance) {
                     try {
-                        window.collaboratorSelectInstance.setValue(formData.joint_person);
+                        var jp = [];
+                        if (Array.isArray(formData.joint_person)) {
+                            jp = formData.joint_person;
+                        } else if (typeof formData.joint_person === 'string' && formData.joint_person.trim() !== '') {
+                            jp = formData.joint_person.split(',');
+                        }
+                        var singleJp = '';
+                        if (jp.length > 0) {
+                            singleJp = String(jp[0] || '').trim();
+                        }
+                        window.collaboratorSelectInstance.setValue(singleJp ? [singleJp] : []);
                     } catch (e) { console.debug('joint_person setValue:', e); }
                 }
+                enforceProfitRatesWhenNoCollaborator();
                 if (Array.isArray(formData.order_items) && formData.order_items.length > 0) {
                     var $tbody = $('#productTableBody');
                     var cache = window.__optCache;
@@ -1351,7 +1478,13 @@
                 });
                 if (window.collaboratorSelectInstance && typeof window.collaboratorSelectInstance.getValue === 'function') {
                     var jpVals = window.collaboratorSelectInstance.getValue('value');
-                    if (Array.isArray(jpVals)) payload.joint_person = jpVals;
+                    payload.joint_person = (Array.isArray(jpVals) && jpVals.length > 0) ? String(jpVals[0] || '') : '';
+                }
+                payload.owner_profit_rate = normalizeProfitRate(payload.owner_profit_rate, 100);
+                payload.collaborator_profit_rate = normalizeProfitRate(payload.collaborator_profit_rate, 0);
+                if (!payload.joint_person) {
+                    payload.owner_profit_rate = '100';
+                    payload.collaborator_profit_rate = '0';
                 }
                 return payload;
             }
@@ -2681,6 +2814,29 @@
             data.field.money = $('#money').val() || '0';
             data.field.profit = $('#profit').val() || '0';
             data.field.margin_rate = $('#margin_rate').val() || '0';
+            var selectedJointPerson = getSelectedJointPerson();
+            data.field.joint_person = selectedJointPerson;
+            data.field.owner_profit_rate = normalizeProfitRate($('#owner_profit_rate').val(), 100);
+            data.field.collaborator_profit_rate = normalizeProfitRate($('#collaborator_profit_rate').val(), 0);
+            if (!selectedJointPerson) {
+                data.field.owner_profit_rate = '100';
+                data.field.collaborator_profit_rate = '0';
+                setProfitRates(100, 0);
+            }
+            var ownerRateInt = parseInt(data.field.owner_profit_rate, 10);
+            var collaboratorRateInt = parseInt(data.field.collaborator_profit_rate, 10);
+            if (PROFIT_RATE_VALUES.indexOf(data.field.owner_profit_rate) === -1 || PROFIT_RATE_VALUES.indexOf(data.field.collaborator_profit_rate) === -1) {
+                layer.msg('利润占比只能按10%递增选择', { icon: 2, time: 2000 });
+                return false;
+            }
+            if ((ownerRateInt + collaboratorRateInt) !== 100) {
+                layer.msg('负责人和协同人利润占比合计必须等于100%', { icon: 2, time: 2000 });
+                return false;
+            }
+            if (!selectedJointPerson && (ownerRateInt !== 100 || collaboratorRateInt !== 0)) {
+                layer.msg('未选择协同人时，负责人占比必须为100%，协同人占比必须为0%', { icon: 2, time: 2000 });
+                return false;
+            }
 
             // 检查联系方式是否已填写
             var contact = $("#contact").val();
