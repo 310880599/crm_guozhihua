@@ -1239,6 +1239,43 @@
             window.__ORDER_SUBMITTING__ = false;
             var __ORDER_SUBMIT_LOADING_INDEX__ = null;
             var __ORDER_SUBMIT_BTN_TEXT__ = '';
+            function resetOrderSubmitState($submitBtn) {
+                window.__ORDER_SUBMITTING__ = false;
+                if (__ORDER_SUBMIT_LOADING_INDEX__ !== null) {
+                    layer.close(__ORDER_SUBMIT_LOADING_INDEX__);
+                    __ORDER_SUBMIT_LOADING_INDEX__ = null;
+                }
+                if ($submitBtn && $submitBtn.length) {
+                    $submitBtn.attr('disabled', false)
+                        .removeClass('layui-btn-disabled')
+                        .text(__ORDER_SUBMIT_BTN_TEXT__ || '提交保存');
+                }
+            }
+
+            function closeCurrentOrderEditLayer() {
+                try {
+                    if (window.parent && window.parent !== window && window.parent.layer) {
+                        var index = window.parent.layer.getFrameIndex(window.name);
+
+                        if (index !== null && index !== undefined && index !== '') {
+                            window.parent.layer.close(index);
+                            return true;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('关闭父级 layer 弹窗失败', e);
+                }
+
+                // 兜底：如果不是 layer iframe 打开的，就返回上一页或关闭当前窗口
+                try {
+                    if (window.history.length > 1) {
+                        window.history.back();
+                        return true;
+                    }
+                } catch (e2) {}
+
+                return false;
+            }
             // ===== 防重复提交：END =====
             // 日期控件初始化
             laydate.render({
@@ -3062,52 +3099,30 @@
             // ===== 防重复提交：END =====
             $.post("{:url('Order/edit')}", data.field, function (res) {
                 if (res.code === 0) {
-                    layer.msg(res.msg, { time: 2000 }, function () {
-                        var parentLayer = parent && parent.layer ? parent.layer : null;
-                        var parentLayui = parent && parent.layui ? parent.layui : null;
+                    resetOrderSubmitState($submitBtn);
+                    layer.msg(res.msg || '编辑成功！', { time: 800, icon: 1 }, function () {
+                        closeCurrentOrderEditLayer();
 
-                        if (parentLayui && parentLayui.table && typeof parentLayui.table.reload === 'function') {
+                        setTimeout(function () {
                             try {
-                                parentLayui.table.reload('table-list');
+                                if (window.parent && window.parent !== window) {
+                                    if (window.parent.layui && window.parent.layui.table) {
+                                        window.parent.layui.table.reload('table-list');
+                                    } else {
+                                        window.parent.location.reload();
+                                    }
+                                }
                             } catch (e) {
-                                console.warn('父页面表格刷新失败，改用页面刷新兜底', e);
-                                if (parent && parent.location) parent.location.reload();
+                                console.warn('刷新父页面失败', e);
                             }
-                        } else if (parent && parent.location) {
-                            parent.location.reload();
-                        }
-
-                        if (parentLayer) {
-                            var index = parentLayer.getFrameIndex(window.name);
-                            if (typeof index === 'number' && index >= 0) {
-                                parentLayer.close(index);
-                            }
-                        }
+                        }, 150);
                     });
                 } else {
-                    // ===== 防重复提交：BEGIN =====
-                    window.__ORDER_SUBMITTING__ = false;
-                    if (__ORDER_SUBMIT_LOADING_INDEX__ !== null) {
-                        layer.close(__ORDER_SUBMIT_LOADING_INDEX__);
-                        __ORDER_SUBMIT_LOADING_INDEX__ = null;
-                    }
-                    if ($submitBtn.length) {
-                        $submitBtn.attr('disabled', false).removeClass('layui-btn-disabled').text(__ORDER_SUBMIT_BTN_TEXT__ || '提交保存');
-                    }
-                    // ===== 防重复提交：END =====
-                    layer.msg(res.msg, { time: 2000 });
+                    resetOrderSubmitState($submitBtn);
+                    layer.msg(res.msg || '编辑失败，请重试', { time: 2000 });
                 }
             }, 'json').fail(function () {
-                // ===== 防重复提交：BEGIN =====
-                window.__ORDER_SUBMITTING__ = false;
-                if (__ORDER_SUBMIT_LOADING_INDEX__ !== null) {
-                    layer.close(__ORDER_SUBMIT_LOADING_INDEX__);
-                    __ORDER_SUBMIT_LOADING_INDEX__ = null;
-                }
-                if ($submitBtn.length) {
-                    $submitBtn.attr('disabled', false).removeClass('layui-btn-disabled').text(__ORDER_SUBMIT_BTN_TEXT__ || '提交保存');
-                }
-                // ===== 防重复提交：END =====
+                resetOrderSubmitState($submitBtn);
                 layer.msg('订单提交失败：网络错误，请重试', { icon: 2, time: 2000 });
             });
             return false;
