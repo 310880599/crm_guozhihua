@@ -43,7 +43,7 @@ class ClientStatusService
         }
 
         $targetIds = array_column($clientRows, 'id');
-        $utTime = time();
+        $utTime = date('Y-m-d H:i:s');
 
         Db::startTrans();
         try {

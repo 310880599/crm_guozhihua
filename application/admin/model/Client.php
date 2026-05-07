@@ -152,7 +152,7 @@ class Client extends Model
     /**
      * 批量更新客户成交状态（仅更新有效客户且当前状态匹配的数据）
      */
-    public function batchUpdateIsSuccess(array $ids, int $fromIsSuccess, int $toIsSuccess, int $utTime, int $status = 1)
+    public function batchUpdateIsSuccess(array $ids, int $fromIsSuccess, int $toIsSuccess, string $utTime, int $status = 1)
     {
         if (empty($ids)) {
             return 0;
