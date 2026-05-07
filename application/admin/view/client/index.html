@@ -633,6 +633,7 @@
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="alterAll" lay-event="alterAll"><i class="layui-icon">&#xe60e;</i>转移客户</button>
     {if session('aid') eq 1}    
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="chengjiaoAll" lay-event="chengjiaoAll"><i class="layui-icon">&#xe63c;</i>客户成交</button>
+    <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" id="batchClientUnSuccess"><i class="layui-icon">&#xe605;</i>客户未成交</button>
     <button type="button" id="delAlls" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" lay-event="delAlls"><i class="layui-icon">&#xe640;</i>选中删除</button>
     {/if}    
 </script>
@@ -1563,6 +1564,32 @@
                     shadeClose: false,
                     maxmin: false,
                     content: ["{:url('Client/add')}"]
+                });
+            });
+
+            // 批量改为未成交（兼容现有 layui table 多选逻辑）
+            $('body').on('click', '#batchClientUnSuccess', function () {
+                var checkStatus = table.checkStatus('table-list');
+                var data = checkStatus.data || [];
+                if (data.length === 0) {
+                    layer.msg('请选择客户');
+                    return;
+                }
+
+                var ids = data.map(function (item) {
+                    return item.id;
+                });
+
+                layer.confirm('确认将选中的客户改为未成交客户吗？', function (index) {
+                    $.post("{:url('Client/batchClientUnSuccess')}", { ids: ids }, function (res) {
+                        if (res.code === 0) {
+                            layer.msg(res.msg, { time: 1000, icon: 1 });
+                            reloadKeepColWidth();
+                        } else {
+                            layer.msg(res.msg || '操作失败', { time: 1500, icon: 2 });
+                        }
+                    });
+                    layer.close(index);
                 });
             });
 

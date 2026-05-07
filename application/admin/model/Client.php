@@ -127,6 +127,47 @@ class Client extends Model
             ->find();
     }
 
+    /**
+     * 按指定状态获取可批量变更的客户基础信息
+     */
+    public function getBatchStatusClients(array $ids, int $fromIsSuccess, int $status = 1): array
+    {
+        if (empty($ids)) {
+            return [];
+        }
+
+        $rows = Db::table('crm_leads')
+            ->where('id', 'in', $ids)
+            ->where('status', $status)
+            ->where('issuccess', $fromIsSuccess)
+            ->field('id,kh_name,issuccess,status')
+            ->select();
+
+        if (is_object($rows) && method_exists($rows, 'toArray')) {
+            return $rows->toArray();
+        }
+        return is_array($rows) ? $rows : [];
+    }
+
+    /**
+     * 批量更新客户成交状态（仅更新有效客户且当前状态匹配的数据）
+     */
+    public function batchUpdateIsSuccess(array $ids, int $fromIsSuccess, int $toIsSuccess, int $utTime, int $status = 1)
+    {
+        if (empty($ids)) {
+            return 0;
+        }
+
+        return Db::table('crm_leads')
+            ->where('id', 'in', $ids)
+            ->where('status', $status)
+            ->where('issuccess', $fromIsSuccess)
+            ->update([
+                'issuccess' => $toIsSuccess,
+                'ut_time' => $utTime
+            ]);
+    }
+
     //查询
     public function getClientSearchList($page, $limit, $keyword)
     {

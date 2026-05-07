@@ -13,6 +13,7 @@ use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
 use app\admin\service\ClientDetailService;
 use app\admin\service\ClientFollowService;
+use app\admin\service\ClientStatusService;
 use app\admin\service\OrderService;
 use app\admin\service\PositionTitleService;
 use app\admin\service\SuccessClientOrderService;
@@ -5059,24 +5060,69 @@ class Client extends Common
     //客户成交
     public function chengjiao()
     {
-        $ids = Request::param('ids');
-        if (is_string($ids)) $ids = explode(',', $ids);
-        $count = 0;
-        foreach ($ids as $key => $value) {
-            $data['issuccess'] = 1;
-            $data['id'] = $value;
-            $insertAll = Db::name('crm_leads')->update($data);
-            if ($insertAll) {
-                $count++;
-            }
+        if (!Request::isPost()) {
+            return json([
+                'code' => 1,
+                'msg' => '请求方式错误'
+            ]);
         }
-        if ($count > 0) {
-            $msg = ['code' => 0, 'msg' => '成交' . $count . '个客户成功！', 'data' => []];
-            return json($msg);
-        } else {
-            $msg = ['code' => 500, 'msg' => '成交失败！', 'data' => []];
-            return json($msg);
+
+        $ids = Request::param('ids', []);
+        if (is_string($ids)) {
+            $ids = explode(',', $ids);
         }
+
+        $service = new ClientStatusService();
+        $result = $service->batchClientSuccess((array)$ids);
+        if ((int)($result['code'] ?? 1) === 0) {
+            return json([
+                'code' => 0,
+                'msg' => $result['msg'] ?? '操作成功'
+            ]);
+        }
+
+        return json([
+            'code' => 1,
+            'msg' => $result['msg'] ?? '操作失败'
+        ]);
+    }
+
+    /**
+     * 批量客户未成交：仅允许 POST
+     */
+    public function batchClientUnSuccess()
+    {
+        if (!Request::isPost()) {
+            return json([
+                'code' => 1,
+                'msg' => '请求方式错误'
+            ]);
+        }
+
+        $ids = Request::param('ids', []);
+        if (is_string($ids)) {
+            $ids = explode(',', $ids);
+        }
+        if (empty($ids)) {
+            return json([
+                'code' => 1,
+                'msg' => '请选择客户'
+            ]);
+        }
+
+        $service = new ClientStatusService();
+        $result = $service->batchClientUnSuccess((array)$ids);
+        if ((int)($result['code'] ?? 1) === 0) {
+            return json([
+                'code' => 0,
+                'msg' => $result['msg'] ?? '操作成功'
+            ]);
+        }
+
+        return json([
+            'code' => 1,
+            'msg' => $result['msg'] ?? '操作失败'
+        ]);
     }
 
 
