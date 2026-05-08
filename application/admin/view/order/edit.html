@@ -1840,7 +1840,9 @@
                 $('#inquiry_assign_image').attr('lay-verify', 'required');
             }
 
-            form.render();
+            // 只重渲染 select，避免 form.render() 无参数时重新初始化
+            // .layui-upload 容器，导致上传按钮/容器 DOM 被清除
+            form.render('select');
         }
         
         // 用户属性(customer_type_flag)显隐与校验：统一函数，避免 val 回填但 UI 不动
@@ -1855,7 +1857,7 @@
                 $('#client_company').val('');
                 $('#companyList').hide();
             }
-            form.render();
+            form.render('select');
         }
         
         // 票种性质(invoice_type)显隐与校验：统一函数，避免 val 回填但 UI 不动
@@ -1869,7 +1871,7 @@
                 $('#invoice_amount_item').show();
                 $('#invoice_amount').attr('lay-verify', 'required');
             }
-            form.render();
+            form.render('select');
         }
         
         // 用户属性选择变化时的处理
@@ -3091,6 +3093,11 @@
                     return String(u || '').trim() !== '';
                 });
                 if (wechatReceiptArray.length < 1) {
+                    // 确保上传区域及按钮保持可见，让用户可以重新上传
+                    $('#wechat_receipt_item').show();
+                    $('#inquiry_assign_item').show();
+                    if (typeof updateWechatReceiptText === 'function') updateWechatReceiptText();
+                    if (typeof updateInquiryAssignText === 'function') updateInquiryAssignText();
                     layer.msg('利润达到2000元及以上，必须上传微信沟通及付款凭证', { icon: 2, time: 2200 });
                     return false;
                 }
@@ -3106,6 +3113,11 @@
                     return String(u || '').trim() !== '';
                 });
                 if (inquiryAssignArray.length < 1) {
+                    // 确保上传区域及按钮保持可见，让用户可以重新上传
+                    $('#wechat_receipt_item').show();
+                    $('#inquiry_assign_item').show();
+                    if (typeof updateWechatReceiptText === 'function') updateWechatReceiptText();
+                    if (typeof updateInquiryAssignText === 'function') updateInquiryAssignText();
                     layer.msg('利润达到2000元及以上，必须上传询盘来源凭证', { icon: 2, time: 2200 });
                     return false;
                 }
@@ -3162,11 +3174,25 @@
                     });
                 } else {
                     resetOrderSubmitState($submitBtn);
+                    // 后端报错后，确保上传区域及按钮保持可见，用户可继续重新上传
+                    if (typeof isVoucherExempt === 'function' && !isVoucherExempt()) {
+                        $('#wechat_receipt_item').show();
+                        $('#inquiry_assign_item').show();
+                    }
+                    if (typeof updateWechatReceiptText === 'function') updateWechatReceiptText();
+                    if (typeof updateInquiryAssignText === 'function') updateInquiryAssignText();
                     layer.msg(res.msg || '编辑失败，请重试', { time: 2000 });
                     return false;
                 }
             }, 'json').fail(function () {
                 resetOrderSubmitState($submitBtn);
+                // 网络失败后同样恢复上传区域状态
+                if (typeof isVoucherExempt === 'function' && !isVoucherExempt()) {
+                    $('#wechat_receipt_item').show();
+                    $('#inquiry_assign_item').show();
+                }
+                if (typeof updateWechatReceiptText === 'function') updateWechatReceiptText();
+                if (typeof updateInquiryAssignText === 'function') updateInquiryAssignText();
                 layer.msg('订单提交失败：网络错误，请重试', { icon: 2, time: 2000 });
             });
             return false;
