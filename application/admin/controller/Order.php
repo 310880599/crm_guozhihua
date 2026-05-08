@@ -3024,6 +3024,11 @@ class Order extends Common
         }
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
 
+        // 详情页专用展示字段（只读）：协同人 + 占比
+        $order['joint_person_display'] = $this->buildJointPersonDisplay($order['joint_person'] ?? '');
+        $order['owner_profit_rate_display'] = $this->formatRateDisplay($order['owner_profit_rate'] ?? null, 100);
+        $order['collaborator_profit_rate_display'] = $this->formatRateDisplay($order['collaborator_profit_rate'] ?? null, 0);
+
         // 产品经理列表（group_id = 14）
         $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人
         $managerList = Db::name('admin')
