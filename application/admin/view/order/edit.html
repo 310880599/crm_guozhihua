@@ -3140,7 +3140,7 @@
             // ===== 防重复提交：END =====
             $.post("{:url('Order/edit')}", data.field, function (res) {
                 var resCode = parseInt(res && res.code, 10);
-                var isSubmitSuccess = (resCode === 1 || resCode === 200);
+                var isSubmitSuccess = (resCode === 0);
                 if (isSubmitSuccess) {
                     resetOrderSubmitState($submitBtn);
                     layer.msg(res.msg || '编辑成功！', { time: 800, icon: 1 }, function () {

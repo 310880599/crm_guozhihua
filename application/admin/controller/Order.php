@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace app\admin\controller;
 
@@ -1694,7 +1694,7 @@ class Order extends Common
                         // 编辑订单保存前：客户电话职位身份必须完整（后端兜底）
                         $checkResult = OrderService::checkClientPhonePositionTitleComplete($leadsId);
                         if (!$checkResult['ok']) {
-                            return json(['code' => 0, 'msg' => '客户电话职位身份未完善']);
+                            return json(['code' => -200, 'msg' => '客户电话职位身份未完善']);
                         }
                     }
                 }
@@ -1741,11 +1741,11 @@ class Order extends Common
                 // 公司类型，客户公司必填
                 $clientCompany = trim($clientCompany);
                 if ($clientCompany === '') {
-                    return json(['code' => 0, 'msg' => '客户公司名称不能为空']);
+                    return json(['code' => -200, 'msg' => '客户公司名称不能为空']);
                 }
                 // 校验：允许中文 + 中文括号（），且不少于2个字符
                 if (!preg_match('/^[\x{4e00}-\x{9fa5}（）]{2,}$/u', $clientCompany)) {
-                    return json(['code' => 0, 'msg' => '客户公司名称只能填写中文（可包含中文括号），且不少于2个字']);
+                    return json(['code' => -200, 'msg' => '客户公司名称只能填写中文（可包含中文括号），且不少于2个字']);
                 }
                 $data['client_company'] = $clientCompany;
             } else {
@@ -1811,7 +1811,7 @@ class Order extends Common
             );
             if (empty($returnRuleCheck['ok'])) {
                 return json([
-                    'code' => 0,
+                    'code' => -200,
                     'msg' => (string)($returnRuleCheck['message'] ?? '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。'),
                 ]);
             }
@@ -1859,13 +1859,6 @@ class Order extends Common
 
             $clearWechatReceipt = (int)Request::param('clear_wechat_receipt_image', 0);
             $clearInquiryAssign = (int)Request::param('clear_inquiry_assign_image', 0);
-            $voucherDebugLogPath = dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'runtime' . DIRECTORY_SEPARATOR . 'order_voucher_debug.log';
-            $appendVoucherDebugLog = function (array $payload) use ($voucherDebugLogPath) {
-                $debugContent = "\n================ ORDER VOUCHER DEBUG " . date('Y-m-d H:i:s') . " ================\n";
-                $debugContent .= json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . "\n";
-                $debugContent .= "======================================================================\n";
-                file_put_contents($voucherDebugLogPath, $debugContent, FILE_APPEND);
-            };
             // 使用哨兵值判断“字段是否出现于本次 POST”，避免 '' / '[]' 被当作未提交
             $fieldNotExistsSentinel = '__FIELD_NOT_EXISTS__';
             $wechatReceiptRaw = Request::param('wechat_receipt_image', $fieldNotExistsSentinel);
@@ -1886,7 +1879,7 @@ class Order extends Common
             } elseif ($hasWechatInput) {
                 $wechatReceiptParsed = OrderService::parseImageList($wechatReceiptRaw);
                 if (count($wechatReceiptParsed) > $MAX_WECHAT_RECEIPT_IMAGES) {
-                    return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
+                    return json(['code' => -200, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
                 }
                 $wechatReceiptUrls = OrderService::normalizeVoucherImages($wechatReceiptParsed, $MAX_WECHAT_RECEIPT_IMAGES);
                 $data['wechat_receipt_image'] = !empty($wechatReceiptUrls)
@@ -1902,7 +1895,7 @@ class Order extends Common
             } elseif ($hasInquiryInput) {
                 $inquiryAssignParsed = OrderService::parseImageList($inquiryAssignRaw);
                 if (count($inquiryAssignParsed) > $MAX_INQUIRY_ASSIGN_IMAGES) {
-                    return json(['code' => 0, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
+                    return json(['code' => -200, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
                 }
                 $inquiryAssignUrls = OrderService::normalizeVoucherImages($inquiryAssignParsed, $MAX_INQUIRY_ASSIGN_IMAGES);
                 $data['inquiry_assign_image'] = !empty($inquiryAssignUrls)
@@ -1911,22 +1904,8 @@ class Order extends Common
             }
 
             $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, $originalOrder);
-            $appendVoucherDebugLog([
-                'stage' => 'after_validate_voucher_requirement_before_return_check',
-                'id' => $id,
-                'clear_wechat_receipt_image' => $clearWechatReceipt,
-                'clear_inquiry_assign_image' => $clearInquiryAssign,
-                'wechat_receipt_image_raw' => $wechatReceiptRaw,
-                'inquiry_assign_image_raw' => $inquiryAssignRaw,
-                'voucher_validation_params' => $voucherValidationParams,
-                'originalOrder' => $originalOrder,
-                'voucher_validation_result' => $voucherValidation,
-                'profit' => '__NOT_COMPUTED_YET__',
-                'data_wechat_receipt_image' => array_key_exists('wechat_receipt_image', $data) ? $data['wechat_receipt_image'] : '__NOT_SET__',
-                'data_inquiry_assign_image' => array_key_exists('inquiry_assign_image', $data) ? $data['inquiry_assign_image'] : '__NOT_SET__',
-            ]);
             if (empty($voucherValidation['ok'])) {
-                return json(['code' => 0, 'msg' => $voucherValidation['message']]);
+                return json(['code' => -200, 'msg' => $voucherValidation['message']]);
             }
             $data['ut_time']          = date("Y-m-d H:i:s");              // 更新操作时间
 
@@ -1954,7 +1933,7 @@ class Order extends Common
             })));
 
             if (count($jpIds) > 1) {
-                return json(['code' => 0, 'msg' => '一个订单只能选择一个协同人，请重新选择后保存']);
+                return json(['code' => -200, 'msg' => '一个订单只能选择一个协同人，请重新选择后保存']);
             }
             $singleJointPerson = $jpIds[0] ?? '';
             $data['joint_person'] = $singleJointPerson;
@@ -1966,23 +1945,23 @@ class Order extends Common
             $ownerRateText = trim(str_replace('%', '', (string)$ownerRateRaw));
             $collaboratorRateText = trim(str_replace('%', '', (string)$collaboratorRateRaw));
             if (!is_numeric($ownerRateText) || !is_numeric($collaboratorRateText)) {
-                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+                return json(['code' => -200, 'msg' => '利润占比只能按10%递增选择']);
             }
             $ownerRateFloat = (float)$ownerRateText;
             $collaboratorRateFloat = (float)$collaboratorRateText;
             if (abs($ownerRateFloat - round($ownerRateFloat)) > 0.000001 || abs($collaboratorRateFloat - round($collaboratorRateFloat)) > 0.000001) {
-                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+                return json(['code' => -200, 'msg' => '利润占比只能按10%递增选择']);
             }
             $ownerRate = (int)round($ownerRateFloat);
             $collaboratorRate = (int)round($collaboratorRateFloat);
             if (!in_array($ownerRate, $allowedRates, true) || !in_array($collaboratorRate, $allowedRates, true)) {
-                return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
+                return json(['code' => -200, 'msg' => '利润占比只能按10%递增选择']);
             }
             if (($ownerRate + $collaboratorRate) !== 100) {
-                return json(['code' => 0, 'msg' => '负责人和协同人利润占比合计必须等于100%']);
+                return json(['code' => -200, 'msg' => '负责人和协同人利润占比合计必须等于100%']);
             }
             if ($singleJointPerson === '' && ($ownerRate !== 100 || $collaboratorRate !== 0)) {
-                return json(['code' => 0, 'msg' => '未选择协同人时，负责人占比必须为100%，协同人占比必须为0%']);
+                return json(['code' => -200, 'msg' => '未选择协同人时，负责人占比必须为100%，协同人占比必须为0%']);
             }
             $data['owner_profit_rate'] = number_format($ownerRate, 2, '.', '');
             $data['collaborator_profit_rate'] = number_format($collaboratorRate, 2, '.', '');
@@ -2068,21 +2047,6 @@ class Order extends Common
             $data['money']       = $saveBundle['money'];
             $data['profit']      = $saveBundle['profit'];
             $data['margin_rate'] = $saveBundle['margin_rate'];
-            $appendVoucherDebugLog([
-                'stage' => 'after_profit_calculated_before_update',
-                'id' => $id,
-                'clear_wechat_receipt_image' => $clearWechatReceipt,
-                'clear_inquiry_assign_image' => $clearInquiryAssign,
-                'wechat_receipt_image_raw' => $wechatReceiptRaw,
-                'inquiry_assign_image_raw' => $inquiryAssignRaw,
-                'voucher_validation_params' => $voucherValidationParams,
-                'originalOrder' => $originalOrder,
-                'voucher_validation_result' => $voucherValidation,
-                'profit' => $data['profit'],
-                'data_wechat_receipt_image' => array_key_exists('wechat_receipt_image', $data) ? $data['wechat_receipt_image'] : '__NOT_SET__',
-                'data_inquiry_assign_image' => array_key_exists('inquiry_assign_image', $data) ? $data['inquiry_assign_image'] : '__NOT_SET__',
-            ]);
-
             // 更新主表产品名称摘要（存入第一个产品名称，多个则加"等"字样）
             if ($saveBundle['product_name_summary'] !== '') {
                 $data['product_name'] = $saveBundle['product_name_summary'];
@@ -2106,7 +2070,7 @@ class Order extends Common
                 'product_manager' => is_array($managerIds) ? $managerIds : [],
             ], 8);
             if (empty($lockResult['ok'])) {
-                return json(['code' => 1, 'msg' => '请勿重复提交，订单正在处理中']);
+                return json(['code' => -200, 'msg' => '请勿重复提交，订单正在处理中']);
             }
             $submitLockKey = (string)($lockResult['key'] ?? '');
             // ===== 防重复提交：END =====
@@ -2141,7 +2105,7 @@ class Order extends Common
                         $money = isset($data['money']) ? (float)$data['money'] : 0;
                         $hasProduct = !empty($productIds) && is_array($productIds) && count(array_filter($productIds, function ($pid) { return (int)$pid > 0; })) > 0;
                         if ($orderTime === '' || $cname === '' || $money <= 0 || !$hasProduct) {
-                            return json(['code' => 1, 'msg' => '请先完善必填项后再提交审核']);
+                            return json(['code' => -200, 'msg' => '请先完善必填项后再提交审核']);
                         }
                         Db::name('crm_client_order')->where('id', $id)->update([
                             'check_status' => 1,
