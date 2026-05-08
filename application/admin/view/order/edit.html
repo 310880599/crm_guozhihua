@@ -1235,6 +1235,12 @@
                 $ = layui.jquery,
                 laydate = layui.laydate,
                 upload = layui.upload;
+            // 图片上传变量：提前初始化，避免在 updateVoucherUI 等函数中读取 .length 报错
+            var MAX_WECHAT_RECEIPT_IMAGES = 10;
+            var MAX_INQUIRY_ASSIGN_IMAGES = 10;
+            var wechatReceiptUrls = [];
+            var inquiryAssignUrls = [];
+
             // ===== 防重复提交：BEGIN =====
             window.__ORDER_SUBMITTING__ = false;
             var __ORDER_SUBMIT_LOADING_INDEX__ = null;
@@ -2331,11 +2337,11 @@
             }
 
             // 微信沟通凭证多图上传配置
-            var MAX_WECHAT_RECEIPT_IMAGES = 10; // 最多上传图片数量
-            var wechatReceiptUrls = []; // 当前已上传的图片URL列表（存储对象数组：{full: 原图URL, thumb: 缩略图URL}）
+            // MAX_WECHAT_RECEIPT_IMAGES / wechatReceiptUrls 已在顶部提前初始化
             
             // 渲染缩略图列表
             function renderWechatReceiptPreviews() {
+                if (!Array.isArray(wechatReceiptUrls)) wechatReceiptUrls = [];
                 var $list = $('#wechat_receipt_preview_list');
                 $list.empty();
                 wechatReceiptUrls.forEach(function(item) {
@@ -2369,6 +2375,9 @@
             
             // 更新提示文本
             function updateWechatReceiptText() {
+                if (!Array.isArray(wechatReceiptUrls)) {
+                    wechatReceiptUrls = [];
+                }
                 $('#wechat_receipt_text').html('已上传 ' + wechatReceiptUrls.length + '/' + MAX_WECHAT_RECEIPT_IMAGES);
             }
             
@@ -2377,6 +2386,7 @@
             $('body').append(wechatReceiptInput);
             
             $('#upload_wechat_receipt').on('click', function() {
+                if (!Array.isArray(wechatReceiptUrls)) wechatReceiptUrls = [];
                 // 检查是否已达上限
                 if (wechatReceiptUrls.length >= MAX_WECHAT_RECEIPT_IMAGES) {
                     layer.msg('最多只能上传 ' + MAX_WECHAT_RECEIPT_IMAGES + ' 张图片', {icon: 2});
@@ -2612,10 +2622,10 @@
             window.initImageEchoFromOrderInfo = initImageEchoFromOrderInfo;
 
             // 询盘来源凭证多图上传配置
-            var MAX_INQUIRY_ASSIGN_IMAGES = 10;
-            var inquiryAssignUrls = [];
+            // MAX_INQUIRY_ASSIGN_IMAGES / inquiryAssignUrls 已在顶部提前初始化
 
             function renderInquiryAssignPreviews() {
+                if (!Array.isArray(inquiryAssignUrls)) inquiryAssignUrls = [];
                 var $list = $('#inquiry_assign_preview_list');
                 $list.empty();
                 inquiryAssignUrls.forEach(function(item) {
@@ -2645,6 +2655,9 @@
             }
 
             function updateInquiryAssignText() {
+                if (!Array.isArray(inquiryAssignUrls)) {
+                    inquiryAssignUrls = [];
+                }
                 $('#inquiry_assign_text').html('已上传 ' + inquiryAssignUrls.length + '/' + MAX_INQUIRY_ASSIGN_IMAGES);
             }
 
@@ -2653,6 +2666,7 @@
             $('body').append(inquiryAssignInput);
             
             $('#upload_inquiry_assign').on('click', function() {
+                if (!Array.isArray(inquiryAssignUrls)) inquiryAssignUrls = [];
                 if (inquiryAssignUrls.length >= MAX_INQUIRY_ASSIGN_IMAGES) {
                     layer.msg('最多只能上传 ' + MAX_INQUIRY_ASSIGN_IMAGES + ' 张图片', {icon: 2});
                     return;
