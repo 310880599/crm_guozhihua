@@ -1838,7 +1838,6 @@ class Order extends Common
             // ====== 编辑场景：读取原订单并统一重算利润 + 凭证校验 ======
             $originalOrder = Db::name('crm_client_order')
                 ->where('id', $id)
-                ->field('wechat_receipt_image, inquiry_assign_image')
                 ->find();
             if (!$originalOrder) {
                 $originalOrder = [];
@@ -1860,6 +1859,13 @@ class Order extends Common
 
             $clearWechatReceipt = (int)Request::param('clear_wechat_receipt_image', 0);
             $clearInquiryAssign = (int)Request::param('clear_inquiry_assign_image', 0);
+            $voucherDebugLogPath = dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'runtime' . DIRECTORY_SEPARATOR . 'order_voucher_debug.log';
+            $appendVoucherDebugLog = function (array $payload) use ($voucherDebugLogPath) {
+                $debugContent = "\n================ ORDER VOUCHER DEBUG " . date('Y-m-d H:i:s') . " ================\n";
+                $debugContent .= json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . "\n";
+                $debugContent .= "======================================================================\n";
+                file_put_contents($voucherDebugLogPath, $debugContent, FILE_APPEND);
+            };
             // 使用哨兵值判断“字段是否出现于本次 POST”，避免 '' / '[]' 被当作未提交
             $fieldNotExistsSentinel = '__FIELD_NOT_EXISTS__';
             $wechatReceiptRaw = Request::param('wechat_receipt_image', $fieldNotExistsSentinel);
@@ -1905,6 +1911,20 @@ class Order extends Common
             }
 
             $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, $originalOrder);
+            $appendVoucherDebugLog([
+                'stage' => 'after_validate_voucher_requirement_before_return_check',
+                'id' => $id,
+                'clear_wechat_receipt_image' => $clearWechatReceipt,
+                'clear_inquiry_assign_image' => $clearInquiryAssign,
+                'wechat_receipt_image_raw' => $wechatReceiptRaw,
+                'inquiry_assign_image_raw' => $inquiryAssignRaw,
+                'voucher_validation_params' => $voucherValidationParams,
+                'originalOrder' => $originalOrder,
+                'voucher_validation_result' => $voucherValidation,
+                'profit' => '__NOT_COMPUTED_YET__',
+                'data_wechat_receipt_image' => array_key_exists('wechat_receipt_image', $data) ? $data['wechat_receipt_image'] : '__NOT_SET__',
+                'data_inquiry_assign_image' => array_key_exists('inquiry_assign_image', $data) ? $data['inquiry_assign_image'] : '__NOT_SET__',
+            ]);
             if (empty($voucherValidation['ok'])) {
                 return json(['code' => 0, 'msg' => $voucherValidation['message']]);
             }
@@ -2048,6 +2068,20 @@ class Order extends Common
             $data['money']       = $saveBundle['money'];
             $data['profit']      = $saveBundle['profit'];
             $data['margin_rate'] = $saveBundle['margin_rate'];
+            $appendVoucherDebugLog([
+                'stage' => 'after_profit_calculated_before_update',
+                'id' => $id,
+                'clear_wechat_receipt_image' => $clearWechatReceipt,
+                'clear_inquiry_assign_image' => $clearInquiryAssign,
+                'wechat_receipt_image_raw' => $wechatReceiptRaw,
+                'inquiry_assign_image_raw' => $inquiryAssignRaw,
+                'voucher_validation_params' => $voucherValidationParams,
+                'originalOrder' => $originalOrder,
+                'voucher_validation_result' => $voucherValidation,
+                'profit' => $data['profit'],
+                'data_wechat_receipt_image' => array_key_exists('wechat_receipt_image', $data) ? $data['wechat_receipt_image'] : '__NOT_SET__',
+                'data_inquiry_assign_image' => array_key_exists('inquiry_assign_image', $data) ? $data['inquiry_assign_image'] : '__NOT_SET__',
+            ]);
 
             // 更新主表产品名称摘要（存入第一个产品名称，多个则加"等"字样）
             if ($saveBundle['product_name_summary'] !== '') {

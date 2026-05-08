@@ -3139,7 +3139,9 @@
             __ORDER_SUBMIT_LOADING_INDEX__ = layer.load(1, { shade: [0.15, '#fff'] });
             // ===== 防重复提交：END =====
             $.post("{:url('Order/edit')}", data.field, function (res) {
-                if (res.code === 0) {
+                var resCode = parseInt(res && res.code, 10);
+                var isSubmitSuccess = (resCode === 1 || resCode === 200);
+                if (isSubmitSuccess) {
                     resetOrderSubmitState($submitBtn);
                     layer.msg(res.msg || '编辑成功！', { time: 800, icon: 1 }, function () {
                         closeCurrentOrderEditLayer();
@@ -3161,6 +3163,7 @@
                 } else {
                     resetOrderSubmitState($submitBtn);
                     layer.msg(res.msg || '编辑失败，请重试', { time: 2000 });
+                    return false;
                 }
             }, 'json').fail(function () {
                 resetOrderSubmitState($submitBtn);
