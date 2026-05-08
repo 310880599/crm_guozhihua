@@ -1860,16 +1860,21 @@ class Order extends Common
 
             $clearWechatReceipt = (int)Request::param('clear_wechat_receipt_image', 0);
             $clearInquiryAssign = (int)Request::param('clear_inquiry_assign_image', 0);
-            $wechatReceiptRaw = Request::param('wechat_receipt_image', null);
-            $inquiryAssignRaw = Request::param('inquiry_assign_image', null);
+            // 使用哨兵值判断“字段是否出现于本次 POST”，避免 '' / '[]' 被当作未提交
+            $fieldNotExistsSentinel = '__FIELD_NOT_EXISTS__';
+            $wechatReceiptRaw = Request::param('wechat_receipt_image', $fieldNotExistsSentinel);
+            $inquiryAssignRaw = Request::param('inquiry_assign_image', $fieldNotExistsSentinel);
             // 以本次提交为准：字段出现即视为参与覆盖（包括 [] / ''）
-            $hasWechatInput = $wechatReceiptRaw !== null;
-            $hasInquiryInput = $inquiryAssignRaw !== null;
+            $hasWechatInput = $wechatReceiptRaw !== $fieldNotExistsSentinel;
+            $hasInquiryInput = $inquiryAssignRaw !== $fieldNotExistsSentinel;
 
             $voucherValidationParams = $profitCalcParams;
             $voucherValidationParams['clear_wechat_receipt_image'] = $clearWechatReceipt;
             $voucherValidationParams['clear_inquiry_assign_image'] = $clearInquiryAssign;
 
+            if ($hasWechatInput) {
+                $voucherValidationParams['wechat_receipt_image'] = $wechatReceiptRaw;
+            }
             if ($clearWechatReceipt === 1) {
                 $data['wechat_receipt_image'] = '';
             } elseif ($hasWechatInput) {
@@ -1881,9 +1886,11 @@ class Order extends Common
                 $data['wechat_receipt_image'] = !empty($wechatReceiptUrls)
                     ? json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
                     : '';
-                $voucherValidationParams['wechat_receipt_image'] = $wechatReceiptRaw;
             }
 
+            if ($hasInquiryInput) {
+                $voucherValidationParams['inquiry_assign_image'] = $inquiryAssignRaw;
+            }
             if ($clearInquiryAssign === 1) {
                 $data['inquiry_assign_image'] = '';
             } elseif ($hasInquiryInput) {
@@ -1895,7 +1902,6 @@ class Order extends Common
                 $data['inquiry_assign_image'] = !empty($inquiryAssignUrls)
                     ? json_encode($inquiryAssignUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
                     : '';
-                $voucherValidationParams['inquiry_assign_image'] = $inquiryAssignRaw;
             }
 
             $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, $originalOrder);
