@@ -2956,8 +2956,12 @@
                 ownerRateInt = 100;
                 collaboratorRateInt = 0;
             }
+            if (selectedJointPerson && collaboratorRateInt < 10) {
+                layer.msg('您已经选择了协同人，请给协同人至少10%以上的占比。', { icon: 2, time: 2000 });
+                return false;
+            }
             if ((ownerRateInt + collaboratorRateInt) !== 100) {
-                layer.msg('负责人和协同人利润占比合计必须等于100%', { icon: 2, time: 2000 });
+                layer.msg('负责人占比和协同人占比之和必须等于100%。', { icon: 2, time: 2000 });
                 return false;
             }
             if (!selectedJointPerson && (ownerRateInt !== 100 || collaboratorRateInt !== 0)) {

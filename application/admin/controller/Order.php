@@ -934,9 +934,13 @@ class Order extends Common
                 $this->redisUnLock();
                 return json(['code' => 0, 'msg' => '利润占比只能按10%递增选择']);
             }
+            if ($singleJointPerson !== '' && $collaboratorRate < 10) {
+                $this->redisUnLock();
+                return json(['code' => 0, 'msg' => '您已经选择了协同人，请给协同人至少10%以上的占比。']);
+            }
             if (($ownerRate + $collaboratorRate) !== 100) {
                 $this->redisUnLock();
-                return json(['code' => 0, 'msg' => '负责人和协同人利润占比合计必须等于100%']);
+                return json(['code' => 0, 'msg' => '负责人占比和协同人占比之和必须等于100%。']);
             }
             if ($singleJointPerson === '' && ($ownerRate !== 100 || $collaboratorRate !== 0)) {
                 $this->redisUnLock();
@@ -1957,8 +1961,11 @@ class Order extends Common
             if (!in_array($ownerRate, $allowedRates, true) || !in_array($collaboratorRate, $allowedRates, true)) {
                 return json(['code' => -200, 'msg' => '利润占比只能按10%递增选择']);
             }
+            if ($singleJointPerson !== '' && $collaboratorRate < 10) {
+                return json(['code' => -200, 'msg' => '您已经选择了协同人，请给协同人至少10%以上的占比。']);
+            }
             if (($ownerRate + $collaboratorRate) !== 100) {
-                return json(['code' => -200, 'msg' => '负责人和协同人利润占比合计必须等于100%']);
+                return json(['code' => -200, 'msg' => '负责人占比和协同人占比之和必须等于100%。']);
             }
             if ($singleJointPerson === '' && ($ownerRate !== 100 || $collaboratorRate !== 0)) {
                 return json(['code' => -200, 'msg' => '未选择协同人时，负责人占比必须为100%，协同人占比必须为0%']);
