@@ -35,6 +35,144 @@ class Order extends Common
         return floatval($profit) >= 2000;
     }
 
+    /**
+     * 订单详情页协同人展示值（兼容历史多种存储格式）
+     *
+     * @param mixed $jointPersonRaw
+     * @return string
+     */
+    private function buildJointPersonDisplay($jointPersonRaw)
+    {
+        $tokens = $this->parseJointPersonTokens($jointPersonRaw);
+        if (empty($tokens)) {
+            return '无';
+        }
+
+        $adminIds = [];
+        foreach ($tokens as $token) {
+            if ($token !== '' && ctype_digit($token)) {
+                $adminIds[] = (int)$token;
+            }
+        }
+        $adminIds = array_values(array_unique($adminIds));
+
+        $adminMap = [];
+        if (!empty($adminIds)) {
+            $adminMap = Db::name('admin')->whereIn('admin_id', $adminIds)->column('username', 'admin_id');
+        }
+
+        $displayNames = [];
+        $seen = [];
+        foreach ($tokens as $token) {
+            $name = $token;
+            if (ctype_digit($token)) {
+                $adminId = (int)$token;
+                if (isset($adminMap[$adminId]) && trim((string)$adminMap[$adminId]) !== '') {
+                    $name = trim((string)$adminMap[$adminId]);
+                }
+            }
+
+            $name = trim((string)$name);
+            if ($name === '' || isset($seen[$name])) {
+                continue;
+            }
+            $displayNames[] = $name;
+            $seen[$name] = 1;
+        }
+
+        if (empty($displayNames)) {
+            return '无';
+        }
+
+        if (count($displayNames) === 1) {
+            return $displayNames[0];
+        }
+
+        return implode('、', $displayNames) . '（历史多人协同数据）';
+    }
+
+    /**
+     * 解析协同人字段，兼容空字符串/单值/逗号分隔/JSON数组/PHP数组
+     *
+     * @param mixed $raw
+     * @return array
+     */
+    private function parseJointPersonTokens($raw)
+    {
+        $items = [];
+
+        if (is_array($raw)) {
+            $items = $raw;
+        } elseif (is_string($raw)) {
+            $str = trim($raw);
+            if ($str === '') {
+                return [];
+            }
+            if (preg_match('/^\s*\[.*\]\s*$/', $str)) {
+                $decoded = json_decode($str, true);
+                if (is_array($decoded)) {
+                    $items = $decoded;
+                } else {
+                    $items = explode(',', $str);
+                }
+            } elseif (strpos($str, ',') !== false) {
+                $items = explode(',', $str);
+            } else {
+                $items = [$str];
+            }
+        } elseif ($raw !== null && $raw !== '') {
+            $items = [$raw];
+        }
+
+        $tokens = [];
+        $seen = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                foreach ($item as $nested) {
+                    $value = trim((string)$nested);
+                    if ($value === '' || isset($seen[$value])) {
+                        continue;
+                    }
+                    $tokens[] = $value;
+                    $seen[$value] = 1;
+                }
+                continue;
+            }
+
+            $value = trim((string)$item);
+            if ($value === '' || isset($seen[$value])) {
+                continue;
+            }
+            $tokens[] = $value;
+            $seen[$value] = 1;
+        }
+
+        return $tokens;
+    }
+
+    /**
+     * 百分比只读展示值，空值按默认值兜底
+     *
+     * @param mixed $value
+     * @param float $default
+     * @return string
+     */
+    private function formatRateDisplay($value, $default)
+    {
+        $rate = $default;
+        if ($value !== null) {
+            $raw = trim((string)$value);
+            if ($raw !== '' && is_numeric($raw)) {
+                $rate = (float)$raw;
+            }
+        }
+        $formatted = rtrim(rtrim(number_format($rate, 2, '.', ''), '0'), '.');
+        if ($formatted === '') {
+            $formatted = '0';
+        }
+        return $formatted . '%';
+    }
+
     //订单列表
     public function index()
     {
@@ -2343,7 +2481,7 @@ class Order extends Common
         
         $this->assign('productList', $productRows);
 
-        // 协同人列表（xm-select 数据格式）
+        // 协同人列表（历史代码保留；详情页不再使用 xm-select）
         $teamName = $currentAdmin['team_name'] ?? Session::get('team_name') ?: '';
         $adminList = Db::name('admin')
             ->where('group_id', '<>', 1)
@@ -2363,6 +2501,11 @@ class Order extends Common
             $collaboratorData[] = $item;
         }
         $this->assign('collaboratorList', json_encode($collaboratorData, JSON_UNESCAPED_UNICODE));
+
+        // 详情页专用展示字段（只读）：协同人 + 占比
+        $order['joint_person_display'] = $this->buildJointPersonDisplay($order['joint_person'] ?? '');
+        $order['owner_profit_rate_display'] = $this->formatRateDisplay($order['owner_profit_rate'] ?? null, 100);
+        $order['collaborator_profit_rate_display'] = $this->formatRateDisplay($order['collaborator_profit_rate'] ?? null, 0);
 
         // 产品经理列表（group_id = 13/14）
         $extraManagerIds = []; // 李营，可为空数组 [] 表示不额外包含任何人

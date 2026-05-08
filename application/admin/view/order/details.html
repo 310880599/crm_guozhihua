@@ -13,7 +13,6 @@
     <script src="/js/jquery.min.js"></script>
     <script src="/static/admin/js/select.js"></script>
     <script src="/static/plugins/layui/layui.js"></script>
-    <script src="/static/admin/js/xm-select.js"></script>
     <script src="/js/xlsx.bundle.js"></script>
     <style>
         .layui-form-pane .layui-form-label {
@@ -113,17 +112,6 @@
         background-color:#f5f5f5 !important;
         color:#666 !important;
         cursor:not-allowed !important;
-        }
-
-        /* xm-select 组件禁用的灰化与禁止交互 */
-        .xm-select-disabled,
-        .xm-select-disabled *{
-        pointer-events:none !important;
-        cursor:not-allowed !important;
-        }
-        .xm-select.xm-select-disabled{
-        background:#f5f5f5 !important;
-        color:#666 !important;
         }
 
         /* 禁用加减按钮/普通按钮（如果页面后续打开提交按钮可一并灰化） */
@@ -335,11 +323,23 @@
                     </select>
                 </div>
             </div>
-            <!-- 【修改】协同人（与 edit.html 对齐） -->
+            <!-- 协同人（详情页只读展示） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">协同人</label>
                 <div class="layui-input-4">
-                    <div id="collaboratorSelect"></div>
+                    <input type="text" id="joint_person_display" value="{$orderInfo.joint_person_display|default='无'|htmlentities}" class="layui-input" readonly>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">负责人占比</label>
+                <div class="layui-input-4">
+                    <input type="text" id="owner_profit_rate_display" value="{$orderInfo.owner_profit_rate_display|default='100%'|htmlentities}" class="layui-input" readonly>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">协同人占比</label>
+                <div class="layui-input-4">
+                    <input type="text" id="collaborator_profit_rate_display" value="{$orderInfo.collaborator_profit_rate_display|default='0%'|htmlentities}" class="layui-input" readonly>
                 </div>
             </div>
             <!-- 【修改】团队名称（与 edit.html 对齐） -->
@@ -646,48 +646,6 @@
                     }
                 }
             });
-            // 【修改】协同人多选下拉初始化（详情页：初始化后立即禁用，但保持显示已选值）
-            var collaboratorData = {$collaboratorList|raw};
-            // 获取当前订单的协同人ID列表
-            var currentJpIds = [];
-            {if condition="!empty($orderInfo.joint_person)"}
-            var jpStr = '{$orderInfo.joint_person}';
-            if (jpStr) {
-                if (jpStr.trim().charAt(0) === '[') {
-                    try {
-                        currentJpIds = JSON.parse(jpStr);
-                    } catch(e) {
-                        currentJpIds = jpStr.split(',').filter(function(v) { return v !== ''; });
-                    }
-                } else {
-                    currentJpIds = jpStr.split(',').filter(function(v) { return v !== ''; });
-                }
-            }
-            {/if}
-            // 初始化 xm-select，设置初始值
-            var collaboratorSelectInstance = xmSelect.render({
-                el: '#collaboratorSelect',
-                name: 'joint_person',
-                tips: '请选择协同人员',
-                filterable: true,
-                clickClose: false,
-                initValue: currentJpIds.map(function(id) { return String(id); }),
-                data: collaboratorData
-            });
-            // 立即禁用协同人组件
-            setTimeout(function() {
-                try {
-                    if (collaboratorSelectInstance && collaboratorSelectInstance.update) {
-                        collaboratorSelectInstance.update({ disabled: true });
-                    }
-                    $('#collaboratorSelect').addClass('xm-select-disabled');
-                } catch(e) {
-                    console.log('禁用协同人组件失败:', e);
-                }
-            }, 100);
-
-
-
             // 【修改】渲染表单（详情页：先渲染，再禁用）
             form.render('select');
             fixSelectAlign(); // 首次渲染后调整下拉框文本左对齐
@@ -1152,19 +1110,6 @@
                 form.render('select');
                 $('.layui-form-select').addClass('layui-disabled');
                 fixSelectAlign(); // 调整对齐
-
-                // 5) 禁用 xm-select 协同人组件（已在上面处理，这里做二次确认）
-                setTimeout(function() {
-                    try {
-                        var collabIns = xmSelect.get('#collaboratorSelect', true);
-                        if (collabIns && collabIns.update) {
-                            collabIns.update({ disabled: true });
-                        }
-                        $('#collaboratorSelect').addClass('xm-select-disabled');
-                    } catch(e) {
-                        // 忽略错误
-                    }
-                }, 300);
 
                 // 6) 防止任何表单提交
                 $('form.layui-form').on('submit', function(e) {
