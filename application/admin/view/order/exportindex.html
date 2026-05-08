@@ -255,7 +255,6 @@
         /* 表格样式优化 */
         .layui-table {
             border-radius: 8px;
-            overflow: hidden;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         }
 
@@ -275,17 +274,6 @@
 
         .layui-table tbody tr:hover {
             background-color: #f5f7fa;
-        }
-
-        /* 让单元格内容成为独立可移动的容器 */
-            .layui-table tbody td > * {
-                display: inline-block;
-                transition: transform 0.25s ease;
-        }
-
-        /* hover 行时，只移动内容，不移动整个表格行 */
-        .layui-table tbody tr:hover td > * {
-            transform: translateX(-4px);
         }
 
         .layui-table tbody td {
@@ -1258,18 +1246,19 @@
                 method: 'post',
                 toolbar: '#topBtn',
                 defaultToolbar: ['filter', 'print'],
+                cellMinWidth: 180,
                 cols: [[
                     { field: 'id', title: 'ID', width: 80, fixed: true, hide: true },
-                    { field: 'order_no', title: '订单编号', width: 180, totalRowText: '合计：' },
-                    { field: 'contact', title: '联系方式', width: 180 },
-                    { field: 'customer_type_flag', title: '用户属性' , width: 180, templet: function (res) {
+                    { field: 'order_no', title: '订单编号', minWidth: 180, totalRowText: '合计：' },
+                    { field: 'contact', title: '联系方式', minWidth: 180 },
+                    { field: 'customer_type_flag', title: '用户属性' , minWidth: 180, templet: function (res) {
                             return res.customer_type_flag == 1 ? '个人' : '公司';
                         }
                     },
-                    { field: 'cname', title: '客户名称', width: 180 },
-                    { field: 'client_company', title: '客户公司', width: 180 },
-                    { field: 'country', title: '发货详细地址', width: 180 },
-                    { field: 'customer_type', title: '客户性质', width: 180 },
+                    { field: 'cname', title: '客户名称', minWidth: 180 },
+                    { field: 'client_company', title: '客户公司', minWidth: 180 },
+                    { field: 'country', title: '发货详细地址', minWidth: 180 },
+                    { field: 'customer_type', title: '客户性质', minWidth: 180 },
                     { field: 'order_items', title: '产品明细', width: 480, templet: function(d){
                         if (!d.order_items || d.order_items.length === 0) {
                             return '';
@@ -1292,38 +1281,38 @@
                         }).join('');
                         return '<div class="product-cell">' + rows + '</div>';
                     }},
-                    { field: 'money', title: '成交金额(￥)', totalRow: true, width: 180 },
-                    { field: 'profit', title: '利润', totalRow: true, width: 180 },
-                    { field: 'margin_rate', title: '利润率(%)', totalRowText: '', width: 180 },
-                    { field: 'ticheng', title: '提成金额', width: 180 },
-                    { field: 'shipping_cost', title: '估算运费', width: 180 },
-                    { field: 'invoice_amount', title: '开票金额', width: 180 },
-                    { field: 'tax_amount', title: '税费金额', width: 180 },
-                    { field: 'debugging_cost', title: '调试费', width: 180 },
-                    { field: 'sales_commission', title: '佣金', width: 180 },
-                    { field: 'split_remarks', title: '分成备注', width: 180 },
-                    { field: 'bank_account', title: '收款账户手动录入', width: 180, templet: function(d){
+                    { field: 'money', title: '成交金额(￥)', totalRow: true, minWidth: 180 },
+                    { field: 'profit', title: '利润', totalRow: true, minWidth: 180 },
+                    { field: 'margin_rate', title: '利润率(%)', totalRowText: '', minWidth: 180 },
+                    { field: 'ticheng', title: '提成金额', minWidth: 180 },
+                    { field: 'shipping_cost', title: '估算运费', minWidth: 180 },
+                    { field: 'invoice_amount', title: '开票金额', minWidth: 180 },
+                    { field: 'tax_amount', title: '税费金额', minWidth: 180 },
+                    { field: 'debugging_cost', title: '调试费', minWidth: 180 },
+                    { field: 'sales_commission', title: '佣金', minWidth: 180 },
+                    { field: 'split_remarks', title: '分成备注', minWidth: 180 },
+                    { field: 'bank_account', title: '收款账户手动录入', minWidth: 180, templet: function(d){
                         return d.bank_account_name || d.bank_account || '';
                     }},
-                    { field: 'amount_received', title: '已收款金额', width: 180 },
-                    { field: 'source', title: '运营渠道', width: 180 },
-                    { field: 'source_port', title: '运营端口', width: 180 },
-                    { field: 'pr_user', title: '负责人', width: 180 },
-                    { field: 'team_name', title: '团队', width: 180 },
-                    { field: 'joint_person', title: '协同人', width: 180, templet: function(d){
+                    { field: 'amount_received', title: '已收款金额', minWidth: 180 },
+                    { field: 'source', title: '运营渠道', minWidth: 180 },
+                    { field: 'source_port', title: '运营端口', minWidth: 180 },
+                    { field: 'pr_user', title: '负责人', minWidth: 180 },
+                    { field: 'team_name', title: '团队', minWidth: 180 },
+                    { field: 'joint_person', title: '协同人', minWidth: 180, templet: function(d){
                         return d.joint_person_names || d.joint_person || '';
                     }},
-                    { field: 'order_time', title: '成交时间', width: 180 },
-                    { field: 'create_time', title: '创建时间', width: 180 },
-                    { field: 'at_user', title: '创建人', width: 180 },
-                    { field: 'ut_time', title: '更新时间', width: 180 },
-                    { field: 'status', title: '业绩状态', width: 180 },
-                    { field: 'remark', title: '备注', width: 180 },
+                    { field: 'order_time', title: '成交时间', minWidth: 180 },
+                    { field: 'create_time', title: '创建时间', minWidth: 180 },
+                    { field: 'at_user', title: '创建人', minWidth: 180 },
+                    { field: 'ut_time', title: '更新时间', minWidth: 180 },
+                    { field: 'status', title: '业绩状态', minWidth: 180 },
+                    { field: 'remark', title: '备注', minWidth: 180 },
                     { title: '操作', toolbar: '#action', hide: true }
                 ]],
                 limit: 10,
                 page: { limits: [10, 20, 30, 40, 50, 100, 200, 500,9999999] },
-                totalRow: true,
+                totalRow: false,
                 done(res) {
                     $('#total-money').text(res.totalMoney);
                     $('#total-profit').text(res.totalProfit);
@@ -1339,12 +1328,22 @@
                     var rate = totalMoney === 0 ? '0' : (totalProfit / totalMoney * 100).toFixed(2);
 
                     // 更新合计行单元格（margin_rate 列）
-                    $('.layui-table-total td[data-field="margin_rate"] div').text(rate);
+                    var totalMarginCell = $('.layui-table-total td[data-field="margin_rate"] div');
+                    if (totalMarginCell.length) {
+                        totalMarginCell.text(rate);
+                    }
 
                     // 为产品明细列添加专用样式，确保有足够的展示空间
                     $('.layui-table-body td[data-field="order_items"]').addClass('product-detail-cell');
 
                     bindRowActionPanel(res);
+
+                    if (typeof table.resize === 'function') {
+                        table.resize('table-list');
+                    }
+                    setTimeout(function () {
+                        window.dispatchEvent(new Event('resize'));
+                    }, 50);
                 }
             });
 
