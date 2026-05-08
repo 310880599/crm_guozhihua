@@ -1827,11 +1827,12 @@
             }
             window.__voucherUiState = stateKey;
 
-            $('#wechat_receipt_item').toggle(!exempt);
-            $('#inquiry_assign_item').toggle(!exempt);
+            // 编辑页两个凭证区域永远显示，不允许隐藏
+            $('#wechat_receipt_item').show();
+            $('#inquiry_assign_item').show();
 
             if (exempt) {
-                // 利润 < 2000：凭证非必填
+                // 利润 < 2000：凭证非必填，但区域仍显示
                 $('#wechat_receipt_image').removeAttr('lay-verify');
                 $('#inquiry_assign_image').removeAttr('lay-verify');
             } else {
@@ -1839,6 +1840,9 @@
                 $('#wechat_receipt_image').attr('lay-verify', 'required');
                 $('#inquiry_assign_image').attr('lay-verify', 'required');
             }
+
+            if (typeof updateWechatReceiptText === 'function') updateWechatReceiptText();
+            if (typeof updateInquiryAssignText === 'function') updateInquiryAssignText();
 
             // 只重渲染 select，避免 form.render() 无参数时重新初始化
             // .layui-upload 容器，导致上传按钮/容器 DOM 被清除
