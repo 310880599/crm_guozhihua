@@ -303,6 +303,21 @@
                            class="layui-input" readonly>
                 </div>
             </div>
+            <!-- 协同人 + 协同人占比（详情页只读展示） -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">协同人</label>
+                <div class="layui-input-inline" style="width: 240px;">
+                    <input type="text" id="joint_person_display"
+                           value="{$orderInfo.joint_person_display|default='无'|htmlentities}"
+                           class="layui-input" readonly>
+                </div>
+                <label class="layui-form-label profit-rate-label">协同人占比</label>
+                <div class="layui-input-inline profit-rate-inline">
+                    <input type="text" id="collaborator_profit_rate_display"
+                           value="{$orderInfo.collaborator_profit_rate_display|default='0%'|htmlentities}"
+                           class="layui-input" readonly>
+                </div>
+            </div>
             <!-- 【修改】询盘来源（与 edit.html 对齐，改为下拉） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">询盘来源<span style="color:red;">*</span></label>
@@ -337,21 +352,6 @@
                         <option value="{$acc.id}" {if $acc.id == $orderInfo.bank_account}selected{/if}>{$acc.account|htmlentities}</option>
                         {/volist}
                     </select>
-                </div>
-            </div>
-            <!-- 协同人 + 协同人占比（详情页只读展示） -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">协同人</label>
-                <div class="layui-input-inline" style="width: 240px;">
-                    <input type="text" id="joint_person_display"
-                           value="{$orderInfo.joint_person_display|default='无'|htmlentities}"
-                           class="layui-input" readonly>
-                </div>
-                <label class="layui-form-label profit-rate-label">协同人占比</label>
-                <div class="layui-input-inline profit-rate-inline">
-                    <input type="text" id="collaborator_profit_rate_display"
-                           value="{$orderInfo.collaborator_profit_rate_display|default='0%'|htmlentities}"
-                           class="layui-input" readonly>
                 </div>
             </div>
             <!-- 【修改】团队名称（与 edit.html 对齐） -->
