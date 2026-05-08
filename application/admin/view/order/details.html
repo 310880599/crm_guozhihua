@@ -66,6 +66,16 @@
         .label-long {
             width: 200px !important;   /* 或 220px，看你整体布局 */
         }
+        .profit-rate-label {
+            width: 110px !important;
+            min-width: 110px !important;
+            white-space: nowrap;
+            overflow: visible;
+            text-overflow: clip;
+        }
+        .profit-rate-inline {
+            width: 120px;
+        }
     </style>
     
     <style>
@@ -279,12 +289,18 @@
                 </div>
             </div>
             {/if}
-            <!-- 【修改】客户负责人（与 edit.html 对齐） -->
+            <!-- 【修改】客户负责人 + 负责人占比（与 add/edit 布局一致，详情页只读） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">客户负责人<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
+                <div class="layui-input-inline" style="width: 240px;">
                     <input type="text" id="pr_user" name="pr_user" lay-verify="required" readonly
                            value="{$orderInfo.pr_user|default=''}" class="layui-input">
+                </div>
+                <label class="layui-form-label profit-rate-label">负责人占比</label>
+                <div class="layui-input-inline profit-rate-inline">
+                    <input type="text" id="owner_profit_rate_display"
+                           value="{$orderInfo.owner_profit_rate_display|default='100%'|htmlentities}"
+                           class="layui-input" readonly>
                 </div>
             </div>
             <!-- 【修改】询盘来源（与 edit.html 对齐，改为下拉） -->
@@ -323,23 +339,19 @@
                     </select>
                 </div>
             </div>
-            <!-- 协同人（详情页只读展示） -->
+            <!-- 协同人 + 协同人占比（详情页只读展示） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">协同人</label>
-                <div class="layui-input-4">
-                    <input type="text" id="joint_person_display" value="{$orderInfo.joint_person_display|default='无'|htmlentities}" class="layui-input" readonly>
+                <div class="layui-input-inline" style="width: 240px;">
+                    <input type="text" id="joint_person_display"
+                           value="{$orderInfo.joint_person_display|default='无'|htmlentities}"
+                           class="layui-input" readonly>
                 </div>
-            </div>
-            <div class="layui-form-item">
-                <label class="layui-form-label">负责人占比</label>
-                <div class="layui-input-4">
-                    <input type="text" id="owner_profit_rate_display" value="{$orderInfo.owner_profit_rate_display|default='100%'|htmlentities}" class="layui-input" readonly>
-                </div>
-            </div>
-            <div class="layui-form-item">
-                <label class="layui-form-label">协同人占比</label>
-                <div class="layui-input-4">
-                    <input type="text" id="collaborator_profit_rate_display" value="{$orderInfo.collaborator_profit_rate_display|default='0%'|htmlentities}" class="layui-input" readonly>
+                <label class="layui-form-label profit-rate-label">协同人占比</label>
+                <div class="layui-input-inline profit-rate-inline">
+                    <input type="text" id="collaborator_profit_rate_display"
+                           value="{$orderInfo.collaborator_profit_rate_display|default='0%'|htmlentities}"
+                           class="layui-input" readonly>
                 </div>
             </div>
             <!-- 【修改】团队名称（与 edit.html 对齐） -->
