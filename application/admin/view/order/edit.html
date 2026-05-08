@@ -2356,6 +2356,8 @@
                 $('#wechat_receipt_image').trigger('change');
                 if (urlArray.length > 0) {
                     $('#clear_wechat_receipt_image').val('0');
+                } else {
+                    $('#clear_wechat_receipt_image').val('1');
                 }
             }
             
@@ -2502,7 +2504,29 @@
                 // 后端可能直接给数组
                 if (Array.isArray(rawValue)) {
                     rawValue.forEach(function(u) {
-                        if (u != null && String(u).trim() !== '') {
+                        if (u == null) {
+                            return;
+                        }
+                        if (typeof u === 'string') {
+                            var su = u.trim();
+                            if (su !== '') parsed.push(su);
+                            return;
+                        }
+                        if (typeof u === 'object') {
+                            var ou = '';
+                            if (u.full != null && String(u.full).trim() !== '') {
+                                ou = String(u.full).trim();
+                            } else if (u.url != null && String(u.url).trim() !== '') {
+                                ou = String(u.url).trim();
+                            } else if (u.path != null && String(u.path).trim() !== '') {
+                                ou = String(u.path).trim();
+                            } else if (u.src != null && String(u.src).trim() !== '') {
+                                ou = String(u.src).trim();
+                            }
+                            if (ou !== '') parsed.push(ou);
+                            return;
+                        }
+                        if (String(u).trim() !== '') {
                             parsed.push(String(u).trim());
                         }
                     });
@@ -3041,19 +3065,33 @@
                         return [parsed.trim()];
                     }
                 } catch (e) {}
+                if (text.indexOf(',') > -1) {
+                    return text.split(',').map(function (u) {
+                        return String(u || '').trim();
+                    }).filter(function (u) {
+                        return u !== '';
+                    });
+                }
                 return [text];
             }
+
+            // 提交前再次同步隐藏域，确保后端收到的是最终图片状态
+            syncWechatReceiptHidden();
+            syncInquiryAssignHidden();
 
             // 仅按利润判断凭证是否可豁免（利润 < 2000 才豁免，=2000 必填）
             var exempt = isVoucherExempt();
             
             // 只有在非豁免情况下才校验两个图片
             if (!exempt) {
-                // 微信沟通凭证校验（多图，至少1张）
-                var wechatReceiptImage = $('#wechat_receipt_image').val();
-                var wechatReceiptArray = parseVoucherUrls(wechatReceiptImage);
+                // 以最终提交状态为准：剩余旧图 + 新上传图（当前数组即最终状态）
+                var wechatReceiptArray = wechatReceiptUrls.map(function (item) {
+                    return typeof item === 'string' ? item : item.full;
+                }).filter(function (u) {
+                    return String(u || '').trim() !== '';
+                });
                 if (wechatReceiptArray.length < 1) {
-                    layer.msg('请至少上传1张微信沟通凭证', { icon: 2, time: 2000 });
+                    layer.msg('利润达到2000元及以上，必须上传微信沟通及付款凭证', { icon: 2, time: 2200 });
                     return false;
                 }
                 if (wechatReceiptArray.length > MAX_WECHAT_RECEIPT_IMAGES) {
@@ -3062,10 +3100,13 @@
                 }
                 
                 // 询盘来源凭证校验
-                var inquiryAssignImage = $('#inquiry_assign_image').val();
-                var inquiryAssignArray = parseVoucherUrls(inquiryAssignImage);
+                var inquiryAssignArray = inquiryAssignUrls.map(function (item) {
+                    return typeof item === 'string' ? item : item.full;
+                }).filter(function (u) {
+                    return String(u || '').trim() !== '';
+                });
                 if (inquiryAssignArray.length < 1) {
-                    layer.msg('请上传产品询盘分配图', { icon: 2, time: 2000 });
+                    layer.msg('利润达到2000元及以上，必须上传询盘来源凭证', { icon: 2, time: 2200 });
                     return false;
                 }
                 if (inquiryAssignArray.length > MAX_INQUIRY_ASSIGN_IMAGES) {
@@ -3075,8 +3116,8 @@
             }
 
             // 同步删除标记，删除旧图后利润>=2000时会强制重新上传
-            $('#clear_wechat_receipt_image').val(parseVoucherUrls($('#wechat_receipt_image').val()).length > 0 ? '0' : '1');
-            $('#clear_inquiry_assign_image').val(parseVoucherUrls($('#inquiry_assign_image').val()).length > 0 ? '0' : '1');
+            $('#clear_wechat_receipt_image').val(wechatReceiptUrls.length > 0 ? '0' : '1');
+            $('#clear_inquiry_assign_image').val(inquiryAssignUrls.length > 0 ? '0' : '1');
             data.field.clear_wechat_receipt_image = $('#clear_wechat_receipt_image').val();
             data.field.clear_inquiry_assign_image = $('#clear_inquiry_assign_image').val();
             // 透传 URL 参数 from（草稿进入时为 draft），后端用于保存后自动提交审核

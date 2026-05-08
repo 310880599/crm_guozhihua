@@ -1876,9 +1876,9 @@ class Order extends Common
                     return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
                 }
                 $wechatReceiptUrls = OrderService::normalizeVoucherImages($wechatReceiptParsed, $MAX_WECHAT_RECEIPT_IMAGES);
-                if (!empty($wechatReceiptUrls)) {
-                    $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                }
+                $data['wechat_receipt_image'] = !empty($wechatReceiptUrls)
+                    ? json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                    : '';
                 $voucherValidationParams['wechat_receipt_image'] = $wechatReceiptRaw;
             }
 
@@ -1891,9 +1891,9 @@ class Order extends Common
                     return json(['code' => 0, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
                 }
                 $inquiryAssignUrls = OrderService::normalizeVoucherImages($inquiryAssignParsed, $MAX_INQUIRY_ASSIGN_IMAGES);
-                if (!empty($inquiryAssignUrls)) {
-                    $data['inquiry_assign_image'] = json_encode($inquiryAssignUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                }
+                $data['inquiry_assign_image'] = !empty($inquiryAssignUrls)
+                    ? json_encode($inquiryAssignUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                    : '';
                 $voucherValidationParams['inquiry_assign_image'] = $inquiryAssignRaw;
             }
 

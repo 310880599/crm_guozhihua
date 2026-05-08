@@ -1083,15 +1083,15 @@ class OrderService
         );
 
         if (count($wechatImages) < 1 && count($inquiryImages) < 1) {
-            return ['ok' => false, 'message' => '利润达到 2000 及以上时，必须上传微信沟通及付款凭证和询盘来源凭证'];
+            return ['ok' => false, 'message' => '利润达到2000元及以上，必须上传微信沟通及付款凭证和询盘来源凭证'];
         }
 
         if (count($wechatImages) < 1) {
-            return ['ok' => false, 'message' => '利润达到 2000 及以上时，必须上传微信沟通及付款凭证'];
+            return ['ok' => false, 'message' => '利润达到2000元及以上，必须上传微信沟通及付款凭证'];
         }
 
         if (count($inquiryImages) < 1) {
-            return ['ok' => false, 'message' => '利润达到 2000 及以上时，必须上传询盘来源凭证'];
+            return ['ok' => false, 'message' => '利润达到2000元及以上，必须上传询盘来源凭证'];
         }
 
         return ['ok' => true, 'message' => ''];
@@ -1121,12 +1121,8 @@ class OrderService
         }
 
         $submittedImages = self::normalizeVoucherImages($params[$field]);
-        if (!empty($submittedImages)) {
-            return $submittedImages;
-        }
-
-        // 编辑场景下：未显式清空且本次未上传新图时，保留旧图
-        return $existingImages;
+        // 字段已提交时，以本次提交结果为准（允许为空数组，表示删除后未保留任何图片）
+        return $submittedImages;
     }
 
     /**
@@ -1154,6 +1150,9 @@ class OrderService
                     } else {
                         $list = [$raw];
                     }
+                } elseif (strpos($raw, ',') !== false) {
+                    // 兼容历史逗号分隔存储
+                    $list = explode(',', $raw);
                 } else {
                     $list = [$raw];
                 }
