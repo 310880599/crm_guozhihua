@@ -2924,8 +2924,7 @@
 
         // 表单提交监听
         form.on('submit(submit)', function (data) {
-            // 提交固定顺序：先重算金额利润，再更新凭证UI，再执行校验
-            if (typeof updateTotals === 'function') updateTotals();
+            // 提交时读取页面已计算好的金额字段，不在提交瞬间重算（避免 DOM 异常导致金额被清零）
             if (typeof updateVoucherUI === 'function') updateVoucherUI(true);
             data.field.money = $('#money').val() || '0';
             data.field.profit = $('#profit').val() || '0';
