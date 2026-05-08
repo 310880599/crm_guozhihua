@@ -1860,8 +1860,11 @@ class Order extends Common
 
             $clearWechatReceipt = (int)Request::param('clear_wechat_receipt_image', 0);
             $clearInquiryAssign = (int)Request::param('clear_inquiry_assign_image', 0);
-            $hasWechatInput = request()->has('wechat_receipt_image');
-            $hasInquiryInput = request()->has('inquiry_assign_image');
+            $wechatReceiptRaw = Request::param('wechat_receipt_image', null);
+            $inquiryAssignRaw = Request::param('inquiry_assign_image', null);
+            // 以本次提交为准：字段出现即视为参与覆盖（包括 [] / ''）
+            $hasWechatInput = $wechatReceiptRaw !== null;
+            $hasInquiryInput = $inquiryAssignRaw !== null;
 
             $voucherValidationParams = $profitCalcParams;
             $voucherValidationParams['clear_wechat_receipt_image'] = $clearWechatReceipt;
@@ -1870,7 +1873,6 @@ class Order extends Common
             if ($clearWechatReceipt === 1) {
                 $data['wechat_receipt_image'] = '';
             } elseif ($hasWechatInput) {
-                $wechatReceiptRaw = Request::param('wechat_receipt_image', '');
                 $wechatReceiptParsed = OrderService::parseImageList($wechatReceiptRaw);
                 if (count($wechatReceiptParsed) > $MAX_WECHAT_RECEIPT_IMAGES) {
                     return json(['code' => 0, 'msg' => '微信沟通凭证图片数量不能超过 ' . $MAX_WECHAT_RECEIPT_IMAGES . ' 张']);
@@ -1885,7 +1887,6 @@ class Order extends Common
             if ($clearInquiryAssign === 1) {
                 $data['inquiry_assign_image'] = '';
             } elseif ($hasInquiryInput) {
-                $inquiryAssignRaw = Request::param('inquiry_assign_image', '');
                 $inquiryAssignParsed = OrderService::parseImageList($inquiryAssignRaw);
                 if (count($inquiryAssignParsed) > $MAX_INQUIRY_ASSIGN_IMAGES) {
                     return json(['code' => 0, 'msg' => '询盘来源凭证图片数量不能超过 ' . $MAX_INQUIRY_ASSIGN_IMAGES . ' 张']);
@@ -4564,48 +4565,37 @@ class Order extends Common
         $data['sales_commission'] = Request::param('sales_commission', '');
         $data['split_remarks']    = Request::param('split_remarks', '');
         $data['amount_received']  = Request::param('amount_received', '');
-        // 询盘来源凭证：支持多图 JSON、显式清空、数量限制
+        // 凭证图片：以本次提交的最终状态为准（支持显式清空、空数组覆盖旧值）
         $clearInq = (int)Request::param('clear_inquiry_assign_image', 0);
+        $inquiryAssignRaw = Request::param('inquiry_assign_image', null);
+        $hasInquiryInput = $inquiryAssignRaw !== null;
         if ($clearInq === 1) {
             $data['inquiry_assign_image'] = '';
-        } elseif (request()->has('inquiry_assign_image')) {
-            $handledInquiryAssignImage = OrderService::handleInquiryImages(Request::param('inquiry_assign_image', ''));
-            $inquiryAssignUrls = json_decode($handledInquiryAssignImage, true);
-            if (!is_array($inquiryAssignUrls)) {
-                $inquiryAssignUrls = [];
-            }
+        } elseif ($hasInquiryInput) {
+            $inquiryAssignParsed = OrderService::parseImageList($inquiryAssignRaw);
+            $inquiryAssignUrls = OrderService::normalizeVoucherImages($inquiryAssignParsed, 10);
             if (count($inquiryAssignUrls) > 10) {
                 return json(['code' => 1, 'msg' => '询盘来源凭证图片数量不能超过 10 张']);
             }
-            $data['inquiry_assign_image'] = $handledInquiryAssignImage;
+            $data['inquiry_assign_image'] = !empty($inquiryAssignUrls)
+                ? json_encode($inquiryAssignUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                : '';
         }
-        // 微信沟通凭证：支持显式清空，空值不覆盖数据库已有图片
-        $wr = Request::param('wechat_receipt_image', null);
+        // 微信沟通凭证：以本次提交的最终状态为准（支持显式清空、空数组覆盖旧值）
+        $wechatReceiptRaw = Request::param('wechat_receipt_image', null);
+        $hasWechatInput = $wechatReceiptRaw !== null;
         $clearWr = (int)Request::param('clear_wechat_receipt_image', 0);
         if ($clearWr === 1) {
             $data['wechat_receipt_image'] = '';
-        } else {
-            $wechatReceiptUrls = [];
-            if (is_array($wr)) {
-                $wechatReceiptUrls = array_values(array_filter($wr, function ($v) { return trim((string)$v) !== ''; }));
-            } elseif (is_string($wr)) {
-                $wr = trim($wr);
-                if ($wr !== '') {
-                    if (isset($wr[0]) && $wr[0] === '[') {
-                        $tmp = json_decode($wr, true);
-                        if (is_array($tmp)) {
-                            $wechatReceiptUrls = array_values(array_filter($tmp, function ($v) { return trim((string)$v) !== ''; }));
-                        } else {
-                            $wechatReceiptUrls = [$wr];
-                        }
-                    } else {
-                        $wechatReceiptUrls = [$wr];
-                    }
-                }
+        } elseif ($hasWechatInput) {
+            $wechatReceiptParsed = OrderService::parseImageList($wechatReceiptRaw);
+            $wechatReceiptUrls = OrderService::normalizeVoucherImages($wechatReceiptParsed, 10);
+            if (count($wechatReceiptUrls) > 10) {
+                return json(['code' => 1, 'msg' => '微信沟通凭证图片数量不能超过 10 张']);
             }
-            if (!empty($wechatReceiptUrls)) {
-                $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE);
-            }
+            $data['wechat_receipt_image'] = !empty($wechatReceiptUrls)
+                ? json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                : '';
         }
         $jpRaw = Request::param('joint_person');
         $jpIds = [];
