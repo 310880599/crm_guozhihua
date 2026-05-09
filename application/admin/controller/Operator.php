@@ -8,6 +8,7 @@ use think\facade\Session;
 use app\admin\model\Admin;
 use app\admin\service\PersonOrderService;
 use app\admin\service\OrderImageService;
+use app\admin\service\BusinessPerformanceSplitService;
 
 class Operator extends Common
 {
@@ -1959,49 +1960,42 @@ private function exportToExcel($data)
         // 后续只需要在这里增删名字即可控制显示范围
         // 业务人员业绩表展示排除名单（仅影响统计展示行和 summary，不影响账号权限）
         // 统一由 Common::getPerformanceExcludeUsernames() 维护，如需调整请修改 Common.php
-        $excludeUsernames = $this->getPerformanceExcludeUsernames();
         $excludeMap = $this->getPerformanceExcludeUsernameMap();
+        $service = new BusinessPerformanceSplitService();
 
         $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $filter_username, $month_keys);
 
-        // 1) summary：与订单列表 totalProfit/totalMoney 同源（对整批 where 求和，不受补零行影响）
-        $totalsQuery = Db::table('crm_client_order');
-        $this->applyPerformanceWhereToQuery($totalsQuery, $where);
-        $totals_row = $totalsQuery
-            ->field('SUM(profit) AS total_profit, SUM(money) AS total_money')
-            ->find();
-        $sum_profit_all = round((float)($totals_row['total_profit'] ?? 0), 2);
-        $sum_money_all = round((float)($totals_row['total_money'] ?? 0), 2);
-        $sum_rate_all = $sum_money_all > 0 ? round(($sum_profit_all / $sum_money_all) * 100, 2) : 0;
-
-        // 2) 按 pr_user 聚合（空 pr_user 单独成桶，避免丢单）
-        // MySQL 5.7: GROUP_CONCAT 的 SEPARATOR 需使用字符串字面量，不能用 CHAR(30)
-        $teamNameSeparator = '||#||';
-        $orderStatsQuery = Db::table('crm_client_order');
-        $this->applyPerformanceWhereToQuery($orderStatsQuery, $where);
-        $order_stats = $orderStatsQuery
-            ->fieldRaw(
-                "IFNULL(NULLIF(TRIM(pr_user),''), '__PR_EMPTY__') AS pr_bucket, "
-                . 'COUNT(id) AS order_count, SUM(profit) AS total_profit, SUM(money) AS total_money, '
-                . "SUBSTRING_INDEX("
-                . "GROUP_CONCAT(NULLIF(TRIM(team_name), '') ORDER BY order_time DESC, id DESC SEPARATOR '{$teamNameSeparator}')"
-                . ", '{$teamNameSeparator}', 1"
-                . ") AS snap_team_name"
-            )
-            ->group('pr_bucket')
-            ->select();
-
         $current_admin = Admin::getMyInfo();
-        $admin_map = [];
-        $adminQuery = Db::table('admin')->field('username,team_name');
+        $adminQuery = Db::table('admin')->field('admin_id,username,team_name');
         if (!empty($current_admin['org'])) {
             $adminQuery->where($this->getOrgWhere($current_admin['org']));
         }
-        foreach ($adminQuery->select() as $ar) {
-            if (!empty($ar['username'])) {
-                $admin_map[$ar['username']] = $ar;
+        $adminRows = $adminQuery->select();
+        $adminMapById = [];
+        $adminMapByUsername = [];
+        foreach ((array)$adminRows as $adminRow) {
+            $adminId = (int)($adminRow['admin_id'] ?? 0);
+            $adminName = trim((string)($adminRow['username'] ?? ''));
+            if ($adminId > 0) {
+                $adminMapById[$adminId] = $adminRow;
+            }
+            if ($adminName !== '') {
+                $adminMapByUsername[$adminName] = $adminRow;
             }
         }
+
+        $ordersQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($ordersQuery, $where);
+        $orders = $ordersQuery
+            ->field('id,order_time,pr_user,pr_user_id,joint_person,owner_profit_rate,collaborator_profit_rate,money,profit,team_name')
+            ->order('order_time desc,id desc')
+            ->select();
+        $aggregate = $service->aggregateOrderPerformance((array)$orders, $adminMapById);
+        $agg_map = $aggregate['agg_map'];
+
+        $sum_profit_all = round((float)($aggregate['total_profit'] ?? 0), 2);
+        $sum_money_all = round((float)($aggregate['total_money'] ?? 0), 2);
+        $sum_rate_all = $sum_money_all > 0 ? round(($sum_profit_all / $sum_money_all) * 100, 2) : 0;
 
         // 3) 补零：仅展示用（启用 + 业务组），不参与上面的 SUM
         $business_users_query = Db::table('admin')
@@ -2019,22 +2013,7 @@ private function exportToExcel($data)
             ->limit(500)
             ->select();
 
-        $agg_map = [];
-        foreach ($order_stats as $stat) {
-            $bucket = (string)$stat['pr_bucket'];
-            $is_empty_pr = ($bucket === '__PR_EMPTY__');
-            $display_username = $is_empty_pr ? '未知业务员' : $bucket;
-            $agg_map[$bucket] = [
-                'username' => $display_username,
-                'pr_bucket' => $bucket,
-                'order_count' => (int)($stat['order_count'] ?? 0),
-                'total_profit' => round((float)($stat['total_profit'] ?? 0), 2),
-                'total_money' => round((float)($stat['total_money'] ?? 0), 2),
-                'snap_team_name' => trim((string)($stat['snap_team_name'] ?? '')),
-            ];
-        }
-
-        foreach ($business_users as $u) {
+        foreach ((array)$business_users as $u) {
             $un = trim((string)($u['username'] ?? ''));
             if ($un === '') {
                 continue;
@@ -2042,7 +2021,6 @@ private function exportToExcel($data)
             if (!isset($agg_map[$un])) {
                 $agg_map[$un] = [
                     'username' => $un,
-                    'pr_bucket' => $un,
                     'order_count' => 0,
                     'total_profit' => 0.0,
                     'total_money' => 0.0,
@@ -2052,22 +2030,21 @@ private function exportToExcel($data)
         }
 
         $result = [];
-        foreach ($agg_map as $row) {
-            $username = trim((string)($row['username'] ?? ''));
+        foreach ($agg_map as $bucket => $row) {
+            $displayUsername = trim((string)($row['username'] ?? ''));
             // 统一在输出前过滤，确保有订单/补零人员都能正确排除
-            if ($username !== '' && isset($excludeMap[$username])) {
+            if ($displayUsername !== '' && isset($excludeMap[$displayUsername])) {
                 continue;
             }
 
-            $bucket = $row['pr_bucket'];
-            $total_profit = (float)$row['total_profit'];
-            $total_money = (float)$row['total_money'];
+            $total_profit = (float)($row['total_profit'] ?? 0);
+            $total_money = (float)($row['total_money'] ?? 0);
             $profit_rate = $total_money > 0 ? round(($total_profit / $total_money) * 100, 2) : 0;
 
-            $snap = trim((string)$row['snap_team_name']);
+            $snap = trim((string)($row['snap_team_name'] ?? ''));
             $admin_team = '';
-            if ($bucket !== '__PR_EMPTY__' && isset($admin_map[$bucket])) {
-                $admin_team = trim((string)($admin_map[$bucket]['team_name'] ?? ''));
+            if ($displayUsername !== '' && isset($adminMapByUsername[$displayUsername])) {
+                $admin_team = trim((string)($adminMapByUsername[$displayUsername]['team_name'] ?? ''));
             }
             if ($snap !== '') {
                 $team_display = $snap;
@@ -2078,9 +2055,9 @@ private function exportToExcel($data)
             }
 
             $result[] = [
-                'username' => $row['username'],
+                'username' => (string)($row['username'] ?? $bucket),
                 'team_name' => $team_display,
-                'order_count' => (int)$row['order_count'],
+                'order_count' => (int)($row['order_count'] ?? 0),
                 'profit_raw' => $total_profit,
                 'profit' => number_format($total_profit, 2),
                 'total_money_raw' => $total_money,
@@ -4617,7 +4594,7 @@ private function exportToExcel($data)
                 ],
                 [
                     'title' => '原始订单明细',
-                    'headers' => ['订单ID', '订单号', '下单时间', '客户名称', '业务员', '团队', '订单金额', '利润', '审核状态'],
+                    'headers' => ['订单ID', '订单号', '下单时间', '客户名称', '业务员', '团队', '订单金额', '利润', '审核状态', '负责人占比', '协同人占比', '协同人', '分摊说明'],
                     'rows' => $exportData['raw_rows'],
                 ],
             ]);
@@ -5203,34 +5180,35 @@ private function exportToExcel($data)
     private function collectBusinessPerformanceExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $username = ''): array
     {
         $where = $this->buildOrderListAlignedOrderWhere($timebucket, $at_time, $username, $month_keys);
-        $teamNameSeparator = '||#||';
-
-        $orderStatsQuery = Db::table('crm_client_order');
-        $this->applyPerformanceWhereToQuery($orderStatsQuery, $where);
-        $orderStats = $orderStatsQuery
-            ->fieldRaw(
-                "IFNULL(NULLIF(TRIM(pr_user),''), '__PR_EMPTY__') AS pr_bucket, "
-                . 'COUNT(id) AS order_count, SUM(profit) AS total_profit, SUM(money) AS total_money, '
-                . "SUBSTRING_INDEX("
-                . "GROUP_CONCAT(NULLIF(TRIM(team_name), '') ORDER BY order_time DESC, id DESC SEPARATOR '{$teamNameSeparator}')"
-                . ", '{$teamNameSeparator}', 1"
-                . ") AS snap_team_name"
-            )
-            ->group('pr_bucket')
-            ->select();
+        $service = new BusinessPerformanceSplitService();
 
         $currentAdmin = Admin::getMyInfo();
-        $adminMap = [];
-        $adminQuery = Db::table('admin')->field('username,team_name');
+        $adminMapById = [];
+        $adminMapByUsername = [];
+        $adminQuery = Db::table('admin')->field('admin_id,username,team_name');
         if (!empty($currentAdmin['org'])) {
             $adminQuery->where($this->getOrgWhere($currentAdmin['org']));
         }
-        foreach ((array)$adminQuery->select() as $ar) {
-            $uname = trim((string)($ar['username'] ?? ''));
-            if ($uname !== '') {
-                $adminMap[$uname] = $ar;
+        foreach ((array)$adminQuery->select() as $adminRow) {
+            $adminId = (int)($adminRow['admin_id'] ?? 0);
+            $adminName = trim((string)($adminRow['username'] ?? ''));
+            if ($adminId > 0) {
+                $adminMapById[$adminId] = $adminRow;
+            }
+            if ($adminName !== '') {
+                $adminMapByUsername[$adminName] = $adminRow;
             }
         }
+
+        $ordersQuery = Db::table('crm_client_order');
+        $this->applyPerformanceWhereToQuery($ordersQuery, $where);
+        $orders = $ordersQuery
+            ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,check_status,joint_person,owner_profit_rate,collaborator_profit_rate')
+            ->order('order_time desc,id desc')
+            ->limit(20000)
+            ->select();
+        $aggregate = $service->aggregateOrderPerformance((array)$orders, $adminMapById);
+        $aggMap = $aggregate['agg_map'];
 
         $businessUsersQuery = Db::table('admin')
             ->where($this->getOrgWhere($currentAdmin['org']))
@@ -5247,25 +5225,7 @@ private function exportToExcel($data)
             ->select();
 
         // 业务人员业绩表展示排除名单（仅影响统计展示，不影响权限），统一由 Common.php 维护
-        $excludeUsernames = $this->getPerformanceExcludeUsernames();
         $excludeMap = $this->getPerformanceExcludeUsernameMap();
-
-        $aggMap = [];
-        foreach ((array)$orderStats as $stat) {
-            $bucket = (string)($stat['pr_bucket'] ?? '');
-            if ($bucket === '') {
-                continue;
-            }
-            $isEmptyPr = ($bucket === '__PR_EMPTY__');
-            $displayUsername = $isEmptyPr ? '未知业务员' : $bucket;
-            $aggMap[$bucket] = [
-                'username' => $displayUsername,
-                'order_count' => (int)($stat['order_count'] ?? 0),
-                'total_profit' => round((float)($stat['total_profit'] ?? 0), 2),
-                'total_money' => round((float)($stat['total_money'] ?? 0), 2),
-                'snap_team_name' => trim((string)($stat['snap_team_name'] ?? '')),
-            ];
-        }
 
         foreach ((array)$businessUsers as $u) {
             $un = trim((string)($u['username'] ?? ''));
@@ -5292,15 +5252,15 @@ private function exportToExcel($data)
             $rate = $totalMoney > 0 ? round(($totalProfit / $totalMoney) * 100, 2) : 0.0;
 
             $teamName = trim((string)($row['snap_team_name'] ?? ''));
-            if ($teamName === '' && $bucket !== '__PR_EMPTY__' && isset($adminMap[$bucket])) {
-                $teamName = trim((string)($adminMap[$bucket]['team_name'] ?? ''));
+            if ($teamName === '' && $displayUsername !== '' && isset($adminMapByUsername[$displayUsername])) {
+                $teamName = trim((string)($adminMapByUsername[$displayUsername]['team_name'] ?? ''));
             }
             if ($teamName === '') {
                 $teamName = '未分组';
             }
 
             $rows[] = [
-                'username' => $displayUsername,
+                'username' => $displayUsername !== '' ? $displayUsername : (string)$bucket,
                 'team_name' => $teamName,
                 'order_count' => (int)($row['order_count'] ?? 0),
                 'total_profit' => $totalProfit,
@@ -5334,15 +5294,30 @@ private function exportToExcel($data)
             ];
         }
 
-        $rawQuery = Db::table('crm_client_order');
-        $this->applyPerformanceWhereToQuery($rawQuery, $where);
-        $rawOrderRows = $rawQuery
-            ->field('id,order_no,order_time,cname,pr_user,team_name,money,profit,check_status')
-            ->order('order_time desc,id desc')
-            ->limit(20000)
-            ->select();
         $rawRows = [];
-        foreach ((array)$rawOrderRows as $r) {
+        foreach ((array)$orders as $r) {
+            $jointIds = $service->parseJointPersonIds($r['joint_person'] ?? '');
+            $jointNames = [];
+            foreach ($jointIds as $jointId) {
+                if (isset($adminMapById[$jointId])) {
+                    $jointNames[] = trim((string)($adminMapById[$jointId]['username'] ?? ''));
+                } else {
+                    $jointNames[] = '协同人#' . (int)$jointId;
+                }
+            }
+            $jointNames = array_values(array_filter($jointNames, function ($name) {
+                return trim((string)$name) !== '';
+            }));
+
+            $rates = $service->normalizeProfitRates($r['owner_profit_rate'] ?? null, $r['collaborator_profit_rate'] ?? null);
+            $splitNote = '负责人全额记利润';
+            if (!empty($jointIds) && (float)$rates['collaborator_rate'] > 0) {
+                $splitNote = '负责人' . number_format((float)$rates['owner_rate'], 2, '.', '') . '%，协同人' . number_format((float)$rates['collaborator_rate'], 2, '.', '') . '%';
+                if (count($jointIds) > 1) {
+                    $splitNote .= '（多人协同均分）';
+                }
+            }
+
             $rawRows[] = [
                 (int)($r['id'] ?? 0),
                 (string)($r['order_no'] ?? ''),
@@ -5353,6 +5328,10 @@ private function exportToExcel($data)
                 number_format((float)($r['money'] ?? 0), 2, '.', ''),
                 number_format((float)($r['profit'] ?? 0), 2, '.', ''),
                 (int)($r['check_status'] ?? 0),
+                number_format((float)$rates['owner_rate'], 2, '.', ''),
+                number_format((float)$rates['collaborator_rate'], 2, '.', ''),
+                implode(',', $jointNames),
+                $splitNote,
             ];
         }
 
