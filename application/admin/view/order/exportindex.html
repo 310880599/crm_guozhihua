@@ -218,7 +218,10 @@
         /* 产品明细展示样式 */
         .product-cell {
             display: block;
+            box-sizing: border-box;
+            max-width: 100%;
             width: 100%;
+            overflow: hidden;
             background: #f5f7fb;
             padding: 10px 12px;
             border-radius: 6px;
@@ -228,6 +231,10 @@
 
         .product-row {
             display: block;
+            box-sizing: border-box;
+            max-width: 100%;
+            width: 100%;
+            overflow: hidden;
             padding: 10px 12px;
             line-height: 22px;
             border: 1px dashed #d6dbe6;
@@ -243,6 +250,9 @@
 
         .product-field {
             display: inline-block;
+            box-sizing: border-box;
+            max-width: 100%;
+            word-break: break-all;
             margin-right: 12px;
             margin-bottom: 6px;
             padding: 3px 6px;
@@ -265,7 +275,6 @@
         .layui-table thead th {
             color: #fff;
             font-weight: 600;
-            padding: 15px 10px;
         }
 
         .layui-table tbody tr {
@@ -276,13 +285,17 @@
             background-color: #f5f7fa;
         }
 
-        .layui-table tbody td {
+        .layui-table-cell {
+            box-sizing: border-box;
             padding: 12px 10px;
-            vertical-align: top;
             white-space: normal;
         }
 
-        .layui-table tbody td.product-detail-cell {
+        .layui-table-main .layui-table-cell {
+            vertical-align: top;
+        }
+
+        .product-detail-cell .layui-table-cell {
             padding: 14px 12px;
         }
 
@@ -754,6 +767,19 @@
                     if (rowData && actionHandlers[action]) {
                         actionHandlers[action](rowData);
                     }
+                });
+            }
+
+            function syncTableHeaderScroll() {
+                var $view = $('#table-list').next('.layui-table-view');
+                var $main = $view.find('.layui-table-main');
+                var $header = $view.find('.layui-table-header');
+                var $total = $view.find('.layui-table-total');
+
+                $main.off('scroll.exportOrderSync').on('scroll.exportOrderSync', function () {
+                    var left = this.scrollLeft || 0;
+                    $header.scrollLeft(left);
+                    $total.scrollLeft(left);
                 });
             }
 
@@ -1242,6 +1268,7 @@
             // 初始化表格
             const tableIn = table.render({
                 elem: '#table-list',
+                id: 'table-list',
                 url: '{:url("index")}',
                 method: 'post',
                 toolbar: '#topBtn',
@@ -1337,13 +1364,15 @@
                     $('.layui-table-body td[data-field="order_items"]').addClass('product-detail-cell');
 
                     bindRowActionPanel(res);
+                    syncTableHeaderScroll();
 
-                    if (typeof table.resize === 'function') {
-                        table.resize('table-list');
-                    }
                     setTimeout(function () {
+                        if (typeof table.resize === 'function') {
+                            table.resize('table-list');
+                        }
+                        syncTableHeaderScroll();
                         window.dispatchEvent(new Event('resize'));
-                    }, 50);
+                    }, 100);
                 }
             });
 
