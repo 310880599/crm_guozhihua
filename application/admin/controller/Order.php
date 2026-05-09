@@ -5001,6 +5001,13 @@ class Order extends Common
         
         // 转换收款账户ID为账户名称 和 协同人ID为用户名
         foreach ($list['data'] as &$order) {
+            if (!isset($order['owner_profit_rate']) || $order['owner_profit_rate'] === null || $order['owner_profit_rate'] === '') {
+                $order['owner_profit_rate'] = '100.00';
+            }
+            if (!isset($order['collaborator_profit_rate']) || $order['collaborator_profit_rate'] === null || $order['collaborator_profit_rate'] === '') {
+                $order['collaborator_profit_rate'] = '0.00';
+            }
+
             // 转换收款账户
             if (!empty($order['bank_account'])) {
                 $accountInfo = Db::name('crm_receive_account')
