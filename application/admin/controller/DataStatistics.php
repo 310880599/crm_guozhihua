@@ -161,7 +161,16 @@ class DataStatistics extends Common
 
             $total_profit = (float)($row['total_profit'] ?? 0);
             $total_money = (float)($row['total_money'] ?? 0);
-            $profit_rate = $total_money > 0 ? round(($total_profit / $total_money) * 100, 2) : 0;
+            if ($total_money > 0) {
+                $profit_rate = round(($total_profit / $total_money) * 100, 2);
+                $profit_rate_display = number_format($profit_rate, 2);
+            } elseif ($total_profit > 0) {
+                $profit_rate = null;
+                $profit_rate_display = '--';
+            } else {
+                $profit_rate = 0;
+                $profit_rate_display = number_format(0, 2);
+            }
 
             $snap = trim((string)($row['snap_team_name'] ?? ''));
             $admin_team = '';
@@ -185,7 +194,7 @@ class DataStatistics extends Common
                 'total_money_raw' => $total_money,
                 'total_money' => number_format($total_money, 2),
                 'profit_rate_raw' => $profit_rate,
-                'profit_rate' => number_format($profit_rate, 2),
+                'profit_rate' => $profit_rate_display,
             ];
         }
 

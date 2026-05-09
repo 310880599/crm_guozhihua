@@ -170,6 +170,8 @@ function renderTable(rows, summary) {
     var html = '';
     for (var i = 0; i < rows.length; i++) {
         var r = rows[i];
+        var rateText = (r.profit_rate === undefined || r.profit_rate === null || r.profit_rate === '') ? '0.00' : r.profit_rate;
+        var rateDisplay = (rateText === '--') ? '--' : (esc(rateText) + '%');
         html += '<tr>'
             + '<td class="text-center">' + (r.rank || (i+1)) + '</td>'
             + '<td>' + esc(r.username) + '</td>'
@@ -177,7 +179,7 @@ function renderTable(rows, summary) {
             + '<td class="col-order-count">' + (r.order_count || 0) + '</td>'
             + '<td class="col-profit profit-pos">' + esc(r.profit) + '</td>'
             + '<td class="col-money">' + esc(r.total_money) + '</td>'
-            + '<td class="col-rate">' + esc(r.profit_rate) + '%</td>'
+            + '<td class="col-rate">' + rateDisplay + '</td>'
             + '</tr>';
     }
     tbody.innerHTML = html;
