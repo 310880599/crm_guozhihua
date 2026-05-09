@@ -221,27 +221,24 @@
             box-sizing: border-box;
             max-width: 100%;
             width: 100%;
+            height: 38px;
+            line-height: 38px;
             overflow: hidden;
             background: #f5f7fb;
-            padding: 10px 12px;
-            border-radius: 6px;
+            padding: 0 8px;
+            border-radius: 4px;
             border: 1px solid #e6eaf2;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+            white-space: nowrap;
+            text-overflow: ellipsis;
         }
 
         .product-row {
-            display: block;
-            box-sizing: border-box;
-            max-width: 100%;
-            width: 100%;
-            overflow: hidden;
-            padding: 10px 12px;
-            line-height: 22px;
-            border: 1px dashed #d6dbe6;
-            border-radius: 6px;
-            color: #333;
-            background: #fff;
-            margin-bottom: 10px;
+            display: inline;
+            padding: 0;
+            line-height: 38px;
+            border: none;
+            background: transparent;
+            margin: 0;
         }
 
         .product-row:last-child {
@@ -249,17 +246,15 @@
         }
 
         .product-field {
-            display: inline-block;
-            box-sizing: border-box;
-            max-width: 100%;
-            word-break: break-all;
-            margin-right: 12px;
-            margin-bottom: 6px;
-            padding: 3px 6px;
-            border-radius: 4px;
+            display: inline;
+            margin-right: 10px;
+            margin-bottom: 0;
+            padding: 2px 5px;
+            border-radius: 3px;
             background: #f0f2f5;
             color: #444;
             font-size: 12px;
+            white-space: nowrap;
         }
 
         /* 表格样式优化 */
@@ -287,23 +282,27 @@
 
         .layui-table-cell {
             box-sizing: border-box;
-            height: auto !important;
-            min-height: 44px;
-            line-height: 22px !important;
-            padding: 11px 10px !important;
-            white-space: normal;
-            overflow: visible;
+            height: 38px !important;
+            min-height: 38px;
+            line-height: 38px !important;
+            padding: 0 10px !important;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .layui-table-main .layui-table-cell {
-            display: flex;
-            align-items: center;
+            display: block;
+            align-items: initial;
         }
 
         .product-detail-cell .layui-table-cell {
             display: block;
-            min-height: 60px;
-            padding: 10px 12px !important;
+            height: 44px !important;
+            min-height: 44px;
+            line-height: 44px !important;
+            padding: 3px 8px !important;
+            overflow: hidden;
         }
 
         .product-cell.js-product-detail {
@@ -1362,23 +1361,27 @@
                         if (!d.order_items || d.order_items.length === 0) {
                             return '';
                         }
-                        const rows = d.order_items.map(function(item){
-                            const detailParts = [];
-                            if (item.manager_name) detailParts.push('产品经理：' + item.manager_name);
-                            if (item.product_name) detailParts.push('产品名称：' + item.product_name);
-                            if (item.spec_model) detailParts.push('规格型号：' + item.spec_model);
-                            if (item.supplier) detailParts.push('供应商：' + item.supplier);
-                            if (item.unit) detailParts.push('单位：' + item.unit);
-                            if (item.qty !== undefined && item.qty !== null) detailParts.push('数量：' + item.qty);
-                            if (item.unit_price !== undefined && item.unit_price !== null) detailParts.push('销售单价：' + item.unit_price);
-                            if (item.total_price !== undefined && item.total_price !== null) detailParts.push('售价合计：' + item.total_price);
-                            if (item.purchase_price !== undefined && item.purchase_price !== null) detailParts.push('进价合计：' + item.purchase_price);
-                            const fields = detailParts.map(function(text){
-                                return '<span class="product-field">' + text + '</span>';
-                            }).join('');
-                            return '<div class="product-row">' + fields + '</div>';
+
+                        var first = d.order_items[0] || {};
+                        var summaryParts = [];
+
+                        if (first.manager_name) summaryParts.push('产品经理：' + first.manager_name);
+                        if (first.product_name) summaryParts.push('产品名称：' + first.product_name);
+                        if (first.spec_model) summaryParts.push('规格型号：' + first.spec_model);
+                        if (first.qty !== undefined && first.qty !== null) summaryParts.push('数量：' + first.qty);
+                        if (first.total_price !== undefined && first.total_price !== null) summaryParts.push('售价合计：' + first.total_price);
+
+                        if (d.order_items.length > 1) {
+                            summaryParts.push('等' + d.order_items.length + '项，点击查看完整明细');
+                        } else {
+                            summaryParts.push('点击查看完整明细');
+                        }
+
+                        var fields = summaryParts.map(function(text){
+                            return '<span class="product-field">' + text + '</span>';
                         }).join('');
-                        return '<div class="product-cell js-product-detail" data-order-id="' + d.id + '">' + rows + '</div>';
+
+                        return '<div class="product-cell js-product-detail" data-order-id="' + d.id + '" title="点击查看完整产品明细">' + fields + '</div>';
                     }},
                     { field: 'money', title: '成交金额(￥)', totalRow: true, minWidth: 180 },
                     { field: 'profit', title: '利润', totalRow: true, minWidth: 180 },
