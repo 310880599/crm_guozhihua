@@ -287,16 +287,32 @@
 
         .layui-table-cell {
             box-sizing: border-box;
-            padding: 12px 10px;
+            height: auto !important;
+            min-height: 44px;
+            line-height: 22px !important;
+            padding: 11px 10px !important;
             white-space: normal;
+            overflow: visible;
         }
 
         .layui-table-main .layui-table-cell {
-            vertical-align: top;
+            display: flex;
+            align-items: center;
         }
 
         .product-detail-cell .layui-table-cell {
-            padding: 14px 12px;
+            display: block;
+            min-height: 60px;
+            padding: 10px 12px !important;
+        }
+
+        .product-cell.js-product-detail {
+            cursor: pointer;
+        }
+
+        .product-cell.js-product-detail:hover {
+            border-color: #5b8def;
+            background: #eef4ff;
         }
 
         /* 产品信息展示样式 */
@@ -781,6 +797,62 @@
                     $header.scrollLeft(left);
                     $total.scrollLeft(left);
                 });
+            }
+
+            function escapeHtml(str) {
+                return String(str == null ? '' : str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            function bindProductDetailPopup(res) {
+                var dataMap = {};
+                if (res && Array.isArray(res.data)) {
+                    res.data.forEach(function(row) {
+                        dataMap[String(row.id)] = row;
+                    });
+                }
+
+                $('.layui-table-body')
+                    .off('click.productDetail', '.js-product-detail')
+                    .on('click.productDetail', '.js-product-detail', function(e) {
+                        e.stopPropagation();
+
+                        var orderId = String($(this).data('order-id') || '');
+                        var row = dataMap[orderId];
+                        if (!row || !row.order_items || row.order_items.length === 0) {
+                            layer.msg('暂无产品明细');
+                            return;
+                        }
+
+                        var html = '<div style="padding:15px 18px;">';
+                        row.order_items.forEach(function(item, index) {
+                            html += '<div style="border:1px solid #e6eaf2;border-radius:6px;padding:10px 12px;margin-bottom:10px;background:#fafafa;">';
+                            html += '<div style="font-weight:600;margin-bottom:8px;">产品明细 ' + (index + 1) + '</div>';
+                            html += '<div>产品经理：' + escapeHtml(item.manager_name || '') + '</div>';
+                            html += '<div>产品名称：' + escapeHtml(item.product_name || '') + '</div>';
+                            html += '<div>规格型号：' + escapeHtml(item.spec_model || '') + '</div>';
+                            html += '<div>供应商：' + escapeHtml(item.supplier || '') + '</div>';
+                            html += '<div>单位：' + escapeHtml(item.unit || '') + '</div>';
+                            html += '<div>数量：' + escapeHtml(item.qty || '') + '</div>';
+                            html += '<div>销售单价：' + escapeHtml(item.unit_price || '') + '</div>';
+                            html += '<div>售价合计：' + escapeHtml(item.total_price || '') + '</div>';
+                            html += '<div>进价合计：' + escapeHtml(item.purchase_price || '') + '</div>';
+                            html += '</div>';
+                        });
+                        html += '</div>';
+
+                        layer.open({
+                            type: 1,
+                            title: '产品明细',
+                            area: ['720px', '70%'],
+                            shadeClose: true,
+                            content: html
+                        });
+                    });
             }
 
             // 自定义美化导出函数 - 导出当前表格显示的数据（应用搜索条件）
@@ -1306,7 +1378,7 @@
                             }).join('');
                             return '<div class="product-row">' + fields + '</div>';
                         }).join('');
-                        return '<div class="product-cell">' + rows + '</div>';
+                        return '<div class="product-cell js-product-detail" data-order-id="' + d.id + '">' + rows + '</div>';
                     }},
                     { field: 'money', title: '成交金额(￥)', totalRow: true, minWidth: 180 },
                     { field: 'profit', title: '利润', totalRow: true, minWidth: 180 },
@@ -1363,6 +1435,7 @@
                     // 为产品明细列添加专用样式，确保有足够的展示空间
                     $('.layui-table-body td[data-field="order_items"]').addClass('product-detail-cell');
 
+                    bindProductDetailPopup(res);
                     bindRowActionPanel(res);
                     syncTableHeaderScroll();
 
