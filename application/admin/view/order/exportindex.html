@@ -807,6 +807,17 @@
                     .replace(/'/g, '&#39;');
             }
 
+            function formatPercentValue(value, defaultValue) {
+                if (value === null || value === undefined || value === '') {
+                    value = defaultValue;
+                }
+                var num = parseFloat(value);
+                if (isNaN(num)) {
+                    num = defaultValue;
+                }
+                return num.toString().replace(/\.00$/, '') + '%';
+            }
+
             function bindProductDetailPopup(res) {
                 var dataMap = {};
                 if (res && Array.isArray(res.data)) {
@@ -993,9 +1004,11 @@
                     { field: 'debugging_cost', title: '调试费', width: 10, type: 'number' },
                     { field: 'sales_commission', title: '佣金', width: 10, type: 'number' },
                     { field: 'split_remarks', title: '分成备注', width: 15 },
-                    { field: 'bank_account', title: '收款账户', width: 15 },
-                    { field: 'source_port', title: '客户来源', width: 15 },
+                    { field: 'owner_profit_rate', title: '负责人占比', width: 14, type: 'percent' },
+                    { field: 'collaborator_profit_rate', title: '协同人占比', width: 14, type: 'percent' },
+                    { field: 'bank_account', title: '收款账户手动录入', width: 15 },
                     { field: 'amount_received', title: '已收款金额', width: 12, type: 'number' },
+                    { field: 'source_port', title: '客户来源', width: 15 },
                     { field: 'profit', title: '预估毛利润', width: 12, type: 'number' },
                     { field: 'margin_rate', title: '预估利润率', width: 12, type: 'number' },
                     { field: 'joint_person', title: '协同人', width: 15 },
@@ -1031,7 +1044,8 @@
                             const orderInfoColumns = ['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                 'shipping_cost', 'invoice_type', 'invoice_amount', 'tax_amount', 
                                 'debugging_cost', 'sales_commission', 'split_remarks', 
-                                'bank_account', 'source_port', 'amount_received', 'profit', 
+                                'owner_profit_rate', 'collaborator_profit_rate', 'bank_account',
+                                'amount_received', 'source_port', 'profit',
                                 'margin_rate', 'joint_person', 'client_company', 'product_name_summary',
                                 'create_time_original', 'ut_time_original', 'old_crm_data',
                                 'create_time', 'ut_time'];
@@ -1053,6 +1067,7 @@
                         orderItems.forEach((itemDetail, index) => {
                             const row = columns.map(col => {
                                 let value = '';
+                                let preserveEmpty = false;
                                 
                                 // 订单主表字段 - 只在第一个产品行显示
                                 if (index === 0) {
@@ -1060,7 +1075,8 @@
                                     if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
-                                         'source_port', 'amount_received', 'profit', 
+                                         'owner_profit_rate', 'collaborator_profit_rate',
+                                         'amount_received', 'source_port', 'profit',
                                          'margin_rate', 'client_company'].includes(col.field)) {
                                         value = item[col.field] || '';
                                     }
@@ -1096,12 +1112,14 @@
                                     if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
-                                         'source_port', 'amount_received', 'profit', 
+                                         'owner_profit_rate', 'collaborator_profit_rate',
+                                         'amount_received', 'source_port', 'profit',
                                          'margin_rate', 'client_company', 'invoice_type',
                                          'bank_account', 'joint_person', 'product_name_summary',
                                          'create_time_original', 'ut_time_original', 'old_crm_data',
                                          'create_time', 'ut_time'].includes(col.field)) {
                                         value = ''; // 订单信息留空
+                                        preserveEmpty = true;
                                     }
                                 }
                                 
@@ -1138,6 +1156,11 @@
                                 if (col.type === 'number' && value !== '') {
                                     value = parseFloat(value) || 0;
                                 }
+                                // 格式化占比
+                                if (col.type === 'percent' && !preserveEmpty) {
+                                    const defaultPercent = col.field === 'owner_profit_rate' ? 100 : 0;
+                                    value = formatPercentValue(value, defaultPercent);
+                                }
                                 // 格式化日期
                                 if (col.type === 'date' && value) {
                                     // 成交日期只精确到年月日（前10个字符：YYYY-MM-DD）
@@ -1162,7 +1185,8 @@
                             if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                  'shipping_cost', 'invoice_amount', 'tax_amount', 
                                  'debugging_cost', 'sales_commission', 'split_remarks', 
-                                 'source_port', 'amount_received', 'profit', 
+                                 'owner_profit_rate', 'collaborator_profit_rate',
+                                 'amount_received', 'source_port', 'profit',
                                  'margin_rate', 'client_company'].includes(col.field)) {
                                 value = item[col.field] || '';
                             }
@@ -1198,6 +1222,11 @@
                             // 格式化数字
                             if (col.type === 'number' && value !== '') {
                                 value = parseFloat(value) || 0;
+                            }
+                            // 格式化占比
+                            if (col.type === 'percent') {
+                                const defaultPercent = col.field === 'owner_profit_rate' ? 100 : 0;
+                                value = formatPercentValue(value, defaultPercent);
                             }
                             // 格式化日期
                             if (col.type === 'date' && value) {
@@ -1393,6 +1422,12 @@
                     { field: 'debugging_cost', title: '调试费', minWidth: 180 },
                     { field: 'sales_commission', title: '佣金', minWidth: 180 },
                     { field: 'split_remarks', title: '分成备注', minWidth: 180 },
+                    { field: 'owner_profit_rate', title: '负责人占比', minWidth: 180, templet: function(d){
+                        return formatPercentValue(d.owner_profit_rate, 100);
+                    }},
+                    { field: 'collaborator_profit_rate', title: '协同人占比', minWidth: 180, templet: function(d){
+                        return formatPercentValue(d.collaborator_profit_rate, 0);
+                    }},
                     { field: 'bank_account', title: '收款账户手动录入', minWidth: 180, templet: function(d){
                         return d.bank_account_name || d.bank_account || '';
                     }},
