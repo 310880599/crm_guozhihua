@@ -391,33 +391,83 @@ class DataStatistics extends Common
 
         try {
             $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
-            \think\facade\Log::info('[TeamPerformanceDebug] controller=' . __CLASS__ . ' method=' . __FUNCTION__ . ' excludedUsers=' . json_encode($excludedUsers, JSON_UNESCAPED_UNICODE));
+            $service = new BusinessPerformanceSplitService();
 
-            $perfQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
-            $this->applyTeamPerformanceExcludedUsers($perfQuery, $excludedUsers);
-            $rows = $perfQuery
-                ->field('team_name, SUM(profit) as total_profit, SUM(money) as total_money')
-                ->group('team_name')
-                ->order('total_profit desc')
+            $adminRows = Db::table('admin')->field('admin_id,username,team_name')->select();
+            $adminMapById = [];
+            foreach ((array)$adminRows as $adminRow) {
+                $adminId = (int)($adminRow['admin_id'] ?? 0);
+                if ($adminId > 0) {
+                    $adminMapById[$adminId] = $adminRow;
+                }
+            }
+
+            $query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
+            $this->applyTeamPerformanceExcludedUsers($query, $excludedUsers);
+            $orders = $query
+                ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,joint_person,owner_profit_rate,collaborator_profit_rate')
+                ->order('order_time desc,id desc')
+                ->limit(20000)
                 ->select();
 
-            $result = [];
-            $sum_profit = 0;
-            $sum_money  = 0;
-            foreach ($rows as $r) {
-                $profit = (float)($r['total_profit'] ?: 0);
-                $money  = (float)($r['total_money'] ?: 0);
-                $sum_profit += $profit;
-                $sum_money  += $money;
+            $teamAgg = [];
+            $sum_profit = 0.0;
+            $sum_money = 0.0;
+            foreach ((array)$orders as $order) {
+                $splitRows = $service->splitOrderProfit((array)$order, $adminMapById);
+                foreach ($splitRows as $splitRow) {
+                    $username = trim((string)($splitRow['username'] ?? ''));
+                    if ($username !== '' && in_array($username, $excludedUsers, true)) {
+                        continue;
+                    }
 
-                $rate = $money > 0 ? round($profit / $money * 100, 2) : 0;
+                    $splitAdminId = (int)($splitRow['admin_id'] ?? 0);
+                    $teamName = '';
+                    if ($splitAdminId > 0 && isset($adminMapById[$splitAdminId])) {
+                        $teamName = trim((string)($adminMapById[$splitAdminId]['team_name'] ?? ''));
+                    }
+                    if ($teamName === '') {
+                        $teamName = trim((string)($splitRow['team_name'] ?? ''));
+                    }
+                    if ($teamName === '') {
+                        $teamName = '未分组';
+                    }
+                    if (!isset($teamAgg[$teamName])) {
+                        $teamAgg[$teamName] = [
+                            'team_name' => $teamName,
+                            'profit_raw' => 0.0,
+                            'total_money_raw' => 0.0,
+                        ];
+                    }
+                    $splitProfit = round((float)($splitRow['profit'] ?? 0), 2);
+                    $splitMoney = round((float)($splitRow['money'] ?? 0), 2);
+                    $teamAgg[$teamName]['profit_raw'] = round($teamAgg[$teamName]['profit_raw'] + $splitProfit, 2);
+                    $teamAgg[$teamName]['total_money_raw'] = round($teamAgg[$teamName]['total_money_raw'] + $splitMoney, 2);
+
+                    $sum_profit = round($sum_profit + $splitProfit, 2);
+                    $sum_money = round($sum_money + $splitMoney, 2);
+                }
+            }
+
+            $result = [];
+            foreach ($teamAgg as $agg) {
+                $profit = (float)$agg['profit_raw'];
+                $money = (float)$agg['total_money_raw'];
+                $rate = $money > 0 ? round(($profit / $money) * 100, 2) : 0.0;
                 $result[] = [
-                    'team_name'   => ($r['team_name'] ?? '') !== '' ? $r['team_name'] : '未分组',
-                    'profit'      => number_format($profit, 2),
+                    'team_name' => (string)$agg['team_name'],
+                    'profit_raw' => $profit,
+                    'profit' => number_format($profit, 2),
+                    'total_money_raw' => $money,
                     'total_money' => number_format($money, 2),
+                    'profit_rate_raw' => $rate,
                     'profit_rate' => number_format($rate, 2),
                 ];
             }
+
+            usort($result, function ($a, $b) {
+                return ((float)$b['profit_raw']) <=> ((float)$a['profit_raw']);
+            });
 
             $rank = 1;
             foreach ($result as &$item) {
@@ -425,7 +475,7 @@ class DataStatistics extends Common
             }
             unset($item);
 
-            $sum_rate = $sum_money > 0 ? round($sum_profit / $sum_money * 100, 2) : 0;
+            $sum_rate = $sum_money > 0 ? round(($sum_profit / $sum_money) * 100, 2) : 0;
             return json([
                 'code' => 0,
                 'msg' => '获取成功',
@@ -482,21 +532,80 @@ class DataStatistics extends Common
             $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
             \think\facade\Log::info('[TeamPerformanceDebug] controller=' . __CLASS__ . ' method=' . __FUNCTION__ . ' team_name=' . $team_name . ' excludedUsers=' . json_encode($excludedUsers, JSON_UNESCAPED_UNICODE));
 
-            $is_ungrouped = ($team_name === '' || $team_name === '未分组');
-            $team_usernames_query = Db::name('admin');
-            if ($is_ungrouped) {
-                $team_usernames_query->where(function ($q) {
-                    $q->whereNull('team_name')->whereOr('team_name', '=', '');
-                });
-            } else {
-                $team_usernames_query->where('team_name', '=', $team_name);
-            }
-            // 在成员名单查询阶段就排除指定业务员，保证第二屏列表里根本不出现被排除的人
-            $this->applyTeamPerformanceExcludedUsers($team_usernames_query, $excludedUsers, 'username');
-            $team_usernames = $team_usernames_query->column('username');
-            $team_usernames = $team_usernames ? array_values(array_filter($team_usernames)) : [];
+            $service = new BusinessPerformanceSplitService();
+            $isUngrouped = ($team_name === '' || $team_name === '未分组');
+            $normalizedTeamName = $isUngrouped ? '未分组' : $team_name;
 
-            if (empty($team_usernames)) {
+            $adminRows = Db::table('admin')->field('admin_id,username,team_name')->select();
+            $adminMapById = [];
+            $teamUsernames = [];
+            foreach ((array)$adminRows as $adminRow) {
+                $adminId = (int)($adminRow['admin_id'] ?? 0);
+                $username = trim((string)($adminRow['username'] ?? ''));
+                $adminTeam = trim((string)($adminRow['team_name'] ?? ''));
+                $adminTeam = $adminTeam === '' ? '未分组' : $adminTeam;
+                if ($adminId > 0) {
+                    $adminMapById[$adminId] = $adminRow;
+                }
+                if ($username === '' || in_array($username, $excludedUsers, true)) {
+                    continue;
+                }
+                if ($adminTeam === $normalizedTeamName) {
+                    $teamUsernames[$username] = $username;
+                }
+            }
+
+            $query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
+            $this->applyTeamPerformanceExcludedUsers($query, $excludedUsers);
+            $orders = $query
+                ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,joint_person,owner_profit_rate,collaborator_profit_rate')
+                ->order('order_time desc,id desc')
+                ->limit(20000)
+                ->select();
+
+            $memberAgg = [];
+            $sum_profit = 0.0;
+            $sum_money = 0.0;
+            foreach ((array)$orders as $order) {
+                $splitRows = $service->splitOrderProfit((array)$order, $adminMapById);
+                foreach ($splitRows as $splitRow) {
+                    $username = trim((string)($splitRow['username'] ?? ''));
+                    if ($username === '' || in_array($username, $excludedUsers, true)) {
+                        continue;
+                    }
+                    $splitAdminId = (int)($splitRow['admin_id'] ?? 0);
+                    $splitTeam = '';
+                    if ($splitAdminId > 0 && isset($adminMapById[$splitAdminId])) {
+                        $splitTeam = trim((string)($adminMapById[$splitAdminId]['team_name'] ?? ''));
+                    }
+                    if ($splitTeam === '') {
+                        $splitTeam = trim((string)($splitRow['team_name'] ?? ''));
+                    }
+                    $splitTeam = $splitTeam === '' ? '未分组' : $splitTeam;
+                    if ($splitTeam !== $normalizedTeamName) {
+                        continue;
+                    }
+
+                    if (!isset($memberAgg[$username])) {
+                        $memberAgg[$username] = [
+                            'username' => $username,
+                            'profit_raw' => 0.0,
+                            'total_money_raw' => 0.0,
+                        ];
+                    }
+
+                    $splitProfit = round((float)($splitRow['profit'] ?? 0), 2);
+                    $splitMoney = round((float)($splitRow['money'] ?? 0), 2);
+                    $memberAgg[$username]['profit_raw'] = round($memberAgg[$username]['profit_raw'] + $splitProfit, 2);
+                    $memberAgg[$username]['total_money_raw'] = round($memberAgg[$username]['total_money_raw'] + $splitMoney, 2);
+                    $sum_profit = round($sum_profit + $splitProfit, 2);
+                    $sum_money = round($sum_money + $splitMoney, 2);
+
+                    $teamUsernames[$username] = $username;
+                }
+            }
+
+            if (empty($teamUsernames)) {
                 return json([
                     'code' => 200,
                     'msg' => 'ok',
@@ -505,42 +614,25 @@ class DataStatistics extends Common
                 ]);
             }
 
-            $memberOrderQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-                ->whereIn('pr_user', $team_usernames);
-            // 双重保险：在订单统计层再次排除（防止 admin 表数据与订单表 pr_user 不一致的情况）
-            $this->applyTeamPerformanceExcludedUsers($memberOrderQuery, $excludedUsers);
-            $order_stats = $memberOrderQuery
-                ->field('pr_user, SUM(profit) as total_profit, SUM(money) as total_money')
-                ->group('pr_user')
-                ->order('total_profit desc')
-                ->select();
-
             $result = [];
-            $sum_profit = 0.0;
-            $sum_money  = 0.0;
-            $hasUser = [];
-            foreach ($order_stats as $stat) {
-                $u = (string)($stat['pr_user'] ?? '');
-                if ($u === '') {
-                    continue;
-                }
-                $profit = (float)($stat['total_profit'] ?: 0);
-                $money  = (float)($stat['total_money'] ?: 0);
-                $sum_profit += $profit;
-                $sum_money  += $money;
-                $hasUser[$u] = true;
+            foreach ($memberAgg as $stat) {
+                $u = (string)($stat['username'] ?? '');
+                $profit = (float)($stat['profit_raw'] ?? 0);
+                $money = (float)($stat['total_money_raw'] ?? 0);
                 $rate = $money > 0 ? round($profit / $money * 100, 2) : 0;
                 $result[] = [
                     'username'    => $u,
+                    'profit_raw'  => $profit,
                     'profit'      => number_format($profit, 2),
+                    'total_money_raw' => $money,
                     'total_money' => number_format($money, 2),
+                    'profit_rate_raw' => $rate,
                     'profit_rate' => number_format($rate, 2),
                 ];
             }
 
-            foreach ($team_usernames as $u) {
-                $u = (string)$u;
-                if ($u === '' || isset($hasUser[$u])) {
+            foreach ($teamUsernames as $u) {
+                if ($u === '' || isset($memberAgg[$u])) {
                     continue;
                 }
                 $result[] = [
@@ -603,7 +695,7 @@ class DataStatistics extends Common
                 'code' => 200,
                 'msg'  => 'ok',
                 'data' => [],
-                'summary' => ['total_money' => '0.00', 'total_profit' => '0.00']
+                'summary' => ['total_split_profit' => '0.00', 'total_records' => 0, 'total_money' => '0.00', 'total_profit' => '0.00']
             ]);
         }
 
@@ -613,32 +705,69 @@ class DataStatistics extends Common
                 'code' => 200,
                 'msg'  => 'ok',
                 'data' => [],
-                'summary' => ['total_money' => '0.00', 'total_profit' => '0.00']
+                'summary' => ['total_split_profit' => '0.00', 'total_records' => 0]
             ]);
         }
 
-        $extra  = ['pr_user' => $username];
-        $orders = $this->buildPerformanceOrderQuery($timebucket, $at_time, $extra, '', $month_keys)
-            ->field('id,order_time,cname,money,profit')
+        $service = new BusinessPerformanceSplitService();
+        $adminRows = Db::table('admin')->field('admin_id,username,team_name')->select();
+        $adminMapById = [];
+        $targetAdminId = 0;
+        foreach ((array)$adminRows as $adminRow) {
+            $adminId = (int)($adminRow['admin_id'] ?? 0);
+            if ($adminId > 0) {
+                $adminMapById[$adminId] = $adminRow;
+            }
+            if ($targetAdminId === 0 && trim((string)($adminRow['username'] ?? '')) === trim((string)$username)) {
+                $targetAdminId = $adminId;
+            }
+        }
+
+        $orders = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
+            ->field('id,order_no,order_time,cname,money,profit,pr_user,pr_user_id,team_name,joint_person,owner_profit_rate,collaborator_profit_rate')
             ->order('order_time desc,id desc')
-            ->limit(1000)
+            ->limit(20000)
             ->select();
 
-        $result     = [];
-        $sum_money  = 0;
-        $sum_profit = 0;
-        foreach ($orders as $order) {
-            $money_val  = (float)($order['money'] ?: 0);
-            $profit_val = (float)($order['profit'] ?: 0);
-            $sum_money  += $money_val;
-            $sum_profit += $profit_val;
+        $result = [];
+        $sumSplitProfit = 0.0;
+        foreach ((array)$orders as $order) {
+            $splitRows = $service->splitOrderProfit((array)$order, $adminMapById);
+            foreach ($splitRows as $splitRow) {
+                $splitUsername = trim((string)($splitRow['username'] ?? ''));
+                $splitAdminId = (int)($splitRow['admin_id'] ?? 0);
+                $isMatched = $splitUsername === trim((string)$username);
+                if (!$isMatched && $targetAdminId > 0 && $splitAdminId > 0) {
+                    $isMatched = ($splitAdminId === $targetAdminId);
+                }
+                if (!$isMatched) {
+                    continue;
+                }
 
-            $result[] = [
-                'order_time' => $order['order_time'] ?: '',
-                'cname'      => $order['cname'] ?: '',
-                'money'      => number_format($money_val, 2),
-                'profit'     => number_format($profit_val, 2),
-            ];
+                $rates = $service->normalizeProfitRates($order['owner_profit_rate'] ?? null, $order['collaborator_profit_rate'] ?? null);
+                $role = (string)($splitRow['role'] ?? '') === 'collaborator' ? '协同人' : '负责人';
+                $rateVal = $role === '协同人' ? (float)$rates['collaborator_rate'] : (float)$rates['owner_rate'];
+                $hasCollaborator = (float)$rates['collaborator_rate'] > 0 && !empty($service->parseJointPersonIds($order['joint_person'] ?? ''));
+                if ($role === '负责人' && !$hasCollaborator) {
+                    $rateVal = 100.0;
+                }
+
+                $splitProfit = round((float)($splitRow['profit'] ?? 0), 2);
+                $sumSplitProfit = round($sumSplitProfit + $splitProfit, 2);
+
+                $result[] = [
+                    'order_id' => (int)($order['id'] ?? 0),
+                    'order_no' => (string)($order['order_no'] ?? ''),
+                    'deal_time' => (string)($order['order_time'] ?? ''),
+                    'order_time' => (string)($order['order_time'] ?? ''),
+                    'cname' => (string)($order['cname'] ?? ''),
+                    'role_type' => $role,
+                    'rate' => number_format($rateVal, 2, '.', ''),
+                    'rate_display' => number_format($rateVal, 2, '.', '') . '%',
+                    'split_profit' => number_format($splitProfit, 2),
+                    'profit' => number_format($splitProfit, 2),
+                ];
+            }
         }
 
         return json([
@@ -646,8 +775,11 @@ class DataStatistics extends Common
             'msg'  => 'ok',
             'data' => $result,
             'summary' => [
-                'total_money'  => number_format($sum_money, 2),
-                'total_profit' => number_format($sum_profit, 2),
+                'total_split_profit' => number_format($sumSplitProfit, 2),
+                'total_records' => count($result),
+                // 兼容旧前端 summary 字段
+                'total_money' => '0.00',
+                'total_profit' => number_format($sumSplitProfit, 2),
             ]
         ]);
     }

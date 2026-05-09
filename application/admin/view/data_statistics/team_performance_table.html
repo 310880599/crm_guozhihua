@@ -234,7 +234,7 @@
                     <p>请点击业务员名称查看个人业绩清单</p>
                 </div>
             </div>
-            <div id="memberDetailPaneSummary" class="pane-summary">合计：订单金额 0.00 ｜ 利润 0.00</div>
+            <div id="memberDetailPaneSummary" class="pane-summary">合计：实际业绩 0.00</div>
         </div>
 
     </div>
@@ -359,8 +359,7 @@
     function updateMemberDetailPaneSummary(summary) {
         var s = summary || {};
         $('#memberDetailPaneSummary').html(
-            '合计：订单金额 ' + (s.total_money || '0.00') +
-            ' ｜ 利润 ' + (s.total_profit || '0.00')
+            '合计：实际业绩 ' + (s.total_split_profit || s.total_profit || '0.00')
         );
     }
 
@@ -664,16 +663,19 @@
             '<thead><tr>' +
             '<th>成交日期</th>' +
             '<th>客户名称</th>' +
-            '<th style="text-align:right;">订单金额</th>' +
-            '<th style="text-align:right;">利润</th>' +
+            '<th style="text-align:center;">角色</th>' +
+            '<th style="text-align:right;">占比</th>' +
+            '<th style="text-align:right;">实际业绩</th>' +
             '</tr></thead><tbody>';
 
         $.each(data, function (_, item) {
+            var rateDisplay = item.rate_display || (((item.rate || '0.00') + '').replace('%', '') + '%');
             html += '<tr style="border-bottom:1px solid #dee2e6;">' +
-                '<td>' + esc(item.order_time || item.deal_date || '') + '</td>' +
+                '<td>' + esc(item.deal_time || item.order_time || item.deal_date || '') + '</td>' +
                 '<td>' + esc(item.cname || item.client_name || item.customer_name || '') + '</td>' +
-                '<td style="text-align:right;">' + esc(item.money || item.order_amount || '0.00') + '</td>' +
-                '<td style="text-align:right;color:#28a745;">' + esc(item.profit || '0.00') + '</td>' +
+                '<td style="text-align:center;">' + esc(item.role_type || '') + '</td>' +
+                '<td style="text-align:right;">' + esc(rateDisplay) + '</td>' +
+                '<td style="text-align:right;color:#28a745;">' + esc(item.split_profit || item.profit || '0.00') + '</td>' +
                 '</tr>';
         });
 
