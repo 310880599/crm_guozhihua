@@ -711,6 +711,38 @@
                     { field: 'joint_person', title: '协同人', width: 180, templet: function(d){
                         return d.joint_person_names || d.joint_person || '';
                     }},
+                    {
+                        field: 'owner_profit_rate',
+                        title: '负责人占比',
+                        width: 130,
+                        templet: function(d) {
+                            var v = d.owner_profit_rate;
+                            if (v === undefined || v === null || v === '') {
+                                v = 100;
+                            }
+                            v = parseFloat(v);
+                            if (isNaN(v)) {
+                                v = 100;
+                            }
+                            return v.toString().replace(/\.0+$/, '') + '%';
+                        }
+                    },
+                    {
+                        field: 'collaborator_profit_rate',
+                        title: '协同人占比',
+                        width: 130,
+                        templet: function(d) {
+                            var v = d.collaborator_profit_rate;
+                            if (v === undefined || v === null || v === '') {
+                                v = 0;
+                            }
+                            v = parseFloat(v);
+                            if (isNaN(v)) {
+                                v = 0;
+                            }
+                            return v.toString().replace(/\.0+$/, '') + '%';
+                        }
+                    },
                     { field: 'create_time', title: '创建时间' , width: 180},
                     { field: 'update_time', title: '更新时间' , width: 180},
                     { width: 200, title: '操作', toolbar: '#action' }

@@ -4050,6 +4050,18 @@ class Order extends Common
                 }
             }
 
+            // 占比字段兜底（历史空值订单）
+            $ownerProfitRate = $order['owner_profit_rate'] ?? null;
+            $collaboratorProfitRate = $order['collaborator_profit_rate'] ?? null;
+            if ($ownerProfitRate === '' || $ownerProfitRate === null || !is_numeric($ownerProfitRate)) {
+                $ownerProfitRate = 100;
+            }
+            if ($collaboratorProfitRate === '' || $collaboratorProfitRate === null || !is_numeric($collaboratorProfitRate)) {
+                $collaboratorProfitRate = 0;
+            }
+            $order['owner_profit_rate'] = number_format((float)$ownerProfitRate, 2, '.', '');
+            $order['collaborator_profit_rate'] = number_format((float)$collaboratorProfitRate, 2, '.', '');
+
             // 绑定订单的产品明细（快照数据）
             $order['order_items'] = $orderItemsMap[$order['id']] ?? [];
             // 如果订单主表的 product_name 为空，从明细快照中取第一个产品名称
