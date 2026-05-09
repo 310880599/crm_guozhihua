@@ -6,31 +6,14 @@ class BusinessPerformanceSplitService
 {
     public function parseJointPersonIds($jointPerson): array
     {
-        if ($jointPerson === null) {
-            return [];
-        }
-        if (is_array($jointPerson)) {
-            return $this->normalizeIdList($jointPerson);
-        }
-        $raw = trim((string)$jointPerson);
-        if ($raw === '') {
-            return [];
-        }
-        if ($raw[0] === '[') {
-            $decoded = json_decode($raw, true);
-            if (is_array($decoded)) {
-                return $this->normalizeIdList($decoded);
+        $ids = [];
+        foreach ($this->parseJointPersonEntries($jointPerson) as $entry) {
+            $adminId = (int)($entry['admin_id'] ?? 0);
+            if ($adminId > 0) {
+                $ids[$adminId] = $adminId;
             }
         }
-        $normalized = str_replace(['，', ';', '|'], ',', $raw);
-        $normalized = preg_replace('/\s+/', '', $normalized);
-        if ($normalized === null || $normalized === '') {
-            return [];
-        }
-        if (preg_match('/^\d+$/', $normalized)) {
-            return [(int)$normalized];
-        }
-        return $this->normalizeIdList(explode(',', $normalized));
+        return array_values($ids);
     }
 
     public function normalizeProfitRates($ownerRate, $collaboratorRate): array
@@ -64,14 +47,69 @@ class BusinessPerformanceSplitService
         }
 
         $rates = $this->normalizeProfitRates($order['owner_profit_rate'] ?? null, $order['collaborator_profit_rate'] ?? null);
-        $jointIds = $this->parseJointPersonIds($order['joint_person'] ?? '');
-        $hasCollaborator = !empty($jointIds) && (float)$rates['collaborator_rate'] > 0;
-        $ownerProfit = $hasCollaborator ? round($profit * (float)$rates['owner_rate'] / 100, 2) : round($profit, 2);
+        $ownerRate = (float)$rates['owner_rate'];
+        $collaboratorRate = (float)$rates['collaborator_rate'];
+
+        $adminByUsername = [];
+        foreach ($adminById as $admin) {
+            $username = trim((string)($admin['username'] ?? ''));
+            if ($username !== '') {
+                $adminByUsername[$username] = $admin;
+            }
+        }
+
+        $collaborators = [];
+        $seen = [];
+        foreach ($this->parseJointPersonEntries($order['joint_person'] ?? '') as $entry) {
+            $entryAdminId = (int)($entry['admin_id'] ?? 0);
+            $entryUsername = trim((string)($entry['username'] ?? ''));
+            $admin = [];
+            if ($entryAdminId > 0 && isset($adminById[$entryAdminId])) {
+                $admin = (array)$adminById[$entryAdminId];
+            } elseif ($entryUsername !== '' && isset($adminByUsername[$entryUsername])) {
+                $admin = (array)$adminByUsername[$entryUsername];
+                if ($entryAdminId <= 0) {
+                    $entryAdminId = (int)($admin['admin_id'] ?? 0);
+                }
+            }
+
+            $resolvedUsername = trim((string)($admin['username'] ?? ''));
+            if ($resolvedUsername === '') {
+                $resolvedUsername = $entryUsername;
+            }
+            $resolvedTeam = trim((string)($admin['team_name'] ?? ''));
+            if ($resolvedTeam === '') {
+                $resolvedTeam = '未分组';
+            }
+            if ($resolvedUsername === '' && $entryAdminId > 0) {
+                $resolvedUsername = '协同人#' . $entryAdminId;
+            }
+            if ($resolvedUsername === '') {
+                continue;
+            }
+
+            $dedupKey = $entryAdminId > 0 ? ('id:' . $entryAdminId) : ('name:' . $resolvedUsername);
+            if (isset($seen[$dedupKey])) {
+                continue;
+            }
+            $seen[$dedupKey] = true;
+
+            $collaborators[] = [
+                'admin_id' => $entryAdminId,
+                'username' => $resolvedUsername,
+                'team_name' => $resolvedTeam,
+            ];
+        }
+
+        $hasCollaborator = !empty($collaborators) && $collaboratorRate > 0;
+        $ownerProfit = $hasCollaborator ? round($profit * $ownerRate / 100, 2) : round($profit, 2);
+        $ownerDisplayRate = $hasCollaborator ? $ownerRate : 100.0;
         $rows = [[
             'admin_id' => $ownerId,
             'username' => $ownerName,
             'team_name' => $ownerTeam,
             'role' => 'owner',
+            'rate' => $ownerDisplayRate,
             'order_count_weight' => 1,
             'money' => round($money, 2),
             'profit' => $ownerProfit,
@@ -80,27 +118,19 @@ class BusinessPerformanceSplitService
             return $rows;
         }
 
-        $collaboratorTotal = round($profit * (float)$rates['collaborator_rate'] / 100, 2);
-        $count = count($jointIds);
+        $collaboratorTotal = round($profit * $collaboratorRate / 100, 2);
+        $count = count($collaborators);
         $avg = $count > 0 ? round($collaboratorTotal / $count, 2) : 0.0;
         $allocated = 0.0;
-        foreach ($jointIds as $idx => $jointId) {
-            $admin = $adminById[$jointId] ?? [];
-            $name = trim((string)($admin['username'] ?? ''));
-            if ($name === '') {
-                $name = '协同人#' . $jointId;
-            }
-            $team = trim((string)($admin['team_name'] ?? ''));
-            if ($team === '') {
-                $team = '未分组';
-            }
+        foreach ($collaborators as $idx => $collaborator) {
             $jointProfit = ($idx === $count - 1) ? round($collaboratorTotal - $allocated, 2) : $avg;
             $allocated = round($allocated + $jointProfit, 2);
             $rows[] = [
-                'admin_id' => (int)$jointId,
-                'username' => $name,
-                'team_name' => $team,
+                'admin_id' => (int)($collaborator['admin_id'] ?? 0),
+                'username' => (string)($collaborator['username'] ?? ''),
+                'team_name' => (string)($collaborator['team_name'] ?? '未分组'),
                 'role' => 'collaborator',
+                'rate' => $collaboratorRate,
                 'order_count_weight' => 0,
                 'money' => 0.0,
                 'profit' => $jointProfit,
@@ -171,5 +201,82 @@ class BusinessPerformanceSplitService
             return null;
         }
         return (float)$raw;
+    }
+
+    private function parseJointPersonEntries($jointPerson): array
+    {
+        if ($jointPerson === null) {
+            return [];
+        }
+
+        if (is_array($jointPerson)) {
+            return $this->normalizeJointEntryList($jointPerson);
+        }
+
+        $raw = trim((string)$jointPerson);
+        if ($raw === '') {
+            return [];
+        }
+
+        if ($raw[0] === '[' || $raw[0] === '{') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                return $this->normalizeJointEntryList($decoded);
+            }
+        }
+
+        $normalized = str_replace(['，', '、', ';', '|'], ',', $raw);
+        $segments = explode(',', $normalized);
+        $entries = [];
+        foreach ($segments as $segment) {
+            $this->appendJointEntryByValue($entries, $segment);
+        }
+        return $entries;
+    }
+
+    private function normalizeJointEntryList(array $items): array
+    {
+        $entries = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                $adminId = 0;
+                foreach (['admin_id', 'id', 'user_id', 'uid'] as $idKey) {
+                    if (isset($item[$idKey]) && preg_match('/^\d+$/', trim((string)$item[$idKey]))) {
+                        $adminId = (int)$item[$idKey];
+                        break;
+                    }
+                }
+                $username = '';
+                foreach (['username', 'name', 'realname', 'user_name'] as $nameKey) {
+                    if (isset($item[$nameKey])) {
+                        $username = trim((string)$item[$nameKey]);
+                        if ($username !== '') {
+                            break;
+                        }
+                    }
+                }
+                if ($adminId > 0 || $username !== '') {
+                    $entries[] = ['admin_id' => $adminId, 'username' => $username];
+                }
+                continue;
+            }
+
+            $this->appendJointEntryByValue($entries, $item);
+        }
+
+        return $entries;
+    }
+
+    private function appendJointEntryByValue(array &$entries, $value): void
+    {
+        $raw = trim((string)$value);
+        if ($raw === '') {
+            return;
+        }
+        if (preg_match('/^\d+$/', $raw)) {
+            $entries[] = ['admin_id' => (int)$raw, 'username' => ''];
+            return;
+        }
+        $entries[] = ['admin_id' => 0, 'username' => $raw];
     }
 }

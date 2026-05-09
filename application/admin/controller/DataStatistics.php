@@ -403,7 +403,6 @@ class DataStatistics extends Common
             }
 
             $query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
-            $this->applyTeamPerformanceExcludedUsers($query, $excludedUsers);
             $orders = $query
                 ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,joint_person,owner_profit_rate,collaborator_profit_rate')
                 ->order('order_time desc,id desc')
@@ -556,7 +555,6 @@ class DataStatistics extends Common
             }
 
             $query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
-            $this->applyTeamPerformanceExcludedUsers($query, $excludedUsers);
             $orders = $query
                 ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,joint_person,owner_profit_rate,collaborator_profit_rate')
                 ->order('order_time desc,id desc')
@@ -735,6 +733,9 @@ class DataStatistics extends Common
             $splitRows = $service->splitOrderProfit((array)$order, $adminMapById);
             foreach ($splitRows as $splitRow) {
                 $splitUsername = trim((string)($splitRow['username'] ?? ''));
+                if ($splitUsername !== '' && in_array($splitUsername, $excludedUsers, true)) {
+                    continue;
+                }
                 $splitAdminId = (int)($splitRow['admin_id'] ?? 0);
                 $isMatched = $splitUsername === trim((string)$username);
                 if (!$isMatched && $targetAdminId > 0 && $splitAdminId > 0) {
@@ -744,12 +745,15 @@ class DataStatistics extends Common
                     continue;
                 }
 
-                $rates = $service->normalizeProfitRates($order['owner_profit_rate'] ?? null, $order['collaborator_profit_rate'] ?? null);
                 $role = (string)($splitRow['role'] ?? '') === 'collaborator' ? '协同人' : '负责人';
-                $rateVal = $role === '协同人' ? (float)$rates['collaborator_rate'] : (float)$rates['owner_rate'];
-                $hasCollaborator = (float)$rates['collaborator_rate'] > 0 && !empty($service->parseJointPersonIds($order['joint_person'] ?? ''));
-                if ($role === '负责人' && !$hasCollaborator) {
-                    $rateVal = 100.0;
+                $rateVal = isset($splitRow['rate']) ? (float)$splitRow['rate'] : 0.0;
+                if (!isset($splitRow['rate'])) {
+                    $rates = $service->normalizeProfitRates($order['owner_profit_rate'] ?? null, $order['collaborator_profit_rate'] ?? null);
+                    $rateVal = $role === '协同人' ? (float)$rates['collaborator_rate'] : (float)$rates['owner_rate'];
+                    $hasCollaborator = (float)$rates['collaborator_rate'] > 0 && !empty($service->parseJointPersonIds($order['joint_person'] ?? ''));
+                    if ($role === '负责人' && !$hasCollaborator) {
+                        $rateVal = 100.0;
+                    }
                 }
 
                 $splitProfit = round((float)($splitRow['profit'] ?? 0), 2);
