@@ -154,12 +154,14 @@
             $tbody.empty();
             $.each(data, function(index, item) {
                 var username = item.username || '';
+                var rateText = item.profit_rate || '0.00';
+                var rateDisplay = (rateText === '--') ? '--' : (rateText + '%');
                 $tbody.append(
                     '<tr>' +
                     '<td>' + (item.rank || (index + 1)) + '</td>' +
                     '<td>' + esc(username) + '</td>' +
                     '<td class="text-right profit-positive">' + (item.profit || '0.00') + '</td>' +
-                    '<td class="text-right">' + (item.profit_rate || '0.00') + '%</td>' +
+                    '<td class="text-right">' + rateDisplay + '</td>' +
                     '</tr>'
                 );
             });

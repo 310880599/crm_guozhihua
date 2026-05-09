@@ -617,7 +617,16 @@ class DataStatistics extends Common
                 $u = (string)($stat['username'] ?? '');
                 $profit = (float)($stat['profit_raw'] ?? 0);
                 $money = (float)($stat['total_money_raw'] ?? 0);
-                $rate = $money > 0 ? round($profit / $money * 100, 2) : 0;
+                if ($money > 0) {
+                    $rate = round($profit / $money * 100, 2);
+                    $rateDisplay = number_format($rate, 2);
+                } elseif ($profit > 0) {
+                    $rate = null;
+                    $rateDisplay = '--';
+                } else {
+                    $rate = 0.0;
+                    $rateDisplay = number_format(0, 2);
+                }
                 $result[] = [
                     'username'    => $u,
                     'profit_raw'  => $profit,
@@ -625,7 +634,7 @@ class DataStatistics extends Common
                     'total_money_raw' => $money,
                     'total_money' => number_format($money, 2),
                     'profit_rate_raw' => $rate,
-                    'profit_rate' => number_format($rate, 2),
+                    'profit_rate' => $rateDisplay,
                 ];
             }
 
@@ -635,8 +644,11 @@ class DataStatistics extends Common
                 }
                 $result[] = [
                     'username'    => $u,
+                    'profit_raw'  => 0.0,
                     'profit'      => number_format(0, 2),
+                    'total_money_raw' => 0.0,
                     'total_money' => number_format(0, 2),
+                    'profit_rate_raw' => 0.0,
                     'profit_rate' => number_format(0, 2),
                 ];
             }
