@@ -2279,6 +2279,16 @@ class Order extends Common
         if (!$order) {
             $this->error('订单不存在或已删除');
         }
+        // 编辑页占比回显字段兜底，确保 orderInfo 中不会丢失
+        if (!array_key_exists('owner_profit_rate', $order) || $order['owner_profit_rate'] === null || $order['owner_profit_rate'] === '') {
+            $order['owner_profit_rate'] = '100.00';
+        }
+        if (!array_key_exists('collaborator_profit_rate', $order) || $order['collaborator_profit_rate'] === null || $order['collaborator_profit_rate'] === '') {
+            $order['collaborator_profit_rate'] = '0.00';
+        }
+        if (!array_key_exists('joint_person', $order) || $order['joint_person'] === null) {
+            $order['joint_person'] = '';
+        }
         // 读取该订单的所有产品明细行
         $items = Db::name('crm_order_item')->where('order_id', $orderId)->select();
 

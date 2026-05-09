@@ -464,6 +464,8 @@
         
         // 编辑页初始化标记：用于防止回显时触发 changeyewu 清空
         window.isEditInit = false;
+        // 占比回显保护标记：防止 form/xmSelect 初始化联动覆盖数据库值
+        window.isProfitRateEchoing = false;
         window.originalContact = '';
         window.hasLegacyMultipleCollaborators = false;
         window.legacyCollaboratorResolved = true;
@@ -1311,9 +1313,19 @@
             var PROFIT_RATE_VALUES = ['0', '10', '20', '30', '40', '50', '60', '70', '80', '90', '100'];
 
             function normalizeProfitRate(value, fallback) {
-                var val = String(value == null ? '' : value).replace('%', '').trim();
-                if (PROFIT_RATE_VALUES.indexOf(val) === -1) return String(fallback);
-                return val;
+                var raw = String(value == null ? '' : value).replace(/%/g, '').trim();
+                if (raw === '') return String(fallback);
+                if (PROFIT_RATE_VALUES.indexOf(raw) !== -1) return raw;
+
+                var numericVal = Number(raw);
+                if (!isNaN(numericVal) && isFinite(numericVal)) {
+                    var normalizedInt = Math.round(numericVal);
+                    var normalizedStr = String(normalizedInt);
+                    if (Math.abs(numericVal - normalizedInt) < 0.000001 && PROFIT_RATE_VALUES.indexOf(normalizedStr) !== -1) {
+                        return normalizedStr;
+                    }
+                }
+                return String(fallback);
             }
 
             function setProfitRates(ownerRate, collaboratorRate) {
@@ -1419,6 +1431,9 @@
             }
 
             window.enforceProfitRatesWhenNoCollaborator = function () {
+                if (window.isEditInit || window.isProfitRateEchoing) {
+                    return;
+                }
                 var selectedJointPerson = getSelectedJointPerson();
                 if (!selectedJointPerson) {
                     setProfitRates(100, 0);
@@ -1426,6 +1441,9 @@
             };
 
             form.on('select(owner_profit_rate)', function () {
+                if (window.isEditInit || window.isProfitRateEchoing) {
+                    return;
+                }
                 syncByOwnerRate();
                 if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
                     window.enforceProfitRatesWhenNoCollaborator();
@@ -1433,6 +1451,9 @@
             });
 
             form.on('select(collaborator_profit_rate)', function () {
+                if (window.isEditInit || window.isProfitRateEchoing) {
+                    return;
+                }
                 syncByCollaboratorRate();
                 if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
                     window.enforceProfitRatesWhenNoCollaborator();
@@ -1453,6 +1474,9 @@
                 radio: true,
                 clickClose: true,
                 on: function () {
+                    if (window.isEditInit || window.isProfitRateEchoing) {
+                        return;
+                    }
                     var selected = getSelectedJointPersonList();
                     syncLegacyCollaboratorStateBySelection(selected);
                     if (typeof window.enforceProfitRatesWhenNoCollaborator === 'function') {
@@ -1963,6 +1987,7 @@
             
             // 设置编辑初始化标记，防止 changeyewu 触发
             window.isEditInit = true;
+            window.isProfitRateEchoing = true;
             
             // 记录原始联系方式
             window.originalContact = orderInfo.contact || '';
@@ -1972,6 +1997,10 @@
             currentClientId = 0;
             customerPhoneTitlesComplete = false;
             
+            // 占比优先取订单表回显值（兼容 80 / 80.00 / 80%）
+            var ownerRateEcho = normalizeProfitRate(orderInfo.owner_profit_rate, 100);
+            var collaboratorRateEcho = normalizeProfitRate(orderInfo.collaborator_profit_rate, 0);
+
             // 使用 form.val 批量回填主表字段
             var formData = {
                 contact: orderInfo.contact || '',
@@ -1979,8 +2008,8 @@
                 country: orderInfo.country || '',
                 client_company: orderInfo.client_company || '',
                 pr_user: orderInfo.pr_user || '{$username}',
-                owner_profit_rate: normalizeProfitRate(orderInfo.owner_profit_rate, 100),
-                collaborator_profit_rate: normalizeProfitRate(orderInfo.collaborator_profit_rate, 0),
+                owner_profit_rate: ownerRateEcho,
+                collaborator_profit_rate: collaboratorRateEcho,
                 team_name: orderInfo.team_name || '',
                 kh_username: orderInfo.kh_username || '',
                 source: orderInfo.source || '',
@@ -2011,6 +2040,9 @@
             
             // 使用 form.val 批量回填
             form.val('orderForm', formData);
+            // 单独再写一次 select 值，避免 LayUI 默认 selected 覆盖回显
+            $('#owner_profit_rate').val(ownerRateEcho);
+            $('#collaborator_profit_rate').val(collaboratorRateEcho);
             form.render('select');
             
             // 票种/用户属性显隐与校验：统一调用函数，确保 UI 与 lay-verify 正确
@@ -2062,7 +2094,10 @@
                     if (window.collaboratorSelectInstance && window.collaboratorSelectInstance.setValue) {
                         window.collaboratorSelectInstance.setValue(initJointPersonValue);
                     }
+                    finishEditInit();
                 }, 300);
+            } else {
+                finishEditInit();
             }
             
             // 产品明细回显
@@ -2128,13 +2163,16 @@
                 });
             }
             
-            // 回显完成后，取消初始化标记（setTimeout 0 避免 changeyewu 在回填过程中触发）
-            setTimeout(function() {
+            function finishEditInit() {
+                if (!window.isEditInit && !window.isProfitRateEchoing) {
+                    return;
+                }
                 updateTotals();
+                window.isProfitRateEchoing = false;
                 window.isEditInit = false;
                 hydrateCustomerStateByContact(orderInfo.contact || '', false);
                 checkReturnOrderRuleByContact(orderInfo.contact || '', orderInfo.id || $('input[name="id"]').val());
-            }, 0);
+            }
         }
         
         // 页面加载完成后，初始化回显
