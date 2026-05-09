@@ -3722,6 +3722,13 @@ class Order extends Common
         // 【收款账户快照模式】优先使用 bank_account_name 快照字段，仅在为空时补齐
         // 转换协同人ID为用户名
         foreach ($list['data'] as &$order) {
+            if (!array_key_exists('owner_profit_rate', $order) || $order['owner_profit_rate'] === null || $order['owner_profit_rate'] === '') {
+                $order['owner_profit_rate'] = 100;
+            }
+            if (!array_key_exists('collaborator_profit_rate', $order) || $order['collaborator_profit_rate'] === null || $order['collaborator_profit_rate'] === '') {
+                $order['collaborator_profit_rate'] = 0;
+            }
+
             // 【收款账户快照模式】优先使用 bank_account_name（快照），仅在 bank_account 有值且 bank_account_name 为空时实时查询补齐
             if (!empty($order['bank_account']) && empty($order['bank_account_name'])) {
                 $accountName = $this->resolveBankAccountName($order['bank_account']);

@@ -652,6 +652,17 @@
             {if session('aid') eq 1}
             defaultToolbar = ['filter', 'print', 'exports'];
             {/if}
+
+            function formatRate(value, defaultValue) {
+                if (value === undefined || value === null || value === '' || (typeof value === 'string' && value.trim() === '')) {
+                    value = defaultValue;
+                }
+                var num = Number(value);
+                if (isNaN(num)) {
+                    num = Number(defaultValue) || 0;
+                }
+                return parseFloat(num.toFixed(2)).toString() + '%';
+            }
             
             const tableIn = table.render({
                 elem: '#table-list',
@@ -682,6 +693,12 @@
                     { field: 'pr_user', title: '负责人', hide: false , width: 180},
                     { field: 'joint_person', title: '协同人', width: 180, templet: function(d){
                         return d.joint_person_names || d.joint_person || '';
+                    }},
+                    { field: 'owner_profit_rate', title: '负责人占比', width: 140, templet: function(d){
+                        return formatRate(d.owner_profit_rate, 100);
+                    }},
+                    { field: 'collaborator_profit_rate', title: '协同人占比', width: 140, templet: function(d){
+                        return formatRate(d.collaborator_profit_rate, 0);
                     }},
                     { field: 'create_time', title: '创建时间' , width: 180},
                     { field: 'update_time', title: '更新时间' , width: 180},
