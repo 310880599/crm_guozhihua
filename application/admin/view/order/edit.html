@@ -187,13 +187,14 @@
         }
 
         .profit-rate-label {
-            width: 110px !important;
-            min-width: 110px !important;
+            width: 150px !important;
+            min-width: 150px !important;
             white-space: nowrap;
             overflow: visible;
             text-overflow: clip;
-            text-align: right !important;
-            padding-right: 10px !important;
+            text-align: center !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
         }
 
         .profit-rate-inline {
@@ -854,7 +855,7 @@
                         class="layui-input" readonly>
                     <input type="hidden" id="login_admin_id" value="{$Think.session.aid}">
                 </div>
-                <label class="layui-form-label profit-rate-label">负责人占比</label>
+                <label class="layui-form-label profit-rate-label">负责人业绩占比</label>
                 <div class="layui-input-inline profit-rate-inline">
                     <select name="owner_profit_rate" id="owner_profit_rate" lay-filter="owner_profit_rate">
                         <option value="0">0%</option>
@@ -877,7 +878,7 @@
                     <div id="collaboratorSelect"></div>
                     <div id="legacyCollaboratorWarning" class="legacy-collaborator-warning">该订单存在历史多人协同人数据，请重新选择 1 个协同人后再保存。</div>
                 </div>
-                <label class="layui-form-label profit-rate-label">协同人占比</label>
+                <label class="layui-form-label profit-rate-label">协同人业绩占比</label>
                 <div class="layui-input-inline profit-rate-inline">
                     <select name="collaborator_profit_rate" id="collaborator_profit_rate" lay-filter="collaborator_profit_rate">
                         <option value="0" selected>0%</option>

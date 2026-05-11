@@ -694,10 +694,10 @@
                     { field: 'joint_person', title: '协同人', width: 180, templet: function(d){
                         return d.joint_person_names || d.joint_person || '';
                     }},
-                    { field: 'owner_profit_rate', title: '负责人占比', width: 140, templet: function(d){
+                    { field: 'owner_profit_rate', title: '负责人业绩占比', width: 140, templet: function(d){
                         return formatRate(d.owner_profit_rate, 100);
                     }},
-                    { field: 'collaborator_profit_rate', title: '协同人占比', width: 140, templet: function(d){
+                    { field: 'collaborator_profit_rate', title: '协同人业绩占比', width: 140, templet: function(d){
                         return formatRate(d.collaborator_profit_rate, 0);
                     }},
                     { field: 'create_time', title: '创建时间' , width: 180},

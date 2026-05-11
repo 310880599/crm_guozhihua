@@ -67,8 +67,8 @@
             width: 200px !important;   /* 或 220px，看你整体布局 */
         }
         .profit-rate-label {
-            width: 110px !important;
-            min-width: 110px !important;
+            width: 150px !important;
+            min-width: 150px !important;
             white-space: nowrap;
             overflow: visible;
             text-overflow: clip;
@@ -296,7 +296,7 @@
                     <input type="text" id="pr_user" name="pr_user" lay-verify="required" readonly
                            value="{$orderInfo.pr_user|default=''}" class="layui-input">
                 </div>
-                <label class="layui-form-label profit-rate-label">负责人占比</label>
+                <label class="layui-form-label profit-rate-label">负责人业绩占比</label>
                 <div class="layui-input-inline profit-rate-inline">
                     <input type="text" id="owner_profit_rate_display"
                            value="{$orderInfo.owner_profit_rate_display|default='100%'|htmlentities}"
@@ -311,7 +311,7 @@
                            value="{$orderInfo.joint_person_display|default='无'|htmlentities}"
                            class="layui-input" readonly>
                 </div>
-                <label class="layui-form-label profit-rate-label">协同人占比</label>
+                <label class="layui-form-label profit-rate-label">协同人业绩占比</label>
                 <div class="layui-input-inline profit-rate-inline">
                     <input type="text" id="collaborator_profit_rate_display"
                            value="{$orderInfo.collaborator_profit_rate_display|default='0%'|htmlentities}"
