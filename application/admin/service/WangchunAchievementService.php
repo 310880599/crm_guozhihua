@@ -164,32 +164,80 @@ class WangchunAchievementService
 
         $orderRows = Db::table('crm_client_order')
             ->alias('o')
-            ->field('o.pr_user_id, o.pr_user, SUM(COALESCE(o.profit, 0)) AS total_profit')
+            ->field('o.id, o.order_no, o.pr_user_id, o.pr_user, o.joint_person, o.profit, o.owner_profit_rate, o.collaborator_profit_rate')
             ->where('o.check_status', 2)
             ->where('o.' . $timeField, '>=', $startTime)
             ->where('o.' . $timeField, '<=', $endTime)
-            ->group('o.pr_user_id, o.pr_user')
             ->select();
 
         $achievementByUserId = [];
         $achievementByName   = [];
         if (is_array($orderRows)) {
+            $allJointIds = [];
+            foreach ($orderRows as $row) {
+                foreach ($this->parseJointPersonIds(isset($row['joint_person']) ? $row['joint_person'] : '') as $jointId) {
+                    $allJointIds[$jointId] = $jointId;
+                }
+            }
+            $jointNameMap = $this->getAdminNameMapByIds(array_values($allJointIds));
+
+            /**
+             * 开发自测样例（旺春业绩看板分润）：
+             * A: profit=10000, owner=100, collaborator=0,   joint=空      => 负责人+10000
+             * B: profit=10000, owner=90,  collaborator=10,  joint=单人ID  => 负责人+9000, 协同+1000
+             * C: profit=10000, owner=80,  collaborator=20,  joint=两人ID  => 负责人+8000, 协同各+1000
+             */
             foreach ($orderRows as $row) {
                 $uid    = isset($row['pr_user_id']) ? (int)$row['pr_user_id'] : 0;
                 $name   = isset($row['pr_user']) ? trim((string)$row['pr_user']) : '';
-                $amount = isset($row['total_profit']) ? (float)$row['total_profit'] : 0.0;
-                $amount = round($amount, 2);
-                if ($uid > 0) {
-                    if (!isset($achievementByUserId[$uid])) {
-                        $achievementByUserId[$uid] = 0.0;
-                    }
-                    $achievementByUserId[$uid] += $amount;
+                $profit = $this->toFloatOrNull(isset($row['profit']) ? $row['profit'] : null);
+                if ($profit === null) {
+                    $profit = 0.0;
                 }
-                if ($name !== '') {
-                    if (!isset($achievementByName[$name])) {
-                        $achievementByName[$name] = 0.0;
-                    }
-                    $achievementByName[$name] += $amount;
+                $profit = round($profit, 2);
+
+                $ownerRate = $this->normalizeProfitRate(isset($row['owner_profit_rate']) ? $row['owner_profit_rate'] : null, 100);
+                $collaboratorRate = $this->normalizeProfitRate(isset($row['collaborator_profit_rate']) ? $row['collaborator_profit_rate'] : null, 0);
+
+                $jointIds = $this->parseJointPersonIds(isset($row['joint_person']) ? $row['joint_person'] : '');
+                $hasCollaborator = $collaboratorRate > 0 && !empty($jointIds);
+
+                if (!$hasCollaborator) {
+                    $this->addAchievementAmount($achievementByUserId, $achievementByName, $uid, $name, $profit);
+                    continue;
+                }
+
+                // 旺春业绩看板分润统计：先按占比拆分，再做历史脏数据容错。
+                $ownerAmount = round($profit * $ownerRate / 100, 2);
+                $collaboratorAmount = round($profit * $collaboratorRate / 100, 2);
+                $allocatedAmount = round($ownerAmount + $collaboratorAmount, 2);
+                if ($profit > 0 && $allocatedAmount < $profit) {
+                    // 若比例合计不足导致少算，差额补给负责人，确保总业绩不丢失。
+                    $ownerAmount = round($ownerAmount + ($profit - $allocatedAmount), 2);
+                }
+                $this->addAchievementAmount($achievementByUserId, $achievementByName, $uid, $name, $ownerAmount);
+
+                $jointCount = count($jointIds);
+                if ($jointCount <= 0) {
+                    continue;
+                }
+                if ($jointCount === 1) {
+                    $jointId = (int)$jointIds[0];
+                    $jointName = isset($jointNameMap[$jointId]) ? (string)$jointNameMap[$jointId] : '';
+                    $this->addAchievementAmount($achievementByUserId, $achievementByName, $jointId, $jointName, $collaboratorAmount);
+                    continue;
+                }
+
+                // 历史多人协同：协同利润均分，最后一人吃差额，避免舍入误差导致丢利润。
+                $avgAmount = round($collaboratorAmount / $jointCount, 2);
+                $allocated = 0.0;
+                foreach ($jointIds as $idx => $jointId) {
+                    $jointId = (int)$jointId;
+                    $isLast = $idx === $jointCount - 1;
+                    $jointShare = $isLast ? round($collaboratorAmount - $allocated, 2) : $avgAmount;
+                    $allocated = round($allocated + $jointShare, 2);
+                    $jointName = isset($jointNameMap[$jointId]) ? (string)$jointNameMap[$jointId] : '';
+                    $this->addAchievementAmount($achievementByUserId, $achievementByName, $jointId, $jointName, $jointShare);
                 }
             }
         }
@@ -414,6 +462,9 @@ class WangchunAchievementService
             ->field([
                 'COUNT(1) AS cnt',
                 'SUM(COALESCE(o.profit,0)) AS sum_profit',
+                'SUM(COALESCE(o.owner_profit_rate,0)) AS sum_owner_profit_rate',
+                'SUM(COALESCE(o.collaborator_profit_rate,0)) AS sum_collaborator_profit_rate',
+                'SUM(COALESCE(CRC32(COALESCE(o.joint_person,\'\')),0)) AS sum_joint_person_crc',
                 'MAX(o.id) AS max_id',
                 'MAX(o.' . $timeField . ') AS max_order_time',
                 'MAX(o.create_time) AS max_create_time',
@@ -428,6 +479,9 @@ class WangchunAchievementService
         $periodSummary = [
             'cnt'             => isset($periodRow['cnt']) ? (int)$periodRow['cnt'] : 0,
             'sum_profit'      => isset($periodRow['sum_profit']) ? (float)$periodRow['sum_profit'] : 0.0,
+            'sum_owner_profit_rate'        => isset($periodRow['sum_owner_profit_rate']) ? (float)$periodRow['sum_owner_profit_rate'] : 0.0,
+            'sum_collaborator_profit_rate' => isset($periodRow['sum_collaborator_profit_rate']) ? (float)$periodRow['sum_collaborator_profit_rate'] : 0.0,
+            'sum_joint_person_crc'         => isset($periodRow['sum_joint_person_crc']) ? (string)$periodRow['sum_joint_person_crc'] : '0',
             'max_id'          => isset($periodRow['max_id']) ? (int)$periodRow['max_id'] : 0,
             'max_order_time'  => isset($periodRow['max_order_time']) ? (string)$periodRow['max_order_time'] : '',
             'max_create_time' => isset($periodRow['max_create_time']) ? (string)$periodRow['max_create_time'] : '',
@@ -444,11 +498,16 @@ class WangchunAchievementService
             ->alias('o')
             ->field([
                 'COUNT(1) AS recent_cnt',
+                'SUM(COALESCE(o.profit,0)) AS recent_sum_profit',
+                'SUM(COALESCE(o.owner_profit_rate,0)) AS recent_sum_owner_profit_rate',
+                'SUM(COALESCE(o.collaborator_profit_rate,0)) AS recent_sum_collaborator_profit_rate',
+                'SUM(COALESCE(CRC32(COALESCE(o.joint_person,\'\')),0)) AS recent_sum_joint_person_crc',
                 'MAX(o.id) AS recent_max_id',
                 'MAX(o.create_time) AS recent_max_create_time',
                 'MAX(o.ut_time) AS recent_max_ut_time',
                 'MAX(o.audit_time) AS recent_max_audit_time',
             ])
+            ->where('o.check_status', 2)
             ->where('o.' . $timeField, '>=', $startTime)
             ->where('o.' . $timeField, '<=', $endTime)
             ->where(function ($query) use ($recentStart) {
@@ -460,6 +519,10 @@ class WangchunAchievementService
 
         $recentSummary = [
             'recent_cnt'             => isset($recentRow['recent_cnt']) ? (int)$recentRow['recent_cnt'] : 0,
+            'recent_sum_profit'                   => isset($recentRow['recent_sum_profit']) ? (float)$recentRow['recent_sum_profit'] : 0.0,
+            'recent_sum_owner_profit_rate'        => isset($recentRow['recent_sum_owner_profit_rate']) ? (float)$recentRow['recent_sum_owner_profit_rate'] : 0.0,
+            'recent_sum_collaborator_profit_rate' => isset($recentRow['recent_sum_collaborator_profit_rate']) ? (float)$recentRow['recent_sum_collaborator_profit_rate'] : 0.0,
+            'recent_sum_joint_person_crc'         => isset($recentRow['recent_sum_joint_person_crc']) ? (string)$recentRow['recent_sum_joint_person_crc'] : '0',
             'recent_max_id'          => isset($recentRow['recent_max_id']) ? (int)$recentRow['recent_max_id'] : 0,
             'recent_max_create_time' => isset($recentRow['recent_max_create_time']) ? (string)$recentRow['recent_max_create_time'] : '',
             'recent_max_ut_time'     => isset($recentRow['recent_max_ut_time']) ? (string)$recentRow['recent_max_ut_time'] : '',
@@ -484,5 +547,186 @@ class WangchunAchievementService
         $signatureData = $this->buildAchievementSignatureDataFromConfig($config);
 
         return md5(json_encode($signatureData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
+     * @param mixed $jointPerson
+     * @return int[]
+     */
+    private function parseJointPersonIds($jointPerson)
+    {
+        if ($jointPerson === null) {
+            return [];
+        }
+
+        $rawItems = [];
+        if (is_array($jointPerson)) {
+            $rawItems = $jointPerson;
+        } else {
+            $raw = trim((string)$jointPerson);
+            if ($raw === '') {
+                return [];
+            }
+
+            if ($raw[0] === '[' || $raw[0] === '{') {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $rawItems = $decoded;
+                }
+            }
+            if (empty($rawItems)) {
+                $normalized = str_replace(['，', '、', ';', '|'], ',', $raw);
+                $rawItems = explode(',', $normalized);
+            }
+        }
+
+        $ids = [];
+        foreach ($rawItems as $item) {
+            if (is_array($item)) {
+                foreach (['admin_id', 'id', 'user_id', 'uid'] as $key) {
+                    if (!isset($item[$key])) {
+                        continue;
+                    }
+                    $candidate = trim((string)$item[$key]);
+                    if ($candidate !== '' && preg_match('/^\d+$/', $candidate)) {
+                        $id = (int)$candidate;
+                        if ($id > 0) {
+                            $ids[$id] = $id;
+                        }
+                        break;
+                    }
+                }
+                continue;
+            }
+
+            $candidate = trim((string)$item);
+            if ($candidate === '' || !preg_match('/^\d+$/', $candidate)) {
+                continue;
+            }
+            $id = (int)$candidate;
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+
+        return array_values($ids);
+    }
+
+    /**
+     * @param int[] $userIds
+     * @return array<int,string>
+     */
+    private function getAdminNameMapByIds(array $userIds)
+    {
+        $ids = [];
+        foreach ($userIds as $userId) {
+            $id = (int)$userId;
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+        if (empty($ids)) {
+            return [];
+        }
+
+        $rows = Db::name('admin')
+            ->field('admin_id, username')
+            ->where('admin_id', 'in', array_values($ids))
+            ->select();
+
+        $map = [];
+        if (!is_array($rows)) {
+            return $map;
+        }
+        foreach ($rows as $row) {
+            $id = isset($row['admin_id']) ? (int)$row['admin_id'] : 0;
+            if ($id <= 0) {
+                continue;
+            }
+            $name = isset($row['username']) ? trim((string)$row['username']) : '';
+            if ($name !== '') {
+                $map[$id] = $name;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * @param array<int,float> $achievementByUserId
+     * @param array<string,float> $achievementByName
+     * @param int $uid
+     * @param string $name
+     * @param float $amount
+     * @return void
+     */
+    private function addAchievementAmount(array &$achievementByUserId, array &$achievementByName, $userId, $userName, $amount)
+    {
+        $uid = (int)$userId;
+        $name = trim((string)$userName);
+        $amount = round((float)$amount, 2);
+        if ($amount <= 0) {
+            return;
+        }
+
+        if ($uid > 0) {
+            if (!isset($achievementByUserId[$uid])) {
+                $achievementByUserId[$uid] = 0.0;
+            }
+            $achievementByUserId[$uid] = round((float)$achievementByUserId[$uid] + $amount, 2);
+        }
+
+        if ($name !== '') {
+            if (!isset($achievementByName[$name])) {
+                $achievementByName[$name] = 0.0;
+            }
+            $achievementByName[$name] = round((float)$achievementByName[$name] + $amount, 2);
+        }
+    }
+
+    /**
+     * @param mixed $value
+     * @param mixed $default
+     * @return float
+     */
+    private function normalizeProfitRate($value, $default)
+    {
+        $defaultRate = $this->toFloatOrNull($default);
+        if ($defaultRate === null || $defaultRate < 0) {
+            $defaultRate = 0.0;
+        }
+        if ($defaultRate > 100) {
+            $defaultRate = 100.0;
+        }
+
+        $rate = $this->toFloatOrNull($value);
+        if ($rate === null || $rate < 0) {
+            $rate = $defaultRate;
+        }
+        if ($rate > 100) {
+            $rate = 100.0;
+        }
+
+        return (float)$rate;
+    }
+
+    /**
+     * @param mixed $value
+     * @return float|null
+     */
+    private function toFloatOrNull($value)
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (is_int($value) || is_float($value)) {
+            return (float)$value;
+        }
+        $raw = trim((string)$value);
+        if ($raw === '' || !is_numeric($raw)) {
+            return null;
+        }
+
+        return (float)$raw;
     }
 }
