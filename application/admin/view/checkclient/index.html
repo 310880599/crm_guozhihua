@@ -2367,19 +2367,50 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     });
 
+    // 仅从当前表格勾选项中提取有效 id（去空、去重、仅保留正整数）
+    function collectCheckedIdsFromCurrentTable() {
+        var currentPageRows = Array.isArray(table.cache[tableId]) ? table.cache[tableId] : [];
+        var currentPageMap = {};
+        currentPageRows.forEach(function (row) {
+            var rowId = parseInt(row && row.id, 10);
+            if (rowId > 0) {
+                currentPageMap[rowId] = true;
+            }
+        });
+
+        var checkedRows = table.checkStatus(tableId).data || [];
+        var ids = [];
+        var seen = {};
+        checkedRows.forEach(function (row) {
+            var id = parseInt(row && row.id, 10);
+            if (id > 0 && !seen[id] && currentPageMap[id]) {
+                seen[id] = true;
+                ids.push(id);
+            }
+        });
+        return ids;
+    }
+
     // 顶部工具栏事件
     table.on('toolbar(table-list)', function (obj) {
         var checkStatus = table.checkStatus(obj.config.id), data = checkStatus.data;
         switch (obj.event) {
             case 'moveGh':
-                if (data.length === 0) { layer.msg('请选择要操作的数据'); return; }
-                var ids1 = data.map(function(it){ return it.id; });
-                layer.confirm('确定将 ' + data.length + ' 个客户转入公海？', function(index){
+                var ids1 = collectCheckedIdsFromCurrentTable();
+                if (ids1.length === 0) { layer.msg('请选择一行'); return; }
+                var alterList = ids1.join(',');
+                var currConfirm = layer.confirm('您确定这' + ids1.length + '个客户转入公海吗？', function(){
+                    layer.close(currConfirm);
                     layer.open({
-                        type: 2, title: '移入公海', area: ['100%','86%'],
-                        content: "{:url('Client/toMoveGh')}?ids=" + ids1.join(',')
+                        type: 2,
+                        title: '移入公海',
+                        closeBtn: 1,
+                        area: ['100%', '86%'],
+                        anim: 2,
+                        shadeClose: false,
+                        maxmin: false,
+                        content: ["{:url('Client/toMoveGh')}?ids=" + alterList]
                     });
-                    layer.close(index);
                 });
                 break;
             case 'alterAll':
