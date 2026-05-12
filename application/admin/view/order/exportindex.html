@@ -1007,8 +1007,8 @@
                     { field: 'owner_profit_rate', title: '负责人占比', width: 14, type: 'percent' },
                     { field: 'collaborator_profit_rate', title: '协同人占比', width: 14, type: 'percent' },
                     { field: 'bank_account', title: '收款账户手动录入', width: 15 },
-                    { field: 'amount_received', title: '已收款金额', width: 12, type: 'number' },
                     { field: 'source_port', title: '客户来源', width: 15 },
+                    { field: 'amount_received', title: '已收款金额', width: 12, type: 'number' },
                     { field: 'profit', title: '预估毛利润', width: 12, type: 'number' },
                     { field: 'margin_rate', title: '预估利润率', width: 12, type: 'number' },
                     { field: 'joint_person', title: '协同人', width: 15 },
@@ -1045,7 +1045,7 @@
                                 'shipping_cost', 'invoice_type', 'invoice_amount', 'tax_amount', 
                                 'debugging_cost', 'sales_commission', 'split_remarks', 
                                 'owner_profit_rate', 'collaborator_profit_rate', 'bank_account',
-                                'amount_received', 'source_port', 'profit',
+                                'source_port', 'amount_received', 'profit',
                                 'margin_rate', 'joint_person', 'client_company', 'product_name_summary',
                                 'create_time_original', 'ut_time_original', 'old_crm_data',
                                 'create_time', 'ut_time'];
@@ -1076,7 +1076,7 @@
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
                                          'owner_profit_rate', 'collaborator_profit_rate',
-                                         'amount_received', 'source_port', 'profit',
+                                         'source_port', 'amount_received', 'profit',
                                          'margin_rate', 'client_company'].includes(col.field)) {
                                         value = item[col.field] || '';
                                     }
@@ -1113,7 +1113,7 @@
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
                                          'owner_profit_rate', 'collaborator_profit_rate',
-                                         'amount_received', 'source_port', 'profit',
+                                         'source_port', 'amount_received', 'profit',
                                          'margin_rate', 'client_company', 'invoice_type',
                                          'bank_account', 'joint_person', 'product_name_summary',
                                          'create_time_original', 'ut_time_original', 'old_crm_data',
@@ -1186,7 +1186,7 @@
                                  'shipping_cost', 'invoice_amount', 'tax_amount', 
                                  'debugging_cost', 'sales_commission', 'split_remarks', 
                                  'owner_profit_rate', 'collaborator_profit_rate',
-                                 'amount_received', 'source_port', 'profit',
+                                 'source_port', 'amount_received', 'profit',
                                  'margin_rate', 'client_company'].includes(col.field)) {
                                 value = item[col.field] || '';
                             }
