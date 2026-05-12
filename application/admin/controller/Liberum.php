@@ -27,27 +27,10 @@ class Liberum extends Common{
     // 公海列表
     public function index(){
         if(request()->isPost()){
-            $key = input('post.key');
             $page = input('page') ? input('page') : 1;
             $pageSize = input('limit') ? input('limit') : config('pageSize');
-            
-            // 添加关联查询crm_contacts表获取详细联系方式
-            $list = db('crm_leads')
-                ->alias('l')
-                ->join('crm_contacts c', 'l.id = c.leads_id', 'left')
-                ->where(['l.status' => 2, 'l.issuccess' => -1])
-                ->field([
-                    'l.*',
-                    // 按类型分组获取联系方式
-                    "SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN c.contact_type = ".ContactMap::CONTACT_MAP['whatsapp']." THEN c.contact_value END), ',', 1) AS whatsapp",
-                    "SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN c.contact_type = ".ContactMap::CONTACT_MAP['email']." THEN c.contact_value END), ',', 1) AS email",
-                    "SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN c.contact_type = ".ContactMap::CONTACT_MAP['phone']." THEN c.contact_value END), ',', 1) AS phone"
-                ])
-                ->group('l.id')
-                ->order('l.ut_time desc')
-                ->paginate(['list_rows' => $pageSize, 'page' => $page])
-                ->toArray();
-                
+            $keyword = input('post.keyword/a', []);
+            $list = model('liberum')->getLiberumPageList($page, $pageSize, $keyword);
             return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
         }
 
@@ -264,8 +247,8 @@ class Liberum extends Common{
     public function liberumSearch(){
         $page = input('page') ?: 1;
         $limit = input('limit') ?: config('pageSize');
-        $keyword = Request::param('keyword');
-        $list = model('liberum')->getLiberumSearchList($page, $limit, $keyword);
+        $keyword = input('keyword/a', []);
+        $list = model('liberum')->getLiberumPageList($page, $limit, $keyword);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
     }
 

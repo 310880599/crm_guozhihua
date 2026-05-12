@@ -289,48 +289,35 @@
             toolbar: '#topBtn',
             page: true,
             cols: [[
-                  {checkbox:true,fixed: true},
-                {field: 'id', title: 'ID', width: 80, fixed: true,hide:true},
+                {type:'checkbox', fixed:'left'},
+                {field: 'id', title: 'ID', width: 80, fixed: true, hide:true},
                  {
                     field: 'kh_name', 
-                    title: '客户名称',
+                    title: '客户名称', width:160,
                     templet: function(d) {
-                        return '<a href="javascript:;" onclick="showClientDetails('+ d.id +')" style="color:#1E9FFF">'+ d.kh_name +'</a>';
+                        return '<a href="javascript:;" onclick="showClientDetails('+ d.id +')" style="color:#1E9FFF">'+ (d.kh_name || '') +'</a>';
                     }
                 },
-                {field: 'kh_rank', title: '客户级别', },
-                {field: 'xs_area', title: '国家地区', },
-                {field: 'kh_status', title: '客户来源',},
+                {field:'product_name', title:'产品名称', width:180},
+                {field:'main_phone', title:'主电话', width:150},
+                {field:'aux_phone', title:'辅助电话', width:150},
+                {field:'inquiry_name', title:'所属渠道', width:130},
+                {field:'port_name', title:'运营端口', width:150},
+                {field:'main_phone_position_titles', title:'主电话职位身份', width:190},
+                {field:'aux_phone_position_titles', title:'辅助电话职位身份', width:190},
+                {field:'kh_rank_display', title:'客户级别', width:100},
+                {field:'remark', title:'备注', width:160},
+                {field:'to_gh_time', title:'最新转入时间', width:170},
+                {field:'pr_user_bef', title:'前负责人', width:110},
                 {
-                    field: 'whatsapp', 
-                    title: 'WhatsApp',
-                    templet: function(d) {
-                        return d.whatsapp ? 
-                            '<i class="layui-icon layui-icon-cellphone" style="color:#25D366"></i> ' + d.whatsapp : '-';
+                    field:'creator',
+                    title:'创建人',
+                    width:110,
+                    templet:function(d){
+                        return d.creator || '';
                     }
                 },
-                {
-                    field: 'email', 
-                    title: '邮箱',
-                    templet: function(d) {
-                        return d.email ? 
-                            '<i class="layui-icon layui-icon-email" style="color:#4285F4"></i> ' + d.email : '-';
-                    }
-                },
-                {
-                    field: 'phone', 
-                    title: '联系电话',
-                    templet: function(d) {
-                        return d.phone ? 
-                            '<i class="layui-icon layui-icon-phone" style="color:#4CAF50"></i> ' + d.phone : '-';
-                    }
-                },
-               {field: 'remark', title: '备注', },
-                {field: 'at_time', title: '创建时间'},
-                {field: 'to_gh_time', title: '最新转入时间'},
-                {field: 'at_user', title: '创建人'},
-                {field: 'pr_user_bef', title: '前负责人', },
-                {title:'操作',width: 160, align: 'center', toolbar: '#action'}
+                {fixed:'right', title:'操作', toolbar:'#action', width:160, align:'center'}
             ]],
             limit: 10
         });
