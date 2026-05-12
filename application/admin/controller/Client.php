@@ -3858,16 +3858,35 @@ class Client extends Common
 
             $leadRows = Db::table('crm_leads')
                 ->whereIn('id', $ids)
-                ->field('id,pr_user,pr_user_id,pr_user_bef,pr_user_bef_id')
+                ->field('id,kh_name,issuccess,status,pr_user,pr_user_id,pr_user_bef,pr_user_bef_id')
                 ->select();
             if (is_object($leadRows) && method_exists($leadRows, 'toArray')) {
                 $leadRows = $leadRows->toArray();
             } elseif (!is_array($leadRows)) {
                 $leadRows = [];
             }
+            if (empty($leadRows) || count($leadRows) !== count($ids)) {
+                return json(['code' => 500, 'msg' => '客户不存在或已被处理', 'data' => []]);
+            }
             $leadMap = [];
             foreach ($leadRows as $leadRow) {
                 $leadMap[(int)$leadRow['id']] = $leadRow;
+            }
+            if (count($leadMap) !== count($ids)) {
+                return json(['code' => 500, 'msg' => '客户不存在或已被处理', 'data' => []]);
+            }
+            foreach ($leadMap as $leadRow) {
+                if ((int)($leadRow['status'] ?? 0) !== 1) {
+                    return json(['code' => 500, 'msg' => '选中的客户中包含非客户状态数据，禁止移入公海', 'data' => []]);
+                }
+            }
+            foreach ($leadMap as $leadRow) {
+                if ((int)($leadRow['issuccess'] ?? 0) === 1) {
+                    $errorMsg = count($ids) > 1
+                        ? '选中的客户中包含已成交客户，禁止移入公海'
+                        : '这个客户是已成交客户，禁止移入公海';
+                    return json(['code' => 500, 'msg' => $errorMsg, 'data' => []]);
+                }
             }
 
             $now = date('Y-m-d H:i:s');
@@ -3876,7 +3895,7 @@ class Client extends Common
             try {
                 foreach ($ids as $leadId) {
                     if (empty($leadMap[$leadId])) {
-                        continue;
+                        throw new \RuntimeException('客户不存在或已被处理');
                     }
                     $leadRow = $leadMap[$leadId];
                     $updateData = [
@@ -3891,10 +3910,15 @@ class Client extends Common
                         $updateData['pr_user_bef_id'] = (int)$leadRow['pr_user_id'];
                     }
 
-                    $result = Db::table('crm_leads')->where('id', $leadId)->update($updateData);
-                    if ($result !== false) {
-                        $count++;
+                    $result = Db::table('crm_leads')
+                        ->where('id', $leadId)
+                        ->where('status', 1)
+                        ->where('issuccess', -1)
+                        ->update($updateData);
+                    if ($result !== 1) {
+                        throw new \RuntimeException('选中的客户状态发生变化，请刷新后重试');
                     }
+                    $count++;
 
                     $this->addOperLog(
                         $leadId,
@@ -3903,7 +3927,7 @@ class Client extends Common
                     );
                 }
 
-                if ($count <= 0) {
+                if ($count !== count($ids)) {
                     throw new \RuntimeException('转入公海失败！');
                 }
                 Db::commit();

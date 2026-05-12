@@ -748,7 +748,8 @@ class Client extends Model
             ->where($mapInquiry)
             ->where($mapPort)
             ->where($mapAtTime)
-            ->where($mapPrUser);
+            ->where($mapPrUser)
+            ->where('l.status', 1);
 
         if (!$skipOrgUserLimit) {
             $query->where(function ($subQuery) use ($usernames) {
