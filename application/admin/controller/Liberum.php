@@ -3,9 +3,26 @@ namespace app\admin\controller;
 use think\facade\Request;
 use think\Db;
 use think\facade\Session;
+use think\facade\Env;
 use app\admin\behavior\ContactMap; 
+use app\admin\model\LiberumType as LiberumTypeModel;
+use app\admin\service\LiberumTypeService;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class Liberum extends Common{
+
+    /**
+     * @var LiberumTypeService
+     */
+    protected $liberumTypeService;
+
+    protected function getLiberumTypeService()
+    {
+        if (!$this->liberumTypeService) {
+            $this->liberumTypeService = new LiberumTypeService();
+        }
+        return $this->liberumTypeService;
+    }
 
     // 公海列表
     public function index(){
@@ -34,7 +51,7 @@ class Liberum extends Common{
             return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
         }
 
-        $ghTypeList = Db::table('crm_liberum_type')->select();
+        $ghTypeList = LiberumTypeModel::where('is_deleted', 0)->order('id desc')->select();
         $this->assign('ghTypeList', $ghTypeList);
         return $this->fetch();
     }
@@ -42,12 +59,13 @@ class Liberum extends Common{
     // 公海类型
     public function libTypeList(){
         if(request()->isPost()){
-            $page = input('page') ?: 1;
-            $pageSize = input('limit') ?: config('pageSize');
-            $list = db('crm_liberum_type')
-                ->paginate(['list_rows' => $pageSize, 'page' => $page])
-                ->toArray();
-            return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
+            $page = input('page/d', 1);
+            $pageSize = input('limit/d', config('pageSize'));
+            $params = [
+                'type_name' => input('type_name', ''),
+            ];
+            $list = $this->getLiberumTypeService()->search($params, $page, $pageSize);
+            return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['count'], 'rel' => 1];
         }
         return $this->fetch('liberum/lib_type_list');
     }
@@ -55,12 +73,10 @@ class Liberum extends Common{
     // 添加公海类型
     public function libTypeAdd(){
         if(request()->isPost()){
-            $data['type_name'] = Request::param('type_name');
-            $data['add_time'] = time();
-            $result = Db::table('crm_liberum_type')->insert($data);
-            return $result 
-                ? ['code' => 0, 'msg' => '添加成功！', 'data' => []]
-                : ['code' => -200, 'msg' => '添加失败！', 'data' => []];
+            $data = Request::only(['type_name'], 'post');
+            $data['creator'] = (string)Session::get('username');
+            $result = $this->getLiberumTypeService()->add($data);
+            return $result + ['data' => []];
         }
         return $this->fetch('liberum/lib_type_add');
     }
@@ -68,25 +84,180 @@ class Liberum extends Common{
     // 编辑公海类型
     public function libTypeEdit(){
         if(Request::isAjax()){
-            $data = Request::param();
-            $result = Db::table('crm_liberum_type')->where(['id' => $data['id']])->update($data);
-            return $result 
-                ? ['code' => 0, 'msg' => '编辑成功！', 'data' => []]
-                : ['code' => -200, 'msg' => '编辑失败！', 'data' => []];
+            $id = input('post.id/d', 0);
+            $data = Request::only(['type_name'], 'post');
+            $result = $this->getLiberumTypeService()->edit($id, $data);
+            return $result + ['data' => []];
         }
 
-        $result = Db::table('crm_liberum_type')->where(['id' => Request::param('id')])->find();
+        $id = input('id/d', 0);
+        $result = LiberumTypeModel::where('id', $id)->where('is_deleted', 0)->find();
+        if (empty($result)) {
+            return $this->error('记录不存在或已删除');
+        }
         $this->assign('result', $result);
         return $this->fetch('liberum/lib_type_edit');
     }
 
     // 删除公海类型
     public function libTypeDel(){
-        $id = Request::param('id');
-        $result = Db::table('crm_liberum_type')->where('id', $id)->delete();
-        return $result 
-            ? ['code' => 0, 'msg' => '删除成功！', 'data' => []]
-            : ['code' => -200, 'msg' => '删除失败！', 'data' => []];
+        $id = input('id/d', 0);
+        $result = $this->getLiberumTypeService()->softDelete($id);
+        return $result + ['data' => []];
+    }
+
+    // 批量删除公海类型（软删除）
+    public function libTypeBatchDel()
+    {
+        return $this->batchLibTypeDel();
+    }
+
+    // 批量删除公海类型（软删除）
+    public function batchLibTypeDel()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $ids = input('post.ids/a', []);
+        $result = $this->getLiberumTypeService()->batchSoftDelete($ids);
+        return $result + ['data' => []];
+    }
+
+    // 导入弹窗页面
+    public function libTypeImport()
+    {
+        return $this->fetch('liberum/lib_type_import');
+    }
+
+    // 执行导入
+    public function libTypeImportDo()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $file = request()->file('file');
+        if (!$file) {
+            return ['code' => -200, 'msg' => '请上传Excel文件', 'data' => []];
+        }
+
+        $saveDir = Env::get('root_path') . 'runtime' . DIRECTORY_SEPARATOR . 'upload' . DIRECTORY_SEPARATOR . 'excel';
+        if (!is_dir($saveDir)) {
+            @mkdir($saveDir, 0777, true);
+        }
+
+        $info = $file->validate(['size' => 10 * 1024 * 1024, 'ext' => 'xlsx,xls,csv'])->move($saveDir);
+        if (!$info) {
+            return ['code' => -200, 'msg' => $file->getError() ?: '文件保存失败', 'data' => []];
+        }
+
+        $filePath = $info->getPathname();
+        $ext = strtolower($info->getExtension());
+        $rows = [];
+        $isHeaderRow = function ($text) {
+            $text = trim((string)$text);
+            if ($text === '') {
+                return false;
+            }
+            // 兼容 UTF-8 BOM
+            if (strncmp($text, "\xEF\xBB\xBF", 3) === 0) {
+                $text = substr($text, 3);
+            }
+            return mb_strpos($text, '公海类型') !== false || mb_strpos($text, '类型') !== false;
+        };
+
+        try {
+            if ($ext === 'csv') {
+                $handle = fopen($filePath, 'r');
+                if (!$handle) {
+                    throw new \Exception('CSV文件读取失败');
+                }
+
+                $lineNo = 0;
+                while (($data = fgetcsv($handle)) !== false) {
+                    $lineNo++;
+                    $data = array_pad($data, 1, '');
+                    $typeName = trim((string)$data[0]);
+
+                    // 首行表头兼容：包含“公海类型”或“类型”则跳过
+                    if ($lineNo === 1 && $isHeaderRow($typeName)) {
+                        continue;
+                    }
+
+                    if ($typeName === '') {
+                        continue;
+                    }
+                    $rows[] = ['type_name' => $typeName];
+                }
+                fclose($handle);
+            } else {
+                if (!class_exists('\PhpOffice\PhpSpreadsheet\IOFactory')) {
+                    return [
+                        'code' => -200,
+                        'msg' => '服务器未安装 PhpSpreadsheet，无法解析 .xlsx/.xls，请安装 phpoffice/phpspreadsheet 或改用 CSV 导入',
+                        'data' => [],
+                    ];
+                }
+
+                $spreadsheet = IOFactory::load($filePath);
+                $sheet = $spreadsheet->getActiveSheet();
+                $highestRow = $sheet->getHighestRow();
+
+                $firstCell = trim((string)$sheet->getCell('A1')->getValue());
+                $hasHeader = $isHeaderRow($firstCell);
+                $start = $hasHeader ? 2 : 1;
+
+                for ($r = $start; $r <= $highestRow; $r++) {
+                    $typeName = trim((string)$sheet->getCell("A{$r}")->getValue());
+                    if ($typeName === '') {
+                        continue;
+                    }
+                    $rows[] = ['type_name' => $typeName];
+                }
+            }
+        } catch (\Throwable $e) {
+            return ['code' => -200, 'msg' => '解析失败：' . $e->getMessage(), 'data' => []];
+        }
+
+        $result = $this->getLiberumTypeService()->importRows($rows);
+        return $result + ['data' => []];
+    }
+
+    // 下载导入模板（CSV）
+    public function libTypeTpl()
+    {
+        $filename = '公海类型导入模板_' . date('Ymd_His') . '.csv';
+
+        $csvLine = function (array $cols) {
+            $safe = array_map(function ($v) {
+                $v = (string)$v;
+                $v = str_replace('"', '""', $v);
+                return '"' . $v . '"';
+            }, $cols);
+            return implode(',', $safe) . "\r\n";
+        };
+
+        if (function_exists('ob_get_level')) {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+        }
+
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
+
+        // UTF-8 BOM，兼容 Excel 打开中文
+        echo "\xEF\xBB\xBF";
+
+        // 仅 1 列模板：公海类型
+        echo $csvLine(['公海类型']);
+        echo $csvLine(['无效公海']);
+        echo $csvLine(['待分配公海']);
+        exit;
     }
 
     // 公海搜索

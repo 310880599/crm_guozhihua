@@ -1,58 +1,85 @@
-{include file="common/head"/}
-<div class="admin-main layui-anim layui-anim-upbit" ng-app="hd" ng-controller="ctrl">
+<!DOCTYPE html>
+<html>
+<head>
+    {include file="common/head"/}
+    <style>
+        .layui-btn-secondary {
+            background-color: #f5f5f5 !important;
+            border-color: #d2d2d2 !important;
+            color: #333 !important;
+        }
+        .layui-btn-secondary:hover {
+            background-color: #e8e8e8 !important;
+            border-color: #c0c0c0 !important;
+            color: #000 !important;
+        }
+    </style>
+</head>
+<body>
+<form class="layui-form" style="padding:15px 20px 0 20px;">
+    <input type="hidden" name="id" value="{$result.id}">
 
-    <form class="layui-form layui-form-pane">
-
-        <input type="hidden" name="id" value="{$result.id}">
-
-        <div class="layui-form-item">
-            <label class="layui-form-label">公海类型</label>
-            <div class="layui-input-4">
-                <input type="text" id="type_name" name="type_name" value="{$result.type_name}" lay-verify="required" placeholder="请输入公海类型名称" class="layui-input">
-            </div>
+    <div class="layui-form-item">
+        <label class="layui-form-label">公海类型</label>
+        <div class="layui-input-block">
+            <input type="text" name="type_name" value="{$result.type_name|default=''}" required lay-verify="required"
+                   placeholder="请输入公海类型名称" autocomplete="off" class="layui-input">
         </div>
-
-        <div class="layui-form-item">
-            <div class="layui-input-block">
-                <button type="button" class="layui-btn"  lay-submit="" lay-filter="submit">提交保存</button>
-
-            </div>
+    </div>
+    <div class="layui-form-item">
+        <label class="layui-form-label">创建人</label>
+        <div class="layui-input-block">
+            <input type="text" value="{$result.creator|default=''}" class="layui-input layui-bg-gray" readonly>
         </div>
-    </form>
-</div>
+    </div>
+    <div class="layui-form-item">
+        <label class="layui-form-label">创建时间</label>
+        <div class="layui-input-block">
+            <input type="text" id="create_time_view" value="{$result.create_time|default=''}" class="layui-input layui-bg-gray" readonly>
+        </div>
+    </div>
+    <div class="layui-form-item">
+        <div class="layui-input-block">
+            <button type="submit" class="layui-btn" lay-submit lay-filter="formSubmit">保存修改</button>
+            <button type="button" class="layui-btn layui-btn-secondary"
+                    onclick="var i = parent.layer.getFrameIndex(window.name); parent.layer.close(i);">
+                取消
+            </button>
+        </div>
+    </div>
+</form>
+
 {include file="common/foot"/}
-
 <script>
+layui.use(['form', 'jquery', 'util'], function () {
+    var form = layui.form, $ = layui.jquery, util = layui.util;
 
+    (function formatCreateTime() {
+        var $input = $('#create_time_view');
+        var v = ($input.val() || '').toString();
+        if (!v) {
+            return;
+        }
+        if (/^\d+$/.test(v)) {
+            $input.val(util.toDateString(parseInt(v, 10) * 1000));
+        }
+    })();
 
-    layui.use(['form', 'layer'], function () {
-        var form = layui.form, layer = layui.layer,$= layui.jquery;
-
-
-        //监听提交
-        form.on('submit(submit)', function(data){
-
-            /*  layer.alert(JSON.stringify(data.field), {
-                  title: '最终的提交信息'
-              })
-              return false;*/
-
-            $.post("{:url('Liberum/libTypeEdit')}",data.field,function (res) {
-
-
-                if (res.code == 0){
-                    layer.msg(res.msg,{time:2000});
-                    layer.close(layer.index);
-                    window.parent.location.reload();
-                }else {
-                    layer.msg(res.msg,{time:2000});
-                }
-
-            },'json')
-
-            return false;
-        });
+    form.on('submit(formSubmit)', function (data) {
+        $.post("{:url('Liberum/libTypeEdit')}", data.field, function (res) {
+            if (res.code === 0) {
+                layer.msg(res.msg || '修改成功！', {icon: 1, time: 1000}, function () {
+                    parent.layui.table.reload('table-list');
+                    var index = parent.layer.getFrameIndex(window.name);
+                    parent.layer.close(index);
+                });
+            } else {
+                layer.msg(res.msg || '操作失败', {icon: 2, time: 1500});
+            }
+        }, 'json');
+        return false;
     });
+});
 </script>
 </body>
 </html>

@@ -160,6 +160,27 @@
     }
 </style>
 <div class="lib-type-list-container">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>高级查询</legend>
+        <div class="layui-card" style="box-shadow: none; margin-top: 10px;">
+            <div class="layui-form layui-card-header layuiadmin-card-header-auto"
+                 style="border-bottom: transparent; height: auto;">
+                <div class="layui-form-item" style="text-align: left; padding-left: 20px;">
+                    <div class="layui-inline">
+                        <label class="layui-form-label">公海类型：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="type_name" name="type_name" placeholder="请输入公海类型名称" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline" style="float: right; padding-bottom: 15px;">
+                        <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-lib-type-search">
+                            <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align: sub;"></i>查询数据
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
     <div class="lib-type-table-wrapper">
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
     </div>
@@ -173,17 +194,21 @@
 </script>
 
 <script type="text/html" id="topBtn">
-    <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加公海类型</button>
+    <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" lay-event="add"><i class="layui-icon">&#xe608;</i>添加公海类型</button>
+    <button type="button" class="layui-btn layui-btn-danger layui-btn-sm" lay-event="batchDel"><i class="layui-icon">&#xe640;</i>批量删除</button>
+    <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="importExcel"><i class="layui-icon">&#xe67c;</i>导入Excel</button>
+    <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" lay-event="downloadTpl"><i class="layui-icon">&#xe601;</i>下载模板</button>
 </script>
 
 
 {include file="common/foot"/}
 <script>
-    layui.use(['table','form','upload','util','laydate'], function() {
-        var table = layui.table,form = layui.form,laydate = layui.laydate, $ = layui.jquery,upload = layui.upload,util = layui.util;
+    layui.use(['table','form','util'], function() {
+        var table = layui.table,form = layui.form, $ = layui.jquery,util = layui.util;
         var tableIn = table.render({
             elem: '#table-list',
-            url: '{:url("libTypeList")}',
+            id: 'table-list',
+            url: '{:url("Liberum/libTypeList")}',
             method: 'post',
             toolbar: '#topBtn',
             page: true,
@@ -191,27 +216,23 @@
                 {checkbox:true,fixed: true},
                 {field: 'id', title: 'ID', width: 120, fixed: true},
                 {field: 'type_name', title: '公海类型', },
-                {field: 'add_time', title:'创建时间',templet:function (res) {
-                        return util.toDateString(res.add_time = (res.add_time * 1000));
+                {field: 'creator', title: '创建人', width: 140},
+                {field: 'create_time', title:'创建时间',templet:function (res) {
+                        var v = res.create_time || res.add_time;
+                        if (!v) return '';
+                        if (/^\d+$/.test(v)) return util.toDateString(v * 1000);
+                        return v;
+                    }},
+                {field: 'update_time', title:'修改时间',templet:function (res) {
+                        var v = res.update_time;
+                        if (!v) return '';
+                        if (/^\d+$/.test(v)) return util.toDateString(v * 1000);
+                        return v;
                     }},
                 {title:'操作',width: 260, align: 'center', toolbar: '#action'}
             ]],
             limit: 10 //每页默认显示的数量
         });
-
-        $('body').on('click','#add',function() {
-            var indexOpen = layer.open({
-                type: 2,
-                title: '添加公海类型',
-                closeBtn: 1, //是否显示关闭按钮
-                area: ['500px','260px'],
-                anim: 2,  //动画
-                shadeClose: false,  //点击空白处是否关闭
-                maxmin: false, //开启最大化最小化按钮
-                content: ["{:url('Liberum/libTypeAdd')}"]
-            });
-        })
-
 
         table.on('tool(table-list)', function(obj) {
             var data = obj.data;
@@ -219,43 +240,95 @@
             if (obj.event === 'del') {
                 layer.confirm('您确定要删除吗？', function(index){
                     var loading = layer.load(1, {shade: [0.1, '#fff']});
-                    $.post("{:url('libTypeDel')}",{id:data.id},function(res){
+                    $.post("{:url('Liberum/libTypeDel')}",{id:data.id},function(res){
                         layer.close(loading);
                         if(res.code===0){
                             layer.msg(res.msg,{time:1000,icon:1});
-                            tableIn.reload();
+                            tableIn.reload({page:{curr:1}});
                         }else{
-                            layer.msg('操作失败！',{time:1000,icon:2});
+                            layer.msg(res.msg || '操作失败！',{time:1000,icon:2});
                         }
-                    });
+                    }, 'json');
                     layer.close(index);
                 });
             }else if(obj.event === 'edit'){
-                layer_add("编辑公海类型","{:url('Liberum/libTypeEdit')}?id="+data.id);
+                layer.open({
+                    type: 2,
+                    title: '编辑公海类型',
+                    closeBtn: 1,
+                    area: ['550px', '350px'],
+                    anim: 2,
+                    shadeClose: false,
+                    maxmin: true,
+                    content: ["{:url('Liberum/libTypeEdit')}?id=" + data.id, 'no'],
+                    end: function () {
+                        table.reload('table-list');
+                    }
+                });
             }
         });
 
+        table.on('toolbar(table-list)', function(obj){
+            if (obj.event === 'add') {
+                layer.open({
+                    type: 2,
+                    title: '添加公海类型',
+                    closeBtn: 1,
+                    area: ['500px','260px'],
+                    anim: 2,
+                    shadeClose: false,
+                    maxmin: false,
+                    content: ["{:url('Liberum/libTypeAdd')}", 'no'],
+                    end: function () {
+                        table.reload('table-list');
+                    }
+                });
+            } else if (obj.event === 'batchDel') {
+                var rows = table.checkStatus('table-list').data || [];
+                if (!rows.length) {
+                    return layer.msg('请先勾选要删除的记录', {icon: 0});
+                }
+                var ids = rows.map(function (r) { return r.id; });
+                layer.confirm('确认删除选中的 ' + ids.length + ' 条记录吗？', function(index){
+                    $.post("{:url('Liberum/batchLibTypeDel')}", {ids: ids}, function(res){
+                        if(res.code===0){
+                            layer.msg(res.msg || '删除成功', {time:1000,icon:1});
+                            tableIn.reload({page:{curr:1}});
+                        }else{
+                            layer.msg(res.msg || '操作失败！',{time:1200,icon:2});
+                        }
+                    }, 'json');
+                    layer.close(index);
+                });
+            } else if (obj.event === 'importExcel') {
+                layer.open({
+                    type: 2,
+                    title: '导入公海类型',
+                    closeBtn: 1,
+                    area: ['600px', '360px'],
+                    anim: 2,
+                    shadeClose: false,
+                    maxmin: false,
+                    content: ["{:url('Liberum/libTypeImport')}", 'no'],
+                    end: function () {
+                        table.reload('table-list');
+                    }
+                });
+            } else if (obj.event === 'downloadTpl') {
+                window.location.href = "{:url('Liberum/libTypeTpl')}";
+            }
+        });
+
+        form.on('submit(LAY-lib-type-search)', function (data) {
+            table.reload('table-list', {
+                url: "{:url('Liberum/libTypeList')}",
+                where: data.field,
+                page: { curr: 1 }
+            });
+            return false;
+        });
 
     });
-</script>
-
-
-<script>
-
-    /*添加*/
-    function layer_add(title,url){
-        var index = layer.open({
-            type: 2,
-            title: title,
-            closeBtn: 1, //是否显示关闭按钮
-            area: ['550px', '350px'],
-            anim: 2,  //动画
-            shadeClose: false,  //点击空白处是否关闭
-            maxmin: true, //开启最大化最小化按钮
-            content: [url,'no']
-        });
-    }
-
 </script>
 </body>
 </html>
