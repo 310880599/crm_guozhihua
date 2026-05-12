@@ -4,8 +4,12 @@
     body {
         background: #f5f7fa !important;
     }
-    .wukong-search-card .layui-form{
+    .wukong-search-card .search-form-row {
         display: flex !important;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 16px;
+        width: 100%;
     }
     .liberum-list-container {
         position: absolute;
@@ -63,11 +67,38 @@
         margin-bottom: 15px;
     }
     
+    .wukong-search-card .search-item {
+        display: flex;
+        align-items: center;
+        margin-right: 0 !important;
+        margin-bottom: 0 !important;
+        flex-shrink: 0;
+    }
+    
     .wukong-search-card .layui-form-label {
-        width: 90px;
+        width: auto !important;
+        min-width: 72px;
         color: #333;
         font-weight: 500;
         background-color: transparent !important;
+        padding: 9px 8px;
+        white-space: nowrap;
+        line-height: 20px;
+        text-align: right;
+    }
+    
+    .wukong-search-card .search-item .layui-input-inline {
+        width: 160px;
+        margin-right: 0 !important;
+    }
+    
+    .wukong-search-card .search-item .layui-form-select {
+        width: 160px;
+    }
+    
+    .wukong-search-card .search-btn {
+        flex-shrink: 0;
+        margin-left: 4px;
     }
     
     .wukong-search-card .layui-input,
@@ -182,73 +213,44 @@
 
     <!-- 查询区域 -->
     <div class="wukong-search-card">
-        <div class="layui-form" lay-filter="LAY-app-contlist-search">
-
-                <div class="layui-form-item" style="text-align: left;padding-left: 20px;">
-
-                    <div class="layui-inline">
-                        <label class="layui-form-label">日期查询：</label>
-                        <div class="layui-input-inline">
-                            <input type="text" class="layui-input" autocomplete="off" name="at_time" id="at_time" placeholder="请输入日期查询">
-                        </div>
-
-                    </div>
-
-                    <div class="layui-inline">
-                        <label class="layui-form-label" style="margin-left: 5px">公海类型：</label>
-                        <div class="layui-input-inline">
-                            <select name="pr_gh_type" id="pr_gh_type">
-                                <option value="">请选择公海类型</option>
-
-                                {volist name='ghTypeList' id='vo'}
-                                <option value="{$vo.type_name}">{$vo.type_name}</option>
-                                {/volist}
-
-                            </select>
-                        </div>
-                    </div>
-                    <div class="layui-inline">
-                        <label class="layui-form-label">手机：</label>
-                        <div class="layui-input-inline">
-                            <input type="text" id="phone" name="phone" placeholder="请输入手机号码" class="layui-input">
-                        </div>
-                    </div>
-                    <div class="layui-inline">
-                        <label class="layui-form-label" style="">客户名称：</label>
-                        <div class="layui-input-inline">
-                            <input type="text" id="kh_name" name="kh_name" placeholder="请输入客户名称" class="layui-input">
-                        </div>
-                    </div>
-                    <!-- <div class="layui-inline">
-                        <label class="layui-form-label" style="">时间查询：</label>
-                        <div class="layui-input-inline">
-                            <select name="timebucket">
-                                <option value="">请选择时间</option>
-                                <option value="today">今天</option>
-                                <option value="yesterday">昨天</option>
-                                <option value="week">本周</option>
-                                <option value="last week">上周</option>
-                                <option value="month">本月</option>
-                                <option value="last month">上月</option>
-                                <option value="year">今年</option>
-                                <option value="last year">去年</option>
-                                <option value="-2 hours">两个小时内</option>
-                            </select>
-                        </div>
-                    </div> -->
-
-
+        <div class="layui-form search-form-row" lay-filter="LAY-app-contlist-search">
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">日期查询：</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" autocomplete="off" name="at_time" id="at_time" placeholder="请输入日期查询">
                 </div>
-
-
-
-                <div class="layui-inline" style="float: right;padding-bottom: 15px">
-                    <button class="layui-btn layuiadmin-btn-list"  lay-submit lay-filter="LAY-app-contlist-search">
-                        <i class="layui-icon layui-icon-search layuiadmin-button-btn"  style="vertical-align: sub;"></i>查询数据
-                    </button>
-                </div>
-
             </div>
+
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">公海类型：</label>
+                <div class="layui-input-inline">
+                    <select name="pr_gh_type" id="pr_gh_type">
+                        <option value="">请选择公海类型</option>
+                        {volist name='ghTypeList' id='vo'}
+                        <option value="{$vo.type_name}">{$vo.type_name}</option>
+                        {/volist}
+                    </select>
+                </div>
+            </div>
+
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">手机：</label>
+                <div class="layui-input-inline">
+                    <input type="text" id="phone" name="phone" placeholder="请输入手机号码" class="layui-input">
+                </div>
+            </div>
+
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">客户名称：</label>
+                <div class="layui-input-inline">
+                    <input type="text" id="kh_name" name="kh_name" placeholder="请输入客户名称" class="layui-input">
+                </div>
+            </div>
+
+            <button class="layui-btn layuiadmin-btn-list search-btn" lay-submit lay-filter="LAY-app-contlist-search">
+                <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align: sub;"></i>查询数据
+            </button>
+        </div>
         </div>
 
 
