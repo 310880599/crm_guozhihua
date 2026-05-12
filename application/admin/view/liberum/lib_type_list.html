@@ -47,6 +47,23 @@
     .filtrate-warp .layui-badge:hover {
         color: white !important;
     }
+
+    /* 公海类型列表高级查询区域 - 防止标签和输入框挤压换行 */
+    .lib-type-list-container .layui-form-label {
+        width: 95px !important;
+        padding: 9px 10px !important;
+        box-sizing: border-box;
+        white-space: nowrap !important;
+        text-align: right;
+    }
+
+    .lib-type-list-container .layui-input-inline {
+        width: 220px !important;
+    }
+
+    .lib-type-list-container .layui-form-item .layui-inline {
+        margin-right: 15px;
+    }
     
     /* 表格容器样式 - 撑满可用空间 */
     .lib-type-table-wrapper {
@@ -256,7 +273,7 @@
                     type: 2,
                     title: '编辑公海类型',
                     closeBtn: 1,
-                    area: ['550px', '350px'],
+                    area: ['600px', '360px'],
                     anim: 2,
                     shadeClose: false,
                     maxmin: true,
@@ -274,7 +291,7 @@
                     type: 2,
                     title: '添加公海类型',
                     closeBtn: 1,
-                    area: ['500px','260px'],
+                    area: ['560px', '280px'],
                     anim: 2,
                     shadeClose: false,
                     maxmin: false,
