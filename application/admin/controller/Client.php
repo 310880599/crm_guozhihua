@@ -3819,63 +3819,178 @@ class Client extends Common
     //移入公海
     public function toMoveGh()
     {
-        //1，获取提交的线索ID 【1,2,3,4,】
-        $ids = Request::param('ids');
-        $this->assign('ids', $ids);
-        if (Request::isAjax()) {
-            $pr_gh_type = Request::param('pr_gh_type');
-            $idsArr = explode(",", $ids);
-
-
-            $count = 0;
-            foreach ($idsArr as $key => $value) {
-                // $data['pr_user_bef'] = Db::table('crm_leads')->where(['id'=>$value])->field('pr_user')->find();
-                // $data['pr_user'] = $username;
-                // $data['id'] = $value;
-                // $insertAll = Db::name('crm_leads')->update($data);
-                $data['pr_gh_type'] = $pr_gh_type;
-                $data['to_gh_time'] = date("Y-m-d H:i:s", time());
-                $data['status'] = 2; //0-线索，1客户，2公海
-                $data['id']  = $value;
-                $result = Db::table('crm_leads')->where(['id' => $value])->update($data);
-                if ($result) {
-                    $count++;
-                }
-                // 添加日志记录
-                $this->addOperLog(
-                    $value,
-                    '移入公海',
-                    "移入 [{$pr_gh_type}] 公海池"
-                );
-            }
-            if ($count > 0) {
-                $msg = ['code' => 0, 'msg' => $count . '个客户移入公海成功！', 'data' => []];
-                return json($msg);
-            } else {
-                $msg = ['code' => 500, 'msg' => '转入公海失败！', 'data' => []];
-                return json($msg);
-            }
-            // $data['pr_gh_type'] = Request::param('pr_gh_type');
-            // $data['to_gh_time'] = date("Y-m-d H:i:s",time());
-            // $data['status'] = 2;//0-线索，1客户，2公海
-            // $data['id']  = Request::param('id');
-            // $result = Db::table('crm_leads')->where(['id'=>$data['id']])->update($data);
-            // if ($result){
-            //     $msg = ['code' => 0,'msg'=>'移入公海成功！','data'=>[]];
-            //     return json($msg);
-            // }else{
-            //     $msg = ['code' => 500,'msg'=>'抱歉，移入公海失败！','data'=>[]];
-            //     return json($msg);
-            // }
+        $idsParam = Request::param('ids', '');
+        if (is_array($idsParam)) {
+            $idsParam = implode(',', $idsParam);
         }
 
+        $ids = [];
+        foreach (explode(',', (string)$idsParam) as $idValue) {
+            $id = (int)trim((string)$idValue);
+            if ($id > 0) {
+                $ids[$id] = $id;
+            }
+        }
+        $ids = array_values($ids);
 
-        $libTypeList = Db::table('crm_liberum_type')->select();
+        if (empty($ids)) {
+            $msg = ['code' => 500, 'msg' => '请选择客户', 'data' => []];
+            return Request::isAjax() ? json($msg) : $this->error('请选择客户');
+        }
 
+        $idsStr = implode(',', $ids);
+        $this->assign('ids', $idsStr);
+
+        if (Request::isAjax()) {
+            $prGhTypeId = (int)Request::param('pr_gh_type', 0);
+            if ($prGhTypeId <= 0) {
+                return json(['code' => 500, 'msg' => '请选择公海类型', 'data' => []]);
+            }
+
+            $liberumType = Db::table('crm_liberum_type')
+                ->where('id', $prGhTypeId)
+                ->where('is_deleted', 0)
+                ->field('id,type_name')
+                ->find();
+            if (empty($liberumType)) {
+                return json(['code' => 500, 'msg' => '请选择有效的公海类型。', 'data' => []]);
+            }
+
+            $leadRows = Db::table('crm_leads')
+                ->whereIn('id', $ids)
+                ->field('id,pr_user,pr_user_id,pr_user_bef,pr_user_bef_id')
+                ->select();
+            if (is_object($leadRows) && method_exists($leadRows, 'toArray')) {
+                $leadRows = $leadRows->toArray();
+            } elseif (!is_array($leadRows)) {
+                $leadRows = [];
+            }
+            $leadMap = [];
+            foreach ($leadRows as $leadRow) {
+                $leadMap[(int)$leadRow['id']] = $leadRow;
+            }
+
+            $now = date('Y-m-d H:i:s');
+            $count = 0;
+            Db::startTrans();
+            try {
+                foreach ($ids as $leadId) {
+                    if (empty($leadMap[$leadId])) {
+                        continue;
+                    }
+                    $leadRow = $leadMap[$leadId];
+                    $updateData = [
+                        'status' => 2,
+                        'to_gh_time' => $now,
+                        'pr_gh_type' => $prGhTypeId,
+                    ];
+                    if (trim((string)($leadRow['pr_user_bef'] ?? '')) === '') {
+                        $updateData['pr_user_bef'] = (string)($leadRow['pr_user'] ?? '');
+                    }
+                    if ((int)($leadRow['pr_user_bef_id'] ?? 0) <= 0 && (int)($leadRow['pr_user_id'] ?? 0) > 0) {
+                        $updateData['pr_user_bef_id'] = (int)$leadRow['pr_user_id'];
+                    }
+
+                    $result = Db::table('crm_leads')->where('id', $leadId)->update($updateData);
+                    if ($result !== false) {
+                        $count++;
+                    }
+
+                    $this->addOperLog(
+                        $leadId,
+                        '移入公海',
+                        "移入 [{$liberumType['type_name']}] 公海池"
+                    );
+                }
+
+                if ($count <= 0) {
+                    throw new \RuntimeException('转入公海失败！');
+                }
+                Db::commit();
+                return json(['code' => 0, 'msg' => $count . '个客户移入公海成功！', 'data' => []]);
+            } catch (\Throwable $e) {
+                Db::rollback();
+                Log::error('toMoveGh failed: ' . $e->getMessage());
+                return json(['code' => 500, 'msg' => $e->getMessage() ?: '转入公海失败！', 'data' => []]);
+            }
+        }
+
+        $leadList = Db::table('crm_leads')
+            ->whereIn('id', $ids)
+            ->field('id,kh_name')
+            ->select();
+        if (is_object($leadList) && method_exists($leadList, 'toArray')) {
+            $leadList = $leadList->toArray();
+        } elseif (!is_array($leadList)) {
+            $leadList = [];
+        }
+        $leadNameMap = [];
+        foreach ($leadList as $leadRow) {
+            $leadNameMap[(int)$leadRow['id']] = (string)($leadRow['kh_name'] ?? '');
+        }
+
+        $contactRows = Db::table('crm_contacts')
+            ->whereIn('leads_id', $ids)
+            ->where('is_delete', 0)
+            ->whereIn('contact_type', [1, 3])
+            ->field('leads_id,contact_type,contact_value')
+            ->order('id asc')
+            ->select();
+        if (is_object($contactRows) && method_exists($contactRows, 'toArray')) {
+            $contactRows = $contactRows->toArray();
+        } elseif (!is_array($contactRows)) {
+            $contactRows = [];
+        }
+
+        $contactMap = [];
+        foreach ($contactRows as $contactRow) {
+            $leadId = (int)($contactRow['leads_id'] ?? 0);
+            if ($leadId <= 0) {
+                continue;
+            }
+            if (!isset($contactMap[$leadId])) {
+                $contactMap[$leadId] = ['main_phone' => '', 'aux_phone' => ''];
+            }
+            $contactValue = trim((string)($contactRow['contact_value'] ?? ''));
+            if ($contactValue === '') {
+                continue;
+            }
+            if ((int)$contactRow['contact_type'] === 1 && $contactMap[$leadId]['main_phone'] === '') {
+                $contactMap[$leadId]['main_phone'] = $contactValue;
+            }
+            if ((int)$contactRow['contact_type'] === 3 && $contactMap[$leadId]['aux_phone'] === '') {
+                $contactMap[$leadId]['aux_phone'] = $contactValue;
+            }
+        }
+
+        $clientPhoneList = [];
+        foreach ($ids as $leadId) {
+            $mainPhone = isset($contactMap[$leadId]) ? (string)$contactMap[$leadId]['main_phone'] : '';
+            $auxPhone = isset($contactMap[$leadId]) ? (string)$contactMap[$leadId]['aux_phone'] : '';
+            if ($mainPhone !== '') {
+                $displayPhone = $mainPhone;
+            } elseif ($auxPhone !== '') {
+                $displayPhone = $auxPhone;
+            } else {
+                $displayPhone = '未找到电话（客户ID：' . $leadId . '）';
+            }
+            $clientPhoneList[] = [
+                'id' => $leadId,
+                'kh_name' => isset($leadNameMap[$leadId]) ? $leadNameMap[$leadId] : '',
+                'main_phone' => $mainPhone,
+                'aux_phone' => $auxPhone,
+                'display_phone' => $displayPhone,
+            ];
+        }
+        $this->assign('clientPhoneList', $clientPhoneList);
+
+        $libTypeList = Db::table('crm_liberum_type')
+            ->where('is_deleted', 0)
+            ->field('id,type_name')
+            ->order('id asc')
+            ->select();
         $this->assign('libTypeList', $libTypeList);
 
-        // $result = Db::table('crm_leads') ->where(['id' => Request::param('id')])->find();
-        // $this -> assign('result',$result);
         return $this->fetch('client/move_gh');
     }
     //客户搜索

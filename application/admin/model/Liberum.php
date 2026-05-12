@@ -136,6 +136,13 @@ class Liberum extends Model
         foreach ($rankMapRaw as $rankId => $rankName) {
             $rankMap[(string)$rankId] = trim((string)$rankName);
         }
+        $liberumTypeMapRaw = Db::table('crm_liberum_type')
+            ->where('is_deleted', 0)
+            ->column('type_name', 'id');
+        $liberumTypeMap = [];
+        foreach ($liberumTypeMapRaw as $typeId => $typeName) {
+            $liberumTypeMap[(string)$typeId] = trim((string)$typeName);
+        }
 
         $productIds = [];
         foreach ($rows as $row) {
@@ -241,6 +248,12 @@ class Liberum extends Model
             $row['inquiry_name'] = isset($inquiryMap[$inquiryId]) ? (string)$inquiryMap[$inquiryId] : $inquiryId;
             $row['port_name'] = isset($portMap[$portId]) ? (string)$portMap[$portId] : $portId;
             $row['kh_rank_display'] = $this->resolveKhRankDisplayName($khRankRaw, $rankMap);
+            $rawGhType = trim((string)($row['pr_gh_type'] ?? ''));
+            if ($rawGhType !== '' && preg_match('/^\d+$/', $rawGhType)) {
+                $row['pr_gh_type_name'] = isset($liberumTypeMap[$rawGhType]) ? $liberumTypeMap[$rawGhType] : $rawGhType;
+            } else {
+                $row['pr_gh_type_name'] = $rawGhType;
+            }
             $row['remark'] = isset($row['remark']) ? (string)$row['remark'] : '';
             $row['to_gh_time'] = !empty($row['to_gh_time']) ? (string)$row['to_gh_time'] : (isset($row['ut_time']) ? (string)$row['ut_time'] : '');
             $row['pr_user_bef'] = isset($row['pr_user_bef']) ? (string)$row['pr_user_bef'] : '';

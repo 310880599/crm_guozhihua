@@ -55,10 +55,33 @@
         </div> -->
 
 
+        <input type="hidden" id="ids" name="ids" value="{$ids}" />
+
         <div class="layui-form-item">
-            <label class="layui-form-label">客户</label>
-            <div class="layui-input-4">
-                <input type="text" id="ids" name="ids" disabled value="{$ids}" lay-verify="required"  class="layui-input">
+            <label class="layui-form-label">客户电话确认</label>
+            <div class="layui-input-4" style="padding-top: 8px;">
+                <div style="max-height: 260px; overflow-y: auto; border: 1px solid #e6e6e6; border-radius: 2px;">
+                    <table class="layui-table" style="margin: 0;">
+                        <thead>
+                        <tr>
+                            <th>客户名称</th>
+                            <th>主电话</th>
+                            <th>辅助电话</th>
+                            <th>确认电话</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {volist name='clientPhoneList' id='vo'}
+                        <tr>
+                            <td>{$vo.kh_name|default='-'}</td>
+                            <td>{$vo.main_phone|default='-'}</td>
+                            <td>{$vo.aux_phone|default='-'}</td>
+                            <td>{$vo.display_phone|default='-'}</td>
+                        </tr>
+                        {/volist}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -69,7 +92,7 @@
                     <option value="">请选择公海类型</option>
 
                     {volist name='libTypeList' id='vo'}
-                    <option value="{$vo.type_name}">{$vo.type_name}</option>
+                    <option value="{$vo.id}">{$vo.type_name}</option>
                     {/volist}
 
                 </select>
@@ -102,6 +125,11 @@
                     title: '最终的提交信息'
                 })
                 return false;*/
+
+                if (!data.field.pr_gh_type) {
+                    layer.msg('请选择公海类型',{time:2000});
+                    return false;
+                }
 
                 $.post("{:url('Client/toMoveGh')}",data.field,function (res) {
 
