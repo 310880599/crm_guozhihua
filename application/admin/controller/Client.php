@@ -511,11 +511,27 @@ class Client extends Common
         $inquiryList  = Db::table('crm_inquiry')->select();        // 所属渠道下拉数据
         $khStatusList = Db::table('crm_client_status')->select();
         $xsSourceList = Db::table('crm_clues_source')->select();
+        $currentAdmin = \app\admin\model\Admin::getMyInfo();
+        $productListQuery = Db::name('crm_products')->alias('p')
+            ->leftJoin('crm_product_category c', 'p.category_id = c.id');
+        if (!empty($currentAdmin['org']) && strpos($currentAdmin['org'], 'admin') === false) {
+            $productListQuery->where($this->getOrgWhere($currentAdmin['org'], 'p'));
+        }
+        $productList = $productListQuery
+            ->where([
+                'p.is_deleted' => 0,
+                'c.is_deleted' => 0,
+            ])
+            ->group('p.product_name, c.category_name')
+            ->field('MIN(p.id) as id, p.product_name, c.category_name')
+            ->order('p.product_name', 'asc')
+            ->select();
         $yyList = $this->getYyList();
         $this->assign('_yyList', json_encode($yyList['_yyList']));
         $this->assign('khRankList', $khRankList);
         $this->assign('inquiryList', $inquiryList);
         $this->assign('xsSourceList', $xsSourceList);  //线索/客户来源
+        $this->assign('productList', $productList);
 
 
         

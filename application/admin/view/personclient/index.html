@@ -1084,6 +1084,18 @@
                     </div>
 
                     <div class="layui-inline">
+                        <label class="layui-form-label">产品名称：</label>
+                        <div class="layui-input-inline">
+                            <select name="product_name" id="product_name" lay-search>
+                                <option value="">请选择产品名称</option>
+                                {volist name="productList" id="vo"}
+                                <option value="{$vo.id}">{$vo.product_name} ({$vo.category_name|default='无'})</option>
+                                {/volist}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
                         <label class="layui-form-label">所属渠道：</label>
                         <div class="layui-input-inline">
                             <select name="inquiry_id" id="inquiry_id" lay-filter="inquiry_id">

@@ -369,6 +369,7 @@ class Client extends Model
         $where = [];
         $mapInquiry = [];
         $mapPort    = [];
+        $mapProductName = []; // 产品名称（存储产品ID）
 
 
         if (!empty($keyword['timebucket'])) {
@@ -410,6 +411,10 @@ class Client extends Model
             $mapPort = ['port_id' => $keyword['port_id']];
         }
 
+        if (isset($keyword['product_name']) && $keyword['product_name'] !== '' && $keyword['product_name'] !== null) {
+            $mapProductName = ['product_name' => $keyword['product_name']];
+        }
+
         $mapSourcePort = []; // 来源端口
         if (!empty($keyword['source_port'])) {
             $mapSourcePort = ['source_port' => $keyword['source_port']];
@@ -442,6 +447,7 @@ class Client extends Model
             ->where($mapInquiry)     // 使用所属渠道筛选
             ->where($mapKhRank)
             ->where($mapXsSource)
+            ->where($mapProductName) // 产品名称按产品ID精确筛选
             ->where($mapPort)        // 使用运营端口筛选
             ->where($mapAtTime)
             ->where($mapFollow)      // 【新增-跟进筛选】最新跟进时间筛选（recent_follow）
