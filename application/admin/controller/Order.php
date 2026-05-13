@@ -735,8 +735,15 @@ class Order extends Common
             $adminInfo = \app\admin\model\Admin::getMyInfo();
             $canManageAllOrders = OrderService::canManageAllOrders($adminInfo);
 
+            // ====== 联系方式统一清洗与校验 ======
+            $rawContact = Request::param('contact', '');
+            $cleanContact = OrderService::normalizeContact($rawContact);
+            if (!$isDraft && !preg_match('/^1\d{10}$/', $cleanContact)) {
+                return json(['code' => 0, 'msg' => '请输入正确的11位手机号']);
+            }
+
             // ====== 验证客户是否属于当前用户或协同人 ======
-            $contact = Request::param('contact');
+            $contact = $cleanContact;
             $leadsId = null; // 保存客户ID，用于后续更新成交状态
             $custinfo = null; // 保存客户信息，用于后续填充cname等字段
             if (!empty($contact)) {
@@ -744,15 +751,7 @@ class Order extends Common
                 $currentAdminId = Session::get('aid');
                 
                 // 查找客户信息
-                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($contact) {
-                    $_contact = trim(preg_replace('/[+\-\s]/', '', $contact));
-                    $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$contact}'")
-                        ->whereOr('contact_value', $contact);
-                    if ($contact != $_contact) {
-                        $query->whereOr('contact_value', $_contact)
-                            ->whereOrRaw("CONCAT(contact_extra, contact_value) = '{$_contact}'");
-                    }
-                })->find();
+                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $contact)->find();
                 
                 if ($coninfo) {
                     $custinfo = Db::name('crm_leads')->where('id', $coninfo['leads_id'])->find();
@@ -796,7 +795,7 @@ class Order extends Common
             
             // ====== 读取主表字段 ======
             $data = [];
-            $data['contact']          = Request::param('contact');        // 客户联系方式
+            $data['contact']          = $cleanContact;        // 客户联系方式（已清洗）
             $data['cname']            = Request::param('cname', '');       // 客户名称
             
             // 如果cname为空，尝试从已查询的客户信息中获取
@@ -807,15 +806,7 @@ class Order extends Common
             // 如果cname仍然为空，尝试再次查询（防止前面验证失败的情况）
             if (empty($data['cname']) && !empty($contact)) {
                 // 查找客户信息
-                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($contact) {
-                    $_contact = trim(preg_replace('/[+\-\s]/', '', $contact));
-                    $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$contact}'")
-                        ->whereOr('contact_value', $contact);
-                    if ($contact != $_contact) {
-                        $query->whereOr('contact_value', $_contact)
-                            ->whereOrRaw("CONCAT(contact_extra, contact_value) = '{$_contact}'");
-                    }
-                })->find();
+                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $contact)->find();
                 
                 if ($coninfo && !empty($coninfo['leads_id'])) {
                     $tempCustinfo = Db::name('crm_leads')->where('id', $coninfo['leads_id'])->find();
@@ -1229,8 +1220,7 @@ class Order extends Common
                     // 兜底B：前端没传 draft_id，按 contact 匹配当前用户最新草稿
                     if (!$draftOrder && $draftId <= 0) {
                         $username = Session::get('username') ?? '';
-                        $contactRaw = trim((string)Request::param('contact', ''));
-                        $contactNorm = trim(preg_replace('/[+\-\s]/', '', $contactRaw));
+                        $contactNorm = OrderService::normalizeContact(Request::param('contact', ''));
                         if ($username !== '' && $contactNorm !== '') {
                             $drafts = Db::name('crm_client_order')
                                 ->where('check_status', 0)
@@ -1242,7 +1232,7 @@ class Order extends Common
                                 ->select();
                             foreach ($drafts as $d) {
                                 $dContact = trim((string)($d['contact'] ?? ''));
-                                $dNorm = trim(preg_replace('/[+\-\s]/', '', $dContact));
+                                $dNorm = OrderService::normalizeContact($dContact);
                                 if ($dNorm === $contactNorm) {
                                     $draftOrder = $d;
                                     $draftId = (int)$d['id'];
@@ -1446,21 +1436,19 @@ class Order extends Common
     public function changeyewu()
     {
         $data  = Request::param();
-        $custphone = $data['contact'];
+        $custphone = OrderService::normalizeContact($data['contact'] ?? '');
+        if ($custphone === '') {
+            $res['code'] = 0;
+            $res['msg'] = "该客户信息没用找到";
+            $this->success($res);
+            return;
+        }
         $adminInfo = \app\admin\model\Admin::getMyInfo();
         $canManageAllOrders = OrderService::canManageAllOrders($adminInfo);
         // $where=[];
         // $where['phone'] = $custphone;
         // $custinfo = Db::name('crm_leads')->where($where)->find();
-        $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($custphone) {
-            $_custphone = trim(preg_replace('/[+\-\s]/', '', $custphone));
-            $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$custphone}'")
-                ->whereOr('contact_value', $custphone);
-            if ($custphone != $_custphone) {
-                $query->whereOr('contact_value', $_custphone)
-                    ->whereOrRaw("CONCAT(contact_extra, contact_value) = '{$_custphone}'");
-            }
-        })->find();
+        $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $custphone)->find();
         if (!$coninfo) {
             $res['code'] = 0;
             $res['msg'] = "该客户信息没用找到";
@@ -1726,7 +1714,7 @@ class Order extends Common
      */
     public function checkReturnOrderRule()
     {
-        $contact = trim((string)Request::param('contact', ''));
+        $contact = OrderService::normalizeContact(Request::param('contact', ''));
         $orderId = (int)Request::param('order_id/d', 0);
         if ($contact === '') {
             return json([
@@ -1787,8 +1775,15 @@ class Order extends Common
                 return json(['code' => -200, 'msg' => '缺少订单ID参数']);
             }
 
+            // ====== 联系方式统一清洗与校验 ======
+            $rawContact = Request::param('contact', '');
+            $cleanContact = OrderService::normalizeContact($rawContact);
+            if (!preg_match('/^1\d{10}$/', $cleanContact)) {
+                return json(['code' => 0, 'msg' => '请输入正确的11位手机号']);
+            }
+
             // ====== 验证客户是否属于当前用户或协同人（与新增逻辑保持一致） ======
-            $contact = Request::param('contact');
+            $contact = $cleanContact;
             $leadsId = null;
             $custinfo = null;
             $adminInfo = \app\admin\model\Admin::getMyInfo();
@@ -1796,15 +1791,7 @@ class Order extends Common
             if (!empty($contact)) {
                 $currentUsername = Session::get('username');
                 $currentAdminId = Session::get('aid');
-                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($contact) {
-                    $_contact = trim(preg_replace('/[+\-\s]/', '', $contact));
-                    $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$contact}'")
-                        ->whereOr('contact_value', $contact);
-                    if ($contact != $_contact) {
-                        $query->whereOr('contact_value', $_contact)
-                            ->whereOrRaw("CONCAT(contact_extra, contact_value) = '{$_contact}'");
-                    }
-                })->find();
+                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $contact)->find();
 
                 if ($coninfo) {
                     $custinfo = Db::name('crm_leads')->where('id', $coninfo['leads_id'])->find();
@@ -1843,7 +1830,7 @@ class Order extends Common
             }
             // ====== 读取并整理主表字段 ======
             $data = [];
-            $data['contact']          = Request::param('contact');        // 客户联系方式
+            $data['contact']          = $cleanContact;        // 客户联系方式（已清洗）
             $data['cname']            = Request::param('cname', '');          // 客户名称
 
             if (empty($data['cname']) && $custinfo && !empty($custinfo['kh_name'])) {
@@ -1851,15 +1838,7 @@ class Order extends Common
             }
 
             if (empty($data['cname']) && !empty($contact)) {
-                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($contact) {
-                    $_contact = trim(preg_replace('/[+\-\s]/', '', $contact));
-                    $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$contact}'")
-                        ->whereOr('contact_value', $contact);
-                    if ($contact != $_contact) {
-                        $query->whereOr('contact_value', $_contact)
-                            ->whereOrRaw("CONCAT(contact_extra, contact_value) = '{$_contact}'");
-                    }
-                })->find();
+                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $contact)->find();
 
                 if ($coninfo && !empty($coninfo['leads_id'])) {
                     $tempCustinfo = Db::name('crm_leads')->where('id', $coninfo['leads_id'])->find();
@@ -2565,16 +2544,8 @@ class Order extends Common
         if (!empty($order['contact'])) {
             try {
                 // 通过联系方式查找 crm_contacts 表
-                $custphone = trim($order['contact']);
-                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($custphone) {
-                    $_custphone = trim(preg_replace('/[+\-\s]/', '', $custphone));
-                    $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$custphone}'")
-                        ->whereOr('contact_value', $custphone);
-                    if ($custphone != $_custphone) {
-                        $query->whereOr('contact_value', $_custphone)
-                            ->whereOrRaw("CONCAT(contact_extra, contact_value) = '{$_custphone}'");
-                    }
-                })->find();
+                $custphone = OrderService::normalizeContact($order['contact']);
+                $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $custphone)->find();
                 
                 if ($coninfo && !empty($coninfo['leads_id'])) {
                     // 从 crm_leads 表获取 source_port
@@ -2639,7 +2610,7 @@ class Order extends Common
             }
             // ====== 读取并整理主表字段 ======
             $data = [];
-            $data['contact']          = Request::param('contact');        // 客户联系方式
+            $data['contact']          = OrderService::normalizeContact(Request::param('contact', ''));        // 客户联系方式
             $data['cname']            = Request::param('cname');          // 客户名称
             $data['client_company']   = Request::param('client_company'); // 客户公司
             $data['country']          = Request::param('country');        // 发货地址
@@ -3530,12 +3501,8 @@ class Order extends Common
         $id = Request::param('id');
 
         $orderinfo = Db::table('crm_client_order')->where('id', $id)->find();
-        $custphone = $orderinfo['cphone'];
-        $custphone = trim(preg_replace('/[+\-\s]/', '', $custphone));
-        $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where(function ($query) use ($custphone) {
-            $query->whereRaw("CONCAT(contact_extra, contact_value) = '{$custphone}'")
-                ->whereOr('contact_value', $custphone);
-        })->find();
+        $custphone = OrderService::normalizeContact($orderinfo['cphone'] ?? '');
+        $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $custphone)->find();
         if (!$coninfo) {
             $msg['code'] = -200;
             $msg['msg'] = "该客户信息没用找到";
@@ -4716,7 +4683,7 @@ class Order extends Common
         }
         $now = date('Y-m-d H:i:s');
         $data = [];
-        $data['contact']          = Request::param('contact', '');
+        $data['contact']          = OrderService::normalizeContact(Request::param('contact', ''));
         $data['cname']            = Request::param('cname', '');
         $data['customer_type_flag'] = in_array(Request::param('customer_type_flag'), ['0', '1']) ? (int)Request::param('customer_type_flag') : 0;
         $data['client_company']   = Request::param('client_company', '');

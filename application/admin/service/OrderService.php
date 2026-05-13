@@ -111,7 +111,7 @@ class OrderService
     }
 
     /**
-     * 标准化联系方式（仅去掉 +、-、空白字符）
+     * 标准化联系方式（统一清洗手机号）
      *
      * @param string $contact
      * @return string
@@ -122,16 +122,21 @@ class OrderService
         if ($contact === '') {
             return '';
         }
-        return (string)preg_replace('/[+\-\s]/u', '', $contact);
+
+        $contact = html_entity_decode($contact, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $contact = str_replace("\xC2\xA0", ' ', $contact);
+        $contact = str_replace('　', ' ', $contact);
+        $contact = preg_replace('/[+\-\s]/u', '', $contact);
+
+        return trim((string)$contact);
     }
 
     /**
      * 根据联系方式匹配客户ID（leads_id）
      *
-     * 兼容：
-     * - contact_value = 输入值
-     * - CONCAT(contact_extra, contact_value) = 输入值
-     * - 去除 + - 空格后的归一化匹配
+     * 规则：
+     * - 仅基于 contact_value 匹配
+     * - 匹配前统一走 normalizeContact
      *
      * @param string $contact
      * @return int
@@ -145,10 +150,9 @@ class OrderService
     /**
      * 批量根据联系方式匹配客户ID（leads_id）
      *
-     * 兼容规则：
-     * - contact_value = 输入值
-     * - CONCAT(contact_extra, contact_value) = 输入值
-     * - 去除 + - 空格后的归一化匹配
+     * 规则：
+     * - 仅基于 contact_value 匹配
+     * - 匹配前统一走 normalizeContact
      * - 仅匹配未删除联系人（is_delete = 0）
      *
      * @param array $contacts
@@ -190,37 +194,11 @@ class OrderService
             return [];
         }
 
-        $records = [];
-        $rowKeySet = [];
-
-        $valueRows = Db::name('crm_contacts')
+        $records = Db::name('crm_contacts')
             ->where('is_delete', 0)
             ->whereIn('contact_value', $candidateValues)
-            ->field('leads_id, contact_value, contact_extra')
+            ->field('leads_id, contact_value')
             ->select();
-        foreach ($valueRows as $row) {
-            $rowKey = (string)($row['leads_id'] ?? 0) . '|' . (string)($row['contact_extra'] ?? '') . '|' . (string)($row['contact_value'] ?? '');
-            if (!isset($rowKeySet[$rowKey])) {
-                $records[] = $row;
-                $rowKeySet[$rowKey] = 1;
-            }
-        }
-
-        $inSql = "'" . implode("','", array_map('addslashes', $candidateValues)) . "'";
-        if ($inSql !== "''") {
-            $concatRows = Db::name('crm_contacts')
-                ->where('is_delete', 0)
-                ->whereRaw("CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')) IN (" . $inSql . ")")
-                ->field('leads_id, contact_value, contact_extra')
-                ->select();
-            foreach ($concatRows as $row) {
-                $rowKey = (string)($row['leads_id'] ?? 0) . '|' . (string)($row['contact_extra'] ?? '') . '|' . (string)($row['contact_value'] ?? '');
-                if (!isset($rowKeySet[$rowKey])) {
-                    $records[] = $row;
-                    $rowKeySet[$rowKey] = 1;
-                }
-            }
-        }
 
         if (empty($records)) {
             return [];
@@ -238,23 +216,15 @@ class OrderService
                 }
 
                 $rowValue = trim((string)($row['contact_value'] ?? ''));
-                $rowConcat = trim((string)($row['contact_extra'] ?? '')) . $rowValue;
                 $rowValueNormalized = self::normalizeContact($rowValue);
-                $rowConcatNormalized = self::normalizeContact($rowConcat);
 
                 $score = 999;
                 if ($rowValue !== '' && $rowValue === $rawContact) {
                     $score = 1;
-                } elseif ($rowConcat !== '' && $rowConcat === $rawContact) {
-                    $score = 2;
                 } elseif ($normalizedContact !== '' && $rowValue !== '' && $rowValue === $normalizedContact) {
-                    $score = 3;
-                } elseif ($normalizedContact !== '' && $rowConcat !== '' && $rowConcat === $normalizedContact) {
-                    $score = 4;
+                    $score = 2;
                 } elseif ($normalizedContact !== '' && $rowValueNormalized !== '' && $rowValueNormalized === $normalizedContact) {
-                    $score = 5;
-                } elseif ($normalizedContact !== '' && $rowConcatNormalized !== '' && $rowConcatNormalized === $normalizedContact) {
-                    $score = 6;
+                    $score = 3;
                 }
 
                 if ($score < $bestScore) {
@@ -630,23 +600,20 @@ class OrderService
     {
         $contact = trim((string)$contact);
         $normalized = self::normalizeContact($contact);
-        if ($contact === '') {
+        if ($normalized === '') {
             return ['leads_id' => 0, 'matched_contact' => ''];
         }
 
         $record = Db::name('crm_contacts')
             ->where('is_delete', 0)
             ->where(function ($query) use ($contact, $normalized) {
-                $query->where('contact_value', $contact)
-                    ->whereOrRaw("CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')) = '" . addslashes($contact) . "'");
-                if ($normalized !== '' && $normalized !== $contact) {
-                    $query->whereOr('contact_value', $normalized)
-                        ->whereOrRaw("CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')) = '" . addslashes($normalized) . "'")
-                        ->whereOrRaw("REPLACE(REPLACE(REPLACE(IFNULL(contact_value,''), '+', ''), '-', ''), ' ', '') = '" . addslashes($normalized) . "'")
-                        ->whereOrRaw("REPLACE(REPLACE(REPLACE(CONCAT(IFNULL(contact_extra,''), IFNULL(contact_value,'')), '+', ''), '-', ''), ' ', '') = '" . addslashes($normalized) . "'");
+                $query->where('contact_value', $normalized);
+                if ($contact !== '' && $contact !== $normalized) {
+                    $query->whereOr('contact_value', $contact);
                 }
+                $query->whereOrRaw("REPLACE(REPLACE(REPLACE(IFNULL(contact_value,''), '+', ''), '-', ''), ' ', '') = '" . addslashes($normalized) . "'");
             })
-            ->field('leads_id, contact_value, contact_extra')
+            ->field('leads_id, contact_value')
             ->find();
 
         if (empty($record)) {
@@ -654,9 +621,6 @@ class OrderService
         }
 
         $matched = trim((string)($record['contact_value'] ?? ''));
-        if ($matched === '') {
-            $matched = trim((string)($record['contact_extra'] ?? '')) . trim((string)($record['contact_value'] ?? ''));
-        }
 
         return [
             'leads_id' => (int)($record['leads_id'] ?? 0),
