@@ -252,6 +252,142 @@ class Liberum extends Common{
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
     }
 
+    /**
+     * 获取表格列宽
+     * 路由：Liberum/getColWidths
+     * 入参：page_key、table_id
+     * 返回：{code:0,msg:'获取成功',data:{field:width}}
+     */
+    public function getColWidths()
+    {
+        if (!request()->isAjax()) {
+            return json(['code' => 500, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $adminId = Session::get('aid');
+        $pageKey = Request::param('page_key', '');
+        $tableId = Request::param('table_id', '');
+
+        if (empty($adminId)) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        if (empty($pageKey) || empty($tableId)) {
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => []]);
+        }
+
+        try {
+            $list = Db::table('crm_table_colwidth')
+                ->where('admin_id', $adminId)
+                ->where('page_key', $pageKey)
+                ->where('table_id', $tableId)
+                ->field('field,width')
+                ->select();
+
+            $widths = [];
+            if (!empty($list)) {
+                foreach ($list as $item) {
+                    if (empty($item['field'])) {
+                        continue;
+                    }
+                    $width = (int)$item['width'];
+                    if ($width >= 30 && $width <= 3000) {
+                        $widths[$item['field']] = $width;
+                    }
+                }
+            }
+
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => $widths]);
+        } catch (\Exception $e) {
+            // 表不存在或读取失败时不影响页面
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => []]);
+        }
+    }
+
+    /**
+     * 保存表格列宽
+     * 路由：Liberum/saveColWidths
+     * 入参：page_key、table_id、widths(JSON字符串或数组)
+     * 返回：{code:0,msg:'保存成功',data:[]}
+     */
+    public function saveColWidths()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 500, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $adminId = Session::get('aid');
+        $pageKey = Request::param('page_key', '');
+        $tableId = Request::param('table_id', '');
+        $widthsParam = Request::param('widths', '');
+
+        if (empty($adminId) || empty($pageKey) || empty($tableId)) {
+            return json(['code' => 500, 'msg' => '参数不完整', 'data' => []]);
+        }
+
+        $widths = [];
+        if (is_array($widthsParam)) {
+            $widths = $widthsParam;
+        } elseif (!empty($widthsParam)) {
+            $decoded = json_decode($widthsParam, true);
+            if (is_array($decoded)) {
+                $widths = $decoded;
+            }
+        }
+
+        if (empty($widths) || !is_array($widths)) {
+            return json(['code' => 400, 'msg' => '列宽数据格式错误或为空', 'data' => []]);
+        }
+
+        $validRows = [];
+        foreach ($widths as $field => $width) {
+            if (empty($field) || !is_string($field)) {
+                continue;
+            }
+            if (!preg_match('/^[a-zA-Z0-9_]+$/', $field)) {
+                continue;
+            }
+            $intWidth = (int)$width;
+            if ($intWidth < 30 || $intWidth > 3000) {
+                continue;
+            }
+            $validRows[$field] = $intWidth;
+        }
+
+        if (empty($validRows)) {
+            return json(['code' => 400, 'msg' => '没有有效的列宽数据', 'data' => []]);
+        }
+
+        try {
+            Db::startTrans();
+
+            // 同一用户+页面+表格每次以最新快照覆盖，保证每个字段仅一条有效记录
+            Db::table('crm_table_colwidth')
+                ->where('admin_id', $adminId)
+                ->where('page_key', $pageKey)
+                ->where('table_id', $tableId)
+                ->delete();
+
+            $currentTime = time();
+            foreach ($validRows as $field => $intWidth) {
+                Db::table('crm_table_colwidth')->insert([
+                    'admin_id'   => $adminId,
+                    'page_key'   => $pageKey,
+                    'table_id'   => $tableId,
+                    'field'      => $field,
+                    'width'      => $intWidth,
+                    'updated_at' => $currentTime,
+                ]);
+            }
+
+            Db::commit();
+            return json(['code' => 0, 'msg' => '保存成功', 'data' => []]);
+        } catch (\Exception $e) {
+            Db::rollback();
+            return json(['code' => 500, 'msg' => '保存失败', 'data' => []]);
+        }
+    }
+
     // 写跟进
     public function libdialog(){
         $id = Request::param('id');

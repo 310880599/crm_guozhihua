@@ -262,7 +262,7 @@
 
 
 
-    <table class="layui-table" id="table-list" lay-filter="table-list"></table>
+    <table class="layui-table" id="liberumTable" lay-filter="table-list"></table>
 </div>
 
 
@@ -282,17 +282,130 @@
 <script>
     layui.use(['table','form','upload','util','laydate'], function() {
         var table = layui.table,form = layui.form,laydate = layui.laydate, $ = layui.jquery,upload = layui.upload,util = layui.util;
-    var tableIn = table.render({
-            elem: '#table-list',
-            url: '{:url("index")}',
-            method: 'post',
-            toolbar: '#topBtn',
-            page: true,
-            cols: [[
+        var currentUsername = "{$Think.session.username}" || 'default';
+        var tableId = 'liberumTable';
+        var pageKey = 'liberum_index';
+        var columnWidthKey = 'crm_colwidth_' + currentUsername + '_' + pageKey + '_' + tableId;
+        var lastSnapshot = {};
+
+        function getCurrentWidthsSnapshot() {
+            var snapshot = {};
+            try {
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if (!$view.length) return snapshot;
+
+                var $headerTable = $view.find('.layui-table-header table').eq(0);
+                var $ths = $headerTable.find('thead tr th');
+                $ths.each(function () {
+                    var $th = $(this);
+                    var field = $th.attr('data-field');
+                    if (!field || field === '0') return;
+                    var w = parseInt($th.width(), 10);
+                    if (w >= 30 && w <= 3000) {
+                        snapshot[field] = w;
+                    }
+                });
+            } catch (e) {
+                console.warn('获取列宽快照失败:', e);
+            }
+            return snapshot;
+        }
+
+        function saveWidths() {
+            try {
+                var widths = getCurrentWidthsSnapshot();
+                if (!Object.keys(widths).length) return;
+
+                localStorage.setItem(columnWidthKey, JSON.stringify(widths));
+
+                $.ajax({
+                    url: "{:url('Liberum/saveColWidths')}",
+                    type: 'POST',
+                    dataType: 'json',
+                    data: {
+                        page_key: pageKey,
+                        table_id: tableId,
+                        widths: JSON.stringify(widths)
+                    },
+                    success: function (res) {
+                        if (res.code !== 0) {
+                            layer.msg('列宽保存失败', {icon: 2, time: 1500});
+                        }
+                    },
+                    error: function () {
+                        layer.msg('列宽保存失败', {icon: 2, time: 1500});
+                    }
+                });
+            } catch (e) {
+                console.warn('保存列宽失败:', e);
+            }
+        }
+
+        function bindResizeSave() {
+            var $view = $('#' + tableId).next('.layui-table-view');
+            if (!$view.length) return;
+
+            $(document).off('mouseup.liberum_colwidth touchend.liberum_colwidth');
+            lastSnapshot = getCurrentWidthsSnapshot();
+
+            $(document).on('mouseup.liberum_colwidth touchend.liberum_colwidth', function () {
+                setTimeout(function () {
+                    var newSnapshot = getCurrentWidthsSnapshot();
+                    if (!Object.keys(newSnapshot).length) return;
+                    if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
+                        saveWidths();
+                        lastSnapshot = newSnapshot;
+                    }
+                }, 120);
+            });
+        }
+
+        function restoreColWidth(colArr) {
+            var dbWidths = {};
+            $.ajax({
+                url: "{:url('Liberum/getColWidths')}",
+                type: 'GET',
+                data: {
+                    page_key: pageKey,
+                    table_id: tableId
+                },
+                async: false,
+                success: function (res) {
+                    if (res.code === 0 && res.data && Object.keys(res.data).length > 0) {
+                        dbWidths = res.data;
+                    }
+                },
+                error: function () {
+                    console.warn('读取列宽失败，使用本地缓存兜底');
+                }
+            });
+
+            try {
+                var saved = JSON.parse(localStorage.getItem(columnWidthKey) || '{}');
+                var finalWidths = saved;
+                if (Object.keys(dbWidths).length > 0) {
+                    finalWidths = Object.assign({}, saved, dbWidths);
+                    localStorage.setItem(columnWidthKey, JSON.stringify(finalWidths));
+                }
+
+                colArr.forEach(function (c) {
+                    if (!c || !c.field) return;
+                    var w = parseInt(finalWidths[c.field], 10);
+                    if (w >= 30 && w <= 3000) {
+                        c.width = w;
+                    }
+                });
+            } catch (e) {
+                console.warn('恢复列宽失败:', e);
+            }
+        }
+
+        function getCols() {
+            var cols = [[
                 {type:'checkbox', fixed:'left'},
                 {field: 'id', title: 'ID', width: 80, fixed: true, hide:true},
-                 {
-                    field: 'kh_name', 
+                {
+                    field: 'kh_name',
                     title: '客户名称', width:160,
                     templet: function(d) {
                         return '<a href="javascript:;" onclick="showClientDetails('+ d.id +')" style="color:#1E9FFF">'+ (d.kh_name || '') +'</a>';
@@ -318,8 +431,24 @@
                     }
                 },
                 {fixed:'right', title:'操作', toolbar:'#action', width:160, align:'center'}
-            ]],
-            limit: 10
+            ]];
+
+            restoreColWidth(cols[0]);
+            return cols;
+        }
+
+        var tableIn = table.render({
+            elem: '#' + tableId,
+            id: tableId,
+            url: '{:url("index")}',
+            method: 'post',
+            toolbar: '#topBtn',
+            page: true,
+            cols: getCols(),
+            limit: 10,
+            done: function () {
+                bindResizeSave();
+            }
         });
 
 
@@ -354,13 +483,16 @@
                 return false;*/
 
 
-            table.reload('table-list', {
+            table.reload(tableId, {
                 url:"{:url('Liberum/liberumSearch')}",
                 where: {
                     keyword: data.field
                 },
                 page:{
                     curr:1
+                },
+                done: function () {
+                    bindResizeSave();
                 }
             });
 
