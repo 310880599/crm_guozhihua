@@ -206,6 +206,17 @@
         border-top: 1px solid #e0e0e0 !important;
         padding: 12px 20px !important;
     }
+
+    /* 公海客户列表：右侧固定操作列背景色，避免横向滚动时出现透明透字 */
+    #liberumTable + .layui-table-view .layui-table-fixed-r,
+    #liberumTable + .layui-table-view .layui-table-fixed-r .layui-table-header,
+    #liberumTable + .layui-table-view .layui-table-fixed-r .layui-table-body,
+    #liberumTable + .layui-table-view .layui-table-fixed-r table,
+    #liberumTable + .layui-table-view .layui-table-fixed-r th,
+    #liberumTable + .layui-table-view .layui-table-fixed-r td,
+    #liberumTable + .layui-table-view .layui-table-fixed-r .layui-table-cell {
+        background-color: #fff7ed !important;
+    }
 </style>
 <div class="liberum-list-container">
 
