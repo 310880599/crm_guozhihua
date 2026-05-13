@@ -79,11 +79,18 @@ class Client extends Model
      * 我的客户列表（仅负责人为当前登录用户）
      * 保持原有分页/排序/状态口径，明确保留 next_up_time 字段。
      */
-    public function getMyClientList($page, $pageSize, $username)
+    public function getMyClientList($page, $pageSize, $username, $keyword = [])
     {
+        $mapProductName = [];
+
+        if (isset($keyword['product_name']) && trim((string)$keyword['product_name']) !== '') {
+            $mapProductName = ['product_name' => trim((string)$keyword['product_name'])];
+        }
+
         return Db::table('crm_leads')
             ->where(['status' => 1, 'issuccess' => -1])
             ->where(['pr_user' => $username])
+            ->where($mapProductName)
             ->field('*')
             ->order('at_time desc')
             ->paginate(['list_rows' => $pageSize, 'page' => $page])

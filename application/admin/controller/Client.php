@@ -352,9 +352,10 @@ class Client extends Common
         if (request()->isPost()) {
             $page = input('page') ? input('page') : 1;
             $pageSize = input('limit') ? input('limit') : config('pageSize');
+            $keyword = input('keyword/a', []);
 
             // 基础列表（我的客户）
-            $list = model('Client')->getMyClientList($page, $pageSize, Session::get('username'));
+            $list = model('Client')->getMyClientList($page, $pageSize, Session::get('username'), $keyword);
 
             if (empty($list) || empty($list['data'])) {
                 return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
