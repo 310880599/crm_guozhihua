@@ -738,8 +738,14 @@ class Order extends Common
             // ====== 联系方式统一清洗与校验 ======
             $rawContact = Request::param('contact', '');
             $cleanContact = OrderService::normalizeContact($rawContact);
-            if (!$isDraft && !preg_match('/^1\d{10}$/', $cleanContact)) {
-                return json(['code' => 0, 'msg' => '请输入正确的11位手机号']);
+            if (
+                !$isDraft
+                && (
+                    !ctype_digit($cleanContact)
+                    || strlen($cleanContact) != 11
+                )
+            ) {
+                return json(['code' => 0, 'msg' => '请输入11位纯数字联系方式']);
             }
 
             // ====== 验证客户是否属于当前用户或协同人 ======
@@ -1778,8 +1784,11 @@ class Order extends Common
             // ====== 联系方式统一清洗与校验 ======
             $rawContact = Request::param('contact', '');
             $cleanContact = OrderService::normalizeContact($rawContact);
-            if (!preg_match('/^1\d{10}$/', $cleanContact)) {
-                return json(['code' => 0, 'msg' => '请输入正确的11位手机号']);
+            if (
+                !ctype_digit($cleanContact)
+                || strlen($cleanContact) != 11
+            ) {
+                return json(['code' => 0, 'msg' => '请输入11位纯数字联系方式']);
             }
 
             // ====== 验证客户是否属于当前用户或协同人（与新增逻辑保持一致） ======
@@ -2603,197 +2612,10 @@ class Order extends Common
     public function details()
     {
         if (request()->isPost()) {
-            // 获取订单ID
-            $id = Request::param('id/d');
-            if (!$id) {
-                return json(['code' => -200, 'msg' => '缺少订单ID参数']);
-            }
-            // ====== 读取并整理主表字段 ======
-            $data = [];
-            $data['contact']          = OrderService::normalizeContact(Request::param('contact', ''));        // 客户联系方式
-            $data['cname']            = Request::param('cname');          // 客户名称
-            $data['client_company']   = Request::param('client_company'); // 客户公司
-            $data['country']          = Request::param('country');        // 发货地址
-            $data['customer_type']    = Request::param('customer_type');  // 客户性质
-            $data['source']           = Request::param('source');         // 询盘来源
-            $data['bank_account']     = Request::param('bank_account');  // 收款账户 ID (as string)
-            // 【收款账户快照模式】根据 bank_account ID 查询账户名称并更新快照字段
-            // 先获取原始订单数据，用于在查询失败时保留原值
-            $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('bank_account_name')->find();
-            if (!empty($data['bank_account'])) {
-                $data['bank_account_name'] = $this->resolveBankAccountName($data['bank_account']);
-                // 如果查不到（例如账户被删除或异常），保留原值
-                if (empty($data['bank_account_name']) && !empty($originalOrder['bank_account_name'])) {
-                    $data['bank_account_name'] = $originalOrder['bank_account_name'];
-                }
-            } else {
-                $data['bank_account_name'] = '';  // 如果为空，快照字段也置空
-            }
-            $data['pr_user']          = Request::param('pr_user') ?: Session::get('username'); // 客户负责人（默认当前用户）
-            $data['oper_user']        = Request::param('oper_user');      // 运营人员
-            $data['team_name']        = Request::param('team_name');      // 团队名称
-            $data['order_time']       = Request::param('order_time');     // 成交时间
-            $data['shipping_cost']    = Request::param('shipping_cost');  // 估算运费
-            // 票种性质（普票、专票、不开票）- 验证并保存
-            $invoiceType = Request::param('invoice_type', '');
-            if (in_array($invoiceType, ['普票', '专票', '不开票'])) {
-                $data['invoice_type'] = $invoiceType;
-            } else {
-                $data['invoice_type'] = ''; // 如果值不正确，设为空
-            }
-            $data['invoice_amount']   = Request::param('invoice_amount'); // 开票金额
-            $data['tax_amount']       = Request::param('tax_amount');     // 税费金额
-            $data['debugging_cost']   = Request::param('debugging_cost'); // 调试费
-            $data['sales_commission'] = Request::param('sales_commission'); // 佣金
-            $data['split_remarks']    = Request::param('split_remarks');  // 分成备注
-            $data['amount_received']  = Request::param('amount_received'); // 已收款金额
-            //$data['remark']           = Request::param('remark');         // 备注
-            $data['ut_time']          = date("Y-m-d H:i:s");              // 更新操作时间
-
-            // 解析协同人 joint_person 字段（支持数组/JSON/逗号分隔字符串）
-            $jpRaw = Request::param('joint_person');
-            $jpIds = [];
-            if (is_array($jpRaw)) {
-                $jpIds = $jpRaw;
-            } else if (is_string($jpRaw)) {
-                $jpRaw = trim($jpRaw);
-                if ($jpRaw !== '') {
-                    if ($jpRaw[0] === '[') {
-                        // JSON 字符串
-                        $tmp = json_decode($jpRaw, true);
-                        if (is_array($tmp)) $jpIds = $tmp;
-                    } else {
-                        // 逗号分隔字符串
-                        $jpIds = explode(',', $jpRaw);
-                    }
-                }
-            }
-            // 保留数字字符并去重
-            $jpIds = array_values(array_unique(array_filter(array_map(function ($v) {
-                return preg_replace('/\D/', '', (string)$v);
-            }, $jpIds), function ($v) {
-                return $v !== '';
-            })));
-            $jpStr = implode(',', $jpIds);
-            // 若协同人超出字段长度限制则报错
-            if (strlen($jpStr) > 255) {
-                return json(['code' => -200, 'msg' => '协同人选择过多，超出存储限制']);
-            }
-            $data['joint_person'] = $jpStr;
-
-            // ====== 获取并处理明细表字段（产品明细多行） ======
-            $productIds     = Request::param('product_name/a');    // ★ 产品ID数组（对应每行产品）
-            $managerIds     = Request::param('product_manager/a'); // ★ 产品经理ID数组（对应每行产品）
-            $specModels     = Request::param('spec_model/a');
-            $units          = Request::param('unit/a');
-            $qtys           = Request::param('qty/a');
-            $unitPrices     = Request::param('unit_price/a');
-            $totalPrices    = Request::param('total_price/a');
-            $purchasePrices = Request::param('purchase_price/a');
-            $subProfits     = Request::param('sub_profit/a');
-            $itemRemarks    = Request::param('item_remark/a');
-
-            // 查询涉及的产品名称/供应商快照信息
-            $idArr = [];
-            if (!empty($productIds) && is_array($productIds)) {
-                foreach ($productIds as $pid) {
-                    $pid = (int)$pid;
-                    if ($pid > 0) $idArr[] = $pid;
-                }
-                $idArr = array_values(array_unique($idArr));
-            }
-            $prodMap = [];      // pid => product_name
-            $supIdMap = [];     // pid => category_id
-            $supNameMap = [];   // pid => category_name
-            if (!empty($idArr)) {
-                // 从产品表获取名称和分类，用于展示和计算；已删除产品不过滤 status
-                $rows = Db::name('crm_products')->alias('p')
-                    ->leftJoin('crm_product_category c', 'p.category_id = c.id')
-                    ->where('p.id', 'in', $idArr)
-                    ->field('p.id, p.product_name, p.category_id, c.category_name')
-                    ->select();
-                foreach ($rows as $r) {
-                    $prodMap[$r['id']]    = $r['product_name'];
-                    $supIdMap[$r['id']]   = $r['category_id'] ?? 0;
-                    $supNameMap[$r['id']] = $r['category_name'] ?? '';
-                }
-
-                // 如果某些产品ID查询不到（可能已被删除），尝试从订单明细表中获取产品名称
-                foreach ($idArr as $pid) {
-                    if (!isset($prodMap[$pid])) {
-                        $item = Db::name('crm_order_item')
-                            ->where('product_id', $pid)
-                            ->where('product_name', '<>', '')
-                            ->order('id desc')
-                            ->field('product_name')
-                            ->find();
-                        if ($item && !empty($item['product_name'])) {
-                            $prodMap[$pid] = $item['product_name'];
-                        }
-                    }
-                }
-            }
-
-            // 统一由 Service 构造明细行 + 主表金额（唯一口径，禁止 Controller 自己再算一遍）
-            $saveBundle = OrderService::buildOrderSaveData(
-                [
-                    'product_ids'      => $productIds,
-                    'manager_ids'      => $managerIds,
-                    'spec_models'      => $specModels,
-                    'units'            => $units,
-                    'qty'              => $qtys,
-                    'unit_price'       => $unitPrices,
-                    'purchase_price'   => $purchasePrices,
-                    'item_remarks'     => $itemRemarks,
-                    'shipping_cost'    => $data['shipping_cost'] ?? 0,
-                    'tax_amount'       => $data['tax_amount'] ?? 0,
-                    'debugging_cost'   => $data['debugging_cost'] ?? 0,
-                    'sales_commission' => $data['sales_commission'] ?? 0,
-                ],
-                $prodMap,
-                $supIdMap,
-                $supNameMap,
-                $id
-            );
-            $itemsData = $saveBundle['items'];
-
-            // ★ 防御性补丁：无论 $data 之前从哪里取过值，在落库前强制剥掉
-            // profit / margin_rate / money，杜绝前端 / 其他开发者后续改动带入污染值。
-            unset($data['profit'], $data['margin_rate'], $data['money']);
-
-            // 主表金额字段一律以 Service 计算结果为准（禁止信任前端 profit / margin_rate / money）
-            $data['money']       = $saveBundle['money'];
-            $data['profit']      = $saveBundle['profit'];
-            $data['margin_rate'] = $saveBundle['margin_rate'];
-
-            // 更新主表产品名称摘要
-            if ($saveBundle['product_name_summary'] !== '') {
-                $data['product_name'] = $saveBundle['product_name_summary'];
-            }
-
-            // ====== 写入数据库（使用事务处理） ======
-            Db::startTrans();
-            try {
-                // 更新订单主表数据
-                $resMain = Db::name('crm_client_order')->where('id', $id)->update($data);
-                if ($resMain === false) {
-                    throw new \Exception('主订单更新失败');
-                }
-                // 清除旧的明细行记录
-                Db::name('crm_order_item')->where('order_id', $id)->delete();
-                // 批量插入新的明细行数据
-                if (!empty($itemsData)) {
-                    $resItems = Db::name('crm_order_item')->insertAll($itemsData);
-                    if ($resItems === false || $resItems != count($itemsData)) {
-                        throw new \Exception('订单明细更新失败');
-                    }
-                }
-                Db::commit();
-                return json(['code' => 0, 'msg' => '编辑成功！']);
-            } catch (\Exception $e) {
-                Db::rollback();
-                return json(['code' => -200, 'msg' => '编辑失败！' . $e->getMessage()]);
-            }
+            return json([
+                'code' => 0,
+                'msg'  => '订单详情页为只读页面，不允许保存修改',
+            ]);
         }
 
         // ====== GET 请求：加载编辑页面 ======
