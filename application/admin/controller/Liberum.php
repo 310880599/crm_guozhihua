@@ -15,6 +15,7 @@ class Liberum extends Common{
      * @var LiberumTypeService
      */
     protected $liberumTypeService;
+    protected $dailyPickLimit = 10;
 
     protected function getLiberumTypeService()
     {
@@ -410,48 +411,105 @@ class Liberum extends Common{
 
     // 抢客户
     public function robClient(){
-        $data['id'] = Request::param('id');
+        $leadId = Request::param('id/d', 0);
         $curname = Session::get('username');
-        
-        // 检查抢客户次数限制
-        $curget = Db::table('admin')->where(['username' => $curname])->field('curgetnum')->find();
-        $sysinfo = Db::table('system')->where(['id' => 1])->field('maxgetnum,custlimit')->find();
-        
-        if ($curget['curgetnum'] >= $sysinfo['maxgetnum']) {
-            return ['code' => -200, 'msg' => "抱歉，您当月抢的次数已经达到上限{$sysinfo['maxgetnum']}次!", 'data' => []];
+        $adminId = Session::get('aid');
+
+        if ($leadId <= 0) {
+            return ['code' => -200, 'msg' => '参数错误', 'data' => []];
         }
 
-        // 检查客户数量限制
-        $wherecust = [
-            'pr_user' => $curname,
-            'status' => 1,
-            'ispublic' => 2,
-            'issuccess' => -1
-        ];
-        $maxcustnum = Db::table('crm_leads')->where($wherecust)->count('id');
-        
-        if($maxcustnum >= $sysinfo['custlimit']){
-            return ['code' => -200, 'msg' => "抱歉，您抢得的客户数量已达上限{$sysinfo['custlimit']}!", 'data' => []];
-        }
+        Db::startTrans();
+        try {
+            $ghClient = Db::table('crm_leads')
+                ->where('id', $leadId)
+                ->where('status', 2)
+                ->lock(true)
+                ->find();
 
-        $gh_client = Db::table('crm_leads')->where(['id' => $data['id'], 'status' => 2])->find();
-        
-        if ($gh_client){
-            $data['to_kh_time'] = date("Y-m-d H:i:s");
-            $data['ut_time'] = date("Y-m-d H:i:s");
-            $data['pr_gh_type'] = NULL;
-            $data['status'] = 1;
-            $data['pr_user_bef'] = $gh_client['pr_user'];
-            $data['pr_user'] = Session::get('username');
-            $data['ispublic'] = 2;
+            if (empty($ghClient)) {
+                Db::rollback();
+                return ['code' => -200, 'msg' => '该客户已被其他人领取或已不在公海', 'data' => []];
+            }
 
-            $result = Db::table('crm_leads')->where(['id' => $data['id']])->update($data);
-            return $result 
-                ? ['code' => 0, 'msg' => '抢客户成功！', 'data' => []]
-                : ['code' => -200, 'msg' => '抢客户失败！', 'data' => []];
+            // 保留原有系统限制：月领取次数限制 + 持有客户数量限制
+            $curget = Db::table('admin')->where(['username' => $curname])->field('curgetnum')->find();
+            $sysinfo = Db::table('system')->where(['id' => 1])->field('maxgetnum,custlimit')->find();
+            if (!empty($curget) && !empty($sysinfo) && $curget['curgetnum'] >= $sysinfo['maxgetnum']) {
+                Db::rollback();
+                return ['code' => -200, 'msg' => "抱歉，您当月抢的次数已经达到上限{$sysinfo['maxgetnum']}次!", 'data' => []];
+            }
+
+            $wherecust = [
+                'pr_user' => $curname,
+                'status' => 1,
+                'ispublic' => 2,
+                'issuccess' => -1
+            ];
+            $maxcustnum = Db::table('crm_leads')->where($wherecust)->count('id');
+            if (!empty($sysinfo) && $maxcustnum >= $sysinfo['custlimit']) {
+                Db::rollback();
+                return ['code' => -200, 'msg' => "抱歉，您抢得的客户数量已达上限{$sysinfo['custlimit']}!", 'data' => []];
+            }
+
+            $today = date('Y-m-d');
+            $todayPickedCount = Db::table('crm_liberum_pick_log')
+                ->where('pick_user', $curname)
+                ->where('pick_date', $today)
+                ->where('is_returned', 0)
+                ->count('id');
+            if ($todayPickedCount >= $this->dailyPickLimit) {
+                Db::rollback();
+                return ['code' => -200, 'msg' => "今日领取客户数量已达到上限{$this->dailyPickLimit}个", 'data' => []];
+            }
+
+            $now = date("Y-m-d H:i:s");
+            $updateData = [
+                'status' => 1,
+                'pr_user_bef' => isset($ghClient['pr_user']) ? $ghClient['pr_user'] : '',
+                'pr_user' => $curname,
+                'pr_gh_type' => null,
+                'to_kh_time' => $now,
+                'ut_time' => $now,
+                'ispublic' => 2
+            ];
+            $result = Db::table('crm_leads')
+                ->where('id', $leadId)
+                ->where('status', 2)
+                ->update($updateData);
+
+            if ($result !== 1) {
+                Db::rollback();
+                return ['code' => -200, 'msg' => '该客户已被其他人领取', 'data' => []];
+            }
+
+            $logData = [
+                'leads_id' => $leadId,
+                'active_leads_id' => $leadId,
+                'kh_name' => isset($ghClient['kh_name']) ? $ghClient['kh_name'] : '',
+                'before_pr_user' => isset($ghClient['pr_user']) ? $ghClient['pr_user'] : '',
+                'pick_user' => $curname,
+                'before_status' => 2,
+                'after_status' => 1,
+                'pick_time' => $now,
+                'pick_date' => $today,
+                'operator_id' => $adminId,
+                'operator_name' => $curname,
+                'is_returned' => 0,
+                'create_time' => time()
+            ];
+            Db::table('crm_liberum_pick_log')->insert($logData);
+
+            Db::commit();
+            return ['code' => 0, 'msg' => '提取客户成功！', 'data' => []];
+        } catch (\Exception $e) {
+            Db::rollback();
+            $errorMsg = $e->getMessage();
+            if (stripos($errorMsg, 'uk_active_leads_id') !== false || (stripos($errorMsg, 'Duplicate entry') !== false && stripos($errorMsg, 'active_leads_id') !== false)) {
+                return ['code' => -200, 'msg' => '该客户已被其他人领取，请刷新列表', 'data' => []];
+            }
+            return ['code' => -200, 'msg' => '抢客户失败！', 'data' => []];
         }
-        
-        return ['code' => -200, 'msg' => '抱歉，该客户已被抢走！', 'data' => []];
     }
 
      // 获取客户详细信息接口

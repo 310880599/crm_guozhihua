@@ -462,15 +462,25 @@
 
             if (obj.event === 'robClient') {
                 layer.confirm('您确定要抢这个客户吗？', function(index){
+                    var $btn = $(obj.tr).find('a[lay-event="robClient"]');
+                    if ($btn.hasClass('layui-btn-disabled')) {
+                        return;
+                    }
+                    $btn.addClass('layui-btn-disabled').attr('disabled', true);
                     var loading = layer.load(1, {shade: [0.1, '#fff']});
                     $.post("{:url('robClient')}",{id:data.id},function(res){
                         layer.close(loading);
+                        $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
                         if(res.code===0){
                             layer.msg(res.msg,{time:1000,icon:1});
                             tableIn.reload();
                         }else{
-                            layer.msg('操作失败！',{time:1000,icon:2});
+                            layer.msg(res.msg || '操作失败！',{time:1500,icon:2});
                         }
+                    }).fail(function(){
+                        layer.close(loading);
+                        $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                        layer.msg('网络异常，请稍后重试', {time:1500, icon:2});
                     });
                     layer.close(index);
                 });
