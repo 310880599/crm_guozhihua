@@ -138,6 +138,8 @@ class LiberumLogService
             $hasInOperatorName = $this->hasColumn('crm_liberum_in_log', 'operator_name');
             $hasInOperatorId = $this->hasColumn('crm_liberum_in_log', 'operator_id');
             $hasInSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
+            $hasRecoverOperatorName = $this->hasColumn('crm_liberum_in_log', 'recover_operator_name');
+            $hasRecoverOperatorId = $this->hasColumn('crm_liberum_in_log', 'recover_operator_id');
             $hasContactType = $this->hasColumn('crm_contacts', 'contact_type');
             $phoneType = (int)ContactMap::CONTACT_MAP['phone'];
 
@@ -147,6 +149,12 @@ class LiberumLogService
             $inOperatorIdField = $hasInOperatorId
                 ? 'IFNULL(MAX(il.operator_id), 0) AS operator_id'
                 : '0 AS operator_id';
+            $recoverOperatorNameField = $hasRecoverOperatorName
+                ? 'IFNULL(MAX(il.recover_operator_name), "") AS recover_operator_name'
+                : '"" AS recover_operator_name';
+            $recoverOperatorIdField = $hasRecoverOperatorId
+                ? 'IFNULL(MAX(il.recover_operator_id), 0) AS recover_operator_id'
+                : '0 AS recover_operator_id';
             $sourceTypeField = $hasInSourceType
                 ? 'IFNULL(MAX(il.source_type), "") AS source_type'
                 : '"" AS source_type';
@@ -220,6 +228,8 @@ class LiberumLogService
                     'IFNULL(MAX(il.in_time), "") AS in_time',
                     $inOperatorIdField,
                     $inOperatorNameField,
+                    $recoverOperatorIdField,
+                    $recoverOperatorNameField,
                     'IFNULL(MAX(il.is_recovered), 0) AS is_recovered',
                     'IFNULL(MAX(il.recovered_time), "") AS recovered_time',
                     'IFNULL(MAX(l.status), "") AS current_status',
@@ -485,6 +495,159 @@ class LiberumLogService
         }
 
         $msg = '成功退回 ' . $successCount . ' 条，跳过 ' . $skipCount . ' 条，失败 ' . $failCount . ' 条。';
+        if ($successCount > 0) {
+            return [
+                'code' => 0,
+                'msg' => $msg,
+                'data' => [
+                    'success_count' => $successCount,
+                    'skip_count' => $skipCount,
+                    'fail_count' => $failCount,
+                    'operate_time' => $nowTimestamp,
+                ],
+            ];
+        }
+
+        return [
+            'code' => -200,
+            'msg' => $msg,
+            'data' => [
+                'success_count' => $successCount,
+                'skip_count' => $skipCount,
+                'fail_count' => $failCount,
+                'operate_time' => $nowTimestamp,
+            ],
+        ];
+    }
+
+    public function batchRestoreOwner($ids = [], $operatorInfo = [])
+    {
+        $ids = is_array($ids) ? $ids : [];
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids)) {
+            return ['code' => -200, 'msg' => '请选择需要恢复的记录', 'data' => []];
+        }
+
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? ''));
+        $nowDateTime = date('Y-m-d H:i:s');
+        $nowTimestamp = time();
+
+        $hasLogRecoveredTime = $this->hasColumn('crm_liberum_in_log', 'recovered_time');
+        $hasLogRecoverOperatorId = $this->hasColumn('crm_liberum_in_log', 'recover_operator_id');
+        $hasLogRecoverOperatorName = $this->hasColumn('crm_liberum_in_log', 'recover_operator_name');
+
+        $successCount = 0;
+        $skipCount = 0;
+        $failCount = 0;
+
+        foreach ($ids as $logId) {
+            Db::startTrans();
+            try {
+                $log = Db::table('crm_liberum_in_log')
+                    ->where('id', $logId)
+                    ->lock(true)
+                    ->find();
+
+                // 1. 日志存在校验
+                if (empty($log)) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 2. 仅允许恢复未恢复记录
+                if ((int)($log['is_recovered'] ?? 0) !== 0) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 3. leads_id 存在校验
+                $leadId = (int)($log['leads_id'] ?? 0);
+                if ($leadId <= 0) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 2. 禁止恢复 before_pr_user 为空
+                $beforePrUser = trim((string)($log['before_pr_user'] ?? ''));
+                if ($beforePrUser === '') {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                $lead = Db::table('crm_leads')
+                    ->where('id', $leadId)
+                    ->lock(true)
+                    ->find();
+
+                // 4. crm_leads 存在
+                if (empty($lead)) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 5. 只允许恢复当前仍在公海中的客户，防止覆盖被他人领取客户
+                if ((int)($lead['status'] ?? 0) !== 2) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 并发保护：必须按 id + status=2 更新
+                $leadUpdatedRows = Db::table('crm_leads')
+                    ->where('id', $leadId)
+                    ->where('status', 2)
+                    ->update([
+                        'status' => 1,
+                        'pr_user' => $beforePrUser,
+                        // pr_user_bef 按要求保持原值，不做清空/改写
+                        'ut_time' => $nowDateTime,
+                    ]);
+                if ((int)$leadUpdatedRows !== 1) {
+                    Db::rollback();
+                    $failCount++;
+                    continue;
+                }
+
+                $logUpdate = [
+                    'is_recovered' => 1,
+                ];
+                if ($hasLogRecoveredTime) {
+                    $logUpdate['recovered_time'] = $nowDateTime;
+                }
+                if ($hasLogRecoverOperatorId) {
+                    $logUpdate['recover_operator_id'] = $operatorId;
+                }
+                if ($hasLogRecoverOperatorName) {
+                    $logUpdate['recover_operator_name'] = $operatorName;
+                }
+
+                $logUpdatedRows = Db::table('crm_liberum_in_log')
+                    ->where('id', $logId)
+                    ->where('is_recovered', 0)
+                    ->update($logUpdate);
+                if ((int)$logUpdatedRows !== 1) {
+                    Db::rollback();
+                    $failCount++;
+                    continue;
+                }
+
+                Db::commit();
+                $successCount++;
+            } catch (\Throwable $e) {
+                Db::rollback();
+                $failCount++;
+            }
+        }
+
+        $msg = '成功恢复 ' . $successCount . ' 条，跳过 ' . $skipCount . ' 条，失败 ' . $failCount . ' 条。';
         if ($successCount > 0) {
             return [
                 'code' => 0,

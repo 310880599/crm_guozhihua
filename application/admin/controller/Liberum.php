@@ -109,6 +109,27 @@ class Liberum extends Common{
         ]);
     }
 
+    // 客户流入公海记录批量恢复原负责人
+    public function batchRestoreOwner()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $ids = input('post.ids/a', []);
+        if (empty($ids) || !is_array($ids)) {
+            return ['code' => -200, 'msg' => '请选择需要恢复的记录', 'data' => []];
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        $result = $this->getLiberumLogService()->batchRestoreOwner($ids, $operatorInfo);
+        return $result + ['data' => []];
+    }
+
     // 公海类型
     public function libTypeList(){
         if(request()->isPost()){

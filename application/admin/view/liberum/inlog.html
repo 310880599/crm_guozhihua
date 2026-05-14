@@ -67,12 +67,19 @@
     <a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="placeholder">查看</a>
 </script>
 
+<script type="text/html" id="inLogToolbarTpl">
+    <div class="layui-btn-container">
+        <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" lay-event="batchRestoreOwner">批量恢复原负责人</button>
+    </div>
+</script>
+
 {include file="common/foot"/}
 <script>
     layui.use(['table', 'form', 'laydate'], function () {
         var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery;
         var tableId = 'inLogTable';
         var baseUrl = "{:url('Liberum/getInLogList')}";
+        var batchRestoreUrl = "{:url('Liberum/batchRestoreOwner')}";
 
         laydate.render({ elem: '#in_date' });
 
@@ -83,6 +90,7 @@
             method: 'get',
             page: true,
             limit: 10,
+            toolbar: '#inLogToolbarTpl',
             cols: [[
                 {type: 'checkbox', fixed: 'left'},
                 {field: 'id', title: 'ID', width: 80, sort: true},
@@ -111,6 +119,7 @@
                     if (sourceType === 'pick_return') return '提取退回';
                     if (sourceType === 'manual') return '手动移入';
                     if (sourceType === 'auto_rule') return '自动规则流入';
+                    if (sourceType === 'pick_log_batch_return') return '批量退回公海';
                     return sourceType;
                 }},
                 {field: 'is_recovered', title: '是否已恢复', width: 120, templet: function (d) {
@@ -118,6 +127,9 @@
                     return recovered
                         ? '<span class="layui-badge layui-bg-green">已恢复</span>'
                         : '<span class="layui-badge-rim">未恢复</span>';
+                }},
+                {field: 'recover_operator_name', title: '恢复操作人', width: 120, templet: function (d) {
+                    return d.recover_operator_name || d.recover_operator_id || '';
                 }},
                 {field: 'recovered_time', title: '恢复时间', minWidth: 170},
                 {title: '操作', fixed: 'right', width: 100, align: 'center', toolbar: '#inLogActionTpl'}
@@ -145,6 +157,56 @@
             if (obj.event === 'placeholder') {
                 layer.msg('仅支持查询展示');
             }
+        });
+
+        table.on('toolbar(' + tableId + ')', function (obj) {
+            if (obj.event !== 'batchRestoreOwner') {
+                return;
+            }
+
+            var checkStatus = table.checkStatus(tableId);
+            var selected = checkStatus.data || [];
+            if (!selected.length) {
+                layer.msg('请先勾选需要恢复的记录');
+                return;
+            }
+
+            var ids = [];
+            $.each(selected, function (idx, row) {
+                var id = parseInt(row.id, 10);
+                if (id > 0) {
+                    ids.push(id);
+                }
+            });
+            if (!ids.length) {
+                layer.msg('未获取到有效记录ID');
+                return;
+            }
+
+            layer.confirm(
+                '确定要恢复选中的客户吗？<br>系统只会恢复当前仍在公海中的客户，<br>已经被别人领取的客户不会恢复。',
+                {icon: 3, title: '确认恢复'},
+                function (index) {
+                    layer.close(index);
+                    $.post(batchRestoreUrl, {ids: ids}, function (res) {
+                        if (res && parseInt(res.code, 10) === 0) {
+                            layer.msg(res.msg || '批量恢复成功');
+                            var currPageText = $('.layui-laypage-curr em').last().text();
+                            var currPage = parseInt(currPageText, 10);
+                            if (!(currPage > 0)) {
+                                currPage = 1;
+                            }
+                            table.reload(tableId, {
+                                page: {curr: currPage}
+                            });
+                            return;
+                        }
+                        layer.msg((res && res.msg) ? res.msg : '批量恢复失败');
+                    }, 'json').fail(function () {
+                        layer.msg('请求失败，请稍后重试');
+                    });
+                }
+            );
         });
     });
 </script>
