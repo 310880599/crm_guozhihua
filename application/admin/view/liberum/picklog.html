@@ -32,6 +32,16 @@
                         <div class="layui-input-inline"><input type="text" name="phone" placeholder="请输入手机号" class="layui-input"></div>
                     </div>
                     <div class="layui-inline">
+                        <label class="layui-form-label">是否已退回：</label>
+                        <div class="layui-input-inline">
+                            <select name="is_returned">
+                                <option value="">全部</option>
+                                <option value="0">未退回</option>
+                                <option value="1">已退回</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
                         <button class="layui-btn" lay-submit lay-filter="pick-log-search"><i class="layui-icon layui-icon-search"></i>查询</button>
                         <button type="button" class="layui-btn layui-btn-primary" id="pick-log-reset">重置</button>
                     </div>
@@ -44,10 +54,6 @@
         <table class="layui-table" id="pickLogTable" lay-filter="pickLogTable"></table>
     </div>
 </div>
-
-<script type="text/html" id="pickLogTopBtn">
-    <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchReturn"><i class="layui-icon">&#xe65a;</i>批量退回公海</button>
-</script>
 
 <script type="text/html" id="pickLogActionTpl">
     <a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="placeholder">查看</a>
@@ -67,7 +73,6 @@
             id: tableId,
             url: baseUrl,
             method: 'get',
-            toolbar: '#pickLogTopBtn',
             page: true,
             limit: 10,
             cols: [[
@@ -81,7 +86,12 @@
                 {field: 'pick_time', title: '提取时间', minWidth: 170},
                 {field: 'before_pr_user', title: '原负责人', width: 110},
                 {field: 'current_pr_user', title: '当前负责人', width: 110, templet: function (d) { return d.current_pr_user || d.pr_user || ''; }},
-                {field: 'is_returned', title: '是否已退回', width: 110, templet: function (d) { return (parseInt(d.is_returned || 0) === 1) ? '是' : '否'; }},
+                {field: 'is_returned', title: '是否已退回', width: 120, templet: function (d) {
+                    var returned = parseInt(d.is_returned || 0) === 1;
+                    return returned
+                        ? '<span class="layui-badge layui-bg-orange">已退回</span>'
+                        : '<span class="layui-badge-rim">未退回</span>';
+                }},
                 {title: '操作', fixed: 'right', width: 100, align: 'center', toolbar: '#pickLogActionTpl'}
             ]]
         });
@@ -103,15 +113,9 @@
             });
         });
 
-        table.on('toolbar(' + tableId + ')', function (obj) {
-            if (obj.event === 'batchReturn') {
-                layer.msg('该功能将在第二阶段实现');
-            }
-        });
-
         table.on('tool(' + tableId + ')', function (obj) {
             if (obj.event === 'placeholder') {
-                layer.msg('该功能将在第二阶段实现');
+                layer.msg('仅支持查询展示');
             }
         });
     });

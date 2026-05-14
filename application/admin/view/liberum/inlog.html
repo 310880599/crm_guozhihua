@@ -40,6 +40,16 @@
                         <div class="layui-input-inline"><input type="text" name="phone" placeholder="请输入手机号" class="layui-input"></div>
                     </div>
                     <div class="layui-inline">
+                        <label class="layui-form-label">是否已恢复：</label>
+                        <div class="layui-input-inline">
+                            <select name="is_recovered">
+                                <option value="">全部</option>
+                                <option value="0">未恢复</option>
+                                <option value="1">已恢复</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
                         <button class="layui-btn" lay-submit lay-filter="in-log-search"><i class="layui-icon layui-icon-search"></i>查询</button>
                         <button type="button" class="layui-btn layui-btn-primary" id="in-log-reset">重置</button>
                     </div>
@@ -52,10 +62,6 @@
         <table class="layui-table" id="inLogTable" lay-filter="inLogTable"></table>
     </div>
 </div>
-
-<script type="text/html" id="inLogTopBtn">
-    <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" lay-event="batchRecover"><i class="layui-icon">&#xe65a;</i>批量恢复原负责人</button>
-</script>
 
 <script type="text/html" id="inLogActionTpl">
     <a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="placeholder">查看</a>
@@ -75,7 +81,6 @@
             id: tableId,
             url: baseUrl,
             method: 'get',
-            toolbar: '#inLogTopBtn',
             page: true,
             limit: 10,
             cols: [[
@@ -85,10 +90,22 @@
                 {field: 'client_name', title: '客户名称', minWidth: 140, templet: function (d) { return d.client_name || d.kh_name || ''; }},
                 {field: 'client_phone', title: '客户电话', minWidth: 130, templet: function (d) { return d.client_phone || d.phone || ''; }},
                 {field: 'before_pr_user', title: '原负责人', width: 110},
+                {field: 'current_pr_user', title: '当前负责人', width: 110},
                 {field: 'reason', title: '流入原因', minWidth: 140},
                 {field: 'in_time', title: '流入时间', minWidth: 170},
-                {field: 'operator_id', title: '操作人', width: 100},
-                {field: 'is_recovered', title: '是否已恢复', width: 110, templet: function (d) { return (parseInt(d.is_recovered || 0) === 1) ? '是' : '否'; }},
+                {field: 'operator_name', title: '操作人', width: 120, templet: function (d) { return d.operator_name || d.operator_id || ''; }},
+                {field: 'current_status', title: '当前状态', width: 100, templet: function (d) {
+                    var status = parseInt(d.current_status, 10);
+                    if (status === 1) return '<span class="layui-badge layui-bg-green">客户</span>';
+                    if (status === 2) return '<span class="layui-badge layui-bg-gray">公海</span>';
+                    return d.current_status || '未知';
+                }},
+                {field: 'is_recovered', title: '是否已恢复', width: 120, templet: function (d) {
+                    var recovered = parseInt(d.is_recovered || 0) === 1;
+                    return recovered
+                        ? '<span class="layui-badge layui-bg-green">已恢复</span>'
+                        : '<span class="layui-badge-rim">未恢复</span>';
+                }},
                 {field: 'recovered_time', title: '恢复时间', minWidth: 170},
                 {title: '操作', fixed: 'right', width: 100, align: 'center', toolbar: '#inLogActionTpl'}
             ]]
@@ -111,15 +128,9 @@
             });
         });
 
-        table.on('toolbar(' + tableId + ')', function (obj) {
-            if (obj.event === 'batchRecover') {
-                layer.msg('该功能将在第二阶段实现');
-            }
-        });
-
         table.on('tool(' + tableId + ')', function (obj) {
             if (obj.event === 'placeholder') {
-                layer.msg('该功能将在第二阶段实现');
+                layer.msg('仅支持查询展示');
             }
         });
     });
