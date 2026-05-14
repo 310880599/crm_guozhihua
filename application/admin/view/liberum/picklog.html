@@ -59,6 +59,12 @@
     <a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="placeholder">查看</a>
 </script>
 
+<script type="text/html" id="pickLogTopBtn">
+    <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchReturn">
+        <i class="layui-icon">&#xe65a;</i>批量退回公海
+    </button>
+</script>
+
 {include file="common/foot"/}
 <script>
     layui.use(['table', 'form', 'laydate'], function () {
@@ -75,6 +81,7 @@
             method: 'get',
             page: true,
             limit: 10,
+            toolbar: '#pickLogTopBtn',
             cols: [[
                 {type: 'checkbox', fixed: 'left'},
                 {field: 'id', title: 'ID', width: 80, sort: true},
@@ -117,6 +124,55 @@
             if (obj.event === 'placeholder') {
                 layer.msg('仅支持查询展示');
             }
+        });
+
+        table.on('toolbar(' + tableId + ')', function (obj) {
+            if (obj.event !== 'batchReturn') {
+                return;
+            }
+
+            var checkedData = table.checkStatus(tableId).data || [];
+            if (!checkedData.length) {
+                layer.msg('请选择需要退回公海的记录');
+                return;
+            }
+
+            var ids = [];
+            $.each(checkedData, function (_, item) {
+                var id = parseInt(item.id, 10);
+                if (id > 0) {
+                    ids.push(id);
+                }
+            });
+            ids = Array.from(new Set(ids));
+            if (!ids.length) {
+                layer.msg('请选择需要退回公海的记录');
+                return;
+            }
+
+            layer.confirm('确定要将选中的客户退回公海吗？系统只会退回当前仍由领取人负责、未成交、未退回的客户。', {
+                icon: 3,
+                title: '提示'
+            }, function (index) {
+                $.ajax({
+                    url: "{:url('Liberum/batchReturnToLiberum')}",
+                    type: 'post',
+                    dataType: 'json',
+                    data: {ids: ids},
+                    success: function (res) {
+                        if (parseInt(res.code, 10) === 0) {
+                            layer.msg(res.msg || '操作成功');
+                            table.reload(tableId, {page: {curr: 1}});
+                        } else {
+                            layer.msg(res.msg || '操作失败');
+                        }
+                    },
+                    error: function () {
+                        layer.msg('请求失败，请稍后重试');
+                    }
+                });
+                layer.close(index);
+            });
         });
     });
 </script>

@@ -75,6 +75,27 @@ class Liberum extends Common{
         ]);
     }
 
+    // 客户提取记录批量退回公海
+    public function batchReturnToLiberum()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $ids = input('post.ids/a', []);
+        if (empty($ids) || !is_array($ids)) {
+            return ['code' => -200, 'msg' => '请选择需要退回的记录', 'data' => []];
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        $result = $this->getLiberumLogService()->batchReturnToLiberum($ids, $operatorInfo);
+        return $result + ['data' => []];
+    }
+
     // 客户流入公海记录列表
     public function getInLogList()
     {

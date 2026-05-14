@@ -239,4 +239,191 @@ class LiberumLogService
             'data' => $data,
         ];
     }
+
+    public function batchReturnToLiberum($ids = [], $operatorInfo = [])
+    {
+        $ids = is_array($ids) ? $ids : [];
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids)) {
+            return ['code' => -200, 'msg' => '请选择需要退回的记录', 'data' => []];
+        }
+
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? ''));
+        $nowDateTime = date('Y-m-d H:i:s');
+        $nowTimestamp = time();
+
+        $hasLogReturnedTime = $this->hasColumn('crm_liberum_pick_log', 'returned_time');
+        $hasLogReturnOperatorId = $this->hasColumn('crm_liberum_pick_log', 'return_operator_id');
+        $hasLogReturnOperatorName = $this->hasColumn('crm_liberum_pick_log', 'return_operator_name');
+        $hasLogReturnRemark = $this->hasColumn('crm_liberum_pick_log', 'return_remark');
+        $hasLeadsToGhTime = $this->hasColumn('crm_leads', 'to_gh_time');
+
+        $successCount = 0;
+        $skipCount = 0;
+        $failCount = 0;
+
+        foreach ($ids as $logId) {
+            Db::startTrans();
+            try {
+                $log = Db::table('crm_liberum_pick_log')
+                    ->where('id', $logId)
+                    ->lock(true)
+                    ->find();
+
+                // 日志不存在，跳过
+                if (empty($log)) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 已退回，跳过
+                if ((int)($log['is_returned'] ?? 0) === 1) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                $leadId = 0;
+                if (!empty($log['leads_id'])) {
+                    $leadId = (int)$log['leads_id'];
+                }
+                if ($leadId <= 0 && !empty($log['active_leads_id'])) {
+                    $leadId = (int)$log['active_leads_id'];
+                }
+                // 无有效客户ID，跳过
+                if ($leadId <= 0) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                $lead = Db::table('crm_leads')
+                    ->where('id', $leadId)
+                    ->lock(true)
+                    ->find();
+
+                // 客户不存在，跳过
+                if (empty($lead)) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 已成交禁止退回
+                if (isset($lead['issuccess']) && (int)$lead['issuccess'] === 1) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 已在公海，跳过
+                if ((int)($lead['status'] ?? 0) === 2) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                // 仅客户状态可退回
+                if ((int)($lead['status'] ?? 0) !== 1) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                $pickUser = trim((string)($log['pick_user'] ?? ''));
+                $currentPrUser = trim((string)($lead['pr_user'] ?? ''));
+                // 当前负责人必须仍是领取人
+                if ($pickUser === '' || $currentPrUser !== $pickUser) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
+                }
+
+                $beforePrUser = isset($log['before_pr_user']) ? (string)$log['before_pr_user'] : '';
+                $leadUpdate = [
+                    'status' => 2,
+                    'pr_user_bef' => $currentPrUser,
+                    'pr_user' => $beforePrUser,
+                    'ut_time' => $nowDateTime,
+                ];
+                if ($hasLeadsToGhTime) {
+                    $leadUpdate['to_gh_time'] = $nowDateTime;
+                }
+
+                // 并发保护：按id + 当前状态 + 当前负责人更新
+                $leadUpdatedRows = Db::table('crm_leads')
+                    ->where('id', $leadId)
+                    ->where('status', 1)
+                    ->where('pr_user', $pickUser)
+                    ->update($leadUpdate);
+
+                if ($leadUpdatedRows !== 1) {
+                    Db::rollback();
+                    $failCount++;
+                    continue;
+                }
+
+                $logUpdate = [
+                    'is_returned' => 1,
+                ];
+                if ($hasLogReturnedTime) {
+                    $logUpdate['returned_time'] = $nowDateTime;
+                }
+                if ($hasLogReturnOperatorId) {
+                    $logUpdate['return_operator_id'] = $operatorId;
+                }
+                if ($hasLogReturnOperatorName) {
+                    $logUpdate['return_operator_name'] = $operatorName;
+                }
+                if ($hasLogReturnRemark) {
+                    $logUpdate['return_remark'] = '客户提取记录批量退回公海';
+                }
+
+                $logUpdatedRows = Db::table('crm_liberum_pick_log')
+                    ->where('id', $logId)
+                    ->where('is_returned', 0)
+                    ->update($logUpdate);
+                if ($logUpdatedRows !== 1) {
+                    Db::rollback();
+                    $failCount++;
+                    continue;
+                }
+
+                Db::commit();
+                $successCount++;
+            } catch (\Throwable $e) {
+                Db::rollback();
+                $failCount++;
+            }
+        }
+
+        $msg = '成功退回 ' . $successCount . ' 条，跳过 ' . $skipCount . ' 条，失败 ' . $failCount . ' 条。';
+        if ($successCount > 0) {
+            return [
+                'code' => 0,
+                'msg' => $msg,
+                'data' => [
+                    'success_count' => $successCount,
+                    'skip_count' => $skipCount,
+                    'fail_count' => $failCount,
+                    'operate_time' => $nowTimestamp,
+                ],
+            ];
+        }
+
+        return [
+            'code' => -200,
+            'msg' => $msg,
+            'data' => [
+                'success_count' => $successCount,
+                'skip_count' => $skipCount,
+                'fail_count' => $failCount,
+                'operate_time' => $nowTimestamp,
+            ],
+        ];
+    }
 }
