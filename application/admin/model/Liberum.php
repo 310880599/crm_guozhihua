@@ -256,8 +256,10 @@ class Liberum extends Model
             }
             $row['remark'] = isset($row['remark']) ? (string)$row['remark'] : '';
             $row['to_gh_time'] = !empty($row['to_gh_time']) ? (string)$row['to_gh_time'] : (isset($row['ut_time']) ? (string)$row['ut_time'] : '');
+            $row['at_user'] = isset($row['at_user']) ? (string)$row['at_user'] : '';
+            $row['pr_user'] = isset($row['pr_user']) ? (string)$row['pr_user'] : '';
             $row['pr_user_bef'] = isset($row['pr_user_bef']) ? (string)$row['pr_user_bef'] : '';
-            $row['creator'] = isset($row['creator']) ? (string)$row['creator'] : '';
+            unset($row['creator']);
         }
         unset($row);
     }
