@@ -456,7 +456,6 @@ class Liberum extends Common{
             $todayPickedCount = Db::table('crm_liberum_pick_log')
                 ->where('pick_user', $curname)
                 ->where('pick_date', $today)
-                ->where('is_returned', 0)
                 ->count('id');
             if ($todayPickedCount >= $this->dailyPickLimit) {
                 Db::rollback();
