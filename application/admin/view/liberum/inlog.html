@@ -95,10 +95,23 @@
                 {field: 'in_time', title: '流入时间', minWidth: 170},
                 {field: 'operator_name', title: '操作人', width: 120, templet: function (d) { return d.operator_name || d.operator_id || ''; }},
                 {field: 'current_status', title: '当前状态', width: 100, templet: function (d) {
+                    if (d.current_status === null || d.current_status === undefined || d.current_status === '') {
+                        return '未知';
+                    }
                     var status = parseInt(d.current_status, 10);
                     if (status === 1) return '<span class="layui-badge layui-bg-green">客户</span>';
                     if (status === 2) return '<span class="layui-badge layui-bg-gray">公海</span>';
-                    return d.current_status || '未知';
+                    return d.current_status;
+                }},
+                {field: 'current_gh_type', title: '当前公海类型', minWidth: 130, templet: function (d) {
+                    return d.current_gh_type || '';
+                }},
+                {field: 'source_type', title: '来源类型', width: 110, templet: function (d) {
+                    var sourceType = (d.source_type || '').toString();
+                    if (sourceType === 'pick_return') return '提取退回';
+                    if (sourceType === 'manual') return '手动移入';
+                    if (sourceType === 'auto_rule') return '自动规则流入';
+                    return sourceType;
                 }},
                 {field: 'is_recovered', title: '是否已恢复', width: 120, templet: function (d) {
                     var recovered = parseInt(d.is_recovered || 0) === 1;

@@ -137,6 +137,7 @@ class LiberumLogService
         try {
             $hasInOperatorName = $this->hasColumn('crm_liberum_in_log', 'operator_name');
             $hasInOperatorId = $this->hasColumn('crm_liberum_in_log', 'operator_id');
+            $hasInSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
             $hasContactType = $this->hasColumn('crm_contacts', 'contact_type');
             $phoneType = (int)ContactMap::CONTACT_MAP['phone'];
 
@@ -146,6 +147,9 @@ class LiberumLogService
             $inOperatorIdField = $hasInOperatorId
                 ? 'IFNULL(MAX(il.operator_id), 0) AS operator_id'
                 : '0 AS operator_id';
+            $sourceTypeField = $hasInSourceType
+                ? 'IFNULL(MAX(il.source_type), "") AS source_type'
+                : '"" AS source_type';
             $phoneField = $hasContactType
                 ? 'IFNULL(SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN c.contact_type = ' . $phoneType . ' THEN c.contact_value END), ",", 1), "") AS client_phone'
                 : 'IFNULL(SUBSTRING_INDEX(GROUP_CONCAT(c.contact_value), ",", 1), "") AS client_phone';
@@ -219,6 +223,8 @@ class LiberumLogService
                     'IFNULL(MAX(il.is_recovered), 0) AS is_recovered',
                     'IFNULL(MAX(il.recovered_time), "") AS recovered_time',
                     'IFNULL(MAX(l.status), "") AS current_status',
+                    'IFNULL(MAX(l.pr_gh_type), "") AS current_gh_type',
+                    $sourceTypeField,
                 ])
                 ->group('il.id')
                 ->order('il.id desc')
@@ -259,8 +265,12 @@ class LiberumLogService
         $hasLogReturnOperatorId = $this->hasColumn('crm_liberum_pick_log', 'return_operator_id');
         $hasLogReturnOperatorName = $this->hasColumn('crm_liberum_pick_log', 'return_operator_name');
         $hasLogReturnRemark = $this->hasColumn('crm_liberum_pick_log', 'return_remark');
+        $hasLogPrGhType = $this->hasColumn('crm_liberum_pick_log', 'pr_gh_type');
+        $hasLogGhTypeId = $this->hasColumn('crm_liberum_pick_log', 'gh_type_id');
+        $hasLogGhType = $this->hasColumn('crm_liberum_pick_log', 'gh_type');
         $hasLeadsToGhTime = $this->hasColumn('crm_leads', 'to_gh_time');
         $hasLeadsPrUserId = $this->hasColumn('crm_leads', 'pr_user_id');
+        $hasLeadsPrGhType = $this->hasColumn('crm_leads', 'pr_gh_type');
         $hasInLogLeadsId = $this->hasColumn('crm_liberum_in_log', 'leads_id');
         $hasInLogKhName = $this->hasColumn('crm_liberum_in_log', 'kh_name');
         $hasInLogBeforePrUser = $this->hasColumn('crm_liberum_in_log', 'before_pr_user');
@@ -271,6 +281,7 @@ class LiberumLogService
         $hasInLogIsRecovered = $this->hasColumn('crm_liberum_in_log', 'is_recovered');
         $hasInLogCreateTime = $this->hasColumn('crm_liberum_in_log', 'create_time');
         $hasInLogSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
+        $hasInLogReturnSource = $this->hasColumn('crm_liberum_in_log', 'return_source');
 
         $successCount = 0;
         $skipCount = 0;
@@ -354,6 +365,15 @@ class LiberumLogService
                     continue;
                 }
 
+                $restoredGhType = '手动退回公海';
+                if ($hasLogPrGhType && array_key_exists('pr_gh_type', $log) && trim((string)$log['pr_gh_type']) !== '') {
+                    $restoredGhType = $log['pr_gh_type'];
+                } elseif ($hasLogGhTypeId && array_key_exists('gh_type_id', $log) && trim((string)$log['gh_type_id']) !== '') {
+                    $restoredGhType = $log['gh_type_id'];
+                } elseif ($hasLogGhType && array_key_exists('gh_type', $log) && trim((string)$log['gh_type']) !== '') {
+                    $restoredGhType = $log['gh_type'];
+                }
+
                 $leadKhName = isset($lead['kh_name']) ? (string)$lead['kh_name'] : '';
                 $leadUpdate = [
                     'status' => 2,
@@ -364,6 +384,9 @@ class LiberumLogService
                 ];
                 if ($hasLeadsPrUserId) {
                     $leadUpdate['pr_user_id'] = 0;
+                }
+                if ($hasLeadsPrGhType) {
+                    $leadUpdate['pr_gh_type'] = $restoredGhType;
                 }
                 if ($hasLeadsToGhTime) {
                     $leadUpdate['to_gh_time'] = $nowDateTime;
@@ -426,7 +449,7 @@ class LiberumLogService
                     $inLogData['operator_name'] = $operatorName;
                 }
                 if ($hasInLogReason) {
-                    $inLogData['reason'] = '客户提取记录退回公海';
+                    $inLogData['reason'] = '客户提取记录退回公海（原领取人：' . $currentPrUser . '）';
                 }
                 if ($hasInLogInTime) {
                     $inLogData['in_time'] = $nowDateTime;
@@ -439,6 +462,9 @@ class LiberumLogService
                 }
                 if ($hasInLogSourceType) {
                     $inLogData['source_type'] = 'pick_return';
+                }
+                if ($hasInLogReturnSource) {
+                    $inLogData['return_source'] = 'pick_log_batch_return';
                 }
 
                 if (!empty($inLogData)) {
