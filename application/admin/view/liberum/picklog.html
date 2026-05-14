@@ -162,7 +162,7 @@
                     success: function (res) {
                         if (parseInt(res.code, 10) === 0) {
                             layer.msg(res.msg || '操作成功');
-                            table.reload(tableId, {page: {curr: 1}});
+                            table.reload(tableId, {});
                         } else {
                             layer.msg(res.msg || '操作失败');
                         }

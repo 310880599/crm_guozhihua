@@ -260,6 +260,17 @@ class LiberumLogService
         $hasLogReturnOperatorName = $this->hasColumn('crm_liberum_pick_log', 'return_operator_name');
         $hasLogReturnRemark = $this->hasColumn('crm_liberum_pick_log', 'return_remark');
         $hasLeadsToGhTime = $this->hasColumn('crm_leads', 'to_gh_time');
+        $hasLeadsPrUserId = $this->hasColumn('crm_leads', 'pr_user_id');
+        $hasInLogLeadsId = $this->hasColumn('crm_liberum_in_log', 'leads_id');
+        $hasInLogKhName = $this->hasColumn('crm_liberum_in_log', 'kh_name');
+        $hasInLogBeforePrUser = $this->hasColumn('crm_liberum_in_log', 'before_pr_user');
+        $hasInLogOperatorId = $this->hasColumn('crm_liberum_in_log', 'operator_id');
+        $hasInLogOperatorName = $this->hasColumn('crm_liberum_in_log', 'operator_name');
+        $hasInLogReason = $this->hasColumn('crm_liberum_in_log', 'reason');
+        $hasInLogInTime = $this->hasColumn('crm_liberum_in_log', 'in_time');
+        $hasInLogIsRecovered = $this->hasColumn('crm_liberum_in_log', 'is_recovered');
+        $hasInLogCreateTime = $this->hasColumn('crm_liberum_in_log', 'create_time');
+        $hasInLogSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
 
         $successCount = 0;
         $skipCount = 0;
@@ -343,13 +354,17 @@ class LiberumLogService
                     continue;
                 }
 
-                $beforePrUser = isset($log['before_pr_user']) ? (string)$log['before_pr_user'] : '';
+                $leadKhName = isset($lead['kh_name']) ? (string)$lead['kh_name'] : '';
                 $leadUpdate = [
                     'status' => 2,
                     'pr_user_bef' => $currentPrUser,
-                    'pr_user' => $beforePrUser,
+                    // 与“移入公海”口径对齐：进入公海后当前负责人应清空，避免公海列表仍显示旧负责人
+                    'pr_user' => '',
                     'ut_time' => $nowDateTime,
                 ];
+                if ($hasLeadsPrUserId) {
+                    $leadUpdate['pr_user_id'] = 0;
+                }
                 if ($hasLeadsToGhTime) {
                     $leadUpdate['to_gh_time'] = $nowDateTime;
                 }
@@ -391,6 +406,48 @@ class LiberumLogService
                     Db::rollback();
                     $failCount++;
                     continue;
+                }
+
+                $inLogData = [];
+                if ($hasInLogLeadsId) {
+                    $inLogData['leads_id'] = $leadId;
+                }
+                if ($hasInLogKhName) {
+                    $inLogData['kh_name'] = $leadKhName !== '' ? $leadKhName : '';
+                }
+                if ($hasInLogBeforePrUser) {
+                    // 退回场景下，入公海前负责人应记录当前领取人
+                    $inLogData['before_pr_user'] = $currentPrUser;
+                }
+                if ($hasInLogOperatorId) {
+                    $inLogData['operator_id'] = $operatorId;
+                }
+                if ($hasInLogOperatorName) {
+                    $inLogData['operator_name'] = $operatorName;
+                }
+                if ($hasInLogReason) {
+                    $inLogData['reason'] = '客户提取记录退回公海';
+                }
+                if ($hasInLogInTime) {
+                    $inLogData['in_time'] = $nowDateTime;
+                }
+                if ($hasInLogIsRecovered) {
+                    $inLogData['is_recovered'] = 0;
+                }
+                if ($hasInLogCreateTime) {
+                    $inLogData['create_time'] = $nowTimestamp;
+                }
+                if ($hasInLogSourceType) {
+                    $inLogData['source_type'] = 'pick_return';
+                }
+
+                if (!empty($inLogData)) {
+                    $inLogInsertedRows = Db::table('crm_liberum_in_log')->insert($inLogData);
+                    if ((int)$inLogInsertedRows !== 1) {
+                        Db::rollback();
+                        $failCount++;
+                        continue;
+                    }
                 }
 
                 Db::commit();
