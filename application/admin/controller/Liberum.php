@@ -6,6 +6,7 @@ use think\facade\Session;
 use think\facade\Env;
 use app\admin\behavior\ContactMap; 
 use app\admin\model\LiberumType as LiberumTypeModel;
+use app\admin\service\LiberumLogService;
 use app\admin\service\LiberumTypeService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
@@ -15,6 +16,7 @@ class Liberum extends Common{
      * @var LiberumTypeService
      */
     protected $liberumTypeService;
+    protected $liberumLogService;
     protected $dailyPickLimit = 10;
 
     protected function getLiberumTypeService()
@@ -23,6 +25,14 @@ class Liberum extends Common{
             $this->liberumTypeService = new LiberumTypeService();
         }
         return $this->liberumTypeService;
+    }
+
+    protected function getLiberumLogService()
+    {
+        if (!$this->liberumLogService) {
+            $this->liberumLogService = new LiberumLogService();
+        }
+        return $this->liberumLogService;
     }
 
     // 公海列表
@@ -38,6 +48,44 @@ class Liberum extends Common{
         $ghTypeList = LiberumTypeModel::where('is_deleted', 0)->order('id desc')->select();
         $this->assign('ghTypeList', $ghTypeList);
         return $this->fetch();
+    }
+
+    // 客户提取记录页面
+    public function pickLog()
+    {
+        return $this->fetch('liberum/picklog');
+    }
+
+    // 客户流入公海记录页面
+    public function inLog()
+    {
+        return $this->fetch('liberum/inlog');
+    }
+
+    // 客户提取记录列表
+    public function getPickLogList()
+    {
+        $params = Request::param();
+        $list = $this->getLiberumLogService()->getPickLogList($params);
+        return json([
+            'code' => 0,
+            'msg' => '',
+            'count' => (int)($list['count'] ?? 0),
+            'data' => $list['data'] ?? [],
+        ]);
+    }
+
+    // 客户流入公海记录列表
+    public function getInLogList()
+    {
+        $params = Request::param();
+        $list = $this->getLiberumLogService()->getInLogList($params);
+        return json([
+            'code' => 0,
+            'msg' => '',
+            'count' => (int)($list['count'] ?? 0),
+            'data' => $list['data'] ?? [],
+        ]);
     }
 
     // 公海类型

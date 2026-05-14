@@ -1,0 +1,120 @@
+{include file="common/head"/}
+<style>
+    body { background: #f5f7fa !important; }
+    .liberum-log-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 20px; background: #f5f7fa; overflow: auto; }
+    .search-card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); padding: 16px; margin-bottom: 12px; }
+    .table-wrapper { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); overflow: hidden; padding: 0; height: calc(100vh - 220px); display: flex; flex-direction: column; }
+    .layui-table-view { flex: 1; display: flex; flex-direction: column; height: 100%; border: none !important; }
+    .layui-table-body { flex: 1; overflow: auto; }
+    .layui-table-page { flex-shrink: 0; background: #fff !important; border-top: 1px solid #e0e0e0 !important; padding: 12px 20px !important; }
+</style>
+
+<div class="liberum-log-container">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>客户提取记录</legend>
+        <div class="search-card">
+            <div class="layui-form" lay-filter="pick-log-search-form">
+                <div class="layui-form-item" style="margin-bottom: 10px;">
+                    <div class="layui-inline">
+                        <label class="layui-form-label">日期查询：</label>
+                        <div class="layui-input-inline"><input type="text" name="pick_date" id="pick_date" placeholder="请输入日期" class="layui-input"></div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">提取人：</label>
+                        <div class="layui-input-inline"><input type="text" name="pick_user_keyword" placeholder="请输入提取人" class="layui-input"></div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">客户名称：</label>
+                        <div class="layui-input-inline"><input type="text" name="client_keyword" placeholder="请输入客户名称" class="layui-input"></div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">手机号：</label>
+                        <div class="layui-input-inline"><input type="text" name="phone" placeholder="请输入手机号" class="layui-input"></div>
+                    </div>
+                    <div class="layui-inline">
+                        <button class="layui-btn" lay-submit lay-filter="pick-log-search"><i class="layui-icon layui-icon-search"></i>查询</button>
+                        <button type="button" class="layui-btn layui-btn-primary" id="pick-log-reset">重置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+
+    <div class="table-wrapper">
+        <table class="layui-table" id="pickLogTable" lay-filter="pickLogTable"></table>
+    </div>
+</div>
+
+<script type="text/html" id="pickLogTopBtn">
+    <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchReturn"><i class="layui-icon">&#xe65a;</i>批量退回公海</button>
+</script>
+
+<script type="text/html" id="pickLogActionTpl">
+    <a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="placeholder">查看</a>
+</script>
+
+{include file="common/foot"/}
+<script>
+    layui.use(['table', 'form', 'laydate'], function () {
+        var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery;
+        var tableId = 'pickLogTable';
+        var baseUrl = "{:url('Liberum/getPickLogList')}";
+
+        laydate.render({ elem: '#pick_date' });
+
+        var tableIns = table.render({
+            elem: '#' + tableId,
+            id: tableId,
+            url: baseUrl,
+            method: 'get',
+            toolbar: '#pickLogTopBtn',
+            page: true,
+            limit: 10,
+            cols: [[
+                {type: 'checkbox', fixed: 'left'},
+                {field: 'id', title: 'ID', width: 80, sort: true},
+                {field: 'client_id', title: '客户ID', width: 110, templet: function (d) { return d.client_id || d.leads_id || ''; }},
+                {field: 'client_name', title: '客户名称', minWidth: 140, templet: function (d) { return d.client_name || d.kh_name || ''; }},
+                {field: 'client_phone', title: '客户电话', minWidth: 130, templet: function (d) { return d.client_phone || d.phone || ''; }},
+                {field: 'pick_user', title: '提取人', width: 110, templet: function (d) { return d.pick_user || d.operator_name || ''; }},
+                {field: 'pick_date', title: '提取日期', width: 120},
+                {field: 'pick_time', title: '提取时间', minWidth: 170},
+                {field: 'before_pr_user', title: '原负责人', width: 110},
+                {field: 'current_pr_user', title: '当前负责人', width: 110, templet: function (d) { return d.current_pr_user || d.pr_user || ''; }},
+                {field: 'is_returned', title: '是否已退回', width: 110, templet: function (d) { return (parseInt(d.is_returned || 0) === 1) ? '是' : '否'; }},
+                {title: '操作', fixed: 'right', width: 100, align: 'center', toolbar: '#pickLogActionTpl'}
+            ]]
+        });
+
+        form.on('submit(pick-log-search)', function (data) {
+            table.reload(tableId, {
+                where: data.field,
+                page: {curr: 1}
+            });
+            return false;
+        });
+
+        $('#pick-log-reset').on('click', function () {
+            $('.search-card .layui-input').val('');
+            form.render();
+            table.reload(tableId, {
+                where: {},
+                page: {curr: 1}
+            });
+        });
+
+        table.on('toolbar(' + tableId + ')', function (obj) {
+            if (obj.event === 'batchReturn') {
+                layer.msg('该功能将在第二阶段实现');
+            }
+        });
+
+        table.on('tool(' + tableId + ')', function (obj) {
+            if (obj.event === 'placeholder') {
+                layer.msg('该功能将在第二阶段实现');
+            }
+        });
+    });
+</script>
+</body>
+</html>
