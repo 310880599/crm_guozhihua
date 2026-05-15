@@ -9,6 +9,8 @@ use think\Db;
 class LiberumInLogService extends BaseAdminService
 {
     const EXPORT_LIMIT = 5000;
+    protected static $phoneMapCache = [];
+    protected static $phoneSearchCache = [];
 
     public function getInLogList($params = [])
     {
@@ -164,44 +166,65 @@ class LiberumInLogService extends BaseAdminService
             return [];
         }
 
+        $result = [];
+        $needQueryLeadIds = [];
+        foreach ($leadIds as $leadId) {
+            if (array_key_exists($leadId, self::$phoneMapCache)) {
+                $result[$leadId] = (string)self::$phoneMapCache[$leadId];
+            } else {
+                $needQueryLeadIds[] = $leadId;
+            }
+        }
+
+        if (empty($needQueryLeadIds)) {
+            return $result;
+        }
+
         $hasContactType = $this->hasColumn('crm_contacts', 'contact_type');
         $phoneType = (int)ContactMap::CONTACT_MAP['phone'];
-        $contacts = Db::table('crm_contacts')
-            ->field('leads_id, contact_value' . ($hasContactType ? ', contact_type' : ''))
-            ->whereIn('leads_id', $leadIds)
-            ->order('id asc')
-            ->select();
-        if (is_object($contacts) && method_exists($contacts, 'toArray')) {
-            $contacts = $contacts->toArray();
-        } elseif (!is_array($contacts)) {
-            $contacts = [];
-        }
-
         $firstMap = [];
         $phoneMap = [];
-        foreach ($contacts as $contact) {
-            $leadId = (int)($contact['leads_id'] ?? 0);
-            $contactValue = trim((string)($contact['contact_value'] ?? ''));
-            if ($leadId <= 0 || $contactValue === '') {
+        $leadIdChunks = array_chunk($needQueryLeadIds, 500);
+        foreach ($leadIdChunks as $leadIdChunk) {
+            if (empty($leadIdChunk)) {
                 continue;
             }
-            if (!isset($firstMap[$leadId])) {
-                $firstMap[$leadId] = $contactValue;
+
+            $contacts = Db::table('crm_contacts')
+                ->field('leads_id, contact_value' . ($hasContactType ? ', contact_type' : ''))
+                ->whereIn('leads_id', $leadIdChunk)
+                ->order('id asc')
+                ->select();
+            if (is_object($contacts) && method_exists($contacts, 'toArray')) {
+                $contacts = $contacts->toArray();
+            } elseif (!is_array($contacts)) {
+                $contacts = [];
             }
-            if ($hasContactType && (int)($contact['contact_type'] ?? -1) === $phoneType && !isset($phoneMap[$leadId])) {
-                $phoneMap[$leadId] = $contactValue;
+
+            foreach ($contacts as $contact) {
+                $leadId = (int)($contact['leads_id'] ?? 0);
+                $contactValue = trim((string)($contact['contact_value'] ?? ''));
+                if ($leadId <= 0 || $contactValue === '') {
+                    continue;
+                }
+                if (!isset($firstMap[$leadId])) {
+                    $firstMap[$leadId] = $contactValue;
+                }
+                if ($hasContactType && (int)($contact['contact_type'] ?? -1) === $phoneType && !isset($phoneMap[$leadId])) {
+                    $phoneMap[$leadId] = $contactValue;
+                }
             }
         }
 
-        $result = [];
-        foreach ($leadIds as $leadId) {
+        foreach ($needQueryLeadIds as $leadId) {
             if (isset($phoneMap[$leadId])) {
-                $result[$leadId] = $phoneMap[$leadId];
+                self::$phoneMapCache[$leadId] = $phoneMap[$leadId];
             } elseif (isset($firstMap[$leadId])) {
-                $result[$leadId] = $firstMap[$leadId];
+                self::$phoneMapCache[$leadId] = $firstMap[$leadId];
             } else {
-                $result[$leadId] = '';
+                self::$phoneMapCache[$leadId] = '';
             }
+            $result[$leadId] = (string)self::$phoneMapCache[$leadId];
         }
 
         return $result;
@@ -209,9 +232,13 @@ class LiberumInLogService extends BaseAdminService
 
     protected function findLeadIdsByPhone($phone = '')
     {
-        $phone = trim((string)$phone);
+        $phone = strtolower(trim((string)$phone));
         if ($phone === '') {
             return [];
+        }
+
+        if (array_key_exists($phone, self::$phoneSearchCache)) {
+            return self::$phoneSearchCache[$phone];
         }
 
         $leadIds = Db::table('crm_contacts')
@@ -221,9 +248,13 @@ class LiberumInLogService extends BaseAdminService
             $leadIds = [];
         }
 
-        return array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+        $result = array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
             return $id > 0;
         })));
+
+        self::$phoneSearchCache[$phone] = $result;
+
+        return $result;
     }
 
     public function exportInLog($params = [])
