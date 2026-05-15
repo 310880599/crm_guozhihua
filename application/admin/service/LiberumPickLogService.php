@@ -20,8 +20,6 @@ class LiberumPickLogService extends BaseAdminService
             $hasActiveLeadsId = $this->hasColumn('crm_liberum_pick_log', 'active_leads_id');
             $hasOperatorName = $this->hasColumn('crm_liberum_pick_log', 'operator_name');
             $hasPickOperatorId = $this->hasColumn('crm_liberum_pick_log', 'operator_id');
-            $hasContactType = $this->hasColumn('crm_contacts', 'contact_type');
-            $phoneType = (int)ContactMap::CONTACT_MAP['phone'];
 
             $leadJoin = $hasActiveLeadsId
                 ? 'l.id = IFNULL(NULLIF(pl.leads_id, 0), pl.active_leads_id)'
@@ -36,14 +34,10 @@ class LiberumPickLogService extends BaseAdminService
             $pickOperatorIdField = $hasPickOperatorId
                 ? 'IFNULL(MAX(pl.operator_id), 0) AS operator_id'
                 : '0 AS operator_id';
-            $phoneField = $hasContactType
-                ? 'IFNULL(SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN c.contact_type = ' . $phoneType . ' THEN c.contact_value END), ",", 1), "") AS client_phone'
-                : 'IFNULL(SUBSTRING_INDEX(GROUP_CONCAT(c.contact_value), ",", 1), "") AS client_phone';
 
             $model = new LiberumPickLog();
             $query = $model->alias('pl')
-                ->leftJoin('crm_leads l', $leadJoin)
-                ->leftJoin('crm_contacts c', 'c.leads_id = l.id');
+                ->leftJoin('crm_leads l', $leadJoin);
 
             if (!empty($params['pick_date'])) {
                 $query->where('pl.pick_date', trim((string)$params['pick_date']));
@@ -69,22 +63,46 @@ class LiberumPickLogService extends BaseAdminService
 
             if (!empty($params['phone'])) {
                 $phone = trim((string)$params['phone']);
-                $query->whereLike('c.contact_value', '%' . $phone . '%');
+                $matchedLeadIds = $this->findLeadIdsByPhone($phone);
+                if (empty($matchedLeadIds)) {
+                    return [
+                        'count' => 0,
+                        'data' => [],
+                    ];
+                }
+                if ($hasActiveLeadsId) {
+                    $query->where(function ($subQuery) use ($matchedLeadIds) {
+                        $subQuery->whereIn('pl.leads_id', $matchedLeadIds)
+                            ->whereOr(function ($orQuery) use ($matchedLeadIds) {
+                                $orQuery->where('pl.leads_id', 0)
+                                    ->whereIn('pl.active_leads_id', $matchedLeadIds);
+                            })
+                            ->whereOr(function ($orQuery) use ($matchedLeadIds) {
+                                $orQuery->whereNull('pl.leads_id')
+                                    ->whereIn('pl.active_leads_id', $matchedLeadIds);
+                            });
+                    });
+                } else {
+                    $query->whereIn('pl.leads_id', $matchedLeadIds);
+                }
             }
 
             if (array_key_exists('is_returned', $params) && $params['is_returned'] !== '') {
                 $query->where('pl.is_returned', (int)$params['is_returned']);
             }
 
-            $count = (int)(clone $query)->count('DISTINCT pl.id');
+            $count = (int)(clone $query)->count('pl.id');
             $data = $query
                 ->field([
                     'pl.id',
                     'IFNULL(MAX(pl.leads_id), 0) AS leads_id',
                     $activeLeadsIdField,
                     'IFNULL(MAX(l.id), IFNULL(MAX(pl.leads_id), 0)) AS client_id',
+                    $hasActiveLeadsId
+                        ? 'IFNULL(MAX(l.id), IFNULL(NULLIF(MAX(pl.leads_id), 0), IFNULL(MAX(pl.active_leads_id), 0))) AS contact_leads_id'
+                        : 'IFNULL(MAX(l.id), IFNULL(MAX(pl.leads_id), 0)) AS contact_leads_id',
                     'IFNULL(MAX(l.kh_name), IFNULL(MAX(pl.kh_name), "")) AS client_name',
-                    $phoneField,
+                    '"" AS client_phone',
                     'IFNULL(MAX(pl.pick_user), "") AS pick_user',
                     'IFNULL(MAX(pl.pick_date), "") AS pick_date',
                     'IFNULL(MAX(pl.pick_time), "") AS pick_time',
@@ -103,6 +121,19 @@ class LiberumPickLogService extends BaseAdminService
             } elseif (!is_array($data)) {
                 $data = [];
             }
+            if (!empty($data)) {
+                $leadIds = [];
+                foreach ($data as $row) {
+                    $leadIds[] = (int)($row['contact_leads_id'] ?? 0);
+                }
+                $phoneMap = $this->buildPhoneMap($leadIds);
+                foreach ($data as &$row) {
+                    $mapLeadId = (int)($row['contact_leads_id'] ?? 0);
+                    $row['client_phone'] = $phoneMap[$mapLeadId] ?? '';
+                    unset($row['contact_leads_id']);
+                }
+                unset($row);
+            }
         } catch (\Throwable $e) {
             $count = 0;
             $data = [];
@@ -112,6 +143,78 @@ class LiberumPickLogService extends BaseAdminService
             'count' => $count,
             'data' => $data,
         ];
+    }
+
+    protected function buildPhoneMap($leadIds = [])
+    {
+        $leadIds = is_array($leadIds) ? $leadIds : [];
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($leadIds)) {
+            return [];
+        }
+
+        $hasContactType = $this->hasColumn('crm_contacts', 'contact_type');
+        $phoneType = (int)ContactMap::CONTACT_MAP['phone'];
+        $contacts = Db::table('crm_contacts')
+            ->field('leads_id, contact_value' . ($hasContactType ? ', contact_type' : ''))
+            ->whereIn('leads_id', $leadIds)
+            ->order('id asc')
+            ->select();
+        if (is_object($contacts) && method_exists($contacts, 'toArray')) {
+            $contacts = $contacts->toArray();
+        } elseif (!is_array($contacts)) {
+            $contacts = [];
+        }
+
+        $firstMap = [];
+        $phoneMap = [];
+        foreach ($contacts as $contact) {
+            $leadId = (int)($contact['leads_id'] ?? 0);
+            $contactValue = trim((string)($contact['contact_value'] ?? ''));
+            if ($leadId <= 0 || $contactValue === '') {
+                continue;
+            }
+            if (!isset($firstMap[$leadId])) {
+                $firstMap[$leadId] = $contactValue;
+            }
+            if ($hasContactType && (int)($contact['contact_type'] ?? -1) === $phoneType && !isset($phoneMap[$leadId])) {
+                $phoneMap[$leadId] = $contactValue;
+            }
+        }
+
+        $result = [];
+        foreach ($leadIds as $leadId) {
+            if (isset($phoneMap[$leadId])) {
+                $result[$leadId] = $phoneMap[$leadId];
+            } elseif (isset($firstMap[$leadId])) {
+                $result[$leadId] = $firstMap[$leadId];
+            } else {
+                $result[$leadId] = '';
+            }
+        }
+
+        return $result;
+    }
+
+    protected function findLeadIdsByPhone($phone = '')
+    {
+        $phone = trim((string)$phone);
+        if ($phone === '') {
+            return [];
+        }
+
+        $leadIds = Db::table('crm_contacts')
+            ->whereLike('contact_value', '%' . $phone . '%')
+            ->column('DISTINCT leads_id');
+        if (!is_array($leadIds)) {
+            $leadIds = [];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
     }
 
     public function exportPickLog($params = [])

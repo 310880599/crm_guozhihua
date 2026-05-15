@@ -22,8 +22,6 @@ class LiberumInLogService extends BaseAdminService
             $hasInSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
             $hasRecoverOperatorName = $this->hasColumn('crm_liberum_in_log', 'recover_operator_name');
             $hasRecoverOperatorId = $this->hasColumn('crm_liberum_in_log', 'recover_operator_id');
-            $hasContactType = $this->hasColumn('crm_contacts', 'contact_type');
-            $phoneType = (int)ContactMap::CONTACT_MAP['phone'];
 
             $inOperatorNameField = $hasInOperatorName
                 ? 'IFNULL(MAX(il.operator_name), "") AS operator_name'
@@ -40,14 +38,10 @@ class LiberumInLogService extends BaseAdminService
             $sourceTypeField = $hasInSourceType
                 ? 'IFNULL(MAX(il.source_type), "") AS source_type'
                 : '"" AS source_type';
-            $phoneField = $hasContactType
-                ? 'IFNULL(SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN c.contact_type = ' . $phoneType . ' THEN c.contact_value END), ",", 1), "") AS client_phone'
-                : 'IFNULL(SUBSTRING_INDEX(GROUP_CONCAT(c.contact_value), ",", 1), "") AS client_phone';
 
             $model = new LiberumInLog();
             $query = $model->alias('il')
-                ->leftJoin('crm_leads l', 'il.leads_id = l.id')
-                ->leftJoin('crm_contacts c', 'c.leads_id = l.id');
+                ->leftJoin('crm_leads l', 'il.leads_id = l.id');
 
             if (!empty($params['in_date'])) {
                 $inDate = trim((string)$params['in_date']);
@@ -89,21 +83,30 @@ class LiberumInLogService extends BaseAdminService
             }
 
             if (!empty($params['phone'])) {
-                $query->whereLike('c.contact_value', '%' . trim((string)$params['phone']) . '%');
+                $phone = trim((string)$params['phone']);
+                $matchedLeadIds = $this->findLeadIdsByPhone($phone);
+                if (empty($matchedLeadIds)) {
+                    return [
+                        'count' => 0,
+                        'data' => [],
+                    ];
+                }
+                $query->whereIn('il.leads_id', $matchedLeadIds);
             }
 
             if (array_key_exists('is_recovered', $params) && $params['is_recovered'] !== '') {
                 $query->where('il.is_recovered', (int)$params['is_recovered']);
             }
 
-            $count = (int)(clone $query)->count('DISTINCT il.id');
+            $count = (int)(clone $query)->count('il.id');
             $data = $query
                 ->field([
                     'il.id',
                     'IFNULL(MAX(il.leads_id), 0) AS leads_id',
                     'IFNULL(MAX(l.id), IFNULL(MAX(il.leads_id), 0)) AS client_id',
+                    'IFNULL(MAX(l.id), IFNULL(MAX(il.leads_id), 0)) AS contact_leads_id',
                     'IFNULL(MAX(l.kh_name), IFNULL(MAX(il.kh_name), "")) AS client_name',
-                    $phoneField,
+                    '"" AS client_phone',
                     'IFNULL(MAX(il.before_pr_user), "") AS before_pr_user',
                     'IFNULL(MAX(l.pr_user), "") AS current_pr_user',
                     'IFNULL(MAX(il.reason), "") AS reason',
@@ -127,6 +130,19 @@ class LiberumInLogService extends BaseAdminService
             } elseif (!is_array($data)) {
                 $data = [];
             }
+            if (!empty($data)) {
+                $leadIds = [];
+                foreach ($data as $row) {
+                    $leadIds[] = (int)($row['contact_leads_id'] ?? 0);
+                }
+                $phoneMap = $this->buildPhoneMap($leadIds);
+                foreach ($data as &$row) {
+                    $mapLeadId = (int)($row['contact_leads_id'] ?? 0);
+                    $row['client_phone'] = $phoneMap[$mapLeadId] ?? '';
+                    unset($row['contact_leads_id']);
+                }
+                unset($row);
+            }
         } catch (\Throwable $e) {
             $count = 0;
             $data = [];
@@ -136,6 +152,78 @@ class LiberumInLogService extends BaseAdminService
             'count' => $count,
             'data' => $data,
         ];
+    }
+
+    protected function buildPhoneMap($leadIds = [])
+    {
+        $leadIds = is_array($leadIds) ? $leadIds : [];
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($leadIds)) {
+            return [];
+        }
+
+        $hasContactType = $this->hasColumn('crm_contacts', 'contact_type');
+        $phoneType = (int)ContactMap::CONTACT_MAP['phone'];
+        $contacts = Db::table('crm_contacts')
+            ->field('leads_id, contact_value' . ($hasContactType ? ', contact_type' : ''))
+            ->whereIn('leads_id', $leadIds)
+            ->order('id asc')
+            ->select();
+        if (is_object($contacts) && method_exists($contacts, 'toArray')) {
+            $contacts = $contacts->toArray();
+        } elseif (!is_array($contacts)) {
+            $contacts = [];
+        }
+
+        $firstMap = [];
+        $phoneMap = [];
+        foreach ($contacts as $contact) {
+            $leadId = (int)($contact['leads_id'] ?? 0);
+            $contactValue = trim((string)($contact['contact_value'] ?? ''));
+            if ($leadId <= 0 || $contactValue === '') {
+                continue;
+            }
+            if (!isset($firstMap[$leadId])) {
+                $firstMap[$leadId] = $contactValue;
+            }
+            if ($hasContactType && (int)($contact['contact_type'] ?? -1) === $phoneType && !isset($phoneMap[$leadId])) {
+                $phoneMap[$leadId] = $contactValue;
+            }
+        }
+
+        $result = [];
+        foreach ($leadIds as $leadId) {
+            if (isset($phoneMap[$leadId])) {
+                $result[$leadId] = $phoneMap[$leadId];
+            } elseif (isset($firstMap[$leadId])) {
+                $result[$leadId] = $firstMap[$leadId];
+            } else {
+                $result[$leadId] = '';
+            }
+        }
+
+        return $result;
+    }
+
+    protected function findLeadIdsByPhone($phone = '')
+    {
+        $phone = trim((string)$phone);
+        if ($phone === '') {
+            return [];
+        }
+
+        $leadIds = Db::table('crm_contacts')
+            ->whereLike('contact_value', '%' . $phone . '%')
+            ->column('DISTINCT leads_id');
+        if (!is_array($leadIds)) {
+            $leadIds = [];
+        }
+
+        return array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
     }
 
     public function exportInLog($params = [])
