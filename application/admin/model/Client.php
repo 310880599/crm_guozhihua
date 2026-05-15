@@ -487,6 +487,14 @@ class Client extends Model
         $page  = max(1, (int)$page);
         $limit = max(1, (int)$limit);
 
+        $mapIsSuccess = [];
+        if (isset($keyword['issuccess']) && $keyword['issuccess'] !== '') {
+            $isSuccess = (int)$keyword['issuccess'];
+            if (in_array($isSuccess, [-1, 1], true)) {
+                $mapIsSuccess = [['l.issuccess', '=', $isSuccess]];
+            }
+        }
+
         $adminId       = isset($currentAdmin['admin_id']) ? (int)$currentAdmin['admin_id'] : (int)session('aid');
         $adminGroupId  = isset($currentAdmin['group_id']) ? (int)$currentAdmin['group_id'] : (int)session('group_id');
         $currentUser   = isset($currentAdmin['username']) ? trim((string)$currentAdmin['username']) : trim((string)session('username'));
@@ -499,6 +507,7 @@ class Client extends Model
 
         // 基础口径对齐“客户列表”查询链路
         $query = $this->buildClientSearchAllBaseQuery($baseKeyword, $isSuperAdmin);
+        $query->where($mapIsSuccess);
 
         // 检查客户扩展筛选：运营人员
         if (!empty($keyword['oper_user'])) {
