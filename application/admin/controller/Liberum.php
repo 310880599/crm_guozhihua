@@ -96,6 +96,7 @@ class Liberum extends Common{
         ];
 
         $result = $this->getLiberumLogService()->batchReturnToLiberum($ids, $operatorInfo);
+        $this->recordLiberumDangerOperationLog('公海提取记录批量退回', $ids, $operatorInfo, $result);
         return $result + ['data' => []];
     }
 
@@ -133,7 +134,60 @@ class Liberum extends Common{
         ];
 
         $result = $this->getLiberumLogService()->batchRestoreOwner($ids, $operatorInfo);
+        $this->recordLiberumDangerOperationLog('公海流入记录批量恢复', $ids, $operatorInfo, $result);
         return $result + ['data' => []];
+    }
+
+    /**
+     * 记录公海高危操作日志。
+     * 写日志失败时静默处理，避免影响主业务流程。
+     *
+     * @param string $operation
+     * @param array $ids
+     * @param array $operatorInfo
+     * @param array $result
+     */
+    private function recordLiberumDangerOperationLog($operation, array $ids, array $operatorInfo, array $result)
+    {
+        try {
+            $totalCount = count($ids);
+            $safeIds = array_slice($ids, 0, 50);
+            $safeIds = array_map(function ($id) {
+                return (string)$id;
+            }, $safeIds);
+            $idsText = implode(',', $safeIds);
+            if ($idsText === '') {
+                $idsText = '-';
+            }
+
+            $msg = isset($result['msg']) ? (string)$result['msg'] : '';
+            if (function_exists('mb_substr')) {
+                $msg = mb_substr($msg, 0, 200, 'UTF-8');
+            } else {
+                $msg = substr($msg, 0, 200);
+            }
+
+            $ip = '';
+            try {
+                $ip = request()->ip();
+            } catch (\Throwable $e) {
+                $ip = '';
+            }
+
+            $content = '公海高危操作日志：操作=' . (string)$operation
+                . '，admin_id=' . (int)($operatorInfo['admin_id'] ?? 0)
+                . '，username=' . (string)($operatorInfo['username'] ?? '')
+                . '，ids=' . $idsText
+                . '，total_count=' . $totalCount
+                . '，code=' . (string)($result['code'] ?? '')
+                . '，msg=' . $msg
+                . '，operate_time=' . date('Y-m-d H:i:s')
+                . '，ip=' . (string)$ip;
+
+            \think\Log::record($content, 'info');
+        } catch (\Throwable $e) {
+            // 日志失败不抛出，避免影响正常业务响应
+        }
     }
 
     // 公海类型
