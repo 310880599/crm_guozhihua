@@ -55,10 +55,6 @@
     </div>
 </div>
 
-<script type="text/html" id="pickLogActionTpl">
-    <a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="placeholder">查看</a>
-</script>
-
 <script type="text/html" id="pickLogTopBtn">
     <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchReturn">
         <i class="layui-icon">&#xe65a;</i>批量退回公海
@@ -100,7 +96,6 @@
                         ? '<span class="layui-badge layui-bg-orange">已退回</span>'
                         : '<span class="layui-badge-rim">未退回</span>';
                 }},
-                {title: '操作', fixed: 'right', width: 100, align: 'center', toolbar: '#pickLogActionTpl'}
             ]]
         });
 
@@ -119,12 +114,6 @@
                 where: {},
                 page: {curr: 1}
             });
-        });
-
-        table.on('tool(' + tableId + ')', function (obj) {
-            if (obj.event === 'placeholder') {
-                layer.msg('仅支持查询展示');
-            }
         });
 
         table.on('toolbar(' + tableId + ')', function (obj) {

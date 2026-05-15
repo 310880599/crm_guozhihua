@@ -63,10 +63,6 @@
     </div>
 </div>
 
-<script type="text/html" id="inLogActionTpl">
-    <a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="placeholder">查看</a>
-</script>
-
 <script type="text/html" id="inLogToolbarTpl">
     <div class="layui-btn-container">
         <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" lay-event="batchRestoreOwner">批量恢复原负责人</button>
@@ -133,7 +129,6 @@
                     return d.recover_operator_name || d.recover_operator_id || '';
                 }},
                 {field: 'recovered_time', title: '恢复时间', minWidth: 170},
-                {title: '操作', fixed: 'right', width: 100, align: 'center', toolbar: '#inLogActionTpl'}
             ]]
         });
 
@@ -152,12 +147,6 @@
                 where: {},
                 page: {curr: 1}
             });
-        });
-
-        table.on('tool(' + tableId + ')', function (obj) {
-            if (obj.event === 'placeholder') {
-                layer.msg('仅支持查询展示');
-            }
         });
 
         table.on('toolbar(' + tableId + ')', function (obj) {
