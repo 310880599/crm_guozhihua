@@ -51,6 +51,7 @@
                     </div>
                     <div class="layui-inline">
                         <button class="layui-btn" lay-submit lay-filter="in-log-search"><i class="layui-icon layui-icon-search"></i>查询</button>
+                        <button type="button" class="layui-btn layui-btn-normal" id="in-log-export"><i class="layui-icon layui-icon-export"></i>导出数据</button>
                         <button type="button" class="layui-btn layui-btn-primary" id="in-log-reset">重置</button>
                     </div>
                 </div>
@@ -75,6 +76,7 @@
         var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery;
         var tableId = 'inLogTable';
         var baseUrl = "{:url('Liberum/getInLogList')}";
+        var exportUrl = "{:url('Liberum/exportInLog')}";
         var batchRestoreUrl = "{:url('Liberum/batchRestoreOwner')}";
         var canDangerOperate = {$canDangerOperate|default=0};
 
@@ -147,6 +149,13 @@
                 where: {},
                 page: {curr: 1}
             });
+        });
+
+        $('#in-log-export').on('click', function () {
+            var field = form.val('in-log-search-form') || {};
+            var query = $.param(field);
+            var url = exportUrl + (query ? ('?' + query) : '');
+            window.location.href = url;
         });
 
         table.on('toolbar(' + tableId + ')', function (obj) {

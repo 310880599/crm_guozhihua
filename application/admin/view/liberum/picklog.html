@@ -43,6 +43,7 @@
                     </div>
                     <div class="layui-inline">
                         <button class="layui-btn" lay-submit lay-filter="pick-log-search"><i class="layui-icon layui-icon-search"></i>查询</button>
+                        <button type="button" class="layui-btn layui-btn-normal" id="pick-log-export"><i class="layui-icon layui-icon-export"></i>导出数据</button>
                         <button type="button" class="layui-btn layui-btn-primary" id="pick-log-reset">重置</button>
                     </div>
                 </div>
@@ -67,6 +68,7 @@
         var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery;
         var tableId = 'pickLogTable';
         var baseUrl = "{:url('Liberum/getPickLogList')}";
+        var exportUrl = "{:url('Liberum/exportPickLog')}";
         var canDangerOperate = {$canDangerOperate|default=0};
 
         laydate.render({ elem: '#pick_date' });
@@ -114,6 +116,13 @@
                 where: {},
                 page: {curr: 1}
             });
+        });
+
+        $('#pick-log-export').on('click', function () {
+            var field = form.val('pick-log-search-form') || {};
+            var query = $.param(field);
+            var url = exportUrl + (query ? ('?' + query) : '');
+            window.location.href = url;
         });
 
         table.on('toolbar(' + tableId + ')', function (obj) {

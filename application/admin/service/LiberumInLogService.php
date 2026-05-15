@@ -8,6 +8,8 @@ use think\Db;
 
 class LiberumInLogService extends BaseAdminService
 {
+    const EXPORT_LIMIT = 5000;
+
     public function getInLogList($params = [])
     {
         $params = is_array($params) ? $params : [];
@@ -132,6 +134,25 @@ class LiberumInLogService extends BaseAdminService
 
         return [
             'count' => $count,
+            'data' => $data,
+        ];
+    }
+
+    public function exportInLog($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        unset($params['page'], $params['limit']);
+        $params['page'] = 1;
+        $params['limit'] = self::EXPORT_LIMIT;
+
+        $list = $this->getInLogList($params);
+        $data = isset($list['data']) && is_array($list['data']) ? $list['data'] : [];
+        if (count($data) > self::EXPORT_LIMIT) {
+            $data = array_slice($data, 0, self::EXPORT_LIMIT);
+        }
+
+        return [
+            'count' => min((int)($list['count'] ?? 0), self::EXPORT_LIMIT),
             'data' => $data,
         ];
     }

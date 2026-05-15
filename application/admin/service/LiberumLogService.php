@@ -35,6 +35,16 @@ class LiberumLogService extends BaseAdminService
         return $this->getInLogService()->getInLogList($params);
     }
 
+    public function exportPickLog($params = [])
+    {
+        return $this->getPickLogService()->exportPickLog($params);
+    }
+
+    public function exportInLog($params = [])
+    {
+        return $this->getInLogService()->exportInLog($params);
+    }
+
     public function batchReturnToLiberum($ids = [], $operatorInfo = [])
     {
         return $this->getPickLogService()->batchReturnToLiberum($ids, $operatorInfo);

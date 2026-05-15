@@ -9,6 +9,8 @@ use app\admin\model\LiberumType as LiberumTypeModel;
 use app\admin\service\LiberumLogService;
 use app\admin\service\LiberumTypeService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class Liberum extends Common{
 
@@ -77,6 +79,50 @@ class Liberum extends Common{
         ]);
     }
 
+    // 客户提取记录导出
+    public function exportPickLog()
+    {
+        if (!class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            return ['code' => -200, 'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出', 'data' => []];
+        }
+
+        $params = Request::param();
+        $list = $this->getLiberumLogService()->exportPickLog($params);
+        $rows = isset($list['data']) && is_array($list['data']) ? $list['data'] : [];
+
+        $headers = [
+            'ID',
+            '客户ID',
+            '客户名称',
+            '客户电话',
+            '提取人',
+            '提取日期',
+            '提取时间',
+            '原负责人',
+            '当前负责人',
+            '是否已退回',
+        ];
+
+        $dataRows = [];
+        foreach ($rows as $row) {
+            $isReturned = (int)($row['is_returned'] ?? 0) === 1 ? '已退回' : '未退回';
+            $dataRows[] = [
+                (string)($row['id'] ?? ''),
+                (string)($row['client_id'] ?? ($row['leads_id'] ?? '')),
+                (string)($row['client_name'] ?? ($row['kh_name'] ?? '')),
+                (string)($row['client_phone'] ?? ($row['phone'] ?? '')),
+                (string)($row['pick_user'] ?? ($row['operator_name'] ?? '')),
+                (string)($row['pick_date'] ?? ''),
+                (string)($row['pick_time'] ?? ''),
+                (string)($row['before_pr_user'] ?? ''),
+                (string)($row['current_pr_user'] ?? ($row['pr_user'] ?? '')),
+                $isReturned,
+            ];
+        }
+
+        $this->downloadExcel('客户提取记录_' . date('Ymd_His') . '.xlsx', $headers, $dataRows);
+    }
+
     // 客户提取记录批量退回公海
     public function batchReturnToLiberum()
     {
@@ -113,6 +159,85 @@ class Liberum extends Common{
             'count' => (int)($list['count'] ?? 0),
             'data' => $list['data'] ?? [],
         ]);
+    }
+
+    // 客户流入公海记录导出
+    public function exportInLog()
+    {
+        if (!class_exists('\PhpOffice\PhpSpreadsheet\Spreadsheet')) {
+            return ['code' => -200, 'msg' => '导出失败：系统缺少 PhpSpreadsheet 依赖，请先安装后再导出', 'data' => []];
+        }
+
+        $params = Request::param();
+        $list = $this->getLiberumLogService()->exportInLog($params);
+        $rows = isset($list['data']) && is_array($list['data']) ? $list['data'] : [];
+
+        $headers = [
+            'ID',
+            '客户ID',
+            '客户名称',
+            '客户电话',
+            '原负责人',
+            '当前负责人',
+            '流入原因',
+            '流入时间',
+            '操作人',
+            '当前状态',
+            '当前公海类型',
+            '来源类型',
+            '是否已恢复',
+            '恢复操作人',
+            '恢复时间',
+        ];
+
+        $dataRows = [];
+        foreach ($rows as $row) {
+            $sourceType = (string)($row['source_type'] ?? '');
+            if ($sourceType === 'pick_return') {
+                $sourceTypeText = '提取退回';
+            } elseif ($sourceType === 'manual') {
+                $sourceTypeText = '手动移入';
+            } elseif ($sourceType === 'auto_rule') {
+                $sourceTypeText = '自动规则流入';
+            } elseif ($sourceType === 'pick_log_batch_return') {
+                $sourceTypeText = '批量退回公海';
+            } else {
+                $sourceTypeText = $sourceType;
+            }
+
+            $statusText = '未知';
+            if ((string)($row['current_status'] ?? '') !== '') {
+                $status = (int)$row['current_status'];
+                if ($status === 1) {
+                    $statusText = '客户';
+                } elseif ($status === 2) {
+                    $statusText = '公海';
+                } else {
+                    $statusText = (string)$row['current_status'];
+                }
+            }
+
+            $isRecovered = (int)($row['is_recovered'] ?? 0) === 1 ? '已恢复' : '未恢复';
+            $dataRows[] = [
+                (string)($row['id'] ?? ''),
+                (string)($row['client_id'] ?? ($row['leads_id'] ?? '')),
+                (string)($row['client_name'] ?? ($row['kh_name'] ?? '')),
+                (string)($row['client_phone'] ?? ($row['phone'] ?? '')),
+                (string)($row['before_pr_user'] ?? ''),
+                (string)($row['current_pr_user'] ?? ''),
+                (string)($row['reason'] ?? ''),
+                (string)($row['in_time'] ?? ''),
+                (string)($row['operator_name'] ?? ($row['operator_id'] ?? '')),
+                $statusText,
+                (string)($row['current_gh_type'] ?? ''),
+                $sourceTypeText,
+                $isRecovered,
+                (string)($row['recover_operator_name'] ?? ($row['recover_operator_id'] ?? '')),
+                (string)($row['recovered_time'] ?? ''),
+            ];
+        }
+
+        $this->downloadExcel('客户流入公海记录_' . date('Ymd_His') . '.xlsx', $headers, $dataRows);
     }
 
     // 客户流入公海记录批量恢复原负责人
@@ -819,5 +944,50 @@ class Liberum extends Common{
             \think\Log::record('公海高危操作权限校验异常：' . $e->getMessage(), 'error');
             return false;
         }
+    }
+
+    private function downloadExcel($filename, array $headers, array $rows)
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $col = 1;
+        foreach ($headers as $header) {
+            $sheet->setCellValueByColumnAndRow($col, 1, (string)$header);
+            $col++;
+        }
+
+        $rowNum = 2;
+        foreach ($rows as $row) {
+            $col = 1;
+            foreach ($row as $value) {
+                $sheet->setCellValueByColumnAndRow($col, $rowNum, (string)$value);
+                $col++;
+            }
+            $rowNum++;
+        }
+
+        foreach (range('A', $sheet->getHighestColumn()) as $letter) {
+            $sheet->getColumnDimension($letter)->setAutoSize(true);
+        }
+
+        if (function_exists('ob_get_level')) {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+        }
+
+        $writer = new Xlsx($spreadsheet);
+        $encodedFilename = rawurlencode($filename);
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header("Content-Disposition: attachment; filename=\"{$filename}\"; filename*=UTF-8''{$encodedFilename}");
+        header('Cache-Control: max-age=0');
+        header('Cache-Control: max-age=1');
+        header('Expires: Mon, 26 Jul 1997 05:00:00 GMT');
+        header('Last-Modified: ' . gmdate('D, d M Y H:i:s') . ' GMT');
+        header('Cache-Control: cache, must-revalidate');
+        header('Pragma: public');
+        $writer->save('php://output');
+        exit;
     }
 }

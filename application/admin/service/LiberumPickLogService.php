@@ -8,6 +8,8 @@ use think\Db;
 
 class LiberumPickLogService extends BaseAdminService
 {
+    const EXPORT_LIMIT = 5000;
+
     public function getPickLogList($params = [])
     {
         $params = is_array($params) ? $params : [];
@@ -108,6 +110,25 @@ class LiberumPickLogService extends BaseAdminService
 
         return [
             'count' => $count,
+            'data' => $data,
+        ];
+    }
+
+    public function exportPickLog($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        unset($params['page'], $params['limit']);
+        $params['page'] = 1;
+        $params['limit'] = self::EXPORT_LIMIT;
+
+        $list = $this->getPickLogList($params);
+        $data = isset($list['data']) && is_array($list['data']) ? $list['data'] : [];
+        if (count($data) > self::EXPORT_LIMIT) {
+            $data = array_slice($data, 0, self::EXPORT_LIMIT);
+        }
+
+        return [
+            'count' => min((int)($list['count'] ?? 0), self::EXPORT_LIMIT),
             'data' => $data,
         ];
     }
