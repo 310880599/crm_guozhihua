@@ -873,6 +873,61 @@
         overflow-wrap: anywhere !important;
         line-height: 22px !important;
     }
+
+    /* 检查客户高级查询右侧操作按钮（仅当前页面该区域生效） */
+    .checkclient-search-actions {
+        float: right;
+        padding-bottom: 15px;
+        display: flex !important;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        margin-right: 10px;
+    }
+
+    .checkclient-search-actions .layui-btn {
+        width: 100px;
+        height: 34px;
+        line-height: 34px;
+        margin-left: 0 !important;
+        border-radius: 6px !important;
+        font-size: 13px;
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+    }
+
+    .checkclient-search-actions #checkclient-reset-btn,
+    .checkclient-search-actions .checkclient-reset-btn {
+        background: #4285f4 !important;
+        border-color: #4285f4 !important;
+        color: #fff !important;
+    }
+
+    .checkclient-search-actions #checkclient-reset-btn i,
+    .checkclient-search-actions .checkclient-reset-btn i {
+        color: #fff !important;
+    }
+
+    .checkclient-search-actions .checkclient-search-btn {
+        background: #4285f4 !important;
+        border-color: #4285f4 !important;
+        color: #fff !important;
+    }
+
+    .checkclient-search-actions .checkclient-search-btn i {
+        color: #fff !important;
+    }
+
+    .checkclient-search-actions #checkclient-reset-btn:hover,
+    .checkclient-search-actions .checkclient-reset-btn:hover,
+    .checkclient-search-actions .checkclient-search-btn:hover {
+        background: #3367d6 !important;
+        border-color: #3367d6 !important;
+        color: #fff !important;
+        box-shadow: 0 4px 12px rgba(66, 133, 244, 0.28);
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域 -->
@@ -1015,11 +1070,11 @@
 
                 </div>
 
-                <div class="layui-inline" style="float:right;padding-bottom:15px">
-                    <button type="button" class="layui-btn layui-btn-primary" id="checkclient-reset-btn">
+                <div class="layui-inline checkclient-search-actions">
+                    <button type="button" class="layui-btn layui-btn-primary checkclient-reset-btn" id="checkclient-reset-btn" style="margin-bottom: 20px;">
                         <i class="layui-icon">&#xe669;</i>重置
                     </button>
-                    <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
+                    <button class="layui-btn layuiadmin-btn-list checkclient-search-btn" lay-submit lay-filter="LAY-app-contlist-search">
                         <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align:sub;"></i>查询数据
                     </button>
                 </div>
