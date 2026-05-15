@@ -81,6 +81,9 @@ class Liberum extends Common{
         if (!request()->isPost()) {
             return ['code' => -200, 'msg' => '非法请求', 'data' => []];
         }
+        if (!$this->hasLiberumDangerOperationPermission()) {
+            return ['code' => -200, 'msg' => '无权限执行该操作', 'data' => []];
+        }
 
         $ids = input('post.ids/a', []);
         if (empty($ids) || !is_array($ids)) {
@@ -114,6 +117,9 @@ class Liberum extends Common{
     {
         if (!request()->isPost()) {
             return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+        if (!$this->hasLiberumDangerOperationPermission()) {
+            return ['code' => -200, 'msg' => '无权限执行该操作', 'data' => []];
         }
 
         $ids = input('post.ids/a', []);
@@ -668,5 +674,72 @@ class Liberum extends Common{
             
             return ['code' => 1, 'msg' => '服务器内部错误'];
         }
+    }
+
+    /**
+     * 公海高危批量操作权限校验。
+     * 允许：超级管理员 / 管理员 / 具备当前节点权限的后台人员。
+     * 兜底：aid=1、role=admin|super_admin、用户名命中超管识别逻辑。
+     */
+    private function hasLiberumDangerOperationPermission(): bool
+    {
+        $adminId = (int)Session::get('aid');
+        if ($adminId <= 0) {
+            return false;
+        }
+
+        $role = strtolower(trim((string)Session::get('role')));
+        if (in_array($role, ['admin', 'super_admin'], true)) {
+            return true;
+        }
+        if ($adminId === 1) {
+            return true;
+        }
+
+        $prefix = config('database.prefix');
+        $adminTable = $prefix . 'admin';
+        $authGroupTable = $prefix . 'auth_group';
+        $authRuleTable = $prefix . 'auth_rule';
+
+        $adminInfo = Db::table($adminTable)
+            ->where('admin_id', $adminId)
+            ->field('group_id,username,is_super_admin')
+            ->find();
+
+        $groupId = (int)($adminInfo['group_id'] ?? Session::get('group_id'));
+        $username = strtolower(trim((string)($adminInfo['username'] ?? Session::get('username'))));
+        $isSuperAdmin = !empty($adminInfo['is_super_admin']);
+
+        // 与项目已有超管识别习惯保持兼容（包括历史特殊管理员账号）。
+        $specialAdminIds = [395, 350, 375, 387];
+        if (
+            $groupId === 1
+            || $isSuperAdmin
+            || $username === 'admin'
+            || in_array($adminId, $specialAdminIds, true)
+        ) {
+            return true;
+        }
+
+        // 复用项目现有 auth_rule + auth_group.rules 节点权限模式。
+        $href = strtolower((string)request()->controller()) . '/' . strtolower((string)request()->action());
+        $ruleId = Db::table($authRuleTable)->where('href', $href)->value('id');
+        if (!empty($ruleId)) {
+            $rules = Db::table($adminTable)->alias('a')
+                ->join($authGroupTable . ' ag', 'a.group_id = ag.group_id', 'left')
+                ->where('a.admin_id', $adminId)
+                ->value('ag.rules');
+
+            if (!empty($rules)) {
+                $ruleList = array_values(array_filter(array_map('trim', explode(',', (string)$rules)), function ($item) {
+                    return $item !== '';
+                }));
+                if (in_array((string)$ruleId, $ruleList, true)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }
