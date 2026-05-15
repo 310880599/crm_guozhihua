@@ -71,6 +71,7 @@
         var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery;
         var tableId = 'pickLogTable';
         var baseUrl = "{:url('Liberum/getPickLogList')}";
+        var canDangerOperate = {$canDangerOperate|default=0};
 
         laydate.render({ elem: '#pick_date' });
 
@@ -81,7 +82,7 @@
             method: 'get',
             page: true,
             limit: 10,
-            toolbar: '#pickLogTopBtn',
+            toolbar: canDangerOperate ? '#pickLogTopBtn' : false,
             cols: [[
                 {type: 'checkbox', fixed: 'left'},
                 {field: 'id', title: 'ID', width: 80, sort: true},

@@ -53,12 +53,14 @@ class Liberum extends Common{
     // 客户提取记录页面
     public function pickLog()
     {
+        $this->assign('canDangerOperate', $this->hasLiberumDangerOperationPermission() ? 1 : 0);
         return $this->fetch('liberum/picklog');
     }
 
     // 客户流入公海记录页面
     public function inLog()
     {
+        $this->assign('canDangerOperate', $this->hasLiberumDangerOperationPermission() ? 1 : 0);
         return $this->fetch('liberum/inlog');
     }
 

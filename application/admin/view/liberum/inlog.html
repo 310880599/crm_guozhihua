@@ -80,6 +80,7 @@
         var tableId = 'inLogTable';
         var baseUrl = "{:url('Liberum/getInLogList')}";
         var batchRestoreUrl = "{:url('Liberum/batchRestoreOwner')}";
+        var canDangerOperate = {$canDangerOperate|default=0};
 
         laydate.render({ elem: '#in_date' });
 
@@ -90,7 +91,7 @@
             method: 'get',
             page: true,
             limit: 10,
-            toolbar: '#inLogToolbarTpl',
+            toolbar: canDangerOperate ? '#inLogToolbarTpl' : false,
             cols: [[
                 {type: 'checkbox', fixed: 'left'},
                 {field: 'id', title: 'ID', width: 80, sort: true},
