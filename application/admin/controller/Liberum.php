@@ -683,63 +683,85 @@ class Liberum extends Common{
      */
     private function hasLiberumDangerOperationPermission(): bool
     {
-        $adminId = (int)Session::get('aid');
-        if ($adminId <= 0) {
-            return false;
-        }
+        try {
+            $adminId = (int)Session::get('aid');
+            if ($adminId <= 0) {
+                return false;
+            }
 
-        $role = strtolower(trim((string)Session::get('role')));
-        if (in_array($role, ['admin', 'super_admin'], true)) {
-            return true;
-        }
-        if ($adminId === 1) {
-            return true;
-        }
+            $role = strtolower(trim((string)Session::get('role')));
+            if (in_array($role, ['admin', 'super_admin'], true)) {
+                return true;
+            }
+            if ($adminId === 1) {
+                return true;
+            }
 
-        $prefix = config('database.prefix');
-        $adminTable = $prefix . 'admin';
-        $authGroupTable = $prefix . 'auth_group';
-        $authRuleTable = $prefix . 'auth_rule';
+            $prefix = config('database.prefix');
+            $adminTable = $prefix . 'admin';
+            $authGroupTable = $prefix . 'auth_group';
+            $authRuleTable = $prefix . 'auth_rule';
 
-        $adminInfo = Db::table($adminTable)
-            ->where('admin_id', $adminId)
-            ->field('group_id,username,is_super_admin')
-            ->find();
+            // 仅查询稳定存在的字段，避免因历史库结构差异导致 SQL 报错。
+            $adminInfo = Db::table($adminTable)
+                ->where('admin_id', $adminId)
+                ->field('admin_id,group_id,username')
+                ->find();
 
-        $groupId = (int)($adminInfo['group_id'] ?? Session::get('group_id'));
-        $username = strtolower(trim((string)($adminInfo['username'] ?? Session::get('username'))));
-        $isSuperAdmin = !empty($adminInfo['is_super_admin']);
+            $groupId = (int)($adminInfo['group_id'] ?? Session::get('group_id'));
+            $username = strtolower(trim((string)($adminInfo['username'] ?? Session::get('username'))));
 
-        // 与项目已有超管识别习惯保持兼容（包括历史特殊管理员账号）。
-        $specialAdminIds = [395, 350, 375, 387];
-        if (
-            $groupId === 1
-            || $isSuperAdmin
-            || $username === 'admin'
-            || in_array($adminId, $specialAdminIds, true)
-        ) {
-            return true;
-        }
+            // 与项目已有超管识别习惯保持兼容（包括历史特殊管理员账号）。
+            $specialAdminIds = [395, 350, 375, 387];
+            if (
+                $groupId === 1
+                || $username === 'admin'
+                || in_array($adminId, $specialAdminIds, true)
+            ) {
+                return true;
+            }
 
-        // 复用项目现有 auth_rule + auth_group.rules 节点权限模式。
-        $href = strtolower((string)request()->controller()) . '/' . strtolower((string)request()->action());
-        $ruleId = Db::table($authRuleTable)->where('href', $href)->value('id');
-        if (!empty($ruleId)) {
-            $rules = Db::table($adminTable)->alias('a')
-                ->join($authGroupTable . ' ag', 'a.group_id = ag.group_id', 'left')
-                ->where('a.admin_id', $adminId)
-                ->value('ag.rules');
+            // 复用项目现有 auth_rule + auth_group.rules 节点权限模式，并兼容多种 href 存储格式。
+            $controller = (string)request()->controller();
+            $action = (string)request()->action();
+            $controllerLower = strtolower($controller);
+            $actionLower = strtolower($action);
+            $hrefCandidates = array_values(array_unique(array_filter([
+                $controllerLower . '/' . $actionLower,
+                $controller . '/' . $action,
+                '/admin/' . $controllerLower . '/' . $actionLower,
+                '/admin/' . $controller . '/' . $action,
+                $actionLower,
+                $action,
+            ], function ($item) {
+                return $item !== '';
+            })));
 
-            if (!empty($rules)) {
-                $ruleList = array_values(array_filter(array_map('trim', explode(',', (string)$rules)), function ($item) {
-                    return $item !== '';
-                }));
-                if (in_array((string)$ruleId, $ruleList, true)) {
-                    return true;
+            $ruleIds = Db::table($authRuleTable)
+                ->whereIn('href', $hrefCandidates)
+                ->column('id');
+            if (!empty($ruleIds)) {
+                $rules = Db::table($adminTable)->alias('a')
+                    ->join($authGroupTable . ' ag', 'a.group_id = ag.group_id', 'left')
+                    ->where('a.admin_id', $adminId)
+                    ->value('ag.rules');
+
+                if (!empty($rules)) {
+                    $ruleList = array_values(array_filter(array_map('trim', explode(',', (string)$rules)), function ($item) {
+                        return $item !== '';
+                    }));
+                    foreach ($ruleIds as $ruleId) {
+                        if (in_array((string)$ruleId, $ruleList, true)) {
+                            return true;
+                        }
+                    }
                 }
             }
-        }
 
-        return false;
+            return false;
+        } catch (\Throwable $e) {
+            \think\Log::record('公海高危操作权限校验异常：' . $e->getMessage(), 'error');
+            return false;
+        }
     }
 }
