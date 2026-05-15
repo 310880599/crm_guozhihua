@@ -571,7 +571,7 @@ class Client extends Common
         }
 
         // 角色相关常量
-        $specialAdminIds     = [1, 395, 350, 375, 387];
+        $specialAdminIds     = [1, 395, 350, 375, 387,391, 405];
         $allVisibleGroupIds  = [10, 11, 14, 17, 18 ,19, 21, 22]; 
         $teamVisibleGroupIds = [17, 18];
         $selfVisibleGroupIds = [10, 11, 14 ,19, 21, 22]; 
@@ -628,7 +628,7 @@ class Client extends Common
     {
         $adminId = (int) Session::get('aid');
         $groupId = (int) Session::get('group_id');
-        $specialAdminIds = [395, 350, 375, 387];
+        $specialAdminIds = [395, 350, 375, 387,391, 405];
 
         return (
             $adminId === 1
