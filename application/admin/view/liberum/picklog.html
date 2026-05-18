@@ -60,6 +60,9 @@
     <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchReturn">
         <i class="layui-icon">&#xe65a;</i>批量退回公海
     </button>
+    <button type="button" class="layui-btn layui-btn-danger layui-btn-sm" lay-event="batchHide">
+        <i class="layui-icon">&#xe640;</i>批量隐藏记录
+    </button>
 </script>
 
 {include file="common/foot"/}
@@ -126,16 +129,7 @@
         });
 
         table.on('toolbar(' + tableId + ')', function (obj) {
-            if (obj.event !== 'batchReturn') {
-                return;
-            }
-
             var checkedData = table.checkStatus(tableId).data || [];
-            if (!checkedData.length) {
-                layer.msg('请选择需要退回公海的记录');
-                return;
-            }
-
             var ids = [];
             $.each(checkedData, function (_, item) {
                 var id = parseInt(item.id, 10);
@@ -144,34 +138,68 @@
                 }
             });
             ids = Array.from(new Set(ids));
-            if (!ids.length) {
-                layer.msg('请选择需要退回公海的记录');
+
+            if (obj.event === 'batchReturn') {
+                if (!ids.length) {
+                    layer.msg('请选择需要退回公海的记录');
+                    return;
+                }
+
+                layer.confirm('确定要将选中的客户退回公海吗？系统只会退回当前仍由领取人负责、未成交、未退回的客户。', {
+                    icon: 3,
+                    title: '提示'
+                }, function (index) {
+                    $.ajax({
+                        url: "{:url('Liberum/batchReturnToLiberum')}",
+                        type: 'post',
+                        dataType: 'json',
+                        data: {ids: ids},
+                        success: function (res) {
+                            if (parseInt(res.code, 10) === 0) {
+                                layer.msg(res.msg || '操作成功');
+                                table.reload(tableId, {});
+                            } else {
+                                layer.msg(res.msg || '操作失败');
+                            }
+                        },
+                        error: function () {
+                            layer.msg('请求失败，请稍后重试');
+                        }
+                    });
+                    layer.close(index);
+                });
                 return;
             }
 
-            layer.confirm('确定要将选中的客户退回公海吗？系统只会退回当前仍由领取人负责、未成交、未退回的客户。', {
-                icon: 3,
-                title: '提示'
-            }, function (index) {
-                $.ajax({
-                    url: "{:url('Liberum/batchReturnToLiberum')}",
-                    type: 'post',
-                    dataType: 'json',
-                    data: {ids: ids},
-                    success: function (res) {
-                        if (parseInt(res.code, 10) === 0) {
-                            layer.msg(res.msg || '操作成功');
-                            table.reload(tableId, {});
-                        } else {
-                            layer.msg(res.msg || '操作失败');
+            if (obj.event === 'batchHide') {
+                if (!ids.length) {
+                    layer.msg('请选择需要隐藏的记录');
+                    return;
+                }
+                layer.confirm('确定要隐藏选中的客户提取记录吗？隐藏后默认列表将不再显示，但数据库仍会保留记录。', {
+                    icon: 3,
+                    title: '提示'
+                }, function (index) {
+                    $.ajax({
+                        url: "{:url('Liberum/batchHidePickLog')}",
+                        type: 'post',
+                        dataType: 'json',
+                        data: {ids: ids},
+                        success: function (res) {
+                            if (parseInt(res.code, 10) === 0) {
+                                layer.msg(res.msg || '隐藏成功');
+                                table.reload(tableId, {});
+                            } else {
+                                layer.msg(res.msg || '隐藏失败');
+                            }
+                        },
+                        error: function () {
+                            layer.msg('请求失败，请稍后重试');
                         }
-                    },
-                    error: function () {
-                        layer.msg('请求失败，请稍后重试');
-                    }
+                    });
+                    layer.close(index);
                 });
-                layer.close(index);
-            });
+            }
         });
     });
 </script>

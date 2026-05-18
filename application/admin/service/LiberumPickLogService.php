@@ -22,6 +22,7 @@ class LiberumPickLogService extends BaseAdminService
             $hasActiveLeadsId = $this->hasColumn('crm_liberum_pick_log', 'active_leads_id');
             $hasOperatorName = $this->hasColumn('crm_liberum_pick_log', 'operator_name');
             $hasPickOperatorId = $this->hasColumn('crm_liberum_pick_log', 'operator_id');
+            $hasIsDeleted = $this->hasColumn('crm_liberum_pick_log', 'is_deleted');
 
             $leadJoin = $hasActiveLeadsId
                 ? 'l.id = IFNULL(NULLIF(pl.leads_id, 0), pl.active_leads_id)'
@@ -40,6 +41,9 @@ class LiberumPickLogService extends BaseAdminService
             $model = new LiberumPickLog();
             $query = $model->alias('pl')
                 ->leftJoin('crm_leads l', $leadJoin);
+            if ($hasIsDeleted) {
+                $query->where('pl.is_deleted', 0);
+            }
 
             if (!empty($params['pick_date'])) {
                 $query->where('pl.pick_date', trim((string)$params['pick_date']));
@@ -265,6 +269,63 @@ class LiberumPickLogService extends BaseAdminService
             'count' => min((int)($list['count'] ?? 0), self::EXPORT_LIMIT),
             'data' => $data,
         ];
+    }
+
+    /**
+     * 批量隐藏客户提取记录（软隐藏，不做物理删除）。
+     *
+     * @param array $ids 需要隐藏的日志ID数组
+     * @param array $operatorInfo 当前操作人信息（admin_id、username）
+     * @return array
+     */
+    public function batchHidePickLog($ids = [], $operatorInfo = [])
+    {
+        $ids = is_array($ids) ? $ids : [];
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($ids)) {
+            return ['code' => -200, 'msg' => '请选择需要隐藏的记录', 'data' => []];
+        }
+
+        $hasIsDeleted = $this->hasColumn('crm_liberum_pick_log', 'is_deleted');
+        if (!$hasIsDeleted) {
+            return ['code' => -200, 'msg' => '当前表缺少 is_deleted 字段，无法执行隐藏操作', 'data' => []];
+        }
+
+        $hasDeletedTime = $this->hasColumn('crm_liberum_pick_log', 'deleted_time');
+        $hasDeletedBy = $this->hasColumn('crm_liberum_pick_log', 'deleted_by');
+        $hasDeleteRemark = $this->hasColumn('crm_liberum_pick_log', 'delete_remark');
+
+        $nowDateTime = date('Y-m-d H:i:s');
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $updateData = [
+            'is_deleted' => 1,
+        ];
+        if ($hasDeletedTime) {
+            $updateData['deleted_time'] = $nowDateTime;
+        }
+        if ($hasDeletedBy) {
+            $updateData['deleted_by'] = $operatorId;
+        }
+        if ($hasDeleteRemark) {
+            $updateData['delete_remark'] = '管理员批量隐藏提取记录';
+        }
+
+        try {
+            $affected = (int)Db::table('crm_liberum_pick_log')
+                ->whereIn('id', $ids)
+                ->where('is_deleted', 0)
+                ->update($updateData);
+        } catch (\Throwable $e) {
+            return ['code' => -200, 'msg' => '隐藏失败：' . $e->getMessage(), 'data' => []];
+        }
+
+        if ($affected <= 0) {
+            return ['code' => -200, 'msg' => '没有可隐藏的记录', 'data' => []];
+        }
+
+        return ['code' => 0, 'msg' => '隐藏成功', 'data' => ['count' => $affected]];
     }
 
     public function batchReturnToLiberum($ids = [], $operatorInfo = [])

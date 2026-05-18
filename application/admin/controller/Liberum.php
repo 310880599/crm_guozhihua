@@ -148,6 +148,31 @@ class Liberum extends Common{
         return $result + ['data' => []];
     }
 
+    // 客户提取记录批量隐藏
+    public function batchHidePickLog()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+        if (!$this->hasLiberumDangerOperationPermission()) {
+            return ['code' => -200, 'msg' => '无权限执行该操作', 'data' => []];
+        }
+
+        $ids = input('post.ids/a', []);
+        if (empty($ids) || !is_array($ids)) {
+            return ['code' => -200, 'msg' => '请选择需要隐藏的记录', 'data' => []];
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        $result = $this->getLiberumLogService()->batchHidePickLog($ids, $operatorInfo);
+        $this->recordLiberumDangerOperationLog('公海提取记录批量隐藏', $ids, $operatorInfo, $result);
+        return $result + ['data' => []];
+    }
+
     // 客户流入公海记录列表
     public function getInLogList()
     {
@@ -262,6 +287,31 @@ class Liberum extends Common{
 
         $result = $this->getLiberumLogService()->batchRestoreOwner($ids, $operatorInfo);
         $this->recordLiberumDangerOperationLog('公海流入记录批量恢复', $ids, $operatorInfo, $result);
+        return $result + ['data' => []];
+    }
+
+    // 客户流入公海记录批量隐藏
+    public function batchHideInLog()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+        if (!$this->hasLiberumDangerOperationPermission()) {
+            return ['code' => -200, 'msg' => '无权限执行该操作', 'data' => []];
+        }
+
+        $ids = input('post.ids/a', []);
+        if (empty($ids) || !is_array($ids)) {
+            return ['code' => -200, 'msg' => '请选择需要隐藏的记录', 'data' => []];
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        $result = $this->getLiberumLogService()->batchHideInLog($ids, $operatorInfo);
+        $this->recordLiberumDangerOperationLog('公海流入记录批量隐藏', $ids, $operatorInfo, $result);
         return $result + ['data' => []];
     }
 

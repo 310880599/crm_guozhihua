@@ -67,6 +67,7 @@
 <script type="text/html" id="inLogToolbarTpl">
     <div class="layui-btn-container">
         <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" lay-event="batchRestoreOwner">批量恢复原负责人</button>
+        <button type="button" class="layui-btn layui-btn-danger layui-btn-sm" lay-event="batchHide">批量隐藏记录</button>
     </div>
 </script>
 
@@ -78,6 +79,7 @@
         var baseUrl = "{:url('Liberum/getInLogList')}";
         var exportUrl = "{:url('Liberum/exportInLog')}";
         var batchRestoreUrl = "{:url('Liberum/batchRestoreOwner')}";
+        var batchHideUrl = "{:url('Liberum/batchHideInLog')}";
         var canDangerOperate = {$canDangerOperate|default=0};
 
         laydate.render({ elem: '#in_date' });
@@ -159,17 +161,8 @@
         });
 
         table.on('toolbar(' + tableId + ')', function (obj) {
-            if (obj.event !== 'batchRestoreOwner') {
-                return;
-            }
-
             var checkStatus = table.checkStatus(tableId);
             var selected = checkStatus.data || [];
-            if (!selected.length) {
-                layer.msg('请先勾选需要恢复的记录');
-                return;
-            }
-
             var ids = [];
             $.each(selected, function (idx, row) {
                 var id = parseInt(row.id, 10);
@@ -177,35 +170,66 @@
                     ids.push(id);
                 }
             });
-            if (!ids.length) {
-                layer.msg('未获取到有效记录ID');
+
+            if (obj.event === 'batchRestoreOwner') {
+                if (!ids.length) {
+                    layer.msg('请先勾选需要恢复的记录');
+                    return;
+                }
+
+                layer.confirm(
+                    '确定要恢复选中的客户吗？<br>系统只会恢复当前仍在公海中的客户，<br>已经被别人领取的客户不会恢复。',
+                    {icon: 3, title: '确认恢复'},
+                    function (index) {
+                        layer.close(index);
+                        $.post(batchRestoreUrl, {ids: ids}, function (res) {
+                            if (res && parseInt(res.code, 10) === 0) {
+                                layer.msg(res.msg || '批量恢复成功');
+                                var currPageText = $('.layui-laypage-curr em').last().text();
+                                var currPage = parseInt(currPageText, 10);
+                                if (!(currPage > 0)) {
+                                    currPage = 1;
+                                }
+                                table.reload(tableId, {
+                                    page: {curr: currPage}
+                                });
+                                return;
+                            }
+                            layer.msg((res && res.msg) ? res.msg : '批量恢复失败');
+                        }, 'json').fail(function () {
+                            layer.msg('请求失败，请稍后重试');
+                        });
+                    }
+                );
                 return;
             }
 
-            layer.confirm(
-                '确定要恢复选中的客户吗？<br>系统只会恢复当前仍在公海中的客户，<br>已经被别人领取的客户不会恢复。',
-                {icon: 3, title: '确认恢复'},
-                function (index) {
-                    layer.close(index);
-                    $.post(batchRestoreUrl, {ids: ids}, function (res) {
-                        if (res && parseInt(res.code, 10) === 0) {
-                            layer.msg(res.msg || '批量恢复成功');
-                            var currPageText = $('.layui-laypage-curr em').last().text();
-                            var currPage = parseInt(currPageText, 10);
-                            if (!(currPage > 0)) {
-                                currPage = 1;
-                            }
-                            table.reload(tableId, {
-                                page: {curr: currPage}
-                            });
-                            return;
-                        }
-                        layer.msg((res && res.msg) ? res.msg : '批量恢复失败');
-                    }, 'json').fail(function () {
-                        layer.msg('请求失败，请稍后重试');
-                    });
+            if (obj.event === 'batchHide') {
+                if (!ids.length) {
+                    layer.msg('请选择需要隐藏的记录');
+                    return;
                 }
-            );
+
+                layer.confirm(
+                    '确定要隐藏选中的客户流入公海记录吗？隐藏后默认列表将不再显示，但数据库仍会保留记录。',
+                    {icon: 3, title: '提示'},
+                    function (index) {
+                        layer.close(index);
+                        $.post(batchHideUrl, {ids: ids}, function (res) {
+                            if (res && parseInt(res.code, 10) === 0) {
+                                layer.msg(res.msg || '隐藏成功');
+                                table.reload(tableId, {
+                                    page: {curr: 1}
+                                });
+                                return;
+                            }
+                            layer.msg((res && res.msg) ? res.msg : '隐藏失败');
+                        }, 'json').fail(function () {
+                            layer.msg('请求失败，请稍后重试');
+                        });
+                    }
+                );
+            }
         });
     });
 </script>

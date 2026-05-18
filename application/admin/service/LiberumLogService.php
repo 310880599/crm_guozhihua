@@ -50,8 +50,18 @@ class LiberumLogService extends BaseAdminService
         return $this->getPickLogService()->batchReturnToLiberum($ids, $operatorInfo);
     }
 
+    public function batchHidePickLog($ids = [], $operatorInfo = [])
+    {
+        return $this->getPickLogService()->batchHidePickLog($ids, $operatorInfo);
+    }
+
     public function batchRestoreOwner($ids = [], $operatorInfo = [])
     {
         return $this->getInLogService()->batchRestoreOwner($ids, $operatorInfo);
+    }
+
+    public function batchHideInLog($ids = [], $operatorInfo = [])
+    {
+        return $this->getInLogService()->batchHideInLog($ids, $operatorInfo);
     }
 }
