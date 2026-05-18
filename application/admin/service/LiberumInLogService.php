@@ -24,6 +24,8 @@ class LiberumInLogService extends BaseAdminService
             $hasInSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
             $hasRecoverOperatorName = $this->hasColumn('crm_liberum_in_log', 'recover_operator_name');
             $hasRecoverOperatorId = $this->hasColumn('crm_liberum_in_log', 'recover_operator_id');
+            $hasRecoverTime = $this->hasColumn('crm_liberum_in_log', 'recover_time');
+            $hasRecoveredTime = $this->hasColumn('crm_liberum_in_log', 'recovered_time');
 
             $inOperatorNameField = $hasInOperatorName
                 ? 'IFNULL(MAX(il.operator_name), "") AS operator_name'
@@ -40,6 +42,13 @@ class LiberumInLogService extends BaseAdminService
             $sourceTypeField = $hasInSourceType
                 ? 'IFNULL(MAX(il.source_type), "") AS source_type'
                 : '"" AS source_type';
+            if ($hasRecoverTime) {
+                $recoveredTimeField = 'IFNULL(MAX(il.recover_time), "") AS recovered_time';
+            } elseif ($hasRecoveredTime) {
+                $recoveredTimeField = 'IFNULL(MAX(il.recovered_time), "") AS recovered_time';
+            } else {
+                $recoveredTimeField = '"" AS recovered_time';
+            }
 
             $model = new LiberumInLog();
             $query = $model->alias('il')
@@ -118,7 +127,7 @@ class LiberumInLogService extends BaseAdminService
                     $recoverOperatorIdField,
                     $recoverOperatorNameField,
                     'IFNULL(MAX(il.is_recovered), 0) AS is_recovered',
-                    'IFNULL(MAX(il.recovered_time), "") AS recovered_time',
+                    $recoveredTimeField,
                     'IFNULL(MAX(l.status), "") AS current_status',
                     'IFNULL(MAX(l.pr_gh_type), "") AS current_gh_type',
                     $sourceTypeField,
@@ -146,6 +155,7 @@ class LiberumInLogService extends BaseAdminService
                 unset($row);
             }
         } catch (\Throwable $e) {
+            \think\Log::record('客户流入公海记录查询失败：' . $e->getMessage(), 'error');
             $count = 0;
             $data = [];
         }
@@ -291,7 +301,8 @@ class LiberumInLogService extends BaseAdminService
         $nowDateTime = date('Y-m-d H:i:s');
         $nowTimestamp = time();
 
-        $hasLogRecoveredTime = $this->hasColumn('crm_liberum_in_log', 'recovered_time');
+        $hasLogRecoverTime = $this->hasColumn('crm_liberum_in_log', 'recover_time');
+        $hasLogRecoveredTime = !$hasLogRecoverTime && $this->hasColumn('crm_liberum_in_log', 'recovered_time');
         $hasLogRecoverOperatorId = $this->hasColumn('crm_liberum_in_log', 'recover_operator_id');
         $hasLogRecoverOperatorName = $this->hasColumn('crm_liberum_in_log', 'recover_operator_name');
 
@@ -367,7 +378,9 @@ class LiberumInLogService extends BaseAdminService
                 $logUpdate = [
                     'is_recovered' => 1,
                 ];
-                if ($hasLogRecoveredTime) {
+                if ($hasLogRecoverTime) {
+                    $logUpdate['recover_time'] = $nowDateTime;
+                } elseif ($hasLogRecoveredTime) {
                     $logUpdate['recovered_time'] = $nowDateTime;
                 }
                 if ($hasLogRecoverOperatorId) {
@@ -391,6 +404,7 @@ class LiberumInLogService extends BaseAdminService
                 $successCount++;
             } catch (\Throwable $e) {
                 Db::rollback();
+                \think\Log::record('批量恢复原负责人失败，log_id=' . $logId . '，错误：' . $e->getMessage(), 'error');
                 $failCount++;
             }
         }
