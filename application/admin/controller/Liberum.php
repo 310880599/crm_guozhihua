@@ -243,6 +243,10 @@ class Liberum extends Common{
             }
 
             $isRecovered = (int)($row['is_recovered'] ?? 0) === 1 ? '已恢复' : '未恢复';
+            $currentGhTypeText = (string)($row['current_gh_type_name'] ?? '');
+            if ($currentGhTypeText === '') {
+                $currentGhTypeText = (string)($row['current_gh_type'] ?? '');
+            }
             $dataRows[] = [
                 (string)($row['id'] ?? ''),
                 (string)($row['client_id'] ?? ($row['leads_id'] ?? '')),
@@ -254,7 +258,7 @@ class Liberum extends Common{
                 (string)($row['in_time'] ?? ''),
                 (string)($row['operator_name'] ?? ($row['operator_id'] ?? '')),
                 $statusText,
-                (string)($row['current_gh_type'] ?? ''),
+                $currentGhTypeText,
                 $sourceTypeText,
                 $isRecovered,
                 (string)($row['recover_operator_name'] ?? ($row['recover_operator_id'] ?? '')),

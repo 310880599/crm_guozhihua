@@ -27,6 +27,7 @@ class LiberumInLogService extends BaseAdminService
             $hasRecoverTime = $this->hasColumn('crm_liberum_in_log', 'recover_time');
             $hasRecoveredTime = $this->hasColumn('crm_liberum_in_log', 'recovered_time');
             $hasIsDeleted = $this->hasColumn('crm_liberum_in_log', 'is_deleted');
+            $hasInLiberumType = $this->hasColumn('crm_liberum_in_log', 'liberum_type');
 
             $inOperatorNameField = $hasInOperatorName
                 ? 'IFNULL(MAX(il.operator_name), "") AS operator_name'
@@ -53,7 +54,11 @@ class LiberumInLogService extends BaseAdminService
 
             $model = new LiberumInLog();
             $query = $model->alias('il')
-                ->leftJoin('crm_leads l', 'il.leads_id = l.id');
+                ->leftJoin('crm_leads l', 'il.leads_id = l.id')
+                ->leftJoin('crm_liberum_type gt', 'gt.id = l.pr_gh_type AND gt.is_deleted = 0');
+            if ($hasInLiberumType) {
+                $query->leftJoin('crm_liberum_type gtl', 'gtl.id = il.liberum_type AND gtl.is_deleted = 0');
+            }
             if ($hasIsDeleted) {
                 $query->where('il.is_deleted', 0);
             }
@@ -114,6 +119,13 @@ class LiberumInLogService extends BaseAdminService
             }
 
             $count = (int)(clone $query)->count('il.id');
+            $logLiberumTypeValueExpr = $hasInLiberumType
+                ? 'IFNULL(MAX(il.liberum_type), "")'
+                : '""';
+            $currentGhTypeExpr = 'IFNULL(NULLIF(IFNULL(MAX(l.pr_gh_type), ""), ""), ' . $logLiberumTypeValueExpr . ')';
+            $currentGhTypeNameExpr = $hasInLiberumType
+                ? 'IFNULL(NULLIF(IFNULL(MAX(gt.type_name), ""), ""), IFNULL(NULLIF(IFNULL(MAX(gtl.type_name), ""), ""), ' . $currentGhTypeExpr . '))'
+                : 'IFNULL(NULLIF(IFNULL(MAX(gt.type_name), ""), ""), ' . $currentGhTypeExpr . ')';
             $data = $query
                 ->field([
                     'il.id',
@@ -133,7 +145,8 @@ class LiberumInLogService extends BaseAdminService
                     'IFNULL(MAX(il.is_recovered), 0) AS is_recovered',
                     $recoveredTimeField,
                     'IFNULL(MAX(l.status), "") AS current_status',
-                    'IFNULL(MAX(l.pr_gh_type), "") AS current_gh_type',
+                    $currentGhTypeExpr . ' AS current_gh_type',
+                    $currentGhTypeNameExpr . ' AS current_gh_type_name',
                     $sourceTypeField,
                 ])
                 ->group('il.id')
