@@ -579,6 +579,7 @@ class Common extends Controller
             '付淑雅',
             '叶诗龙',
             '于喜英',
+            '李鹏',
             // 按实际需要继续补充
         ];
 
@@ -634,6 +635,7 @@ class Common extends Controller
             '付淑雅',
             '叶诗龙',
             '于喜英',
+            '李鹏',
         ];
 
         return array_values(array_unique(array_filter(array_map(function ($name) {
