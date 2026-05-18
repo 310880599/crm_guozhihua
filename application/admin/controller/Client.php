@@ -3860,6 +3860,7 @@ class Client extends Common
 
         if (Request::isAjax()) {
             $prGhTypeId = (int)Request::param('pr_gh_type', 0);
+            $manualReason = trim((string)Request::param('reason', ''));
             if ($prGhTypeId <= 0) {
                 return json(['code' => 500, 'msg' => '请选择公海类型', 'data' => []]);
             }
@@ -3875,7 +3876,7 @@ class Client extends Common
 
             $leadRows = Db::table('crm_leads')
                 ->whereIn('id', $ids)
-                ->field('id,kh_name,issuccess,status,pr_user,pr_user_id,pr_user_bef,pr_user_bef_id')
+                ->field('id,kh_name,issuccess,status,pr_user,pr_user_id,pr_user_bef,pr_user_bef_id,pr_gh_type')
                 ->select();
             if (is_object($leadRows) && method_exists($leadRows, 'toArray')) {
                 $leadRows = $leadRows->toArray();
@@ -3935,6 +3936,18 @@ class Client extends Common
                     if ($result !== 1) {
                         throw new \RuntimeException('选中的客户状态发生变化，请刷新后重试');
                     }
+
+                    $inLogSaved = $this->recordManualLiberumInLog(
+                        $leadRow,
+                        $prGhTypeId,
+                        (string)($liberumType['type_name'] ?? ''),
+                        $manualReason,
+                        $now
+                    );
+                    if (!$inLogSaved) {
+                        throw new \RuntimeException('流入公海记录写入失败，请重试');
+                    }
+
                     $count++;
 
                     $this->addOperLog(
@@ -4034,6 +4047,82 @@ class Client extends Common
 
         return $this->fetch('client/move_gh');
     }
+
+    /**
+     * 记录客户管理手动移入公海日志（crm_liberum_in_log）
+     */
+    private function recordManualLiberumInLog(array $clientBefore, int $ghTypeId, string $ghTypeName = '', string $reason = '', string $inTime = ''): bool
+    {
+        $leadId = (int)($clientBefore['id'] ?? 0);
+        if ($leadId <= 0) {
+            return false;
+        }
+        if ((int)($clientBefore['status'] ?? 0) !== 1) {
+            return false;
+        }
+
+        $nowTime = $inTime !== '' ? $inTime : date('Y-m-d H:i:s');
+        $timestamp = time();
+        $reasonText = trim($reason) !== '' ? trim($reason) : '手动移入公海';
+        $operatorId = (int)Session::get('aid');
+        $operatorName = (string)Session::get('username');
+        $liberumTypeValue = $ghTypeId > 0 ? (string)$ghTypeId : trim((string)($clientBefore['pr_gh_type'] ?? ''));
+        if ($liberumTypeValue === '' && $ghTypeName !== '') {
+            $liberumTypeValue = $ghTypeName;
+        }
+
+        $inLogData = [];
+        if ($this->tableHasColumn('crm_liberum_in_log', 'leads_id')) {
+            $inLogData['leads_id'] = $leadId;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'kh_name')) {
+            $inLogData['kh_name'] = (string)($clientBefore['kh_name'] ?? '');
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'before_pr_user')) {
+            $inLogData['before_pr_user'] = (string)($clientBefore['pr_user'] ?? '');
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'before_status')) {
+            $inLogData['before_status'] = 1;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'after_status')) {
+            $inLogData['after_status'] = 2;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'liberum_type')) {
+            $inLogData['liberum_type'] = $liberumTypeValue;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'reason')) {
+            $inLogData['reason'] = $reasonText;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'in_time')) {
+            $inLogData['in_time'] = $nowTime;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'operator_id')) {
+            $inLogData['operator_id'] = $operatorId;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'operator_name')) {
+            $inLogData['operator_name'] = $operatorName;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'source_type')) {
+            $inLogData['source_type'] = 'manual';
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'remark')) {
+            $inLogData['remark'] = '客户管理手动移入公海';
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'is_recovered')) {
+            $inLogData['is_recovered'] = 0;
+        }
+        if ($this->tableHasColumn('crm_liberum_in_log', 'create_time')) {
+            $inLogData['create_time'] = $timestamp;
+        }
+
+        if (empty($inLogData)) {
+            return false;
+        }
+
+        $insertRows = Db::table('crm_liberum_in_log')->insert($inLogData);
+        return (int)$insertRows === 1;
+    }
+
     //客户搜索
     public function clientSearch()
     {
