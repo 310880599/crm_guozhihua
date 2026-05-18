@@ -56,6 +56,13 @@ class Liberum extends Common{
     public function pickLog()
     {
         $this->assign('canDangerOperate', $this->hasLiberumDangerOperationPermission() ? 1 : 0);
+        $pickUserList = Db::table('crm_liberum_pick_log')
+            ->where('pick_user', 'not null')
+            ->where('pick_user', '<>', '')
+            ->group('pick_user')
+            ->order('pick_user asc')
+            ->column('pick_user');
+        $this->assign('pickUserList', $pickUserList);
         return $this->fetch('liberum/picklog');
     }
 

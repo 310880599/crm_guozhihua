@@ -32,7 +32,14 @@
                     </div>
                     <div class="layui-inline">
                         <label class="layui-form-label">提取人：</label>
-                        <div class="layui-input-inline"><input type="text" name="pick_user_keyword" placeholder="请输入提取人" class="layui-input"></div>
+                        <div class="layui-input-inline">
+                            <select name="pick_user_keyword" lay-search>
+                                <option value="">全部</option>
+                                {volist name="pickUserList" id="vo"}
+                                <option value="{$vo}">{$vo}</option>
+                                {/volist}
+                            </select>
+                        </div>
                     </div>
                     <div class="layui-inline">
                         <label class="layui-form-label">客户名称：</label>
@@ -125,6 +132,8 @@
 
         $('#pick-log-reset').on('click', function () {
             $('.search-card .layui-input').val('');
+            $('select[name="pick_user_keyword"]').val('');
+            $('select[name="is_returned"]').val('');
             form.render();
             table.reload(tableId, {
                 where: {},
