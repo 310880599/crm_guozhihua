@@ -63,6 +63,24 @@ class Liberum extends Common{
     public function inLog()
     {
         $this->assign('canDangerOperate', $this->hasLiberumDangerOperationPermission() ? 1 : 0);
+
+        $beforePrUserList = Db::table('crm_liberum_in_log')
+            ->where('before_pr_user', 'not null')
+            ->where('before_pr_user', '<>', '')
+            ->group('before_pr_user')
+            ->order('before_pr_user asc')
+            ->column('before_pr_user');
+
+        $operatorNameList = Db::table('crm_liberum_in_log')
+            ->where('operator_name', 'not null')
+            ->where('operator_name', '<>', '')
+            ->group('operator_name')
+            ->order('operator_name asc')
+            ->column('operator_name');
+
+        $this->assign('beforePrUserList', $beforePrUserList);
+        $this->assign('operatorNameList', $operatorNameList);
+
         return $this->fetch('liberum/inlog');
     }
 

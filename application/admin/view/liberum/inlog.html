@@ -32,11 +32,25 @@
                     </div>
                     <div class="layui-inline">
                         <label class="layui-form-label">原负责人：</label>
-                        <div class="layui-input-inline"><input type="text" name="before_pr_user_keyword" placeholder="请输入原负责人" class="layui-input"></div>
+                        <div class="layui-input-inline">
+                            <select name="before_pr_user_keyword" lay-search>
+                                <option value="">全部</option>
+                                {volist name="beforePrUserList" id="vo"}
+                                <option value="{$vo}">{$vo}</option>
+                                {/volist}
+                            </select>
+                        </div>
                     </div>
                     <div class="layui-inline">
                         <label class="layui-form-label">操作人：</label>
-                        <div class="layui-input-inline"><input type="text" name="operator_keyword" placeholder="请输入操作人" class="layui-input"></div>
+                        <div class="layui-input-inline">
+                            <select name="operator_keyword" lay-search>
+                                <option value="">全部</option>
+                                {volist name="operatorNameList" id="vo"}
+                                <option value="{$vo}">{$vo}</option>
+                                {/volist}
+                            </select>
+                        </div>
                     </div>
                     <div class="layui-inline">
                         <label class="layui-form-label">流入原因：</label>
@@ -157,7 +171,12 @@
 
         $('#in-log-reset').on('click', function () {
             $('.search-card .layui-input').val('');
-            form.render();
+            form.val('in-log-search-form', {
+                before_pr_user_keyword: '',
+                operator_keyword: '',
+                is_recovered: ''
+            });
+            form.render('select');
             table.reload(tableId, {
                 where: {},
                 page: {curr: 1}
