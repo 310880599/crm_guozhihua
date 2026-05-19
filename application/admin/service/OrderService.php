@@ -3,6 +3,7 @@
 namespace app\admin\service;
 
 use think\Db;
+use think\facade\Log;
 
 class OrderService
 {
@@ -1526,7 +1527,7 @@ class OrderService
         }
 
         try {
-            \think\Log::record($message, 'error');
+            Log::record($message, 'error');
         } catch (\Throwable $e) {
         }
     }

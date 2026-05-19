@@ -4,6 +4,7 @@ namespace app\admin\service;
 
 use app\admin\model\Admin;
 use think\Db;
+use think\facade\Log;
 
 /**
  * 待办跟进列表的数据可见范围（负责人 + 协同人）。
@@ -391,9 +392,7 @@ class ClientFollowTodoPermissionService
         }
 
         try {
-            if (class_exists('\\think\\Log')) {
-                \think\Log::record((string)$message, 'debug');
-            }
+            Log::record((string)$message, 'debug');
         } catch (\Throwable $e) {
         }
     }

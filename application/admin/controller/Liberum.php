@@ -2,6 +2,7 @@
 namespace app\admin\controller;
 use think\facade\Request;
 use think\Db;
+use think\facade\Log;
 use think\facade\Session;
 use think\facade\Env;
 use app\admin\behavior\ContactMap; 
@@ -456,7 +457,7 @@ class Liberum extends Common{
                 . '，operate_time=' . date('Y-m-d H:i:s')
                 . '，ip=' . (string)$ip;
 
-            \think\Log::record($content, 'info');
+            Log::record($content, 'info');
         } catch (\Throwable $e) {
             // 日志失败不抛出，避免影响正常业务响应
         }
@@ -952,7 +953,7 @@ class Liberum extends Common{
         }
         
         // 初始化日志配置
-        \think\Log::init([
+        Log::init([
             'type' => 'File',
             'path' => $logPath,
             'level' => ['error', 'debug', 'sql']
@@ -995,8 +996,8 @@ class Liberum extends Common{
             
         } catch (\Exception $e) {
             // 记录详细错误日志
-            \think\Log::record('getClientDetails Error: ' . $e->getMessage());
-            \think\Log::record('Trace: ' . $e->getTraceAsString());
+            Log::record('getClientDetails Error: ' . $e->getMessage());
+            Log::record('Trace: ' . $e->getTraceAsString());
             
             return ['code' => 1, 'msg' => '服务器内部错误'];
         }
@@ -1086,7 +1087,7 @@ class Liberum extends Common{
 
             return false;
         } catch (\Throwable $e) {
-            \think\Log::record('公海高危操作权限校验异常：' . $e->getMessage(), 'error');
+            Log::record('公海高危操作权限校验异常：' . $e->getMessage(), 'error');
             return false;
         }
     }

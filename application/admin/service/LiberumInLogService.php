@@ -5,6 +5,7 @@ namespace app\admin\service;
 use app\admin\behavior\ContactMap;
 use app\admin\model\LiberumInLog;
 use think\Db;
+use think\facade\Log;
 
 class LiberumInLogService extends BaseAdminService
 {
@@ -172,7 +173,7 @@ class LiberumInLogService extends BaseAdminService
                 unset($row);
             }
         } catch (\Throwable $e) {
-            \think\Log::record('客户流入公海记录查询失败：' . $e->getMessage(), 'error');
+            Log::record('客户流入公海记录查询失败：' . $e->getMessage(), 'error');
             $count = 0;
             $data = [];
         }
@@ -478,7 +479,7 @@ class LiberumInLogService extends BaseAdminService
                 $successCount++;
             } catch (\Throwable $e) {
                 Db::rollback();
-                \think\Log::record('批量恢复原负责人失败，log_id=' . $logId . '，错误：' . $e->getMessage(), 'error');
+                Log::record('批量恢复原负责人失败，log_id=' . $logId . '，错误：' . $e->getMessage(), 'error');
                 $failCount++;
             }
         }

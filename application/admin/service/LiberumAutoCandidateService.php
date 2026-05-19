@@ -4,6 +4,7 @@ namespace app\admin\service;
 
 use app\admin\behavior\ContactMap;
 use think\Db;
+use think\facade\Log;
 
 /**
  * 自动公海候选服务
@@ -407,7 +408,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                 'data' => $pageData,
             ];
         } catch (\Throwable $e) {
-            \think\Log::record('自动公海候选查询失败：' . $e->getMessage(), 'error');
+            Log::record('自动公海候选查询失败：' . $e->getMessage(), 'error');
             return ['count' => 0, 'data' => []];
         }
     }
