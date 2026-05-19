@@ -48,25 +48,14 @@
         background: #fff;
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-        overflow: hidden;
         padding: 0;
-        height: calc(100vh - 220px);
-        display: flex;
-        flex-direction: column;
+        min-height: 420px;
+        overflow: visible;
     }
     .layui-table-view {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        height: 100%;
         border: none !important;
     }
-    .layui-table-body {
-        flex: 1;
-        overflow: auto;
-    }
     .layui-table-page {
-        flex-shrink: 0;
         background: #fff !important;
         border-top: 1px solid #e0e0e0 !important;
         padding: 12px 20px !important;
@@ -159,29 +148,31 @@
             id: tableId,
             url: baseUrl,
             method: 'get',
+            height: 'full-300',
             page: true,
             limit: 10,
+            limits: [10, 20, 30, 50, 100],
             toolbar: '#autoCandidateToolbarTpl',
             text: {
                 none: '当前暂无符合自动流入公海规则的客户'
             },
             cols: [[
-                {type: 'checkbox', fixed: 'left'},
+                {type: 'checkbox', fixed: 'left', width: 60},
                 {field: 'id', title: '客户ID', width: 100, sort: true},
-                {field: 'kh_name', title: '客户名称', minWidth: 140},
-                {field: 'phone', title: '客户电话', minWidth: 130},
-                {field: 'pr_user', title: '当前负责人', width: 120},
-                {field: 'create_time', title: '创建时间', minWidth: 170},
-                {field: 'last_follow_time', title: '最后跟进时间', minWidth: 170, templet: function (d) {
+                {field: 'kh_name', title: '客户名称', width: 160},
+                {field: 'phone', title: '客户电话', width: 140},
+                {field: 'pr_user', title: '当前负责人', width: 130},
+                {field: 'create_time', title: '创建时间', width: 180},
+                {field: 'last_follow_time', title: '最后跟进时间', width: 180, templet: function (d) {
                     return d.last_follow_time || '';
                 }},
-                {field: 'overdue_days', title: '超期天数', width: 110, align: 'right'},
-                {field: 'candidate_rule', title: '命中规则', minWidth: 140},
-                {field: 'candidate_reason', title: '候选原因', minWidth: 220, templet: function (d) {
+                {field: 'overdue_days', title: '超期天数', width: 120, align: 'right'},
+                {field: 'candidate_rule', title: '命中规则', width: 150},
+                {field: 'candidate_reason', title: '候选原因', width: 260, templet: function (d) {
                     var txt = d.candidate_reason || '';
                     return '<div class="candidate-reason-cell">' + txt + '</div>';
                 }},
-                {field: 'status', title: '当前状态', width: 100, align: 'center', templet: function (d) {
+                {field: 'status', title: '当前状态', width: 120, align: 'center', templet: function (d) {
                     var status = parseInt(d.status, 10);
                     if (status === 1) {
                         return '<span class="layui-badge layui-bg-green">正常客户</span>';
@@ -191,15 +182,18 @@
                     }
                     return d.status === undefined || d.status === null ? '' : d.status;
                 }},
-                {field: 'issuccess', title: '成交状态', width: 100, align: 'center', templet: function (d) {
+                {field: 'issuccess', title: '成交状态', width: 120, align: 'center', templet: function (d) {
                     var success = parseInt(d.issuccess, 10);
                     if (success === 1) {
                         return '<span class="layui-badge layui-bg-orange">已成交</span>';
                     }
                     return '<span class="layui-badge-rim">未成交</span>';
                 }},
-                {fixed: 'right', title: '操作', toolbar: '#autoCandidateRowBarTpl', width: 130, align: 'center'}
-            ]]
+                {fixed: 'right', title: '操作', toolbar: '#autoCandidateRowBarTpl', width: 150, align: 'center'}
+            ]],
+            done: function () {
+                table.resize(tableId);
+            }
         });
 
         form.on('submit(auto-candidate-search)', function (data) {
@@ -327,6 +321,16 @@
                     }
                 });
             });
+        });
+
+        $(window).on('resize', function () {
+            table.resize(tableId);
+        });
+
+        $(document).on('click', '.layui-tab-title li', function () {
+            setTimeout(function () {
+                table.resize(tableId);
+            }, 100);
         });
     });
 </script>
