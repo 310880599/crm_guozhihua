@@ -17,7 +17,7 @@ use think\facade\Log;
  * 5. 超期天数计算
  *
  * 索引建议（仅注释，不执行SQL）：
- * - crm_leads: status, issuccess, create_time, pr_user（可按查询特点做联合索引）
+ * - crm_leads: status, issuccess, at_time, pr_user（可按查询特点做联合索引）
  * - crm_comment: leads_id, create_date（建议联合索引 leads_id + create_date）
  * - crm_contacts: leads_id, contact_value
  */
@@ -299,7 +299,7 @@ class LiberumAutoCandidateService extends BaseAdminService
             }
 
             $leads = $query
-                ->field('l.id,l.kh_name,l.pr_user,l.create_time,l.status,l.issuccess')
+                ->field('l.id,l.kh_name,l.pr_user,l.at_time as create_time,l.status,l.issuccess')
                 ->order('l.id asc')
                 ->select();
             if (is_object($leads) && method_exists($leads, 'toArray')) {
@@ -492,7 +492,7 @@ class LiberumAutoCandidateService extends BaseAdminService
 
         $lead = $this->leadMap[$leadId] ?? Db::table('crm_leads')
             ->where('id', $leadId)
-            ->field('id,create_time,status,issuccess')
+            ->field('id,at_time as create_time,status,issuccess')
             ->find();
         if (!is_array($lead) || empty($lead)) {
             return ['rule' => '', 'reason' => ''];
