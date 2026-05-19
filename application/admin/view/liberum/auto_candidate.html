@@ -64,6 +64,16 @@
         white-space: normal;
         line-height: 1.5;
     }
+    /* 自动公海候选：右侧固定操作列背景色，避免横向滚动时透明透字 */
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r .layui-table-header,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r .layui-table-body,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r table,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r th,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r td,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r .layui-table-cell {
+        background-color: #f0fdf4 !important;
+    }
 </style>
 
 <div class="auto-candidate-container">
