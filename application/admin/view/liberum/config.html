@@ -1,0 +1,110 @@
+{include file="common/head"/}
+<style>
+    body { background: #f5f7fa !important; }
+    .liberum-config-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #f5f7fa;
+        overflow: auto;
+    }
+    .config-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 22px 20px 10px 20px;
+        max-width: 760px;
+    }
+    .config-form .layui-form-label {
+        width: 180px;
+    }
+    .config-form .layui-input-inline {
+        width: 220px;
+    }
+    .config-unit {
+        color: #999;
+        line-height: 38px;
+        margin-left: 10px;
+        display: inline-block;
+    }
+</style>
+
+<div class="liberum-config-container">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>公海管理配置</legend>
+    </fieldset>
+
+    <div class="config-card">
+        <form class="layui-form config-form" lay-filter="liberum-config-form">
+            <div class="layui-form-item">
+                <label class="layui-form-label">每人每天领取上限</label>
+                <div class="layui-input-inline">
+                    <input type="number" name="daily_pick_limit" min="1" max="999" autocomplete="off" class="layui-input" value="{$config.daily_pick_limit|default='10'}">
+                </div>
+                <span class="config-unit">个/人/天</span>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">自动公海超期天数</label>
+                <div class="layui-input-inline">
+                    <input type="number" name="auto_liberum_days" min="1" max="3650" autocomplete="off" class="layui-input" value="{$config.auto_liberum_days|default='90'}">
+                </div>
+                <span class="config-unit">天</span>
+            </div>
+
+            <div class="layui-form-item">
+                <div class="layui-input-block" style="margin-left: 180px;">
+                    <button type="submit" class="layui-btn" lay-submit lay-filter="liberum-config-submit">保存</button>
+                    <button type="button" class="layui-btn layui-btn-primary" id="liberum-config-reset">重置</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{include file="common/foot"/}
+<script>
+    layui.use(['form'], function () {
+        var form = layui.form, $ = layui.jquery;
+        var saveUrl = "{:url('Liberum/saveConfig')}";
+        var initialConfig = {
+            daily_pick_limit: "{$config.daily_pick_limit|default='10'}",
+            auto_liberum_days: "{$config.auto_liberum_days|default='90'}"
+        };
+
+        $('#liberum-config-reset').on('click', function () {
+            form.val('liberum-config-form', initialConfig);
+        });
+
+        form.on('submit(liberum-config-submit)', function (data) {
+            $.ajax({
+                url: saveUrl,
+                type: 'post',
+                dataType: 'json',
+                data: data.field || {},
+                success: function (res) {
+                    if (res && parseInt(res.code, 10) === 0) {
+                        layer.msg('配置保存成功');
+                        var saved = (res.data && typeof res.data === 'object') ? res.data : {};
+                        initialConfig = {
+                            daily_pick_limit: String(saved.daily_pick_limit || data.field.daily_pick_limit || 10),
+                            auto_liberum_days: String(saved.auto_liberum_days || data.field.auto_liberum_days || 90)
+                        };
+                        form.val('liberum-config-form', initialConfig);
+                        return;
+                    }
+                    layer.msg((res && res.msg) ? res.msg : '保存失败');
+                },
+                error: function () {
+                    layer.msg('请求失败，请稍后重试');
+                }
+            });
+            return false;
+        });
+    });
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@ use think\facade\Env;
 use app\admin\behavior\ContactMap; 
 use app\admin\model\LiberumType as LiberumTypeModel;
 use app\admin\service\LiberumAutoCandidateService;
+use app\admin\service\LiberumConfigService;
 use app\admin\service\LiberumLogService;
 use app\admin\service\LiberumTypeService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -22,7 +23,7 @@ class Liberum extends Common{
     protected $liberumTypeService;
     protected $liberumLogService;
     protected $liberumAutoCandidateService;
-    protected $dailyPickLimit = 10;
+    protected $liberumConfigService;
 
     protected function getLiberumTypeService()
     {
@@ -46,6 +47,14 @@ class Liberum extends Common{
             $this->liberumAutoCandidateService = new LiberumAutoCandidateService();
         }
         return $this->liberumAutoCandidateService;
+    }
+
+    protected function getLiberumConfigService()
+    {
+        if (!$this->liberumConfigService) {
+            $this->liberumConfigService = new LiberumConfigService();
+        }
+        return $this->liberumConfigService;
     }
 
     // 公海列表
@@ -106,6 +115,23 @@ class Liberum extends Common{
     public function autoCandidate()
     {
         return $this->fetch('liberum/auto_candidate');
+    }
+
+    public function config()
+    {
+        $config = $this->getLiberumConfigService()->getConfigMap();
+        $this->assign('config', $config);
+        return $this->fetch('liberum/config');
+    }
+
+    public function saveConfig()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $params = Request::param();
+        return $this->getLiberumConfigService()->saveConfig($params);
     }
 
     // 客户提取记录列表
@@ -880,9 +906,10 @@ class Liberum extends Common{
                 ->where('pick_user', $curname)
                 ->where('pick_date', $today)
                 ->count('id');
-            if ($todayPickedCount >= $this->dailyPickLimit) {
+            $dailyPickLimit = $this->getLiberumConfigService()->getIntValue('daily_pick_limit', 10, 1, 999);
+            if ($todayPickedCount >= $dailyPickLimit) {
                 Db::rollback();
-                return ['code' => -200, 'msg' => "今日领取客户数量已达到上限{$this->dailyPickLimit}个", 'data' => []];
+                return ['code' => -200, 'msg' => "今日领取客户数量已达到上限{$dailyPickLimit}个", 'data' => []];
             }
 
             $now = date("Y-m-d H:i:s");

@@ -24,12 +24,22 @@ use think\facade\Log;
 class LiberumAutoCandidateService extends BaseAdminService
 {
     /**
-     * 自动公海阈值天数（可维护变量）
-     * 后续可改为 60/120/180 等。
-     *
-     * @var int
+     * @var LiberumConfigService
      */
-    protected $autoLiberumDays = 90;
+    protected $liberumConfigService;
+
+    protected function getLiberumConfigService()
+    {
+        if (!$this->liberumConfigService) {
+            $this->liberumConfigService = new LiberumConfigService();
+        }
+        return $this->liberumConfigService;
+    }
+
+    protected function getAutoLiberumDays()
+    {
+        return $this->getLiberumConfigService()->getIntValue('auto_liberum_days', 90, 1, 3650);
+    }
 
     /**
      * 手机号缓存
@@ -443,7 +453,7 @@ class LiberumAutoCandidateService extends BaseAdminService
         }
 
         $stats = $this->getLeadFollowStats($leadId);
-        $thresholdSeconds = (int)$this->autoLiberumDays * 86400;
+        $thresholdSeconds = (int)$this->getAutoLiberumDays() * 86400;
         $now = time();
 
         $followCount = (int)($stats['follow_count'] ?? 0);
@@ -505,8 +515,8 @@ class LiberumAutoCandidateService extends BaseAdminService
 
         $stats = $this->getLeadFollowStats($leadId);
         $createdTs = $this->normalizeTimeToTimestamp($lead['create_time'] ?? '');
-        $thresholdSeconds = (int)$this->autoLiberumDays * 86400;
-        $daysText = (int)$this->autoLiberumDays;
+        $thresholdSeconds = (int)$this->getAutoLiberumDays() * 86400;
+        $daysText = (int)$this->getAutoLiberumDays();
         $now = time();
 
         $followCount = (int)($stats['follow_count'] ?? 0);
@@ -888,7 +898,7 @@ class LiberumAutoCandidateService extends BaseAdminService
      */
     protected function buildAutoInReasonText($rule = '')
     {
-        $days = (int)$this->autoLiberumDays;
+        $days = (int)$this->getAutoLiberumDays();
         if ($rule === '创建未跟进超时') {
             return '自动流入公海：创建' . $days . '天未跟进';
         }
