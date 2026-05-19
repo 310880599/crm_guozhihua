@@ -1,0 +1,334 @@
+{include file="common/head"/}
+<style>
+    body { background: #f5f7fa !important; }
+    .auto-candidate-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #f5f7fa;
+        overflow: auto;
+    }
+    .search-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 16px;
+        margin-bottom: 12px;
+    }
+    .search-card .layui-form-item {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 0;
+        gap: 10px 0;
+    }
+    .search-card .layui-inline {
+        display: inline-flex;
+        align-items: center;
+        margin-right: 14px;
+        margin-bottom: 10px;
+        vertical-align: middle;
+    }
+    .search-card .layui-form-label {
+        width: auto !important;
+        min-width: 96px;
+        white-space: nowrap;
+        padding: 9px 8px 9px 0;
+        text-align: right;
+        box-sizing: border-box;
+    }
+    .search-card .layui-input-inline {
+        width: 155px;
+        margin-right: 0;
+    }
+    .table-wrapper {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        overflow: hidden;
+        padding: 0;
+        height: calc(100vh - 220px);
+        display: flex;
+        flex-direction: column;
+    }
+    .layui-table-view {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        border: none !important;
+    }
+    .layui-table-body {
+        flex: 1;
+        overflow: auto;
+    }
+    .layui-table-page {
+        flex-shrink: 0;
+        background: #fff !important;
+        border-top: 1px solid #e0e0e0 !important;
+        padding: 12px 20px !important;
+    }
+    .candidate-reason-cell {
+        white-space: normal;
+        line-height: 1.5;
+    }
+</style>
+
+<div class="auto-candidate-container">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>自动公海候选</legend>
+        <div class="search-card">
+            <div class="layui-form" lay-filter="auto-candidate-search-form">
+                <div class="layui-form-item">
+                    <div class="layui-inline">
+                        <label class="layui-form-label">客户名称：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="client_keyword" placeholder="请输入客户名称" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">手机号：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="phone" placeholder="请输入手机号" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">当前负责人：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="pr_user_keyword" placeholder="请输入负责人" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">命中规则：</label>
+                        <div class="layui-input-inline">
+                            <select name="candidate_rule">
+                                <option value="">全部</option>
+                                <option value="创建未跟进超时">创建未跟进</option>
+                                <option value="首次跟进超时">首次跟进超时</option>
+                                <option value="跟进间隔超时">跟进间隔超时</option>
+                                <option value="最后跟进超时">最后跟进超时</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">超期天数≥：</label>
+                        <div class="layui-input-inline">
+                            <input type="number" min="0" name="overdue_days" placeholder="请输入天数" class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <button class="layui-btn" lay-submit lay-filter="auto-candidate-search">
+                            <i class="layui-icon layui-icon-search"></i>查询
+                        </button>
+                        <button type="button" class="layui-btn layui-btn-primary" id="auto-candidate-reset">重置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+
+    <div class="table-wrapper">
+        <table class="layui-table" id="autoCandidateTable" lay-filter="autoCandidateTable"></table>
+    </div>
+</div>
+
+<script type="text/html" id="autoCandidateToolbarTpl">
+    <div class="layui-btn-container">
+        <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchConfirmIn">批量确认流入公海</button>
+    </div>
+</script>
+
+<script type="text/html" id="autoCandidateRowBarTpl">
+    <button type="button" class="layui-btn layui-btn-normal layui-btn-xs" lay-event="confirmIn">确认流入公海</button>
+</script>
+
+{include file="common/foot"/}
+<script>
+    layui.use(['table', 'form'], function () {
+        var table = layui.table, form = layui.form, $ = layui.jquery;
+        var tableId = 'autoCandidateTable';
+        var baseUrl = "{:url('Liberum/getAutoCandidateList')}";
+        var confirmUrl = "{:url('Liberum/confirmAutoLiberum')}";
+        var batchConfirmUrl = "{:url('Liberum/batchConfirmAutoLiberum')}";
+
+        var tableIns = table.render({
+            elem: '#' + tableId,
+            id: tableId,
+            url: baseUrl,
+            method: 'get',
+            page: true,
+            limit: 10,
+            toolbar: '#autoCandidateToolbarTpl',
+            text: {
+                none: '当前暂无符合自动流入公海规则的客户'
+            },
+            cols: [[
+                {type: 'checkbox', fixed: 'left'},
+                {field: 'id', title: '客户ID', width: 100, sort: true},
+                {field: 'kh_name', title: '客户名称', minWidth: 140},
+                {field: 'phone', title: '客户电话', minWidth: 130},
+                {field: 'pr_user', title: '当前负责人', width: 120},
+                {field: 'create_time', title: '创建时间', minWidth: 170},
+                {field: 'last_follow_time', title: '最后跟进时间', minWidth: 170, templet: function (d) {
+                    return d.last_follow_time || '';
+                }},
+                {field: 'overdue_days', title: '超期天数', width: 110, align: 'right'},
+                {field: 'candidate_rule', title: '命中规则', minWidth: 140},
+                {field: 'candidate_reason', title: '候选原因', minWidth: 220, templet: function (d) {
+                    var txt = d.candidate_reason || '';
+                    return '<div class="candidate-reason-cell">' + txt + '</div>';
+                }},
+                {field: 'status', title: '当前状态', width: 100, align: 'center', templet: function (d) {
+                    var status = parseInt(d.status, 10);
+                    if (status === 1) {
+                        return '<span class="layui-badge layui-bg-green">正常客户</span>';
+                    }
+                    if (status === 2) {
+                        return '<span class="layui-badge layui-bg-gray">公海客户</span>';
+                    }
+                    return d.status === undefined || d.status === null ? '' : d.status;
+                }},
+                {field: 'issuccess', title: '成交状态', width: 100, align: 'center', templet: function (d) {
+                    var success = parseInt(d.issuccess, 10);
+                    if (success === 1) {
+                        return '<span class="layui-badge layui-bg-orange">已成交</span>';
+                    }
+                    return '<span class="layui-badge-rim">未成交</span>';
+                }},
+                {fixed: 'right', title: '操作', toolbar: '#autoCandidateRowBarTpl', width: 130, align: 'center'}
+            ]]
+        });
+
+        form.on('submit(auto-candidate-search)', function (data) {
+            var field = data.field || {};
+            var where = $.extend({}, field, {
+                kh_name: field.client_keyword || '',
+                pr_user: field.pr_user_keyword || ''
+            });
+
+            table.reload(tableId, {
+                where: where,
+                page: {curr: 1}
+            });
+            return false;
+        });
+
+        $('#auto-candidate-reset').on('click', function () {
+            $('.search-card .layui-input').val('');
+            form.val('auto-candidate-search-form', {
+                candidate_rule: ''
+            });
+            form.render('select');
+
+            table.reload(tableId, {
+                where: {},
+                page: {curr: 1}
+            });
+        });
+
+        table.on('tool(' + tableId + ')', function (obj) {
+            if (obj.event !== 'confirmIn') {
+                return;
+            }
+
+            var row = obj.data || {};
+            var leadId = parseInt(row.id, 10);
+            if (!(leadId > 0)) {
+                layer.msg('客户ID无效');
+                return;
+            }
+
+            var $btn = $(obj.tr).find('button[lay-event="confirmIn"]');
+            if ($btn.hasClass('layui-btn-disabled')) {
+                return;
+            }
+
+            layer.confirm('确定要将该客户流入公海吗？', {icon: 3, title: '提示'}, function (index) {
+                layer.close(index);
+                $btn.addClass('layui-btn-disabled').attr('disabled', true);
+                var loading = layer.load(1, {shade: [0.1, '#fff']});
+                $.ajax({
+                    url: confirmUrl,
+                    type: 'post',
+                    dataType: 'json',
+                    data: {id: leadId},
+                    success: function (res) {
+                        layer.close(loading);
+                        $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                        if (res && parseInt(res.code, 10) === 0) {
+                            layer.msg(res.msg || '操作成功', {icon: 1});
+                            table.reload(tableId, {});
+                            return;
+                        }
+                        layer.msg((res && res.msg) ? res.msg : '操作失败', {icon: 2});
+                    },
+                    error: function () {
+                        layer.close(loading);
+                        $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                        layer.msg('请求失败，请稍后重试', {icon: 2});
+                    }
+                });
+            });
+        });
+
+        table.on('toolbar(' + tableId + ')', function (obj) {
+            if (obj.event !== 'batchConfirmIn') {
+                return;
+            }
+
+            var checkStatus = table.checkStatus(tableId);
+            var selected = checkStatus.data || [];
+            var ids = [];
+            $.each(selected, function (_, row) {
+                var id = parseInt(row.id, 10);
+                if (id > 0) {
+                    ids.push(id);
+                }
+            });
+            ids = Array.from(new Set(ids));
+
+            if (!ids.length) {
+                layer.msg('请选择需要流入公海的客户');
+                return;
+            }
+
+            var $batchBtn = $('.layui-table-tool button[lay-event="batchConfirmIn"]');
+            if ($batchBtn.hasClass('layui-btn-disabled')) {
+                return;
+            }
+
+            layer.confirm('确定要将选中的客户批量流入公海吗？', {icon: 3, title: '提示'}, function (index) {
+                layer.close(index);
+                $batchBtn.addClass('layui-btn-disabled').attr('disabled', true);
+                var loading = layer.load(1, {shade: [0.1, '#fff']});
+                $.ajax({
+                    url: batchConfirmUrl,
+                    type: 'post',
+                    dataType: 'json',
+                    data: {ids: ids},
+                    traditional: true,
+                    success: function (res) {
+                        layer.close(loading);
+                        $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                        if (res && parseInt(res.code, 10) === 0) {
+                            layer.msg(res.msg || '批量处理成功', {icon: 1});
+                            table.reload(tableId, {});
+                            return;
+                        }
+                        layer.msg((res && res.msg) ? res.msg : '批量处理失败', {icon: 2});
+                    },
+                    error: function () {
+                        layer.close(loading);
+                        $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                        layer.msg('请求失败，请稍后重试', {icon: 2});
+                    }
+                });
+            });
+        });
+    });
+</script>
+</body>
+</html>

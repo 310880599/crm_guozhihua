@@ -6,6 +6,7 @@ use think\facade\Session;
 use think\facade\Env;
 use app\admin\behavior\ContactMap; 
 use app\admin\model\LiberumType as LiberumTypeModel;
+use app\admin\service\LiberumAutoCandidateService;
 use app\admin\service\LiberumLogService;
 use app\admin\service\LiberumTypeService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -19,6 +20,7 @@ class Liberum extends Common{
      */
     protected $liberumTypeService;
     protected $liberumLogService;
+    protected $liberumAutoCandidateService;
     protected $dailyPickLimit = 10;
 
     protected function getLiberumTypeService()
@@ -35,6 +37,14 @@ class Liberum extends Common{
             $this->liberumLogService = new LiberumLogService();
         }
         return $this->liberumLogService;
+    }
+
+    protected function getLiberumAutoCandidateService()
+    {
+        if (!$this->liberumAutoCandidateService) {
+            $this->liberumAutoCandidateService = new LiberumAutoCandidateService();
+        }
+        return $this->liberumAutoCandidateService;
     }
 
     // 公海列表
@@ -89,6 +99,12 @@ class Liberum extends Common{
         $this->assign('operatorNameList', $operatorNameList);
 
         return $this->fetch('liberum/inlog');
+    }
+
+    // 自动公海候选页面
+    public function autoCandidate()
+    {
+        return $this->fetch('liberum/auto_candidate');
     }
 
     // 客户提取记录列表
@@ -209,6 +225,56 @@ class Liberum extends Common{
             'count' => (int)($list['count'] ?? 0),
             'data' => $list['data'] ?? [],
         ]);
+    }
+
+    // 自动公海候选列表
+    public function getAutoCandidateList()
+    {
+        $params = Request::param();
+        $list = $this->getLiberumAutoCandidateService()->getCandidateList($params);
+
+        return json([
+            'code' => 0,
+            'msg' => '',
+            'count' => (int)($list['count'] ?? 0),
+            'data' => $list['data'] ?? [],
+        ]);
+    }
+
+    // 单个确认自动流入公海
+    public function confirmAutoLiberum()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $id = input('post.id/d', 0);
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        $result = $this->getLiberumAutoCandidateService()->confirmToLiberum($id, $operatorInfo);
+        $this->recordLiberumDangerOperationLog('自动公海单个确认', [$id], $operatorInfo, $result);
+        return $result + ['data' => []];
+    }
+
+    // 批量确认自动流入公海
+    public function batchConfirmAutoLiberum()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $ids = input('post.ids/a', []);
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        $result = $this->getLiberumAutoCandidateService()->batchConfirmToLiberum($ids, $operatorInfo);
+        $this->recordLiberumDangerOperationLog('自动公海批量确认', is_array($ids) ? $ids : [], $operatorInfo, $result);
+        return $result + ['data' => []];
     }
 
     // 客户流入公海记录导出
