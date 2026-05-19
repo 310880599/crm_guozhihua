@@ -24,8 +24,19 @@
     .layui-table-view { border: none !important; }
     .layui-table-body { overflow: auto; }
     .layui-table-page { flex-shrink: 0; background: #fff !important; border-top: 1px solid #e0e0e0 !important; padding: 12px 20px !important; }
-    #inLogTable + .layui-table-view .layui-table-body { overflow: auto !important; }
-    #inLogTable + .layui-table-view .layui-table-box { overflow: auto !important; }
+    #inLogTable + .layui-table-view .layui-table-main .layui-table-body { overflow: auto !important; }
+    #inLogTable + .layui-table-view .layui-table-box { overflow: hidden !important; }
+    /* 客户流入公海记录：隐藏左右固定列自身的小纵向滚动条，只保留主表滚动条 */
+    #inLogTable + .layui-table-view .layui-table-fixed-l .layui-table-body,
+    #inLogTable + .layui-table-view .layui-table-fixed-r .layui-table-body {
+        overflow-y: hidden !important;
+    }
+
+    /* 避免固定列区域出现多余滚动条 */
+    #inLogTable + .layui-table-view .layui-table-fixed-l,
+    #inLogTable + .layui-table-view .layui-table-fixed-r {
+        overflow: hidden !important;
+    }
 </style>
 
 <div class="liberum-log-container">
