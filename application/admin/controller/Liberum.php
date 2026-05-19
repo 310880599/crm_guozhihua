@@ -268,6 +268,41 @@ class Liberum extends Common{
         ]);
     }
 
+    // 自动公海候选：当前负责人下拉选项
+    public function getPrUserOptions()
+    {
+        $rows = Db::table('admin')
+            ->where('username', '<>', '')
+            ->field('username')
+            ->order('username asc')
+            ->select();
+        if (is_object($rows) && method_exists($rows, 'toArray')) {
+            $rows = $rows->toArray();
+        } elseif (!is_array($rows)) {
+            $rows = [];
+        }
+
+        $seen = [];
+        $data = [];
+        foreach ($rows as $row) {
+            $username = trim((string)($row['username'] ?? ''));
+            if ($username === '' || isset($seen[$username])) {
+                continue;
+            }
+            $seen[$username] = true;
+            $data[] = [
+                'name' => $username,
+                'value' => $username,
+            ];
+        }
+
+        return json([
+            'code' => 0,
+            'msg' => 'success',
+            'data' => $data,
+        ]);
+    }
+
     // 单个确认自动流入公海
     public function confirmAutoLiberum()
     {

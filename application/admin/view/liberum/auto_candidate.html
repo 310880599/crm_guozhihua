@@ -44,6 +44,13 @@
         width: 155px;
         margin-right: 0;
     }
+    .search-card .layui-input-inline .xm-select-parent {
+        width: 100%;
+    }
+    .search-card .layui-input-inline .xm-select {
+        min-height: 38px;
+        line-height: 36px;
+    }
     .table-wrapper {
         background: #fff;
         border-radius: 8px;
@@ -97,7 +104,7 @@
                     <div class="layui-inline">
                         <label class="layui-form-label">当前负责人：</label>
                         <div class="layui-input-inline">
-                            <input type="text" name="pr_user_keyword" placeholder="请输入负责人" class="layui-input">
+                            <div id="autoCandidatePrUserSelect"></div>
                         </div>
                     </div>
                     <div class="layui-inline">
@@ -150,8 +157,48 @@
         var table = layui.table, form = layui.form, $ = layui.jquery;
         var tableId = 'autoCandidateTable';
         var baseUrl = "{:url('Liberum/getAutoCandidateList')}";
+        var prUserOptionsUrl = "{:url('Liberum/getPrUserOptions')}";
         var confirmUrl = "{:url('Liberum/confirmAutoLiberum')}";
         var batchConfirmUrl = "{:url('Liberum/batchConfirmAutoLiberum')}";
+        var prUserSelectInstance = null;
+
+        function getSelectedPrUser() {
+            if (!prUserSelectInstance) {
+                return '';
+            }
+            return $.trim(prUserSelectInstance.getValue('valueStr') || '');
+        }
+
+        function renderPrUserSelect(dataList) {
+            prUserSelectInstance = xmSelect.render({
+                el: '#autoCandidatePrUserSelect',
+                name: 'pr_user',
+                layVerify: '',
+                tips: '请选择负责人',
+                radio: true,
+                clickClose: true,
+                filterable: true,
+                data: dataList || []
+            });
+        }
+
+        function initPrUserOptions() {
+            $.ajax({
+                url: prUserOptionsUrl,
+                type: 'get',
+                dataType: 'json',
+                success: function (res) {
+                    var list = [];
+                    if (res && parseInt(res.code, 10) === 0 && $.isArray(res.data)) {
+                        list = res.data;
+                    }
+                    renderPrUserSelect(list);
+                },
+                error: function () {
+                    renderPrUserSelect([]);
+                }
+            });
+        }
 
         var tableIns = table.render({
             elem: '#' + tableId,
@@ -208,9 +255,10 @@
 
         form.on('submit(auto-candidate-search)', function (data) {
             var field = data.field || {};
+            var prUser = getSelectedPrUser();
             var where = $.extend({}, field, {
                 kh_name: field.client_keyword || '',
-                pr_user: field.pr_user_keyword || ''
+                pr_user: prUser
             });
 
             table.reload(tableId, {
@@ -225,6 +273,9 @@
             form.val('auto-candidate-search-form', {
                 candidate_rule: ''
             });
+            if (prUserSelectInstance) {
+                prUserSelectInstance.setValue([]);
+            }
             form.render('select');
 
             table.reload(tableId, {
@@ -342,6 +393,8 @@
                 table.resize(tableId);
             }, 100);
         });
+
+        initPrUserOptions();
     });
 </script>
 </body>

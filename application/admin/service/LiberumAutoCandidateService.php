@@ -285,6 +285,15 @@ class LiberumAutoCandidateService extends BaseAdminService
         try {
             $khNameKeyword = trim((string)($params['kh_name'] ?? ($params['client_keyword'] ?? '')));
             $prUserKeyword = trim((string)($params['pr_user'] ?? ($params['pr_user_keyword'] ?? '')));
+            if ($prUserKeyword !== '' && ctype_digit($prUserKeyword)) {
+                $adminName = Db::table('admin')
+                    ->where('admin_id', (int)$prUserKeyword)
+                    ->value('username');
+                $adminName = trim((string)$adminName);
+                if ($adminName !== '') {
+                    $prUserKeyword = $adminName;
+                }
+            }
             $candidateRuleKeyword = trim((string)($params['candidate_rule'] ?? ''));
             $overdueDaysMin = isset($params['overdue_days']) && $params['overdue_days'] !== ''
                 ? max(0, (int)$params['overdue_days'])
