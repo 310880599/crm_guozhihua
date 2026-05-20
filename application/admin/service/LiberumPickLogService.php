@@ -420,7 +420,7 @@ class LiberumPickLogService extends BaseAdminService
         return ['code' => 0, 'msg' => '隐藏成功', 'data' => ['count' => $affected]];
     }
 
-    public function batchReturnToLiberum($ids = [], $operatorInfo = [])
+    public function batchReturnToLiberum($ids = [], $operatorInfo = [], $manualGhTypeId = 0)
     {
         $ids = is_array($ids) ? $ids : [];
         $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
@@ -429,6 +429,7 @@ class LiberumPickLogService extends BaseAdminService
         if (empty($ids)) {
             return ['code' => -200, 'msg' => '请选择需要退回的记录', 'data' => []];
         }
+        $manualGhTypeId = (int)$manualGhTypeId;
 
         $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
         $operatorName = trim((string)($operatorInfo['username'] ?? ''));
@@ -457,6 +458,21 @@ class LiberumPickLogService extends BaseAdminService
         $hasInLogSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
         $hasInLogReturnSource = $this->hasColumn('crm_liberum_in_log', 'return_source');
         $hasInLogLiberumType = $this->hasColumn('crm_liberum_in_log', 'liberum_type');
+        $hasInLogInGhType = $this->hasColumn('crm_liberum_in_log', 'in_gh_type');
+        $hasInLogInGhTypeName = $this->hasColumn('crm_liberum_in_log', 'in_gh_type_name');
+
+        $manualGhTypeName = '';
+        if ($manualGhTypeId > 0) {
+            $manualTypeRow = Db::table('crm_liberum_type')
+                ->where('id', $manualGhTypeId)
+                ->where('is_deleted', 0)
+                ->field('id,type_name')
+                ->find();
+            if (empty($manualTypeRow)) {
+                return ['code' => -200, 'msg' => '请选择有效的公海类型。', 'data' => []];
+            }
+            $manualGhTypeName = trim((string)($manualTypeRow['type_name'] ?? ''));
+        }
 
         $successCount = 0;
         $skipCount = 0;
@@ -532,17 +548,35 @@ class LiberumPickLogService extends BaseAdminService
                     continue;
                 }
 
-                $restoredGhType = '手动退回公海';
                 $restoredGhTypeId = 0;
-                if ($hasLogPrGhType && array_key_exists('pr_gh_type', $log) && trim((string)$log['pr_gh_type']) !== '') {
-                    $restoredGhTypeId = (int)$log['pr_gh_type'];
-                } elseif ($hasLogGhTypeId && array_key_exists('gh_type_id', $log) && trim((string)$log['gh_type_id']) !== '') {
-                    $restoredGhTypeId = (int)$log['gh_type_id'];
+                $restoredGhTypeName = '';
+                if ($manualGhTypeId > 0) {
+                    $restoredGhTypeId = $manualGhTypeId;
+                    $restoredGhTypeName = $manualGhTypeName;
+                } else {
+                    if ($hasLogPrGhType && array_key_exists('pr_gh_type', $log) && trim((string)$log['pr_gh_type']) !== '') {
+                        $restoredGhTypeId = (int)$log['pr_gh_type'];
+                    } elseif ($hasLogGhTypeId && array_key_exists('gh_type_id', $log) && trim((string)$log['gh_type_id']) !== '') {
+                        $restoredGhTypeId = (int)$log['gh_type_id'];
+                    }
+                    if ($restoredGhTypeId <= 0 && $hasLeadsPrGhType && isset($lead['pr_gh_type']) && trim((string)$lead['pr_gh_type']) !== '') {
+                        $restoredGhTypeId = (int)$lead['pr_gh_type'];
+                    }
+                    if ($hasLogGhType && array_key_exists('gh_type', $log) && trim((string)$log['gh_type']) !== '') {
+                        $restoredGhTypeName = trim((string)$log['gh_type']);
+                    }
+                    if ($restoredGhTypeName === '' && $restoredGhTypeId > 0) {
+                        $restoredGhTypeName = (string)Db::table('crm_liberum_type')
+                            ->where('id', $restoredGhTypeId)
+                            ->where('is_deleted', 0)
+                            ->value('type_name');
+                        $restoredGhTypeName = trim($restoredGhTypeName);
+                    }
                 }
-                if ($restoredGhTypeId > 0) {
-                    $restoredGhType = $restoredGhTypeId;
-                } elseif ($hasLogGhType && array_key_exists('gh_type', $log) && trim((string)$log['gh_type']) !== '') {
-                    $restoredGhType = $log['gh_type'];
+                if ($restoredGhTypeId <= 0) {
+                    $skipCount++;
+                    Db::commit();
+                    continue;
                 }
 
                 $leadKhName = isset($lead['kh_name']) ? (string)$lead['kh_name'] : '';
@@ -556,7 +590,7 @@ class LiberumPickLogService extends BaseAdminService
                     $leadUpdate['pr_user_id'] = 0;
                 }
                 if ($hasLeadsPrGhType) {
-                    $leadUpdate['pr_gh_type'] = $restoredGhType;
+                    $leadUpdate['pr_gh_type'] = $restoredGhTypeId;
                 }
                 if ($hasLeadsToGhTime) {
                     $leadUpdate['to_gh_time'] = $nowDateTime;
@@ -587,7 +621,11 @@ class LiberumPickLogService extends BaseAdminService
                     $logUpdate['return_operator_name'] = $operatorName;
                 }
                 if ($hasLogReturnRemark) {
-                    $logUpdate['return_remark'] = '客户提取记录批量退回公海';
+                    if ($manualGhTypeId > 0) {
+                        $logUpdate['return_remark'] = '批量退回公海，手动指定公海类型：' . ($restoredGhTypeName !== '' ? $restoredGhTypeName : $restoredGhTypeId);
+                    } else {
+                        $logUpdate['return_remark'] = '批量退回公海，退回提取前公海类型：' . ($restoredGhTypeName !== '' ? $restoredGhTypeName : $restoredGhTypeId);
+                    }
                 }
 
                 $logUpdatedRows = Db::table('crm_liberum_pick_log')
@@ -617,7 +655,11 @@ class LiberumPickLogService extends BaseAdminService
                     $inLogData['operator_name'] = $operatorName;
                 }
                 if ($hasInLogReason) {
-                    $inLogData['reason'] = '客户提取记录退回公海（原领取人：' . $currentPrUser . '）';
+                    if ($manualGhTypeId > 0) {
+                        $inLogData['reason'] = '客户提取记录批量退回公海：手动指定公海类型';
+                    } else {
+                        $inLogData['reason'] = '客户提取记录批量退回公海：退回提取前公海类型';
+                    }
                 }
                 if ($hasInLogInTime) {
                     $inLogData['in_time'] = $nowDateTime;
@@ -629,13 +671,19 @@ class LiberumPickLogService extends BaseAdminService
                     $inLogData['create_time'] = $nowTimestamp;
                 }
                 if ($hasInLogSourceType) {
-                    $inLogData['source_type'] = 'pick_return';
+                    $inLogData['source_type'] = 'pick_log_batch_return';
                 }
                 if ($hasInLogReturnSource) {
                     $inLogData['return_source'] = 'pick_log_batch_return';
                 }
                 if ($hasInLogLiberumType) {
                     $inLogData['liberum_type'] = $restoredGhTypeId > 0 ? $restoredGhTypeId : 0;
+                }
+                if ($hasInLogInGhType) {
+                    $inLogData['in_gh_type'] = $restoredGhTypeId;
+                }
+                if ($hasInLogInGhTypeName) {
+                    $inLogData['in_gh_type_name'] = $restoredGhTypeName !== '' ? $restoredGhTypeName : (string)$restoredGhTypeId;
                 }
 
                 if (!empty($inLogData)) {

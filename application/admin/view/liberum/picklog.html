@@ -90,7 +90,9 @@
         var tableId = 'pickLogTable';
         var baseUrl = "{:url('Liberum/getPickLogList')}";
         var exportUrl = "{:url('Liberum/exportPickLog')}";
+        var batchReturnUrl = "{:url('Liberum/batchReturnToLiberum')}";
         var canDangerOperate = {$canDangerOperate|default=0};
+        var ghTypeList = {:json_encode($ghTypeList|default=[])};
 
         laydate.render({ elem: '#pick_date' });
 
@@ -166,28 +168,61 @@
                     return;
                 }
 
-                layer.confirm('确定要将选中的客户退回公海吗？系统只会退回当前仍由领取人负责、未成交、未退回的客户。', {
-                    icon: 3,
-                    title: '提示'
-                }, function (index) {
-                    $.ajax({
-                        url: "{:url('Liberum/batchReturnToLiberum')}",
-                        type: 'post',
-                        dataType: 'json',
-                        data: {ids: ids},
-                        success: function (res) {
-                            if (parseInt(res.code, 10) === 0) {
-                                layer.msg(res.msg || '操作成功');
-                                table.reload(tableId, {});
-                            } else {
-                                layer.msg(res.msg || '操作失败');
+                var optionsHtml = '<option value="">默认原公海/提取前公海类型</option>';
+                $.each(ghTypeList || [], function (_, item) {
+                    var id = parseInt(item.id, 10) || 0;
+                    var typeName = item.type_name || '';
+                    if (id > 0) {
+                        optionsHtml += '<option value="' + id + '">' + typeName + '</option>';
+                    }
+                });
+
+                var contentHtml = ''
+                    + '<div style="padding: 16px 20px 4px 20px;">'
+                    + '  <div style="margin-bottom: 10px; color: #666;">请选择本次退回公海的类型；不选择则按提取记录里的提取前公海类型退回。</div>'
+                    + '  <form class="layui-form" lay-filter="batch-return-gh-form">'
+                    + '      <div class="layui-form-item">'
+                    + '          <label class="layui-form-label" style="width: 110px;">退回公海类型</label>'
+                    + '          <div class="layui-input-block" style="margin-left: 110px;">'
+                    + '              <select name="gh_type_id" lay-search>'
+                    +                    optionsHtml
+                    + '              </select>'
+                    + '          </div>'
+                    + '      </div>'
+                    + '  </form>'
+                    + '</div>';
+
+                layer.open({
+                    type: 1,
+                    title: '批量退回公海',
+                    area: ['520px', '240px'],
+                    content: contentHtml,
+                    btn: ['确认退回', '取消'],
+                    success: function () {
+                        form.render('select', 'batch-return-gh-form');
+                    },
+                    yes: function (index) {
+                        var field = form.val('batch-return-gh-form') || {};
+                        var ghTypeId = parseInt(field.gh_type_id, 10) || 0;
+                        $.ajax({
+                            url: batchReturnUrl,
+                            type: 'post',
+                            dataType: 'json',
+                            data: {ids: ids, gh_type_id: ghTypeId},
+                            success: function (res) {
+                                if (parseInt(res.code, 10) === 0) {
+                                    layer.msg(res.msg || '操作成功');
+                                    table.reload(tableId, {});
+                                    layer.close(index);
+                                } else {
+                                    layer.msg(res.msg || '操作失败');
+                                }
+                            },
+                            error: function () {
+                                layer.msg('请求失败，请稍后重试');
                             }
-                        },
-                        error: function () {
-                            layer.msg('请求失败，请稍后重试');
-                        }
-                    });
-                    layer.close(index);
+                        });
+                    }
                 });
                 return;
             }

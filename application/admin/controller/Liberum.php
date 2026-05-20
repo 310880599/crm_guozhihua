@@ -82,7 +82,13 @@ class Liberum extends Common{
             ->group('pick_user')
             ->order('pick_user asc')
             ->column('pick_user');
+        $ghTypeList = Db::table('crm_liberum_type')
+            ->where('is_deleted', 0)
+            ->order('id desc')
+            ->field('id,type_name')
+            ->select();
         $this->assign('pickUserList', $pickUserList);
+        $this->assign('ghTypeList', $ghTypeList);
         return $this->fetch('liberum/picklog');
     }
 
@@ -204,6 +210,7 @@ class Liberum extends Common{
         }
 
         $ids = input('post.ids/a', []);
+        $ghTypeId = input('post.gh_type_id/d', 0);
         if (empty($ids) || !is_array($ids)) {
             return ['code' => -200, 'msg' => '请选择需要退回的记录', 'data' => []];
         }
@@ -213,7 +220,7 @@ class Liberum extends Common{
             'username' => (string)Session::get('username'),
         ];
 
-        $result = $this->getLiberumLogService()->batchReturnToLiberum($ids, $operatorInfo);
+        $result = $this->getLiberumLogService()->batchReturnToLiberum($ids, $operatorInfo, $ghTypeId);
         $this->recordLiberumDangerOperationLog('公海提取记录批量退回', $ids, $operatorInfo, $result);
         return $result + ['data' => []];
     }
