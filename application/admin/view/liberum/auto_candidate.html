@@ -1,6 +1,7 @@
 {include file="common/head"/}
 <style>
     body { background: #f5f7fa !important; }
+    /* 页面外层：仅纵向滚动，避免出现底部多余横向滚动条 */
     .auto-candidate-container {
         position: absolute;
         top: 0;
@@ -9,7 +10,8 @@
         bottom: 0;
         padding: 20px;
         background: #f5f7fa;
-        overflow: auto;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
     .search-card {
         background: #fff;
@@ -56,16 +58,32 @@
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         padding: 0;
-        min-height: 420px;
-        overflow: visible;
+        overflow: hidden;
     }
     .layui-table-view {
         border: none !important;
+        overflow: visible !important;
     }
     .layui-table-page {
         background: #fff !important;
         border-top: 1px solid #e0e0e0 !important;
         padding: 12px 20px !important;
+    }
+    /* 仅主表区域保留一根横向滚动条；纵向由页面外层滚动 */
+    #autoCandidateTable + .layui-table-view .layui-table-box {
+        overflow: hidden !important;
+    }
+    #autoCandidateTable + .layui-table-view .layui-table-body.layui-table-main {
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+    }
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-l .layui-table-body,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r .layui-table-body {
+        overflow: hidden !important;
+    }
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-l,
+    #autoCandidateTable + .layui-table-view .layui-table-fixed-r {
+        overflow: hidden !important;
     }
     .candidate-reason-cell {
         white-space: normal;
@@ -258,7 +276,6 @@
             id: tableId,
             url: baseUrl,
             method: 'get',
-            height: 'full-300',
             page: true,
             limit: 10,
             limits: [10, 20, 30, 50, 100],
@@ -300,10 +317,7 @@
                     return '<span class="layui-badge-rim">未成交</span>';
                 }},
                 {fixed: 'right', title: '操作', toolbar: '#autoCandidateRowBarTpl', width: 150, align: 'center'}
-            ]],
-            done: function () {
-                table.resize(tableId);
-            }
+            ]]
         });
 
         form.on('submit(auto-candidate-search)', function (data) {
@@ -455,16 +469,6 @@
                     });
                 });
             });
-        });
-
-        $(window).on('resize', function () {
-            table.resize(tableId);
-        });
-
-        $(document).on('click', '.layui-tab-title li', function () {
-            setTimeout(function () {
-                table.resize(tableId);
-            }, 100);
         });
 
         initPrUserOptions();
