@@ -1,7 +1,7 @@
 {include file="common/head"/}
 <style>
     body { background: #f5f7fa !important; }
-    .liberum-log-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 20px; background: #f5f7fa; overflow: auto; }
+    .liberum-log-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 20px; background: #f5f7fa; overflow: hidden; }
     .search-card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); padding: 16px; margin-bottom: 12px; }
     .search-card .layui-form-item { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 0; gap: 10px 0; }
     .search-card .layui-inline { display: inline-flex; align-items: center; margin-right: 16px; margin-bottom: 10px; vertical-align: middle; }
@@ -14,10 +14,36 @@
         box-sizing: border-box;
     }
     .search-card .layui-input-inline { width: 160px; margin-right: 0; }
-    .table-wrapper { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); overflow: hidden; padding: 0; height: calc(100vh - 220px); display: flex; flex-direction: column; }
-    .layui-table-view { flex: 1; display: flex; flex-direction: column; height: 100%; border: none !important; }
-    .layui-table-body { flex: 1; overflow: auto; }
-    .layui-table-page { flex-shrink: 0; background: #fff !important; border-top: 1px solid #e0e0e0 !important; padding: 12px 20px !important; }
+    .table-wrapper {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 0;
+        height: calc(100vh - 260px);
+        min-height: 420px;
+        overflow: hidden;
+    }
+    .table-wrapper .layui-table-view {
+        height: 100% !important;
+        display: flex;
+        flex-direction: column;
+        margin: 0;
+        border: none !important;
+    }
+    .table-wrapper .layui-table-box {
+        flex: 1;
+        min-height: 0;
+        overflow: auto !important;
+    }
+    .table-wrapper .layui-table-body {
+        overflow: auto !important;
+    }
+    .table-wrapper .layui-table-page {
+        flex-shrink: 0;
+        background: #fff !important;
+        border-top: 1px solid #e0e0e0 !important;
+        padding: 12px 20px !important;
+    }
 </style>
 
 <div class="liberum-log-container">
@@ -96,11 +122,17 @@
 
         laydate.render({ elem: '#pick_date' });
 
+        function getTableHeight() {
+            var wrapperHeight = $('.table-wrapper').innerHeight() || 420;
+            return Math.max(320, wrapperHeight - 2);
+        }
+
         var tableIns = table.render({
             elem: '#' + tableId,
             id: tableId,
             url: baseUrl,
             method: 'get',
+            height: getTableHeight(),
             page: true,
             limit: 10,
             toolbar: canDangerOperate ? '#pickLogTopBtn' : false,
@@ -108,14 +140,14 @@
                 {type: 'checkbox', fixed: 'left'},
                 {field: 'id', title: 'ID', width: 80, sort: true},
                 {field: 'client_id', title: '客户ID', width: 110, templet: function (d) { return d.client_id || d.leads_id || ''; }},
-                {field: 'client_name', title: '客户名称', minWidth: 140, templet: function (d) { return d.client_name || d.kh_name || ''; }},
-                {field: 'client_phone', title: '客户电话', minWidth: 130, templet: function (d) { return d.client_phone || d.phone || ''; }},
-                {field: 'pick_user', title: '提取人', width: 110, templet: function (d) { return d.pick_user || d.operator_name || ''; }},
+                {field: 'client_name', title: '客户名称', width: 180, templet: function (d) { return d.client_name || d.kh_name || ''; }},
+                {field: 'client_phone', title: '客户电话', width: 150, templet: function (d) { return d.client_phone || d.phone || ''; }},
+                {field: 'pick_user', title: '提取人', width: 130, templet: function (d) { return d.pick_user || d.operator_name || ''; }},
                 {field: 'pick_date', title: '提取日期', width: 120},
-                {field: 'pick_time', title: '提取时间', minWidth: 170},
-                {field: 'before_pr_user', title: '原负责人', width: 110},
-                {field: 'before_gh_type_name', title: '提取前公海类型', width: 150, templet: function(d) { return d.before_gh_type_name || d.gh_type || ''; }},
-                {field: 'current_pr_user', title: '当前负责人', width: 110, templet: function (d) { return d.current_pr_user || d.pr_user || ''; }},
+                {field: 'pick_time', title: '提取时间', width: 180},
+                {field: 'before_pr_user', title: '原负责人', width: 130},
+                {field: 'before_gh_type_name', title: '提取前公海类型', width: 180, templet: function(d) { return d.before_gh_type_name || d.gh_type || ''; }},
+                {field: 'current_pr_user', title: '当前负责人', width: 130, templet: function (d) { return d.current_pr_user || d.pr_user || ''; }},
                 {field: 'is_returned', title: '是否已退回', width: 120, templet: function (d) {
                     var returned = parseInt(d.is_returned || 0) === 1;
                     return returned
@@ -127,6 +159,7 @@
 
         form.on('submit(pick-log-search)', function (data) {
             table.reload(tableId, {
+                height: getTableHeight(),
                 where: data.field,
                 page: {curr: 1}
             });
@@ -139,6 +172,7 @@
             $('select[name="is_returned"]').val('');
             form.render();
             table.reload(tableId, {
+                height: getTableHeight(),
                 where: {},
                 page: {curr: 1}
             });
@@ -216,7 +250,7 @@
                                 success: function (res) {
                                     if (parseInt(res.code, 10) === 0) {
                                         layer.msg(res.msg || '操作成功');
-                                        table.reload(tableId, {});
+                                        table.reload(tableId, {height: getTableHeight()});
                                         layer.close(index);
                                     } else {
                                         layer.msg(res.msg || '操作失败');
@@ -250,7 +284,7 @@
                         success: function (res) {
                             if (parseInt(res.code, 10) === 0) {
                                 layer.msg(res.msg || '隐藏成功');
-                                table.reload(tableId, {});
+                                table.reload(tableId, {height: getTableHeight()});
                             } else {
                                 layer.msg(res.msg || '隐藏失败');
                             }
@@ -262,6 +296,16 @@
                     layer.close(index);
                 });
             }
+        });
+
+        var resizeTimer = null;
+        $(window).on('resize', function () {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(function () {
+                table.reload(tableId, {
+                    height: getTableHeight()
+                });
+            }, 150);
         });
     });
 </script>
