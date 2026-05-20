@@ -579,7 +579,12 @@ class LiberumPickLogService extends BaseAdminService
                 }
                 if ($restoredGhTypeId <= 0) {
                     $skipCount++;
-                    $skipReasonStats['公海类型无效'] = ($skipReasonStats['公海类型无效'] ?? 0) + 1;
+                    if ($manualGhTypeId > 0) {
+                        $skipReason = '手动选择公海类型无效';
+                    } else {
+                        $skipReason = '提取记录缺少原公海类型';
+                    }
+                    $skipReasonStats[$skipReason] = ($skipReasonStats[$skipReason] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
