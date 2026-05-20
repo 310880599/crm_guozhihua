@@ -1,7 +1,7 @@
 {include file="common/head"/}
 <style>
     body { background: #f5f7fa !important; }
-    .liberum-log-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 20px; background: #f5f7fa; overflow: hidden; }
+    .liberum-log-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 20px; background: #f5f7fa; overflow: auto; }
     .search-card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); padding: 16px; margin-bottom: 12px; }
     .search-card .layui-form-item { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 0; gap: 10px 0; }
     .search-card .layui-inline { display: inline-flex; align-items: center; margin-right: 16px; margin-bottom: 10px; vertical-align: middle; }
@@ -19,30 +19,25 @@
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         padding: 0;
-        height: calc(100vh - 260px);
-        min-height: 420px;
-        overflow: hidden;
+        overflow: visible;
     }
-    .table-wrapper .layui-table-view {
-        height: 100% !important;
-        display: flex;
-        flex-direction: column;
-        margin: 0;
-        border: none !important;
-    }
-    .table-wrapper .layui-table-box {
-        flex: 1;
-        min-height: 0;
-        overflow: auto !important;
-    }
-    .table-wrapper .layui-table-body {
-        overflow: auto !important;
-    }
-    .table-wrapper .layui-table-page {
+    .layui-table-view { border: none !important; }
+    .layui-table-body { overflow: auto; }
+    .layui-table-page {
         flex-shrink: 0;
         background: #fff !important;
         border-top: 1px solid #e0e0e0 !important;
         padding: 12px 20px !important;
+    }
+    #pickLogTable + .layui-table-view .layui-table-main .layui-table-body { overflow: auto !important; }
+    #pickLogTable + .layui-table-view .layui-table-box { overflow: hidden !important; }
+    #pickLogTable + .layui-table-view .layui-table-fixed-l .layui-table-body,
+    #pickLogTable + .layui-table-view .layui-table-fixed-r .layui-table-body {
+        overflow-y: hidden !important;
+    }
+    #pickLogTable + .layui-table-view .layui-table-fixed-l,
+    #pickLogTable + .layui-table-view .layui-table-fixed-r {
+        overflow: hidden !important;
     }
 </style>
 
@@ -122,19 +117,15 @@
 
         laydate.render({ elem: '#pick_date' });
 
-        function getTableHeight() {
-            var wrapperHeight = $('.table-wrapper').innerHeight() || 420;
-            return Math.max(320, wrapperHeight - 2);
-        }
-
         var tableIns = table.render({
             elem: '#' + tableId,
             id: tableId,
             url: baseUrl,
             method: 'get',
-            height: getTableHeight(),
+            height: 'full-300',
             page: true,
             limit: 10,
+            limits: [10, 20, 30, 50, 100],
             toolbar: canDangerOperate ? '#pickLogTopBtn' : false,
             cols: [[
                 {type: 'checkbox', fixed: 'left'},
@@ -159,7 +150,6 @@
 
         form.on('submit(pick-log-search)', function (data) {
             table.reload(tableId, {
-                height: getTableHeight(),
                 where: data.field,
                 page: {curr: 1}
             });
@@ -172,7 +162,6 @@
             $('select[name="is_returned"]').val('');
             form.render();
             table.reload(tableId, {
-                height: getTableHeight(),
                 where: {},
                 page: {curr: 1}
             });
@@ -250,7 +239,7 @@
                                 success: function (res) {
                                     if (parseInt(res.code, 10) === 0) {
                                         layer.msg(res.msg || '操作成功');
-                                        table.reload(tableId, {height: getTableHeight()});
+                                        table.reload(tableId);
                                         layer.close(index);
                                     } else {
                                         layer.msg(res.msg || '操作失败');
@@ -284,7 +273,7 @@
                         success: function (res) {
                             if (parseInt(res.code, 10) === 0) {
                                 layer.msg(res.msg || '隐藏成功');
-                                table.reload(tableId, {height: getTableHeight()});
+                                table.reload(tableId);
                             } else {
                                 layer.msg(res.msg || '隐藏失败');
                             }
@@ -298,15 +287,6 @@
             }
         });
 
-        var resizeTimer = null;
-        $(window).on('resize', function () {
-            clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(function () {
-                table.reload(tableId, {
-                    height: getTableHeight()
-                });
-            }, 150);
-        });
     });
 </script>
 </body>
