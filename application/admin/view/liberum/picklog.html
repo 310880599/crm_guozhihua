@@ -92,7 +92,7 @@
         var exportUrl = "{:url('Liberum/exportPickLog')}";
         var batchReturnUrl = "{:url('Liberum/batchReturnToLiberum')}";
         var canDangerOperate = {$canDangerOperate|default=0};
-        var ghTypeList = {:json_encode($ghTypeList|default=[])};
+        var ghTypeList = <?php echo json_encode(isset($ghTypeList) ? $ghTypeList : [], JSON_UNESCAPED_UNICODE); ?>;
 
         laydate.render({ elem: '#pick_date' });
 
