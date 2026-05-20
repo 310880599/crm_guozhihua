@@ -436,7 +436,7 @@ class LiberumPickLogService extends BaseAdminService
         $nowDateTime = date('Y-m-d H:i:s');
         $nowTimestamp = time();
 
-        $hasLogReturnedTime = $this->hasColumn('crm_liberum_pick_log', 'returned_time');
+        $hasLogReturnTime = $this->hasColumn('crm_liberum_pick_log', 'return_time');
         $hasLogReturnOperatorId = $this->hasColumn('crm_liberum_pick_log', 'return_operator_id');
         $hasLogReturnOperatorName = $this->hasColumn('crm_liberum_pick_log', 'return_operator_name');
         $hasLogReturnRemark = $this->hasColumn('crm_liberum_pick_log', 'return_remark');
@@ -477,6 +477,7 @@ class LiberumPickLogService extends BaseAdminService
         $successCount = 0;
         $skipCount = 0;
         $failCount = 0;
+        $skipReasonStats = [];
 
         foreach ($ids as $logId) {
             Db::startTrans();
@@ -488,12 +489,14 @@ class LiberumPickLogService extends BaseAdminService
 
                 if (empty($log)) {
                     $skipCount++;
+                    $skipReasonStats['提取记录不存在'] = ($skipReasonStats['提取记录不存在'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
 
                 if ((int)($log['is_returned'] ?? 0) === 1) {
                     $skipCount++;
+                    $skipReasonStats['提取记录已退回'] = ($skipReasonStats['提取记录已退回'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
@@ -507,6 +510,7 @@ class LiberumPickLogService extends BaseAdminService
                 }
                 if ($leadId <= 0) {
                     $skipCount++;
+                    $skipReasonStats['客户不存在'] = ($skipReasonStats['客户不存在'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
@@ -518,35 +522,35 @@ class LiberumPickLogService extends BaseAdminService
 
                 if (empty($lead)) {
                     $skipCount++;
+                    $skipReasonStats['客户不存在'] = ($skipReasonStats['客户不存在'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
 
                 if (isset($lead['issuccess']) && (int)$lead['issuccess'] === 1) {
                     $skipCount++;
+                    $skipReasonStats['客户已成交'] = ($skipReasonStats['客户已成交'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
 
                 if ((int)($lead['status'] ?? 0) === 2) {
                     $skipCount++;
+                    $skipReasonStats['客户已在公海'] = ($skipReasonStats['客户已在公海'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
 
                 if ((int)($lead['status'] ?? 0) !== 1) {
                     $skipCount++;
+                    $skipReasonStats['客户状态非客户'] = ($skipReasonStats['客户状态非客户'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
 
                 $pickUser = trim((string)($log['pick_user'] ?? ''));
                 $currentPrUser = trim((string)($lead['pr_user'] ?? ''));
-                if ($pickUser === '' || $currentPrUser !== $pickUser) {
-                    $skipCount++;
-                    Db::commit();
-                    continue;
-                }
+                $isOwnerChanged = ($pickUser !== '' && $currentPrUser !== '' && $currentPrUser !== $pickUser);
 
                 $restoredGhTypeId = 0;
                 $restoredGhTypeName = '';
@@ -575,6 +579,7 @@ class LiberumPickLogService extends BaseAdminService
                 }
                 if ($restoredGhTypeId <= 0) {
                     $skipCount++;
+                    $skipReasonStats['公海类型无效'] = ($skipReasonStats['公海类型无效'] ?? 0) + 1;
                     Db::commit();
                     continue;
                 }
@@ -599,7 +604,6 @@ class LiberumPickLogService extends BaseAdminService
                 $leadUpdatedRows = Db::table('crm_leads')
                     ->where('id', $leadId)
                     ->where('status', 1)
-                    ->where('pr_user', $pickUser)
                     ->update($leadUpdate);
 
                 if ($leadUpdatedRows !== 1) {
@@ -611,8 +615,8 @@ class LiberumPickLogService extends BaseAdminService
                 $logUpdate = [
                     'is_returned' => 1,
                 ];
-                if ($hasLogReturnedTime) {
-                    $logUpdate['returned_time'] = $nowDateTime;
+                if ($hasLogReturnTime) {
+                    $logUpdate['return_time'] = $nowDateTime;
                 }
                 if ($hasLogReturnOperatorId) {
                     $logUpdate['return_operator_id'] = $operatorId;
@@ -621,10 +625,19 @@ class LiberumPickLogService extends BaseAdminService
                     $logUpdate['return_operator_name'] = $operatorName;
                 }
                 if ($hasLogReturnRemark) {
+                    $ownerInfoText = '提取人：' . ($pickUser !== '' ? $pickUser : '未知')
+                        . '；退回前当前负责人：' . ($currentPrUser !== '' ? $currentPrUser : '空');
+                    if ($isOwnerChanged) {
+                        $ownerInfoText .= '；当前负责人已变化';
+                    }
                     if ($manualGhTypeId > 0) {
-                        $logUpdate['return_remark'] = '批量退回公海，手动指定公海类型：' . ($restoredGhTypeName !== '' ? $restoredGhTypeName : $restoredGhTypeId);
+                        $logUpdate['return_remark'] = '来自客户提取记录批量退回；手动指定公海类型：'
+                            . ($restoredGhTypeName !== '' ? $restoredGhTypeName : $restoredGhTypeId)
+                            . '；' . $ownerInfoText;
                     } else {
-                        $logUpdate['return_remark'] = '批量退回公海，退回提取前公海类型：' . ($restoredGhTypeName !== '' ? $restoredGhTypeName : $restoredGhTypeId);
+                        $logUpdate['return_remark'] = '来自客户提取记录批量退回；退回提取前公海类型：'
+                            . ($restoredGhTypeName !== '' ? $restoredGhTypeName : $restoredGhTypeId)
+                            . '；' . $ownerInfoText;
                     }
                 }
 
@@ -655,10 +668,15 @@ class LiberumPickLogService extends BaseAdminService
                     $inLogData['operator_name'] = $operatorName;
                 }
                 if ($hasInLogReason) {
+                    $ownerInfoText = '提取人：' . ($pickUser !== '' ? $pickUser : '未知')
+                        . '；退回前当前负责人：' . ($currentPrUser !== '' ? $currentPrUser : '空');
+                    if ($isOwnerChanged) {
+                        $ownerInfoText .= '；当前负责人已变化';
+                    }
                     if ($manualGhTypeId > 0) {
-                        $inLogData['reason'] = '客户提取记录批量退回公海：手动指定公海类型';
+                        $inLogData['reason'] = '来自客户提取记录批量退回公海：手动指定公海类型；' . $ownerInfoText;
                     } else {
-                        $inLogData['reason'] = '客户提取记录批量退回公海：退回提取前公海类型';
+                        $inLogData['reason'] = '来自客户提取记录批量退回公海：退回提取前公海类型；' . $ownerInfoText;
                     }
                 }
                 if ($hasInLogInTime) {
@@ -704,6 +722,15 @@ class LiberumPickLogService extends BaseAdminService
         }
 
         $msg = '成功退回 ' . $successCount . ' 条，跳过 ' . $skipCount . ' 条，失败 ' . $failCount . ' 条。';
+        if ($skipCount > 0 && !empty($skipReasonStats)) {
+            $reasonParts = [];
+            foreach ($skipReasonStats as $reason => $count) {
+                $reasonParts[] = $reason . '：' . (int)$count . ' 条';
+            }
+            if (!empty($reasonParts)) {
+                $msg .= ' 跳过原因：' . implode('；', $reasonParts) . '。';
+            }
+        }
         if ($successCount > 0) {
             return [
                 'code' => 0,

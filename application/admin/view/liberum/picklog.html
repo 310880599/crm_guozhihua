@@ -204,23 +204,29 @@
                     yes: function (index) {
                         var field = form.val('batch-return-gh-form') || {};
                         var ghTypeId = parseInt(field.gh_type_id, 10) || 0;
-                        $.ajax({
-                            url: batchReturnUrl,
-                            type: 'post',
-                            dataType: 'json',
-                            data: {ids: ids, gh_type_id: ghTypeId},
-                            success: function (res) {
-                                if (parseInt(res.code, 10) === 0) {
-                                    layer.msg(res.msg || '操作成功');
-                                    table.reload(tableId, {});
-                                    layer.close(index);
-                                } else {
-                                    layer.msg(res.msg || '操作失败');
+                        layer.confirm('确认将选中的客户退回公海吗？如果客户当前负责人已经不是原提取人，系统也会按管理员操作强制退回，并在流入公海记录中记录原当前负责人。', {
+                            icon: 3,
+                            title: '二次确认'
+                        }, function (confirmIndex) {
+                            $.ajax({
+                                url: batchReturnUrl,
+                                type: 'post',
+                                dataType: 'json',
+                                data: {ids: ids, gh_type_id: ghTypeId},
+                                success: function (res) {
+                                    if (parseInt(res.code, 10) === 0) {
+                                        layer.msg(res.msg || '操作成功');
+                                        table.reload(tableId, {});
+                                        layer.close(index);
+                                    } else {
+                                        layer.msg(res.msg || '操作失败');
+                                    }
+                                },
+                                error: function () {
+                                    layer.msg('请求失败，请稍后重试');
                                 }
-                            },
-                            error: function () {
-                                layer.msg('请求失败，请稍后重试');
-                            }
+                            });
+                            layer.close(confirmIndex);
                         });
                     }
                 });
