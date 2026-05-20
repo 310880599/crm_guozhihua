@@ -1,7 +1,18 @@
 {include file="common/head"/}
 <style>
     body { background: #f5f7fa !important; }
-    .liberum-log-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 20px; background: #f5f7fa; overflow: auto; }
+    /* 页面外层：仅纵向滚动，避免出现底部多余横向滚动条 */
+    .liberum-log-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #f5f7fa;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
     .search-card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08); padding: 16px; margin-bottom: 12px; }
     .search-card .layui-form-item { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 0; gap: 10px 0; }
     .search-card .layui-inline { display: inline-flex; align-items: center; margin-right: 16px; margin-bottom: 10px; vertical-align: middle; }
@@ -19,20 +30,29 @@
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         padding: 0;
-        overflow: visible;
+        overflow: hidden;
     }
-    .layui-table-view { border: none !important; }
-    .layui-table-body { overflow: auto; }
-    .layui-table-page { flex-shrink: 0; background: #fff !important; border-top: 1px solid #e0e0e0 !important; padding: 12px 20px !important; }
-    #inLogTable + .layui-table-view .layui-table-main .layui-table-body { overflow: auto !important; }
-    #inLogTable + .layui-table-view .layui-table-box { overflow: hidden !important; }
-    /* 客户流入公海记录：隐藏左右固定列自身的小纵向滚动条，只保留主表滚动条 */
-    #inLogTable + .layui-table-view .layui-table-fixed-l .layui-table-body,
-    #inLogTable + .layui-table-view .layui-table-fixed-r .layui-table-body {
+    .layui-table-view {
+        border: none !important;
+        overflow: visible !important;
+    }
+    .layui-table-page {
+        background: #fff !important;
+        border-top: 1px solid #e0e0e0 !important;
+        padding: 12px 20px !important;
+    }
+    /* 仅主表区域保留一根横向滚动条；纵向由页面外层滚动 */
+    #inLogTable + .layui-table-view .layui-table-box {
+        overflow: hidden !important;
+    }
+    #inLogTable + .layui-table-view .layui-table-body.layui-table-main {
+        overflow-x: auto !important;
         overflow-y: hidden !important;
     }
-
-    /* 避免固定列区域出现多余滚动条 */
+    #inLogTable + .layui-table-view .layui-table-fixed-l .layui-table-body,
+    #inLogTable + .layui-table-view .layui-table-fixed-r .layui-table-body {
+        overflow: hidden !important;
+    }
     #inLogTable + .layui-table-view .layui-table-fixed-l,
     #inLogTable + .layui-table-view .layui-table-fixed-r {
         overflow: hidden !important;
@@ -133,7 +153,6 @@
             id: tableId,
             url: baseUrl,
             method: 'get',
-            height: 'full-300',
             page: true,
             limit: 10,
             limits: [10, 20, 30, 50, 100],
