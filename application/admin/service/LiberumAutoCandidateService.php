@@ -129,6 +129,13 @@ class LiberumAutoCandidateService extends BaseAdminService
                 Db::rollback();
                 return ['code' => -200, 'msg' => '客户不存在', 'data' => []];
             }
+            if (
+                (!isset($lead['create_time']) || trim((string)$lead['create_time']) === '')
+                && isset($lead['at_time'])
+                && trim((string)$lead['at_time']) !== ''
+            ) {
+                $lead['create_time'] = $lead['at_time'];
+            }
 
             if ((int)($lead['status'] ?? 0) !== 1) {
                 Db::rollback();
@@ -473,7 +480,8 @@ class LiberumAutoCandidateService extends BaseAdminService
             return false;
         }
 
-        $createdTs = $this->normalizeTimeToTimestamp($lead['create_time'] ?? '');
+        $createTime = $lead['create_time'] ?? ($lead['at_time'] ?? '');
+        $createdTs = $this->normalizeTimeToTimestamp($createTime);
         if ($createdTs <= 0) {
             return false;
         }
@@ -533,6 +541,13 @@ class LiberumAutoCandidateService extends BaseAdminService
         if (!is_array($lead) || empty($lead)) {
             return ['rule' => '', 'reason' => ''];
         }
+        if (
+            (!isset($lead['create_time']) || trim((string)$lead['create_time']) === '')
+            && isset($lead['at_time'])
+            && trim((string)$lead['at_time']) !== ''
+        ) {
+            $lead['create_time'] = $lead['at_time'];
+        }
 
         if ((int)($lead['issuccess'] ?? 0) === 1) {
             $this->candidateReasonMap[$leadId] = ['rule' => '', 'reason' => '成交客户不进入候选'];
@@ -540,7 +555,8 @@ class LiberumAutoCandidateService extends BaseAdminService
         }
 
         $stats = $this->getLeadFollowStats($leadId);
-        $createdTs = $this->normalizeTimeToTimestamp($lead['create_time'] ?? '');
+        $createTime = $lead['create_time'] ?? ($lead['at_time'] ?? '');
+        $createdTs = $this->normalizeTimeToTimestamp($createTime);
         $thresholdSeconds = (int)$this->getAutoLiberumDays() * 86400;
         $daysText = (int)$this->getAutoLiberumDays();
         $now = time();
