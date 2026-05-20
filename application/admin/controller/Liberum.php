@@ -167,6 +167,7 @@ class Liberum extends Common{
             '提取日期',
             '提取时间',
             '原负责人',
+            '提取前公海类型',
             '当前负责人',
             '是否已退回',
         ];
@@ -183,6 +184,7 @@ class Liberum extends Common{
                 (string)($row['pick_date'] ?? ''),
                 (string)($row['pick_time'] ?? ''),
                 (string)($row['before_pr_user'] ?? ''),
+                (string)($row['before_gh_type_name'] ?? ($row['gh_type'] ?? '')),
                 (string)($row['current_pr_user'] ?? ($row['pr_user'] ?? '')),
                 $isReturned,
             ];
@@ -948,6 +950,14 @@ class Liberum extends Common{
             }
 
             $now = date("Y-m-d H:i:s");
+            $beforeGhTypeId = isset($ghClient['pr_gh_type']) ? (int)$ghClient['pr_gh_type'] : 0;
+            $beforeGhTypeName = '';
+            if ($beforeGhTypeId > 0) {
+                $beforeGhTypeName = (string)Db::table('crm_liberum_type')
+                    ->where('id', $beforeGhTypeId)
+                    ->where('is_deleted', 0)
+                    ->value('type_name');
+            }
             $updateData = [
                 'status' => 1,
                 'pr_user_bef' => isset($ghClient['pr_user']) ? $ghClient['pr_user'] : '',
@@ -982,6 +992,15 @@ class Liberum extends Common{
                 'is_returned' => 0,
                 'create_time' => time()
             ];
+            if ($this->tableHasColumn('crm_liberum_pick_log', 'pr_gh_type')) {
+                $logData['pr_gh_type'] = $beforeGhTypeId > 0 ? $beforeGhTypeId : 0;
+            }
+            if ($this->tableHasColumn('crm_liberum_pick_log', 'gh_type_id')) {
+                $logData['gh_type_id'] = $beforeGhTypeId > 0 ? $beforeGhTypeId : 0;
+            }
+            if ($this->tableHasColumn('crm_liberum_pick_log', 'gh_type')) {
+                $logData['gh_type'] = $beforeGhTypeName !== '' ? $beforeGhTypeName : '';
+            }
             Db::table('crm_liberum_pick_log')->insert($logData);
 
             Db::commit();
@@ -1197,5 +1216,26 @@ class Liberum extends Common{
         header('Pragma: public');
         $writer->save('php://output');
         exit;
+    }
+
+    /**
+     * 检测表字段是否存在，避免历史库结构差异导致 SQL 报错。
+     */
+    private function tableHasColumn($tableName, $columnName)
+    {
+        static $columnCache = [];
+        $cacheKey = strtolower((string)$tableName . '.' . (string)$columnName);
+        if (array_key_exists($cacheKey, $columnCache)) {
+            return (bool)$columnCache[$cacheKey];
+        }
+
+        try {
+            $fields = Db::getTableFields($tableName);
+            $exists = is_array($fields) && in_array($columnName, $fields, true);
+        } catch (\Throwable $e) {
+            $exists = false;
+        }
+        $columnCache[$cacheKey] = $exists ? 1 : 0;
+        return $exists;
     }
 }

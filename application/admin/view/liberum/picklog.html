@@ -112,6 +112,7 @@
                 {field: 'pick_date', title: '提取日期', width: 120},
                 {field: 'pick_time', title: '提取时间', minWidth: 170},
                 {field: 'before_pr_user', title: '原负责人', width: 110},
+                {field: 'before_gh_type_name', title: '提取前公海类型', width: 150, templet: function(d) { return d.before_gh_type_name || d.gh_type || ''; }},
                 {field: 'current_pr_user', title: '当前负责人', width: 110, templet: function (d) { return d.current_pr_user || d.pr_user || ''; }},
                 {field: 'is_returned', title: '是否已退回', width: 120, templet: function (d) {
                     var returned = parseInt(d.is_returned || 0) === 1;

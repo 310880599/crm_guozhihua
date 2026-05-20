@@ -23,6 +23,10 @@ class LiberumPickLogService extends BaseAdminService
             $hasOperatorName = $this->hasColumn('crm_liberum_pick_log', 'operator_name');
             $hasPickOperatorId = $this->hasColumn('crm_liberum_pick_log', 'operator_id');
             $hasIsDeleted = $this->hasColumn('crm_liberum_pick_log', 'is_deleted');
+            $hasLogPrGhType = $this->hasColumn('crm_liberum_pick_log', 'pr_gh_type');
+            $hasLogGhTypeId = $this->hasColumn('crm_liberum_pick_log', 'gh_type_id');
+            $hasLogGhType = $this->hasColumn('crm_liberum_pick_log', 'gh_type');
+            $hasLeadPrGhType = $this->hasColumn('crm_leads', 'pr_gh_type');
 
             $leadJoin = $hasActiveLeadsId
                 ? 'l.id = IFNULL(NULLIF(pl.leads_id, 0), pl.active_leads_id)'
@@ -37,6 +41,18 @@ class LiberumPickLogService extends BaseAdminService
             $pickOperatorIdField = $hasPickOperatorId
                 ? 'IFNULL(MAX(pl.operator_id), 0) AS operator_id'
                 : '0 AS operator_id';
+            $logPrGhTypeField = $hasLogPrGhType
+                ? 'IFNULL(MAX(pl.pr_gh_type), 0) AS log_pr_gh_type'
+                : '0 AS log_pr_gh_type';
+            $logGhTypeIdField = $hasLogGhTypeId
+                ? 'IFNULL(MAX(pl.gh_type_id), 0) AS log_gh_type_id'
+                : '0 AS log_gh_type_id';
+            $logGhTypeField = $hasLogGhType
+                ? 'IFNULL(MAX(pl.gh_type), "") AS gh_type'
+                : '"" AS gh_type';
+            $leadPrGhTypeField = $hasLeadPrGhType
+                ? 'IFNULL(MAX(l.pr_gh_type), 0) AS lead_pr_gh_type'
+                : '0 AS lead_pr_gh_type';
 
             $model = new LiberumPickLog();
             $query = $model->alias('pl')
@@ -117,6 +133,10 @@ class LiberumPickLogService extends BaseAdminService
                     'IFNULL(MAX(pl.is_returned), 0) AS is_returned',
                     $pickOperatorNameField,
                     $pickOperatorIdField,
+                    $logPrGhTypeField,
+                    $logGhTypeIdField,
+                    $logGhTypeField,
+                    $leadPrGhTypeField,
                 ])
                 ->group('pl.id')
                 ->order('pl.id desc')
@@ -133,9 +153,18 @@ class LiberumPickLogService extends BaseAdminService
                     $leadIds[] = (int)($row['contact_leads_id'] ?? 0);
                 }
                 $phoneMap = $this->buildPhoneMap($leadIds);
+                $ghTypeNameMap = $this->buildGhTypeNameMap($data);
                 foreach ($data as &$row) {
                     $mapLeadId = (int)($row['contact_leads_id'] ?? 0);
                     $row['client_phone'] = $phoneMap[$mapLeadId] ?? '';
+                    $row['before_gh_type_id'] = (int)($row['log_pr_gh_type'] ?? 0);
+                    if ($row['before_gh_type_id'] <= 0) {
+                        $row['before_gh_type_id'] = (int)($row['log_gh_type_id'] ?? 0);
+                    }
+                    if ($row['before_gh_type_id'] <= 0) {
+                        $row['before_gh_type_id'] = (int)($row['lead_pr_gh_type'] ?? 0);
+                    }
+                    $row['before_gh_type_name'] = $this->resolveBeforeGhTypeName($row, $ghTypeNameMap);
                     unset($row['contact_leads_id']);
                 }
                 unset($row);
@@ -149,6 +178,69 @@ class LiberumPickLogService extends BaseAdminService
             'count' => $count,
             'data' => $data,
         ];
+    }
+
+    protected function buildGhTypeNameMap($rows = [])
+    {
+        $rows = is_array($rows) ? $rows : [];
+        $typeIds = [];
+        foreach ($rows as $row) {
+            $logPrGhType = (int)($row['log_pr_gh_type'] ?? 0);
+            $logGhTypeId = (int)($row['log_gh_type_id'] ?? 0);
+            $leadPrGhType = (int)($row['lead_pr_gh_type'] ?? 0);
+            if ($logPrGhType > 0) {
+                $typeIds[] = $logPrGhType;
+            }
+            if ($logGhTypeId > 0) {
+                $typeIds[] = $logGhTypeId;
+            }
+            if ($leadPrGhType > 0) {
+                $typeIds[] = $leadPrGhType;
+            }
+        }
+        $typeIds = array_values(array_unique($typeIds));
+        if (empty($typeIds)) {
+            return [];
+        }
+
+        $rows = Db::table('crm_liberum_type')
+            ->where('is_deleted', 0)
+            ->whereIn('id', $typeIds)
+            ->column('type_name', 'id');
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $map = [];
+        foreach ($rows as $id => $name) {
+            $map[(int)$id] = trim((string)$name);
+        }
+        return $map;
+    }
+
+    protected function resolveBeforeGhTypeName($row = [], $ghTypeNameMap = [])
+    {
+        $row = is_array($row) ? $row : [];
+        $ghTypeNameMap = is_array($ghTypeNameMap) ? $ghTypeNameMap : [];
+
+        $snapshotName = trim((string)($row['gh_type'] ?? ''));
+        if ($snapshotName !== '') {
+            return $snapshotName;
+        }
+
+        $fallbackId = (int)($row['log_pr_gh_type'] ?? 0);
+        if ($fallbackId <= 0) {
+            $fallbackId = (int)($row['log_gh_type_id'] ?? 0);
+        }
+        if ($fallbackId <= 0) {
+            $fallbackId = (int)($row['lead_pr_gh_type'] ?? 0);
+        }
+
+        if ($fallbackId > 0 && isset($ghTypeNameMap[$fallbackId])) {
+            return (string)$ghTypeNameMap[$fallbackId];
+        }
+
+        return '';
     }
 
     protected function buildPhoneMap($leadIds = [])
@@ -440,10 +532,14 @@ class LiberumPickLogService extends BaseAdminService
                 }
 
                 $restoredGhType = '手动退回公海';
+                $restoredGhTypeId = 0;
                 if ($hasLogPrGhType && array_key_exists('pr_gh_type', $log) && trim((string)$log['pr_gh_type']) !== '') {
-                    $restoredGhType = $log['pr_gh_type'];
+                    $restoredGhTypeId = (int)$log['pr_gh_type'];
                 } elseif ($hasLogGhTypeId && array_key_exists('gh_type_id', $log) && trim((string)$log['gh_type_id']) !== '') {
-                    $restoredGhType = $log['gh_type_id'];
+                    $restoredGhTypeId = (int)$log['gh_type_id'];
+                }
+                if ($restoredGhTypeId > 0) {
+                    $restoredGhType = $restoredGhTypeId;
                 } elseif ($hasLogGhType && array_key_exists('gh_type', $log) && trim((string)$log['gh_type']) !== '') {
                     $restoredGhType = $log['gh_type'];
                 }
