@@ -1036,7 +1036,7 @@ class Liberum extends Common{
             Db::rollback();
             $errorMsg = $e->getMessage();
             if (stripos($errorMsg, 'uk_active_leads_id') !== false || (stripos($errorMsg, 'Duplicate entry') !== false && stripos($errorMsg, 'active_leads_id') !== false)) {
-                return ['code' => -200, 'msg' => '该客户已被其他人领取，请刷新列表', 'data' => []];
+                return ['code' => -200, 'msg' => '该客户已被其他人领取或旧领取记录未释放，请刷新列表后重试', 'data' => []];
             }
             return ['code' => -200, 'msg' => '抢客户失败！', 'data' => []];
         }

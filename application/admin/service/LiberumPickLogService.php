@@ -5,6 +5,7 @@ namespace app\admin\service;
 use app\admin\behavior\ContactMap;
 use app\admin\model\LiberumPickLog;
 use think\Db;
+use think\facade\Log;
 
 class LiberumPickLogService extends BaseAdminService
 {
@@ -443,6 +444,7 @@ class LiberumPickLogService extends BaseAdminService
         $hasLogPrGhType = $this->hasColumn('crm_liberum_pick_log', 'pr_gh_type');
         $hasLogGhTypeId = $this->hasColumn('crm_liberum_pick_log', 'gh_type_id');
         $hasLogGhType = $this->hasColumn('crm_liberum_pick_log', 'gh_type');
+        $hasLogActiveLeadsId = $this->hasColumn('crm_liberum_pick_log', 'active_leads_id');
         $hasLeadsToGhTime = $this->hasColumn('crm_leads', 'to_gh_time');
         $hasLeadsPrUserId = $this->hasColumn('crm_leads', 'pr_user_id');
         $hasLeadsPrGhType = $this->hasColumn('crm_leads', 'pr_gh_type');
@@ -620,6 +622,10 @@ class LiberumPickLogService extends BaseAdminService
                 $logUpdate = [
                     'is_returned' => 1,
                 ];
+                if ($hasLogActiveLeadsId) {
+                    // 退回后释放 active_leads_id，避免后续重新领取触发唯一索引冲突
+                    $logUpdate['active_leads_id'] = null;
+                }
                 if ($hasLogReturnTime) {
                     $logUpdate['return_time'] = $nowDateTime;
                 }
@@ -654,6 +660,21 @@ class LiberumPickLogService extends BaseAdminService
                     Db::rollback();
                     $failCount++;
                     continue;
+                }
+
+                $releasedActiveLeadsId = false;
+                if ($hasLogActiveLeadsId) {
+                    // 兼容历史脏数据：仅清理已退回记录中仍占用 active_leads_id 的行（不触碰未退回记录）
+                    Db::table('crm_liberum_pick_log')
+                        ->where('is_returned', 1)
+                        ->where('active_leads_id', $leadId)
+                        ->update(['active_leads_id' => null]);
+
+                    $leftOccupiedCount = (int)Db::table('crm_liberum_pick_log')
+                        ->where('is_returned', 1)
+                        ->where('active_leads_id', $leadId)
+                        ->count('id');
+                    $releasedActiveLeadsId = ($leftOccupiedCount === 0);
                 }
 
                 $inLogData = [];
@@ -720,9 +741,30 @@ class LiberumPickLogService extends BaseAdminService
 
                 Db::commit();
                 $successCount++;
+                try {
+                    Log::record(
+                        '客户提取记录退回公海成功：pick_log_id=' . (int)$logId
+                        . '，leads_id=' . (int)$leadId
+                        . '，old_owner=' . ($currentPrUser !== '' ? $currentPrUser : '-')
+                        . '，new_gh_type=' . ($restoredGhTypeName !== '' ? $restoredGhTypeName : (string)$restoredGhTypeId)
+                        . '，active_leads_id_released=' . ($releasedActiveLeadsId ? '1' : '0'),
+                        'info'
+                    );
+                } catch (\Throwable $logEx) {
+                    // 日志失败不影响主流程
+                }
             } catch (\Throwable $e) {
                 Db::rollback();
                 $failCount++;
+                try {
+                    Log::record(
+                        '客户提取记录退回公海异常：pick_log_id=' . (int)$logId
+                        . '，error=' . $e->getMessage(),
+                        'error'
+                    );
+                } catch (\Throwable $logEx) {
+                    // 日志失败不影响主流程
+                }
             }
         }
 
