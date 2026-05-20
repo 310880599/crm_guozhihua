@@ -299,16 +299,29 @@ class LiberumAutoCandidateService extends BaseAdminService
     {
         $params = is_array($params) ? $params : [];
         $page = max(1, (int)($params['page'] ?? 1));
-        $limit = max(1, (int)($params['limit'] ?? 10));
+        $limit = (int)($params['limit'] ?? 10);
+        if ($limit <= 0) {
+            $limit = 10;
+        }
 
         // 每次查询先清空批次级缓存，避免脏数据串场。
         $this->leadMap = [];
         $this->followStatsMap = [];
         $this->candidateReasonMap = [];
 
+        $totalStart = microtime(true);
+        $countMs = 0;
+        $listMs = 0;
+        $countSkipped = false;
+        $dataCount = 0;
+        $total = 0;
         try {
+            $fastCountEnabled = !isset($params['fast_count']) || (int)$params['fast_count'] !== 0;
+            $autoDays = (int)$this->getAutoLiberumDays();
+            $deadline = date('Y-m-d H:i:s', time() - $autoDays * 86400);
             $khNameKeyword = trim((string)($params['kh_name'] ?? ($params['client_keyword'] ?? '')));
             $prUserKeyword = trim((string)($params['pr_user'] ?? ($params['pr_user_keyword'] ?? '')));
+            $phoneKeyword = trim((string)($params['phone'] ?? ''));
             if ($prUserKeyword !== '' && ctype_digit($prUserKeyword)) {
                 $adminName = Db::table('admin')
                     ->where('admin_id', (int)$prUserKeyword)
@@ -322,10 +335,27 @@ class LiberumAutoCandidateService extends BaseAdminService
             $overdueDaysMin = isset($params['overdue_days']) && $params['overdue_days'] !== ''
                 ? max(0, (int)$params['overdue_days'])
                 : null;
+            $hasSearchCondition = $khNameKeyword !== ''
+                || $phoneKeyword !== ''
+                || $prUserKeyword !== ''
+                || $candidateRuleKeyword !== ''
+                || $overdueDaysMin !== null;
 
             $query = Db::table('crm_leads')->alias('l')
                 ->where('l.status', 1)
-                ->where('l.issuccess', '<>', 1);
+                ->where('l.issuccess', '<>', 1)
+                ->whereRaw('l.at_time IS NOT NULL')
+                ->where('l.at_time', '<>', '')
+                ->where('l.at_time', '<>', '0000-00-00 00:00:00')
+                ->where(function ($where) use ($deadline) {
+                    $where->where(function ($sub) use ($deadline) {
+                        $sub->whereRaw("(l.last_up_time IS NULL OR l.last_up_time = '' OR l.last_up_time = '0000-00-00 00:00:00')")
+                            ->where('l.at_time', '<=', $deadline);
+                    })->whereOr(function ($sub) use ($deadline) {
+                        $sub->whereRaw("(l.last_up_time IS NOT NULL AND l.last_up_time <> '' AND l.last_up_time <> '0000-00-00 00:00:00')")
+                            ->where('l.last_up_time', '<=', $deadline);
+                    });
+                });
 
             if ($khNameKeyword !== '') {
                 $query->whereLike('l.kh_name', '%' . $khNameKeyword . '%');
@@ -333,28 +363,88 @@ class LiberumAutoCandidateService extends BaseAdminService
             if ($prUserKeyword !== '') {
                 $query->whereLike('l.pr_user', '%' . $prUserKeyword . '%');
             }
-            if (!empty($params['phone'])) {
-                $matchedLeadIds = $this->findLeadIdsByPhone((string)$params['phone']);
+            if ($phoneKeyword !== '') {
+                $matchedLeadIds = $this->findLeadIdsByPhone($phoneKeyword);
                 if (empty($matchedLeadIds)) {
+                    $countSkipped = true;
+                    $totalMs = (int)round((microtime(true) - $totalStart) * 1000);
+                    Log::record(
+                        '自动公海候选查询性能：page=' . $page
+                        . ', limit=' . $limit
+                        . ', auto_liberum_days=' . $autoDays
+                        . ', fast_count=' . ($fastCountEnabled ? 1 : 0)
+                        . ', count_skipped=' . ($countSkipped ? 1 : 0)
+                        . ', count_ms=' . $countMs
+                        . ', list_ms=' . $listMs
+                        . ', total_ms=' . $totalMs
+                        . ', data_count=' . $dataCount,
+                        'info'
+                    );
                     return ['count' => 0, 'data' => []];
                 }
                 $query->whereIn('l.id', $matchedLeadIds);
             }
+            if ($candidateRuleKeyword !== '') {
+                if (
+                    $candidateRuleKeyword === '创建未跟进超时'
+                    || (function_exists('mb_strpos') && mb_strpos($candidateRuleKeyword, '创建未跟进超时') !== false)
+                    || (!function_exists('mb_strpos') && strpos($candidateRuleKeyword, '创建未跟进超时') !== false)
+                ) {
+                    $query->whereRaw("(l.last_up_time IS NULL OR l.last_up_time = '' OR l.last_up_time = '0000-00-00 00:00:00')");
+                } elseif (
+                    $candidateRuleKeyword === '最后跟进超时'
+                    || (function_exists('mb_strpos') && mb_strpos($candidateRuleKeyword, '最后跟进超时') !== false)
+                    || (!function_exists('mb_strpos') && strpos($candidateRuleKeyword, '最后跟进超时') !== false)
+                ) {
+                    $query->whereRaw("(l.last_up_time IS NOT NULL AND l.last_up_time <> '' AND l.last_up_time <> '0000-00-00 00:00:00')");
+                } else {
+                    $countSkipped = true;
+                    $totalMs = (int)round((microtime(true) - $totalStart) * 1000);
+                    Log::record(
+                        '自动公海候选查询性能：page=' . $page
+                        . ', limit=' . $limit
+                        . ', auto_liberum_days=' . $autoDays
+                        . ', fast_count=' . ($fastCountEnabled ? 1 : 0)
+                        . ', count_skipped=' . ($countSkipped ? 1 : 0)
+                        . ', count_ms=' . $countMs
+                        . ', list_ms=' . $listMs
+                        . ', total_ms=' . $totalMs
+                        . ', data_count=' . $dataCount
+                        . '（candidate_rule未命中轻量规则，直接返回空）',
+                        'info'
+                    );
+                    return ['count' => 0, 'data' => []];
+                }
+            }
+            if ($overdueDaysMin !== null) {
+                $overdueDeadline = date('Y-m-d H:i:s', time() - $overdueDaysMin * 86400);
+                $query->where(function ($where) use ($overdueDeadline) {
+                    $where->where(function ($sub) use ($overdueDeadline) {
+                        $sub->whereRaw("(l.last_up_time IS NULL OR l.last_up_time = '' OR l.last_up_time = '0000-00-00 00:00:00')")
+                            ->where('l.at_time', '<=', $overdueDeadline);
+                    })->whereOr(function ($sub) use ($overdueDeadline) {
+                        $sub->whereRaw("(l.last_up_time IS NOT NULL AND l.last_up_time <> '' AND l.last_up_time <> '0000-00-00 00:00:00')")
+                            ->where('l.last_up_time', '<=', $overdueDeadline);
+                    });
+                });
+            }
 
-            $leads = $query
-                ->field('l.id,l.kh_name,l.pr_user,l.at_time as create_time,l.status,l.issuccess')
-                ->order('l.id asc')
+            $listStart = microtime(true);
+            $listQuery = clone $query;
+            $leads = $listQuery
+                ->field('l.id,l.kh_name,l.kh_contact,l.pr_user,l.at_time,l.last_up_time,l.status,l.issuccess')
+                ->order('l.id', 'desc')
+                ->page($page, $limit)
                 ->select();
+            $listMs = (int)round((microtime(true) - $listStart) * 1000);
             if (is_object($leads) && method_exists($leads, 'toArray')) {
                 $leads = $leads->toArray();
             } elseif (!is_array($leads)) {
                 $leads = [];
             }
-            if (empty($leads)) {
-                return ['count' => 0, 'data' => []];
-            }
 
             $leadIds = [];
+            $data = [];
             foreach ($leads as $lead) {
                 $leadId = (int)($lead['id'] ?? 0);
                 if ($leadId <= 0) {
@@ -362,93 +452,78 @@ class LiberumAutoCandidateService extends BaseAdminService
                 }
                 $leadIds[] = $leadId;
                 $this->leadMap[$leadId] = $lead;
-            }
-            if (empty($leadIds)) {
-                return ['count' => 0, 'data' => []];
-            }
+                $createTime = (string)($lead['at_time'] ?? '');
+                $lastFollowTime = $this->isInvalidDateTime($lead['last_up_time'] ?? '') ? '' : (string)$lead['last_up_time'];
+                $overdueBaseTime = $lastFollowTime !== '' ? $lastFollowTime : $createTime;
+                $candidateRule = $lastFollowTime === '' ? '创建未跟进超时' : '最后跟进超时';
+                $candidateReason = $lastFollowTime === ''
+                    ? ('客户创建时间已超过' . $autoDays . '天且无跟进记录')
+                    : ('客户最后跟进时间已超过' . $autoDays . '天');
 
-            // 批量加载跟进统计，避免循环查库。
-            $this->followStatsMap = $this->buildFollowStatsMap($leadIds);
-
-            $candidateRows = [];
-            foreach ($leads as $lead) {
-                if (!$this->isCandidate($lead)) {
-                    continue;
-                }
-
-                $leadId = (int)$lead['id'];
-                $reasonInfo = $this->buildCandidateReason($leadId);
-                $lastFollowTime = $this->getLastFollowTime($leadId);
-                $overdueBaseTime = $lastFollowTime !== '' ? $lastFollowTime : (string)($lead['create_time'] ?? '');
-
-                $candidateRows[] = [
+                $data[] = [
                     'id' => $leadId,
                     'kh_name' => (string)($lead['kh_name'] ?? ''),
-                    'phone' => '',
+                    'phone' => trim((string)($lead['kh_contact'] ?? '')),
                     'pr_user' => (string)($lead['pr_user'] ?? ''),
-                    'create_time' => (string)($lead['create_time'] ?? ''),
+                    'create_time' => $createTime,
                     'last_follow_time' => $lastFollowTime,
                     'overdue_days' => $this->getOverdueDays($overdueBaseTime),
-                    'candidate_rule' => (string)($reasonInfo['rule'] ?? ''),
-                    'candidate_reason' => (string)($reasonInfo['reason'] ?? ''),
+                    'candidate_rule' => $candidateRule,
+                    'candidate_reason' => $candidateReason,
                     'status' => (int)($lead['status'] ?? 0),
                     'issuccess' => (int)($lead['issuccess'] ?? 0),
                 ];
             }
-
-            if ($candidateRuleKeyword !== '') {
-                $candidateRows = array_values(array_filter($candidateRows, function ($row) use ($candidateRuleKeyword) {
-                    $rule = (string)($row['candidate_rule'] ?? '');
-                    if ($rule === '') {
-                        return false;
+            if (!empty($data) && !empty($leadIds)) {
+                $phoneMap = $this->buildPhoneMap($leadIds);
+                foreach ($data as &$row) {
+                    if (trim((string)($row['phone'] ?? '')) === '') {
+                        $row['phone'] = (string)($phoneMap[(int)$row['id']] ?? '');
                     }
-                    if (function_exists('mb_strpos')) {
-                        return mb_strpos($rule, $candidateRuleKeyword) !== false;
-                    }
-                    return strpos($rule, $candidateRuleKeyword) !== false;
-                }));
-            }
-            if ($overdueDaysMin !== null) {
-                $candidateRows = array_values(array_filter($candidateRows, function ($row) use ($overdueDaysMin) {
-                    return (int)($row['overdue_days'] ?? 0) >= $overdueDaysMin;
-                }));
-            }
-
-            if (!empty($candidateRows)) {
-                usort($candidateRows, function ($a, $b) {
-                    $aOver = (int)($a['overdue_days'] ?? 0);
-                    $bOver = (int)($b['overdue_days'] ?? 0);
-                    if ($aOver !== $bOver) {
-                        return $bOver <=> $aOver;
-                    }
-
-                    return (int)($b['id'] ?? 0) <=> (int)($a['id'] ?? 0);
-                });
-            }
-
-            $total = count($candidateRows);
-            if ($total === 0) {
-                return ['count' => 0, 'data' => []];
-            }
-
-            // 分页切片（候选规则需先完整计算后分页，保证口径正确）。
-            $offset = ($page - 1) * $limit;
-            $pageData = array_slice($candidateRows, $offset, $limit);
-
-            if (!empty($pageData)) {
-                $pageLeadIds = array_values(array_unique(array_map(function ($row) {
-                    return (int)($row['id'] ?? 0);
-                }, $pageData)));
-                $phoneMap = $this->buildPhoneMap($pageLeadIds);
-                foreach ($pageData as &$row) {
-                    $row['phone'] = $phoneMap[(int)$row['id']] ?? '';
                 }
                 unset($row);
             }
 
+            $dataCount = count($data);
+            if ($fastCountEnabled && !$hasSearchCondition) {
+                $countSkipped = true;
+                if ($dataCount > 0) {
+                    $total = $page * $limit + 1;
+                } else {
+                    $total = max(0, ($page - 1) * $limit);
+                }
+            } else {
+                $countStart = microtime(true);
+                $countQuery = clone $query;
+                $total = (int)$countQuery->count('l.id');
+                $countMs = (int)round((microtime(true) - $countStart) * 1000);
+                if ($countMs > 2000) {
+                    Log::record(
+                        '自动公海候选精确count较慢：page=' . $page
+                        . ', limit=' . $limit
+                        . ', auto_liberum_days=' . $autoDays
+                        . ', count_ms=' . $countMs,
+                        'info'
+                    );
+                }
+            }
+
+            $totalMs = (int)round((microtime(true) - $totalStart) * 1000);
+            Log::record(
+                '自动公海候选查询性能：page=' . $page
+                . ', limit=' . $limit
+                . ', auto_liberum_days=' . $autoDays
+                . ', fast_count=' . ($fastCountEnabled ? 1 : 0)
+                . ', count_skipped=' . ($countSkipped ? 1 : 0)
+                . ', count_ms=' . $countMs
+                . ', list_ms=' . $listMs
+                . ', total_ms=' . $totalMs
+                . ', data_count=' . $dataCount,
+                'info'
+            );
             return [
                 'count' => $total,
-                'data' => $pageData,
+                'data' => $data,
             ];
         } catch (\Throwable $e) {
             Log::record('自动公海候选查询失败：' . $e->getMessage(), 'error');
@@ -486,31 +561,37 @@ class LiberumAutoCandidateService extends BaseAdminService
             return false;
         }
 
-        $stats = $this->getLeadFollowStats($leadId);
         $thresholdSeconds = (int)$this->getAutoLiberumDays() * 86400;
         $now = time();
+        $lastUpTime = $lead['last_up_time'] ?? '';
+        $lastUpTs = $this->isInvalidDateTime($lastUpTime) ? 0 : $this->normalizeTimeToTimestamp($lastUpTime);
 
+        // 规则1：创建超过 N 天，且 last_up_time 为空。
+        if ($lastUpTs <= 0 && ($now - $createdTs) > $thresholdSeconds) {
+            return true;
+        }
+
+        // 规则2：最后一次跟进距今超过 N 天。
+        if ($lastUpTs > 0 && ($now - $lastUpTs) > $thresholdSeconds) {
+            return true;
+        }
+
+        // 兼容旧规则：仅在单客户校验时按 lead_id 查询跟进记录，不做全表扫描。
+        $stats = $this->getLeadFollowStats($leadId);
         $followCount = (int)($stats['follow_count'] ?? 0);
         $firstTs = (int)($stats['first_follow_ts'] ?? 0);
         $lastTs = (int)($stats['last_follow_ts'] ?? 0);
         $maxGapSeconds = (int)($stats['max_gap_seconds'] ?? 0);
 
-        // 规则1：创建超过 N 天，无跟进。
         if ($followCount <= 0 && ($now - $createdTs) > $thresholdSeconds) {
             return true;
         }
-
-        // 规则2：首次跟进距离创建超过 N 天。
         if ($firstTs > 0 && ($firstTs - $createdTs) > $thresholdSeconds) {
             return true;
         }
-
-        // 规则3：任意相邻两次跟进间隔超过 N 天。
         if ($maxGapSeconds > $thresholdSeconds) {
             return true;
         }
-
-        // 规则4：最后一次跟进距今超过 N 天。
         if ($lastTs > 0 && ($now - $lastTs) > $thresholdSeconds) {
             return true;
         }
@@ -536,7 +617,7 @@ class LiberumAutoCandidateService extends BaseAdminService
 
         $lead = $this->leadMap[$leadId] ?? Db::table('crm_leads')
             ->where('id', $leadId)
-            ->field('id,at_time as create_time,status,issuccess')
+            ->field('id,at_time as create_time,last_up_time,status,issuccess')
             ->find();
         if (!is_array($lead) || empty($lead)) {
             return ['rule' => '', 'reason' => ''];
@@ -554,26 +635,41 @@ class LiberumAutoCandidateService extends BaseAdminService
             return $this->candidateReasonMap[$leadId];
         }
 
-        $stats = $this->getLeadFollowStats($leadId);
+        $daysText = (int)$this->getAutoLiberumDays();
         $createTime = $lead['create_time'] ?? ($lead['at_time'] ?? '');
         $createdTs = $this->normalizeTimeToTimestamp($createTime);
-        $thresholdSeconds = (int)$this->getAutoLiberumDays() * 86400;
-        $daysText = (int)$this->getAutoLiberumDays();
+        $thresholdSeconds = $daysText * 86400;
         $now = time();
+        $lastUpTime = $lead['last_up_time'] ?? '';
+        $lastUpTs = $this->isInvalidDateTime($lastUpTime) ? 0 : $this->normalizeTimeToTimestamp($lastUpTime);
 
-        $followCount = (int)($stats['follow_count'] ?? 0);
-        $firstTs = (int)($stats['first_follow_ts'] ?? 0);
-        $lastTs = (int)($stats['last_follow_ts'] ?? 0);
-        $maxGapSeconds = (int)($stats['max_gap_seconds'] ?? 0);
-
-        if ($followCount <= 0 && $createdTs > 0 && ($now - $createdTs) > $thresholdSeconds) {
+        if ($lastUpTs <= 0 && $createdTs > 0 && ($now - $createdTs) > $thresholdSeconds) {
             $this->candidateReasonMap[$leadId] = [
                 'rule' => '创建未跟进超时',
-                'reason' => '客户创建后已超过' . $daysText . '天且无任何跟进记录',
+                'reason' => '客户创建时间已超过' . $daysText . '天且无跟进记录',
+            ];
+            return $this->candidateReasonMap[$leadId];
+        }
+        if ($lastUpTs > 0 && ($now - $lastUpTs) > $thresholdSeconds) {
+            $this->candidateReasonMap[$leadId] = [
+                'rule' => '最后跟进超时',
+                'reason' => '客户最后跟进时间已超过' . $daysText . '天',
             ];
             return $this->candidateReasonMap[$leadId];
         }
 
+        $stats = $this->getLeadFollowStats($leadId);
+        $followCount = (int)($stats['follow_count'] ?? 0);
+        $firstTs = (int)($stats['first_follow_ts'] ?? 0);
+        $lastTs = (int)($stats['last_follow_ts'] ?? 0);
+        $maxGapSeconds = (int)($stats['max_gap_seconds'] ?? 0);
+        if ($followCount <= 0 && $createdTs > 0 && ($now - $createdTs) > $thresholdSeconds) {
+            $this->candidateReasonMap[$leadId] = [
+                'rule' => '创建未跟进超时',
+                'reason' => '客户创建时间已超过' . $daysText . '天且无跟进记录',
+            ];
+            return $this->candidateReasonMap[$leadId];
+        }
         if ($firstTs > 0 && $createdTs > 0 && ($firstTs - $createdTs) > $thresholdSeconds) {
             $this->candidateReasonMap[$leadId] = [
                 'rule' => '首次跟进超时',
@@ -581,7 +677,6 @@ class LiberumAutoCandidateService extends BaseAdminService
             ];
             return $this->candidateReasonMap[$leadId];
         }
-
         if ($maxGapSeconds > $thresholdSeconds) {
             $this->candidateReasonMap[$leadId] = [
                 'rule' => '跟进间隔超时',
@@ -589,7 +684,6 @@ class LiberumAutoCandidateService extends BaseAdminService
             ];
             return $this->candidateReasonMap[$leadId];
         }
-
         if ($lastTs > 0 && ($now - $lastTs) > $thresholdSeconds) {
             $this->candidateReasonMap[$leadId] = [
                 'rule' => '最后跟进超时',
@@ -613,6 +707,13 @@ class LiberumAutoCandidateService extends BaseAdminService
         $leadId = (int)$leadId;
         if ($leadId <= 0) {
             return '';
+        }
+
+        if (isset($this->leadMap[$leadId])) {
+            $lastUpTime = $this->leadMap[$leadId]['last_up_time'] ?? '';
+            if (!$this->isInvalidDateTime($lastUpTime)) {
+                return (string)$lastUpTime;
+            }
         }
 
         if (isset($this->followStatsMap[$leadId])) {
@@ -908,6 +1009,18 @@ class LiberumAutoCandidateService extends BaseAdminService
 
         $ts = strtotime($str);
         return $ts === false ? 0 : (int)$ts;
+    }
+
+    /**
+     * 判断 datetime 字段是否为空值（兼容历史脏值）
+     *
+     * @param mixed $value
+     * @return bool
+     */
+    protected function isInvalidDateTime($value)
+    {
+        $str = trim((string)$value);
+        return $str === '' || strtolower($str) === 'null' || $str === '0000-00-00 00:00:00';
     }
 
     /**
