@@ -985,6 +985,32 @@ class Liberum extends Common{
                     ->where('is_deleted', 0)
                     ->value('type_name');
             }
+
+            // 领取前自动修复历史脏数据：客户已在公海(status=2)但 pick_log 仍占用 active_leads_id
+            if ($this->tableHasColumn('crm_liberum_pick_log', 'active_leads_id')) {
+                $dirtyFixData = [
+                    'active_leads_id' => null,
+                ];
+                if ($this->tableHasColumn('crm_liberum_pick_log', 'is_returned')) {
+                    $dirtyFixData['is_returned'] = 1;
+                }
+                if ($this->tableHasColumn('crm_liberum_pick_log', 'return_time')) {
+                    $dirtyFixData['return_time'] = $now;
+                }
+                if ($this->tableHasColumn('crm_liberum_pick_log', 'return_operator_id')) {
+                    $dirtyFixData['return_operator_id'] = (int)$adminId;
+                }
+                if ($this->tableHasColumn('crm_liberum_pick_log', 'return_operator_name')) {
+                    $dirtyFixData['return_operator_name'] = (string)$curname;
+                }
+                if ($this->tableHasColumn('crm_liberum_pick_log', 'return_remark')) {
+                    $dirtyFixData['return_remark'] = '领取前自动修复历史未释放 active_leads_id';
+                }
+                Db::table('crm_liberum_pick_log')
+                    ->where('active_leads_id', $leadId)
+                    ->update($dirtyFixData);
+            }
+
             $updateData = [
                 'status' => 1,
                 'pr_user_bef' => isset($ghClient['pr_user']) ? $ghClient['pr_user'] : '',
