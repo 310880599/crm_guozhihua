@@ -363,7 +363,7 @@ class Liberum extends Common{
             '流入时间',
             '操作人',
             '当前状态',
-            '当前公海类型',
+            '流入公海类型',
             '来源类型',
             '是否已恢复',
             '恢复操作人',
@@ -398,7 +398,13 @@ class Liberum extends Common{
             }
 
             $isRecovered = (int)($row['is_recovered'] ?? 0) === 1 ? '已恢复' : '未恢复';
-            $currentGhTypeText = (string)($row['current_gh_type_name'] ?? '');
+            $currentGhTypeText = (string)($row['in_gh_type_name'] ?? '');
+            if ($currentGhTypeText === '') {
+                $currentGhTypeText = (string)($row['current_gh_type_name'] ?? '');
+            }
+            if ($currentGhTypeText === '') {
+                $currentGhTypeText = (string)($row['in_gh_type'] ?? '');
+            }
             if ($currentGhTypeText === '') {
                 $currentGhTypeText = (string)($row['current_gh_type'] ?? '');
             }

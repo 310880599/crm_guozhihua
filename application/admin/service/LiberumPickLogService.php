@@ -456,6 +456,7 @@ class LiberumPickLogService extends BaseAdminService
         $hasInLogCreateTime = $this->hasColumn('crm_liberum_in_log', 'create_time');
         $hasInLogSourceType = $this->hasColumn('crm_liberum_in_log', 'source_type');
         $hasInLogReturnSource = $this->hasColumn('crm_liberum_in_log', 'return_source');
+        $hasInLogLiberumType = $this->hasColumn('crm_liberum_in_log', 'liberum_type');
 
         $successCount = 0;
         $skipCount = 0;
@@ -632,6 +633,9 @@ class LiberumPickLogService extends BaseAdminService
                 }
                 if ($hasInLogReturnSource) {
                     $inLogData['return_source'] = 'pick_log_batch_return';
+                }
+                if ($hasInLogLiberumType) {
+                    $inLogData['liberum_type'] = $restoredGhTypeId > 0 ? $restoredGhTypeId : 0;
                 }
 
                 if (!empty($inLogData)) {

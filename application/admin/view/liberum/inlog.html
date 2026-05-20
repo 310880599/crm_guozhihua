@@ -158,8 +158,8 @@
                     if (status === 2) return '<span class="layui-badge layui-bg-gray">公海</span>';
                     return d.current_status;
                 }},
-                {field: 'current_gh_type_name', title: '当前公海类型', minWidth: 130, templet: function (d) {
-                    return d.current_gh_type_name || d.current_gh_type || '';
+                {field: 'in_gh_type_name', title: '流入公海类型', minWidth: 130, templet: function (d) {
+                    return d.in_gh_type_name || d.current_gh_type_name || d.in_gh_type || d.current_gh_type || '';
                 }},
                 {field: 'source_type', title: '来源类型', width: 110, templet: function (d) {
                     var sourceType = (d.source_type || '').toString();

@@ -4066,9 +4066,14 @@ class Client extends Common
         $reasonText = trim($reason) !== '' ? trim($reason) : '手动移入公海';
         $operatorId = (int)Session::get('aid');
         $operatorName = (string)Session::get('username');
-        $liberumTypeValue = $ghTypeId > 0 ? (string)$ghTypeId : trim((string)($clientBefore['pr_gh_type'] ?? ''));
-        if ($liberumTypeValue === '' && $ghTypeName !== '') {
-            $liberumTypeValue = $ghTypeName;
+        $liberumTypeValue = $ghTypeId > 0 ? $ghTypeId : (int)($clientBefore['pr_gh_type'] ?? 0);
+        if ($liberumTypeValue <= 0) {
+            $latestLiberumType = (int)Db::table('crm_leads')
+                ->where('id', $leadId)
+                ->value('pr_gh_type');
+            if ($latestLiberumType > 0) {
+                $liberumTypeValue = $latestLiberumType;
+            }
         }
 
         $inLogData = [];
@@ -4088,7 +4093,7 @@ class Client extends Common
             $inLogData['after_status'] = 2;
         }
         if ($this->tableHasColumn('crm_liberum_in_log', 'liberum_type')) {
-            $inLogData['liberum_type'] = $liberumTypeValue;
+            $inLogData['liberum_type'] = $liberumTypeValue > 0 ? (int)$liberumTypeValue : 0;
         }
         if ($this->tableHasColumn('crm_liberum_in_log', 'reason')) {
             $inLogData['reason'] = $reasonText;

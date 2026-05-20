@@ -120,13 +120,12 @@ class LiberumInLogService extends BaseAdminService
             }
 
             $count = (int)(clone $query)->count('il.id');
-            $logLiberumTypeValueExpr = $hasInLiberumType
-                ? 'IFNULL(MAX(il.liberum_type), "")'
-                : '""';
-            $currentGhTypeExpr = 'IFNULL(NULLIF(IFNULL(MAX(l.pr_gh_type), ""), ""), ' . $logLiberumTypeValueExpr . ')';
-            $currentGhTypeNameExpr = $hasInLiberumType
-                ? 'IFNULL(NULLIF(IFNULL(MAX(gt.type_name), ""), ""), IFNULL(NULLIF(IFNULL(MAX(gtl.type_name), ""), ""), ' . $currentGhTypeExpr . '))'
-                : 'IFNULL(NULLIF(IFNULL(MAX(gt.type_name), ""), ""), ' . $currentGhTypeExpr . ')';
+            $inGhTypeExpr = $hasInLiberumType
+                ? '(CASE WHEN IFNULL(MAX(il.liberum_type), 0) > 0 THEN MAX(il.liberum_type) WHEN IFNULL(MAX(l.pr_gh_type), 0) > 0 THEN MAX(l.pr_gh_type) ELSE "" END)'
+                : '(CASE WHEN IFNULL(MAX(l.pr_gh_type), 0) > 0 THEN MAX(l.pr_gh_type) ELSE "" END)';
+            $inGhTypeNameExpr = $hasInLiberumType
+                ? '(CASE WHEN IFNULL(MAX(il.liberum_type), 0) > 0 THEN IFNULL(NULLIF(MAX(gtl.type_name), ""), MAX(il.liberum_type)) WHEN IFNULL(MAX(l.pr_gh_type), 0) > 0 THEN IFNULL(NULLIF(MAX(gt.type_name), ""), MAX(l.pr_gh_type)) ELSE "" END)'
+                : '(CASE WHEN IFNULL(MAX(l.pr_gh_type), 0) > 0 THEN IFNULL(NULLIF(MAX(gt.type_name), ""), MAX(l.pr_gh_type)) ELSE "" END)';
             $data = $query
                 ->field([
                     'il.id',
@@ -146,8 +145,10 @@ class LiberumInLogService extends BaseAdminService
                     'IFNULL(MAX(il.is_recovered), 0) AS is_recovered',
                     $recoveredTimeField,
                     'IFNULL(MAX(l.status), "") AS current_status',
-                    $currentGhTypeExpr . ' AS current_gh_type',
-                    $currentGhTypeNameExpr . ' AS current_gh_type_name',
+                    $inGhTypeExpr . ' AS in_gh_type',
+                    $inGhTypeNameExpr . ' AS in_gh_type_name',
+                    $inGhTypeExpr . ' AS current_gh_type',
+                    $inGhTypeNameExpr . ' AS current_gh_type_name',
                     $sourceTypeField,
                 ])
                 ->group('il.id')
