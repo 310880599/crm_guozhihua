@@ -84,28 +84,39 @@ class LiberumAutoCandidateService extends BaseAdminService
     protected static $columnExistsCache = [];
 
     /**
-     * 默认公海类型ID缓存
-     *
-     * @var int|null
-     */
-    protected static $defaultLiberumTypeIdCache = null;
-
-    /**
      * 确认单个候选客户流入公海
      *
      * @param int $leadId
      * @param array $operatorInfo
      * @return array
      */
-    public function confirmToLiberum($leadId, $operatorInfo = [])
+    public function confirmToLiberum($leadId, $operatorInfo = [], $manualGhTypeId = 0)
     {
         $leadId = (int)$leadId;
+        $manualGhTypeId = (int)$manualGhTypeId;
         $operatorInfo = is_array($operatorInfo) ? $operatorInfo : [];
         $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
         $operatorName = trim((string)($operatorInfo['username'] ?? ''));
 
         if ($leadId <= 0) {
             return ['code' => -200, 'msg' => '参数错误：客户ID无效', 'data' => []];
+        }
+        if ($manualGhTypeId <= 0) {
+            return ['code' => -200, 'msg' => '请选择需要流入的公海类型', 'data' => []];
+        }
+
+        $ghTypeInfo = Db::table('crm_liberum_type')
+            ->where('id', $manualGhTypeId)
+            ->where('is_deleted', 0)
+            ->field('id,type_name')
+            ->find();
+        if (empty($ghTypeInfo)) {
+            return ['code' => -200, 'msg' => '请选择有效的公海类型', 'data' => []];
+        }
+        $ghTypeId = (int)($ghTypeInfo['id'] ?? 0);
+        $ghTypeName = trim((string)($ghTypeInfo['type_name'] ?? ''));
+        if ($ghTypeId <= 0) {
+            return ['code' => -200, 'msg' => '请选择有效的公海类型', 'data' => []];
         }
 
         Db::startTrans();
@@ -138,12 +149,6 @@ class LiberumAutoCandidateService extends BaseAdminService
                 return ['code' => -200, 'msg' => '该客户当前已不符合自动流入公海规则', 'data' => []];
             }
 
-            $ghTypeId = $this->getDefaultLiberumTypeId();
-            if ($ghTypeId <= 0) {
-                Db::rollback();
-                return ['code' => -200, 'msg' => '请先维护公海类型', 'data' => []];
-            }
-
             $now = date('Y-m-d H:i:s');
             $updateData = [
                 'status' => 2,
@@ -171,7 +176,7 @@ class LiberumAutoCandidateService extends BaseAdminService
             $reasonInfo = $this->buildCandidateReason($leadId);
             $logReason = $this->buildAutoInReasonText((string)($reasonInfo['rule'] ?? ''));
 
-            $insertLogData = $this->buildInLogInsertData($lead, $ghTypeId, $logReason, $now, $operatorId, $operatorName);
+            $insertLogData = $this->buildInLogInsertData($lead, $ghTypeId, $ghTypeName, $logReason, $now, $operatorId, $operatorName);
             if (empty($insertLogData)) {
                 Db::rollback();
                 return ['code' => -200, 'msg' => '流入日志字段不可用，无法写入记录', 'data' => []];
@@ -205,12 +210,24 @@ class LiberumAutoCandidateService extends BaseAdminService
      * @param array $operatorInfo
      * @return array
      */
-    public function batchConfirmToLiberum($leadIds = [], $operatorInfo = [])
+    public function batchConfirmToLiberum($leadIds = [], $operatorInfo = [], $manualGhTypeId = 0)
     {
+        $manualGhTypeId = (int)$manualGhTypeId;
         $leadIds = is_array($leadIds) ? $leadIds : [];
         $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
             return $id > 0;
         })));
+        if ($manualGhTypeId <= 0) {
+            return [
+                'code' => -200,
+                'msg' => '请选择需要流入的公海类型',
+                'data' => [
+                    'success_count' => 0,
+                    'fail_count' => 0,
+                    'fail_list' => [],
+                ],
+            ];
+        }
         if (empty($leadIds)) {
             return [
                 'code' => -200,
@@ -228,7 +245,7 @@ class LiberumAutoCandidateService extends BaseAdminService
         $failList = [];
 
         foreach ($leadIds as $leadId) {
-            $result = $this->confirmToLiberum($leadId, $operatorInfo);
+            $result = $this->confirmToLiberum($leadId, $operatorInfo, $manualGhTypeId);
             if ((int)($result['code'] ?? -200) === 0) {
                 $successCount++;
                 continue;
@@ -878,28 +895,6 @@ class LiberumAutoCandidateService extends BaseAdminService
     }
 
     /**
-     * 获取默认公海类型（is_deleted=0 且 id 最小）
-     *
-     * @return int
-     */
-    protected function getDefaultLiberumTypeId()
-    {
-        if (self::$defaultLiberumTypeIdCache !== null) {
-            return (int)self::$defaultLiberumTypeIdCache;
-        }
-
-        $row = Db::table('crm_liberum_type')
-            ->where('is_deleted', 0)
-            ->order('id asc')
-            ->field('id')
-            ->find();
-
-        self::$defaultLiberumTypeIdCache = (int)($row['id'] ?? 0);
-
-        return (int)self::$defaultLiberumTypeIdCache;
-    }
-
-    /**
      * 组装自动流入原因文本
      *
      * @param string $rule
@@ -935,11 +930,12 @@ class LiberumAutoCandidateService extends BaseAdminService
      * @param string $operatorName
      * @return array
      */
-    protected function buildInLogInsertData(array $lead, $ghTypeId, $reason, $inTime, $operatorId, $operatorName)
+    protected function buildInLogInsertData(array $lead, $ghTypeId, $ghTypeName, $reason, $inTime, $operatorId, $operatorName)
     {
         $leadId = (int)($lead['id'] ?? 0);
         $khName = (string)($lead['kh_name'] ?? '');
         $beforePrUser = (string)($lead['pr_user'] ?? '');
+        $ghTypeName = trim((string)$ghTypeName);
         $nowTimestamp = time();
 
         $data = [];
@@ -969,6 +965,27 @@ class LiberumAutoCandidateService extends BaseAdminService
         }
         if ($this->hasColumnCached('crm_liberum_in_log', 'liberum_type')) {
             $data['liberum_type'] = (int)$ghTypeId;
+        }
+        if ($this->hasColumnCached('crm_liberum_in_log', 'in_gh_type')) {
+            $data['in_gh_type'] = (int)$ghTypeId;
+        }
+        if ($this->hasColumnCached('crm_liberum_in_log', 'in_gh_type_name')) {
+            $data['in_gh_type_name'] = $ghTypeName !== '' ? $ghTypeName : (string)$ghTypeId;
+        }
+        if ($this->hasColumnCached('crm_liberum_in_log', 'current_gh_type')) {
+            $data['current_gh_type'] = (int)$ghTypeId;
+        }
+        if ($this->hasColumnCached('crm_liberum_in_log', 'current_gh_type_name')) {
+            $data['current_gh_type_name'] = $ghTypeName !== '' ? $ghTypeName : (string)$ghTypeId;
+        }
+        if ($this->hasColumnCached('crm_liberum_in_log', 'gh_type_id')) {
+            $data['gh_type_id'] = (int)$ghTypeId;
+        }
+        if ($this->hasColumnCached('crm_liberum_in_log', 'gh_type')) {
+            $data['gh_type'] = $ghTypeName !== '' ? $ghTypeName : (string)$ghTypeId;
+        }
+        if ($this->hasColumnCached('crm_liberum_in_log', 'pr_gh_type')) {
+            $data['pr_gh_type'] = (int)$ghTypeId;
         }
         if ($this->hasColumnCached('crm_liberum_in_log', 'is_recovered')) {
             $data['is_recovered'] = 0;

@@ -120,6 +120,12 @@ class Liberum extends Common{
     // 自动公海候选页面
     public function autoCandidate()
     {
+        $ghTypeList = Db::table('crm_liberum_type')
+            ->where('is_deleted', 0)
+            ->order('id desc')
+            ->field('id,type_name')
+            ->select();
+        $this->assign('ghTypeList', $ghTypeList);
         return $this->fetch('liberum/auto_candidate');
     }
 
@@ -320,12 +326,16 @@ class Liberum extends Common{
         }
 
         $id = input('post.id/d', 0);
+        $ghTypeId = input('post.gh_type_id/d', 0);
+        if ($ghTypeId <= 0) {
+            return ['code' => -200, 'msg' => '请选择需要流入的公海类型', 'data' => []];
+        }
         $operatorInfo = [
             'admin_id' => (int)Session::get('aid'),
             'username' => (string)Session::get('username'),
         ];
 
-        $result = $this->getLiberumAutoCandidateService()->confirmToLiberum($id, $operatorInfo);
+        $result = $this->getLiberumAutoCandidateService()->confirmToLiberum($id, $operatorInfo, $ghTypeId);
         $this->recordLiberumDangerOperationLog('自动公海单个确认', [$id], $operatorInfo, $result);
         return $result + ['data' => []];
     }
@@ -338,12 +348,16 @@ class Liberum extends Common{
         }
 
         $ids = input('post.ids/a', []);
+        $ghTypeId = input('post.gh_type_id/d', 0);
+        if ($ghTypeId <= 0) {
+            return ['code' => -200, 'msg' => '请选择需要流入的公海类型', 'data' => []];
+        }
         $operatorInfo = [
             'admin_id' => (int)Session::get('aid'),
             'username' => (string)Session::get('username'),
         ];
 
-        $result = $this->getLiberumAutoCandidateService()->batchConfirmToLiberum($ids, $operatorInfo);
+        $result = $this->getLiberumAutoCandidateService()->batchConfirmToLiberum($ids, $operatorInfo, $ghTypeId);
         $this->recordLiberumDangerOperationLog('自动公海批量确认', is_array($ids) ? $ids : [], $operatorInfo, $result);
         return $result + ['data' => []];
     }

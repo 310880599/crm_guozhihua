@@ -160,6 +160,7 @@
         var prUserOptionsUrl = "{:url('Liberum/getPrUserOptions')}";
         var confirmUrl = "{:url('Liberum/confirmAutoLiberum')}";
         var batchConfirmUrl = "{:url('Liberum/batchConfirmAutoLiberum')}";
+        var ghTypeList = <?php echo json_encode(isset($ghTypeList) ? $ghTypeList : [], JSON_UNESCAPED_UNICODE); ?>;
         var prUserSelectInstance = null;
 
         function getSelectedPrUser() {
@@ -196,6 +197,58 @@
                 },
                 error: function () {
                     renderPrUserSelect([]);
+                }
+            });
+        }
+
+        function openGhTypeDialog(title, yesCallback) {
+            var optionsHtml = '<option value="">请选择公海类型</option>';
+            $.each(ghTypeList || [], function (_, item) {
+                var id = parseInt(item.id, 10) || 0;
+                var typeName = item.type_name || '';
+                if (id > 0) {
+                    optionsHtml += '<option value="' + id + '">' + typeName + '</option>';
+                }
+            });
+
+            var contentHtml = ''
+                + '<div style="padding: 16px 20px 4px 20px;">'
+                + '  <div style="margin-bottom: 10px; color: #666;">请选择本次流入公海的类型，确认后客户将进入所选公海。</div>'
+                + '  <form class="layui-form" lay-filter="auto-candidate-gh-form">'
+                + '      <div class="layui-form-item">'
+                + '          <label class="layui-form-label" style="width: 100px;">公海类型</label>'
+                + '          <div class="layui-input-block" style="margin-left: 100px;">'
+                + '              <select name="gh_type_id" lay-search>'
+                +                    optionsHtml
+                + '              </select>'
+                + '          </div>'
+                + '      </div>'
+                + '  </form>'
+                + '</div>';
+
+            layer.open({
+                type: 1,
+                title: title || '选择公海类型',
+                area: ['520px', '240px'],
+                content: contentHtml,
+                btn: ['确认', '取消'],
+                success: function () {
+                    form.render('select', 'auto-candidate-gh-form');
+                },
+                yes: function (index, layero) {
+                    var $layerDom = layero && layero.length ? layero : $('#layui-layer' + index);
+                    var ghTypeRaw = '';
+                    if ($layerDom && $layerDom.length) {
+                        ghTypeRaw = $.trim($layerDom.find('select[name="gh_type_id"]').val() || '');
+                    }
+                    var ghTypeId = parseInt(ghTypeRaw, 10) || 0;
+                    if (!(ghTypeId > 0)) {
+                        layer.msg('请选择公海类型');
+                        return;
+                    }
+                    if (typeof yesCallback === 'function') {
+                        yesCallback(ghTypeId, index, $layerDom);
+                    }
                 }
             });
         }
@@ -301,30 +354,40 @@
                 return;
             }
 
-            layer.confirm('确定要将该客户流入公海吗？', {icon: 3, title: '提示'}, function (index) {
-                layer.close(index);
-                $btn.addClass('layui-btn-disabled').attr('disabled', true);
-                var loading = layer.load(1, {shade: [0.1, '#fff']});
-                $.ajax({
-                    url: confirmUrl,
-                    type: 'post',
-                    dataType: 'json',
-                    data: {id: leadId},
-                    success: function (res) {
-                        layer.close(loading);
-                        $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
-                        if (res && parseInt(res.code, 10) === 0) {
-                            layer.msg(res.msg || '操作成功', {icon: 1});
-                            table.reload(tableId, {});
-                            return;
+            openGhTypeDialog('确认流入公海', function (ghTypeId, dialogIndex) {
+                layer.confirm('确认将该客户流入所选公海类型吗？', {icon: 3, title: '二次确认'}, function (confirmIndex) {
+                    layer.close(confirmIndex);
+                    $btn.addClass('layui-btn-disabled').attr('disabled', true);
+                    var loading = layer.load(1, {shade: [0.1, '#fff']});
+                    $.ajax({
+                        url: confirmUrl,
+                        type: 'post',
+                        dataType: 'json',
+                        data: {
+                            id: leadId,
+                            gh_type_id: ghTypeId
+                        },
+                        success: function (res) {
+                            layer.close(loading);
+                            $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                            if (res && parseInt(res.code, 10) === 0) {
+                                layer.msg(res.msg || '操作成功', {icon: 1});
+                                table.reload(tableId, {});
+                                layer.close(dialogIndex);
+                                return;
+                            }
+                            layer.msg((res && res.msg) ? res.msg : '操作失败', {icon: 2});
+                        },
+                        error: function (xhr) {
+                            layer.close(loading);
+                            $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                            var errMsg = '请求失败，请稍后重试';
+                            if (xhr && xhr.responseJSON && xhr.responseJSON.msg) {
+                                errMsg = xhr.responseJSON.msg;
+                            }
+                            layer.msg(errMsg, {icon: 2});
                         }
-                        layer.msg((res && res.msg) ? res.msg : '操作失败', {icon: 2});
-                    },
-                    error: function () {
-                        layer.close(loading);
-                        $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
-                        layer.msg('请求失败，请稍后重试', {icon: 2});
-                    }
+                    });
                 });
             });
         });
@@ -355,31 +418,41 @@
                 return;
             }
 
-            layer.confirm('确定要将选中的客户批量流入公海吗？', {icon: 3, title: '提示'}, function (index) {
-                layer.close(index);
-                $batchBtn.addClass('layui-btn-disabled').attr('disabled', true);
-                var loading = layer.load(1, {shade: [0.1, '#fff']});
-                $.ajax({
-                    url: batchConfirmUrl,
-                    type: 'post',
-                    dataType: 'json',
-                    data: {ids: ids},
-                    traditional: true,
-                    success: function (res) {
-                        layer.close(loading);
-                        $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
-                        if (res && parseInt(res.code, 10) === 0) {
-                            layer.msg(res.msg || '批量处理成功', {icon: 1});
-                            table.reload(tableId, {});
-                            return;
+            openGhTypeDialog('批量确认流入公海', function (ghTypeId, dialogIndex) {
+                layer.confirm('确认将选中的客户批量流入所选公海类型吗？', {icon: 3, title: '二次确认'}, function (confirmIndex) {
+                    layer.close(confirmIndex);
+                    $batchBtn.addClass('layui-btn-disabled').attr('disabled', true);
+                    var loading = layer.load(1, {shade: [0.1, '#fff']});
+                    $.ajax({
+                        url: batchConfirmUrl,
+                        type: 'post',
+                        dataType: 'json',
+                        data: {
+                            ids: ids,
+                            gh_type_id: ghTypeId
+                        },
+                        traditional: true,
+                        success: function (res) {
+                            layer.close(loading);
+                            $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                            if (res && parseInt(res.code, 10) === 0) {
+                                layer.msg(res.msg || '批量处理成功', {icon: 1});
+                                table.reload(tableId, {});
+                                layer.close(dialogIndex);
+                                return;
+                            }
+                            layer.msg((res && res.msg) ? res.msg : '批量处理失败', {icon: 2});
+                        },
+                        error: function (xhr) {
+                            layer.close(loading);
+                            $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                            var errMsg = '请求失败，请稍后重试';
+                            if (xhr && xhr.responseJSON && xhr.responseJSON.msg) {
+                                errMsg = xhr.responseJSON.msg;
+                            }
+                            layer.msg(errMsg, {icon: 2});
                         }
-                        layer.msg((res && res.msg) ? res.msg : '批量处理失败', {icon: 2});
-                    },
-                    error: function () {
-                        layer.close(loading);
-                        $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
-                        layer.msg('请求失败，请稍后重试', {icon: 2});
-                    }
+                    });
                 });
             });
         });
