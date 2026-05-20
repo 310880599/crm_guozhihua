@@ -249,11 +249,15 @@ class Liberum extends Model
             $row['port_name'] = isset($portMap[$portId]) ? (string)$portMap[$portId] : $portId;
             $row['kh_rank_display'] = $this->resolveKhRankDisplayName($khRankRaw, $rankMap);
             $rawGhType = trim((string)($row['pr_gh_type'] ?? ''));
-            if ($rawGhType !== '' && preg_match('/^\d+$/', $rawGhType)) {
-                $row['pr_gh_type_name'] = isset($liberumTypeMap[$rawGhType]) ? $liberumTypeMap[$rawGhType] : $rawGhType;
-            } else {
-                $row['pr_gh_type_name'] = $rawGhType;
+            $ghTypeName = '未设置';
+            if ($rawGhType !== '' && $rawGhType !== '0' && preg_match('/^\d+$/', $rawGhType)) {
+                $mappedTypeName = isset($liberumTypeMap[$rawGhType]) ? trim((string)$liberumTypeMap[$rawGhType]) : '';
+                if ($mappedTypeName !== '') {
+                    $ghTypeName = $mappedTypeName;
+                }
             }
+            $row['pr_gh_type_name'] = $ghTypeName;
+            $row['current_gh_type_name'] = $ghTypeName;
             $row['remark'] = isset($row['remark']) ? (string)$row['remark'] : '';
             $row['to_gh_time'] = !empty($row['to_gh_time']) ? (string)$row['to_gh_time'] : (isset($row['ut_time']) ? (string)$row['ut_time'] : '');
             $row['at_user'] = isset($row['at_user']) ? (string)$row['at_user'] : '';
