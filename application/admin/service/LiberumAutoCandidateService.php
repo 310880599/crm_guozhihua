@@ -290,18 +290,25 @@ class LiberumAutoCandidateService extends BaseAdminService
     }
 
     /**
-     * 获取自动公海候选列表（分页 + 筛选）
+     * 获取自动公海候选列表（游标分页 + 筛选）
      *
-     * @param array $params 支持：page、limit、kh_name、phone、pr_user
-     * @return array{count:int,data:array}
+     * @param array $params 支持：last_id、direction、limit、kh_name、phone、pr_user
+     * @return array{count:int,data:array,cursor:array}
      */
     public function getCandidateList($params = [])
     {
         $params = is_array($params) ? $params : [];
-        $page = max(1, (int)($params['page'] ?? 1));
+        $cursorLastId = max(0, (int)($params['last_id'] ?? 0));
+        $direction = trim((string)($params['direction'] ?? 'next'));
+        if ($direction === '') {
+            $direction = 'next';
+        }
         $limit = (int)($params['limit'] ?? 10);
         if ($limit <= 0) {
             $limit = 10;
+        }
+        if ($limit > 100) {
+            $limit = 100;
         }
 
         // 每次查询先清空批次级缓存，避免脏数据串场。
@@ -313,10 +320,7 @@ class LiberumAutoCandidateService extends BaseAdminService
         $batchSelectMs = 0;
         $scannedBatches = 0;
         $scannedLeadsCount = 0;
-        $finalCandidateCount = 0;
         $dataCount = 0;
-        $total = 0;
-        $fastStop = false;
         try {
             $autoDays = (int)$this->getAutoLiberumDays();
             $deadline = date('Y-m-d H:i:s', time() - $autoDays * 86400);
@@ -347,33 +351,37 @@ class LiberumAutoCandidateService extends BaseAdminService
             if ($prUserKeyword !== '') {
                 $baseQuery->whereLike('l.pr_user', '%' . $prUserKeyword . '%');
             }
+
             $hasSearchCondition = ($khNameKeyword !== '' || $prUserKeyword !== '' || $phoneKeyword !== '');
             $batchSize = $hasSearchCondition ? 1000 : 2000;
-            $needStart = ($page - 1) * $limit;
-            $needEnd = $page * $limit;
-            $candidateIndex = 0;
-            $data = [];
-            $lastId = 0;
 
             if ($phoneKeyword !== '') {
                 $matchedLeadIds = $this->findLeadIdsByPhone($phoneKeyword);
                 if (empty($matchedLeadIds)) {
                     $totalMs = (int)round((microtime(true) - $totalStart) * 1000);
                     Log::record(
-                        '自动公海候选查询性能：page=' . $page
+                        '自动公海候选查询性能：cursor_last_id=' . $cursorLastId
+                        . ', direction=' . $direction
                         . ', limit=' . $limit
-                        . ', batch_size=' . $batchSize
+                        . ', next_last_id=0'
+                        . ', has_more=0'
                         . ', scanned_batches=' . $scannedBatches
                         . ', scanned_leads_count=' . $scannedLeadsCount
-                        . ', auto_liberum_days=' . $autoDays
-                        . ', fast_stop=0'
-                        . ', final_candidate_count=' . $finalCandidateCount
-                        . ', data_count=' . $dataCount
+                        . ', data_count=0'
                         . ', total_ms=' . $totalMs
-                        . ', deadline=' . $deadline,
+                        . ', auto_liberum_days=' . $autoDays,
                         'info'
                     );
-                    return ['count' => 0, 'data' => []];
+                    return [
+                        'count' => 0,
+                        'data' => [],
+                        'cursor' => [
+                            'next_last_id' => 0,
+                            'has_more' => false,
+                            'scanned_leads_count' => 0,
+                            'total_ms' => $totalMs,
+                        ],
+                    ];
                 }
                 $baseQuery->whereIn('l.id', $matchedLeadIds);
             }
@@ -399,10 +407,14 @@ class LiberumAutoCandidateService extends BaseAdminService
                 ]
             );
 
+            $data = [];
+            $scanLastId = $cursorLastId;
+            $hasMore = false;
+
             while (true) {
                 $query = clone $baseQuery;
-                if ($lastId > 0) {
-                    $query->where('l.id', '<', $lastId);
+                if ($scanLastId > 0) {
+                    $query->where('l.id', '<', $scanLastId);
                 }
 
                 $listStart = microtime(true);
@@ -427,7 +439,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                 $batchCount = count($leads);
                 $scannedLeadsCount += $batchCount;
                 $lastBatchLeadId = (int)($leads[$batchCount - 1]['id'] ?? 0);
-                $lastId = $lastBatchLeadId > 0 ? $lastBatchLeadId : 0;
+                $scanLastId = $lastBatchLeadId > 0 ? $lastBatchLeadId : 0;
 
                 $this->leadMap = [];
                 $this->followStatsMap = [];
@@ -443,7 +455,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                     $this->leadMap[$leadId] = $lead;
                 }
                 if (empty($leadIds)) {
-                    if ($lastId <= 0) {
+                    if ($scanLastId <= 0) {
                         break;
                     }
                     continue;
@@ -467,7 +479,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                         continue;
                     }
 
-                    if ($candidateIndex >= $needStart && $candidateIndex < $needEnd && count($data) < $limit) {
+                    if (count($data) < $limit) {
                         $data[] = [
                             'id' => $leadId,
                             'kh_name' => (string)($lead['kh_name'] ?? ''),
@@ -481,25 +493,19 @@ class LiberumAutoCandidateService extends BaseAdminService
                             'status' => (int)($lead['status'] ?? 0),
                             'issuccess' => (int)($lead['issuccess'] ?? 0),
                         ];
-                    }
-                    $candidateIndex++;
-                    if ($candidateIndex >= $needEnd && count($data) >= $limit) {
-                        $fastStop = true;
-                        break;
+                        if (count($data) >= $limit) {
+                            // 游标分页只需凑满当前批次即可停止，避免继续深扫。
+                            $hasMore = true;
+                            break 2;
+                        }
+                        continue;
                     }
                 }
 
-                if ($fastStop) {
-                    break;
-                }
-                if ($lastId <= 0) {
+                if ($scanLastId <= 0) {
                     break;
                 }
             }
-
-            $finalCandidateCount = $candidateIndex;
-            // 快速分页模式：提前停止时返回近似总数，保证前端可继续翻页。
-            $total = $fastStop ? ($needEnd + 1) : $finalCandidateCount;
 
             if (!empty($data)) {
                 $pageLeadIds = array_values(array_unique(array_map('intval', array_column($data, 'id'))));
@@ -513,30 +519,50 @@ class LiberumAutoCandidateService extends BaseAdminService
             }
 
             $dataCount = count($data);
+            $nextLastId = 0;
+            if ($dataCount > 0) {
+                $lastRow = $data[$dataCount - 1];
+                $nextLastId = (int)($lastRow['id'] ?? 0);
+            }
 
             $totalMs = (int)round((microtime(true) - $totalStart) * 1000);
             Log::record(
-                '自动公海候选查询性能：page=' . $page
+                '自动公海候选查询性能：cursor_last_id=' . $cursorLastId
+                . ', direction=' . $direction
                 . ', limit=' . $limit
-                . ', batch_size=' . $batchSize
+                . ', next_last_id=' . $nextLastId
+                . ', has_more=' . ($hasMore ? 1 : 0)
                 . ', scanned_batches=' . $scannedBatches
                 . ', scanned_leads_count=' . $scannedLeadsCount
-                . ', auto_liberum_days=' . $autoDays
-                . ', batch_select_ms=' . $batchSelectMs
-                . ', fast_stop=' . ($fastStop ? 1 : 0)
-                . ', final_candidate_count=' . $finalCandidateCount
                 . ', data_count=' . $dataCount
                 . ', total_ms=' . $totalMs
-                . ', deadline=' . $deadline,
+                . ', auto_liberum_days=' . $autoDays
+                . ', batch_select_ms=' . $batchSelectMs,
                 'info'
             );
+
             return [
-                'count' => $total,
+                'count' => $dataCount + ($hasMore ? 1 : 0),
                 'data' => $data,
+                'cursor' => [
+                    'next_last_id' => $nextLastId,
+                    'has_more' => $hasMore,
+                    'scanned_leads_count' => $scannedLeadsCount,
+                    'total_ms' => $totalMs,
+                ],
             ];
         } catch (\Throwable $e) {
             Log::record('自动公海候选查询失败：' . $e->getMessage(), 'error');
-            return ['count' => 0, 'data' => []];
+            return [
+                'count' => 0,
+                'data' => [],
+                'cursor' => [
+                    'next_last_id' => 0,
+                    'has_more' => false,
+                    'scanned_leads_count' => 0,
+                    'total_ms' => 0,
+                ],
+            ];
         }
     }
 

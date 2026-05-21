@@ -278,8 +278,9 @@ class Liberum extends Common{
         return json([
             'code' => 0,
             'msg' => '',
-            'count' => (int)($list['count'] ?? 0),
+            'count' => 999999,
             'data' => $list['data'] ?? [],
+            'cursor' => $list['cursor'] ?? [],
         ]);
     }
 

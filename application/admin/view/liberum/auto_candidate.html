@@ -64,10 +64,24 @@
         border: none !important;
         overflow: visible !important;
     }
-    .layui-table-page {
-        background: #fff !important;
-        border-top: 1px solid #e0e0e0 !important;
-        padding: 12px 20px !important;
+    .cursor-pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 16px;
+        border-top: 1px solid #e8e8e8;
+        background: #fff;
+    }
+    .cursor-pagination .cursor-actions .layui-btn {
+        margin-right: 8px;
+    }
+    .cursor-pagination .cursor-actions .layui-btn:last-child {
+        margin-right: 0;
+    }
+    .cursor-pagination .cursor-tip {
+        color: #666;
+        font-size: 12px;
     }
     /* 仅主表区域保留一根横向滚动条；纵向由页面外层滚动 */
     #autoCandidateTable + .layui-table-view .layui-table-box {
@@ -105,7 +119,7 @@
     <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
         <legend>自动公海候选</legend>
         <div style="margin: 0 0 10px 0; color: #ff6f00; font-size: 12px;">
-            提示：大数据量场景下本页采用快速分页，候选总数为近似值，以避免页面查询超时。
+            提示：当前页面采用游标分页，每次只向后扫描一小批数据，不统计总页数，可避免大数据量查询超时。
         </div>
         <div class="search-card">
             <div class="layui-form" lay-filter="auto-candidate-search-form">
@@ -161,6 +175,14 @@
 
     <div class="table-wrapper">
         <table class="layui-table" id="autoCandidateTable" lay-filter="autoCandidateTable"></table>
+        <div class="cursor-pagination">
+            <div class="cursor-actions">
+                <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="cursor-refresh-first">刷新第一页</button>
+                <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="cursor-prev-batch">上一批</button>
+                <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" id="cursor-next-batch">下一批</button>
+            </div>
+            <div class="cursor-tip" id="cursor-page-tip">当前为第一页</div>
+        </div>
     </div>
 </div>
 
@@ -185,6 +207,12 @@
         var batchConfirmUrl = "{:url('Liberum/batchConfirmAutoLiberum')}";
         var ghTypeList = <?php echo json_encode(isset($ghTypeList) ? $ghTypeList : [], JSON_UNESCAPED_UNICODE); ?>;
         var prUserSelectInstance = null;
+        var currentFilters = {};
+        var currentCursorLastId = 0;
+        var nextLastId = 0;
+        var hasMore = false;
+        var cursorStack = [0];
+        var currentBatchNo = 1;
 
         function getSelectedPrUser() {
             if (!prUserSelectInstance) {
@@ -276,12 +304,74 @@
             });
         }
 
+        function setBatchButtonsLoading(loading) {
+            var disabled = !!loading;
+            $('#cursor-refresh-first').prop('disabled', disabled);
+            $('#cursor-prev-batch').prop('disabled', disabled || cursorStack.length <= 1);
+            $('#cursor-next-batch').prop('disabled', disabled || !hasMore);
+        }
+
+        function renderCursorStatusText(extraText) {
+            var text = '当前为第' + currentBatchNo + '批';
+            if (extraText) {
+                text += '，' + extraText;
+            }
+            $('#cursor-page-tip').text(text);
+            $('#cursor-prev-batch').prop('disabled', cursorStack.length <= 1);
+            $('#cursor-next-batch').prop('disabled', !hasMore);
+        }
+
+        function buildRequestWhere(lastId) {
+            return $.extend({}, currentFilters, {
+                last_id: lastId || 0,
+                direction: 'next'
+            });
+        }
+
+        function syncCursorFromResponse(res) {
+            var cursor = (res && res.cursor) ? res.cursor : {};
+            hasMore = !!cursor.has_more;
+            nextLastId = parseInt(cursor.next_last_id, 10) || 0;
+            var scanned = parseInt(cursor.scanned_leads_count, 10) || 0;
+            var totalMs = parseInt(cursor.total_ms, 10) || 0;
+            renderCursorStatusText('本批扫描' + scanned + '条客户，耗时' + totalMs + 'ms');
+            if (!hasMore) {
+                $('#cursor-next-batch').prop('disabled', true);
+            }
+        }
+
+        function reloadByCursor(lastId, options) {
+            options = options || {};
+            currentCursorLastId = parseInt(lastId, 10) || 0;
+            setBatchButtonsLoading(true);
+            table.reload(tableId, {
+                where: buildRequestWhere(currentCursorLastId),
+                page: false,
+                done: function (res) {
+                    syncCursorFromResponse(res || {});
+                    setBatchButtonsLoading(false);
+                    if (!hasMore && (res && $.isArray(res.data)) && res.data.length > 0 && options.showNoMoreTip) {
+                        layer.msg('已经没有更多候选客户');
+                    }
+                    if ((res && $.isArray(res.data)) && res.data.length === 0 && !hasMore && options.showNoMoreTip) {
+                        layer.msg('已经没有更多候选客户');
+                    }
+                }
+            });
+        }
+
+        function refreshFirstBatch() {
+            cursorStack = [0];
+            currentBatchNo = 1;
+            reloadByCursor(0, {showNoMoreTip: false});
+        }
+
         var tableIns = table.render({
             elem: '#' + tableId,
             id: tableId,
             url: baseUrl,
             method: 'get',
-            page: true,
+            page: false,
             limit: 10,
             limits: [10, 20, 30, 50, 100],
             toolbar: '#autoCandidateToolbarTpl',
@@ -322,21 +412,24 @@
                     return '<span class="layui-badge-rim">未成交</span>';
                 }},
                 {fixed: 'right', title: '操作', toolbar: '#autoCandidateRowBarTpl', width: 150, align: 'center'}
-            ]]
+            ]],
+            where: {
+                last_id: 0,
+                direction: 'next'
+            },
+            done: function (res) {
+                syncCursorFromResponse(res || {});
+            }
         });
 
         form.on('submit(auto-candidate-search)', function (data) {
             var field = data.field || {};
             var prUser = getSelectedPrUser();
-            var where = $.extend({}, field, {
+            currentFilters = $.extend({}, field, {
                 kh_name: field.client_keyword || '',
                 pr_user: prUser
             });
-
-            table.reload(tableId, {
-                where: where,
-                page: {curr: 1}
-            });
+            refreshFirstBatch();
             return false;
         });
 
@@ -349,11 +442,35 @@
                 prUserSelectInstance.setValue([]);
             }
             form.render('select');
+            currentFilters = {};
+            refreshFirstBatch();
+        });
 
-            table.reload(tableId, {
-                where: {},
-                page: {curr: 1}
-            });
+        $('#cursor-refresh-first').on('click', function () {
+            refreshFirstBatch();
+        });
+
+        $('#cursor-next-batch').on('click', function () {
+            if (!hasMore || nextLastId <= 0) {
+                layer.msg('已经没有更多候选客户');
+                return;
+            }
+            if (cursorStack.length === 0 || cursorStack[cursorStack.length - 1] !== nextLastId) {
+                cursorStack.push(nextLastId);
+            }
+            currentBatchNo = cursorStack.length;
+            reloadByCursor(nextLastId, {showNoMoreTip: true});
+        });
+
+        $('#cursor-prev-batch').on('click', function () {
+            if (cursorStack.length <= 1) {
+                layer.msg('已经是第一页');
+                return;
+            }
+            cursorStack.pop();
+            var prevLastId = cursorStack[cursorStack.length - 1] || 0;
+            currentBatchNo = cursorStack.length;
+            reloadByCursor(prevLastId, {showNoMoreTip: false});
         });
 
         table.on('tool(' + tableId + ')', function (obj) {
@@ -391,7 +508,7 @@
                             $btn.removeClass('layui-btn-disabled').removeAttr('disabled');
                             if (res && parseInt(res.code, 10) === 0) {
                                 layer.msg(res.msg || '操作成功', {icon: 1});
-                                table.reload(tableId, {});
+                                reloadByCursor(currentCursorLastId, {showNoMoreTip: false});
                                 layer.close(dialogIndex);
                                 return;
                             }
@@ -456,7 +573,7 @@
                             $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
                             if (res && parseInt(res.code, 10) === 0) {
                                 layer.msg(res.msg || '批量处理成功', {icon: 1});
-                                table.reload(tableId, {});
+                                reloadByCursor(currentCursorLastId, {showNoMoreTip: false});
                                 layer.close(dialogIndex);
                                 return;
                             }
