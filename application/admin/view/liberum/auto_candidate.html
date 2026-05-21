@@ -75,6 +75,21 @@
     }
     .cursor-pagination .cursor-actions .layui-btn {
         margin-right: 8px;
+        color: #fff;
+        border-radius: 6px;
+        padding: 0 16px;
+        transition: opacity .2s ease;
+    }
+    .cursor-pagination .cursor-actions .layui-btn:hover {
+        opacity: .9;
+    }
+    .cursor-pagination .layui-btn[disabled],
+    .cursor-pagination .layui-btn.layui-btn-disabled {
+        background-color: #d9d9d9 !important;
+        border-color: #d9d9d9 !important;
+        color: #999 !important;
+        cursor: not-allowed;
+        opacity: 1;
     }
     .cursor-pagination .cursor-actions .layui-btn:last-child {
         margin-right: 0;
@@ -177,9 +192,9 @@
         <table class="layui-table" id="autoCandidateTable" lay-filter="autoCandidateTable"></table>
         <div class="cursor-pagination">
             <div class="cursor-actions">
-                <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="cursor-refresh-first">刷新第一页</button>
-                <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="cursor-prev-batch">上一批</button>
-                <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" id="cursor-next-batch">下一批</button>
+                <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" id="cursor-refresh-first">刷新第一页</button>
+                <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" id="cursor-prev-batch">上一批</button>
+                <button type="button" class="layui-btn layui-btn-sm" id="cursor-next-batch">下一批</button>
             </div>
             <div class="cursor-tip" id="cursor-page-tip">当前为第一页</div>
         </div>
