@@ -316,6 +316,7 @@ class LiberumAutoCandidateService extends BaseAdminService
         $finalCandidateCount = 0;
         $dataCount = 0;
         $total = 0;
+        $fastStop = false;
         try {
             $autoDays = (int)$this->getAutoLiberumDays();
             $deadline = date('Y-m-d H:i:s', time() - $autoDays * 86400);
@@ -349,7 +350,7 @@ class LiberumAutoCandidateService extends BaseAdminService
             $hasSearchCondition = ($khNameKeyword !== '' || $prUserKeyword !== '' || $phoneKeyword !== '');
             $batchSize = $hasSearchCondition ? 1000 : 2000;
             $needStart = ($page - 1) * $limit;
-            $needEnd = $needStart + $limit;
+            $needEnd = $page * $limit;
             $candidateIndex = 0;
             $data = [];
             $lastId = 0;
@@ -365,6 +366,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                         . ', scanned_batches=' . $scannedBatches
                         . ', scanned_leads_count=' . $scannedLeadsCount
                         . ', auto_liberum_days=' . $autoDays
+                        . ', fast_stop=0'
                         . ', final_candidate_count=' . $finalCandidateCount
                         . ', data_count=' . $dataCount
                         . ', total_ms=' . $totalMs
@@ -481,15 +483,23 @@ class LiberumAutoCandidateService extends BaseAdminService
                         ];
                     }
                     $candidateIndex++;
+                    if ($candidateIndex >= $needEnd && count($data) >= $limit) {
+                        $fastStop = true;
+                        break;
+                    }
                 }
 
+                if ($fastStop) {
+                    break;
+                }
                 if ($lastId <= 0) {
                     break;
                 }
             }
 
             $finalCandidateCount = $candidateIndex;
-            $total = $finalCandidateCount;
+            // 快速分页模式：提前停止时返回近似总数，保证前端可继续翻页。
+            $total = $fastStop ? ($needEnd + 1) : $finalCandidateCount;
 
             if (!empty($data)) {
                 $pageLeadIds = array_values(array_unique(array_map('intval', array_column($data, 'id'))));
@@ -513,6 +523,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                 . ', scanned_leads_count=' . $scannedLeadsCount
                 . ', auto_liberum_days=' . $autoDays
                 . ', batch_select_ms=' . $batchSelectMs
+                . ', fast_stop=' . ($fastStop ? 1 : 0)
                 . ', final_candidate_count=' . $finalCandidateCount
                 . ', data_count=' . $dataCount
                 . ', total_ms=' . $totalMs
