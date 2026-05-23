@@ -1444,7 +1444,7 @@
     <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="details" lay-tips="详情" lay-offset="0,-8"><i class="layui-icon">&#xe60b;</i></a>
     <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a>
     <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i></a>
-    <a class="layui-btn layui-btn-primary layui-btn-xs" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>申请成交</a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn apply-success-btn" data-id="{{d.id}}" lay-event="chengjiao" lay-tips="申请成交" lay-offset="0,-8"><i class="layui-icon">&#xe63c;</i></a>
 </script>
 
 <!-- 顶部工具栏 -->
@@ -2059,7 +2059,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
              return v;
              }
          },
-         { fixed: 'right', title: '操作', width: isMobile ? 130 : 220, align: 'center', toolbar: '#action' }
+        { fixed: 'right', title: '操作', width: isMobile ? 165 : 190, align: 'center', toolbar: '#action' }
      ]];
 
     /**
