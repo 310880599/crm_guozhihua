@@ -114,6 +114,48 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border: none;
         }
+        .sca-btn-reset {
+            background: #f8fafc;
+            border: 1px solid #dbe3ef;
+            color: #4b5563;
+            border-radius: 6px;
+            transition: all .2s ease;
+        }
+        .sca-btn-reset:hover,
+        .sca-btn-reset:focus {
+            background: #eef3fb;
+            border-color: #c7d2e5;
+            color: #374151;
+        }
+        .sca-btn-proof,
+        .sca-btn-detail {
+            border: none;
+            color: #fff !important;
+            border-radius: 14px;
+            transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+        }
+        .sca-btn-proof {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28);
+        }
+        .sca-btn-detail {
+            background: linear-gradient(135deg, #5b8cff 0%, #7b61ff 100%);
+            box-shadow: 0 2px 8px rgba(91, 140, 255, 0.28);
+        }
+        .sca-btn-proof:hover,
+        .sca-btn-proof:focus,
+        .sca-btn-detail:hover,
+        .sca-btn-detail:focus {
+            color: #fff !important;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 14px rgba(59, 130, 246, 0.26);
+        }
+        .sca-btn-mini {
+            height: 24px;
+            line-height: 24px;
+            padding: 0 10px;
+            font-size: 12px;
+        }
         #scaTable + .layui-table-view .layui-table-fixed-r,
         #scaTable + .layui-table-view .layui-table-fixed-r th,
         #scaTable + .layui-table-view .layui-table-fixed-r td {
@@ -167,7 +209,7 @@
                         </div>
                     </div>
                     <div class="layui-inline" style="float:right;padding-bottom:12px;">
-                        <button type="button" class="layui-btn layui-btn-primary" id="btnResetSearch">重置</button>
+                        <button type="button" class="layui-btn sca-btn-reset" id="btnResetSearch">重置</button>
                         <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-sca-search">
                             <i class="layui-icon layui-icon-search"></i> 查询
                         </button>
@@ -189,7 +231,7 @@
     <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="approve">通过</a>
     <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="reject">驳回</a>
 {{# } }}
-    <a class="layui-btn layui-btn-primary layui-btn-xs" lay-event="detail">详情</a>
+    <a class="layui-btn layui-btn-xs sca-btn-detail sca-btn-mini" lay-event="detail">详情</a>
 </script>
 
 {include file="common/foot"/}
@@ -255,7 +297,7 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
             var proofUrl = $.trim(apply.proof_image || '');
             var proofHtml = proofUrl
                 ? '<div class="sca-detail-proof"><img src="' + escHtml(proofUrl) + '" class="js-sca-proof-preview" data-src="' + escHtml(proofUrl) + '" alt="成交凭证">' +
-                  '<div style="margin-top:6px;"><a href="javascript:;" class="layui-btn layui-btn-xs layui-btn-primary js-sca-proof-preview" data-src="' + escHtml(proofUrl) + '">查看大图</a></div></div>'
+                  '<div style="margin-top:6px;"><a href="javascript:;" class="layui-btn layui-btn-xs sca-btn-proof sca-btn-mini js-sca-proof-preview" data-src="' + escHtml(proofUrl) + '">查看大图</a></div></div>'
                 : '—';
 
             var html = '<div class="sca-detail-box">' +
@@ -370,7 +412,7 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
                 templet: function (d) {
                     var url = $.trim(d.proof_image || '');
                     if (!url) return '—';
-                    return '<a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="proof">查看凭证</a>';
+                    return '<a class="layui-btn layui-btn-xs sca-btn-proof sca-btn-mini" lay-event="proof">查看凭证</a>';
                 }
             },
             {
