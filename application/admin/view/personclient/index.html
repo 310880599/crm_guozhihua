@@ -296,6 +296,66 @@
     }
 
     /* 最新跟进记录：悬浮完整内容（由 JS 定位到 body） */
+    /* 申请成交弹窗 */
+    .pc-apply-success-dlg {
+        padding: 12px 18px 4px;
+        max-height: 72vh;
+        overflow-y: auto;
+        box-sizing: border-box;
+    }
+    .pc-apply-success-dlg .pc-apply-info {
+        background: #f8f9fa;
+        border: 1px solid #eee;
+        border-radius: 4px;
+        padding: 10px 12px;
+        margin-bottom: 14px;
+    }
+    .pc-apply-success-dlg .pc-apply-info-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 8px;
+    }
+    .pc-apply-success-dlg .pc-apply-info-row {
+        display: flex;
+        line-height: 1.75;
+        font-size: 13px;
+    }
+    .pc-apply-success-dlg .pc-apply-info-row .pc-label {
+        flex: 0 0 92px;
+        color: #666;
+    }
+    .pc-apply-success-dlg .pc-apply-info-row .pc-value {
+        flex: 1;
+        color: #333;
+        word-break: break-word;
+    }
+    .pc-apply-success-dlg .pc-apply-info-row.pc-apply-follow .pc-value {
+        max-height: 80px;
+        overflow-y: auto;
+    }
+    .pc-apply-success-dlg .pc-required {
+        color: #ff5722;
+        margin-right: 2px;
+    }
+    .pc-apply-success-dlg .pc-proof-preview img {
+        max-width: 220px;
+        max-height: 150px;
+        border: 1px solid #e6e6e6;
+        border-radius: 2px;
+        display: block;
+    }
+    .pc-apply-success-dlg .pc-proof-del {
+        display: inline-block;
+        margin-top: 6px;
+        color: #ff5722;
+        font-size: 12px;
+        cursor: pointer;
+    }
+    .pc-apply-success-dlg .pc-proof-del:hover {
+        text-decoration: underline;
+    }
+
     #pc-last-record-tooltip.pc-last-record-tooltip{
         position: fixed;
         z-index: 2000000000;
@@ -1384,9 +1444,7 @@
     <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="details" lay-tips="详情" lay-offset="0,-8"><i class="layui-icon">&#xe60b;</i></a>
     <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a>
     <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i></a>
-    <!-- {if session('aid') eq 1}
-    <a class="layui-btn layui-btn-primary layui-btn-xs yincang" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>成交</a>
-    {/if} -->
+    <a class="layui-btn layui-btn-primary layui-btn-xs" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>申请成交</a>
 </script>
 
 <!-- 顶部工具栏 -->
@@ -1404,7 +1462,7 @@
     {/if}
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="alterAll" lay-event="alterAll"><i class="layui-icon">&#xe60e;</i>转移客户</button>
     {if session('aid') eq 1}
-    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="chengjiaoAll" lay-event="chengjiaoAll"><i class="layui-icon">&#xe63c;</i>客户成交</button>
+    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="chengjiaoAll" lay-event="chengjiaoAll"><i class="layui-icon">&#xe63c;</i>申请成交</button>
     <button type="button" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" id="delAlls" lay-event="delAlls"><i class="layui-icon">&#xe640;</i>选中删除</button>
     {/if}
 </script>
@@ -1587,6 +1645,161 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
     }
+
+    /** 从表格缓存取当前页行数据 */
+    function getPersonclientRowById(id) {
+        var list = table.cache[tableId];
+        if (!list || !list.length) {
+            return null;
+        }
+        var nid = parseInt(id, 10);
+        if (!nid) {
+            return null;
+        }
+        for (var i = 0; i < list.length; i++) {
+            if (parseInt(list[i].id, 10) === nid) {
+                return list[i];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 打开「申请成交」弹窗：展示客户信息 + 凭证上传 + 申请说明
+     * @param {object} row 表格行数据
+     * @param {function} onSuccess 提交成功回调（通常 tableIns.reload）
+     */
+    function openApplySuccessClientDialog(row, onSuccess) {
+        if (!row || !row.id) {
+            layer.msg('客户数据无效', { icon: 2 });
+            return;
+        }
+        var leadsId = parseInt(row.id, 10);
+        var uid = 'pcApply_' + leadsId + '_' + Date.now();
+        var uploadBtnId = 'pcProofUploadBtn_' + uid;
+        var proofInputId = 'pcProofInput_' + uid;
+        var proofPreviewId = 'pcProofPreview_' + uid;
+        var uploadSlotId = 'pcProofUploadSlot_' + uid;
+        var remarkId = 'pcApplyRemark_' + uid;
+
+        function infoRow(label, value, extraClass) {
+            var cls = 'pc-apply-info-row' + (extraClass ? ' ' + extraClass : '');
+            var text = (value == null || String(value).trim() === '') ? '—' : String(value);
+            return '<div class="' + cls + '"><span class="pc-label">' + personclientEscapeHtml(label) + '</span>' +
+                '<span class="pc-value">' + personclientEscapeHtml(text) + '</span></div>';
+        }
+
+        var html = '<div class="pc-apply-success-dlg layui-form" data-leads-id="' + leadsId + '">' +
+            '<div class="pc-apply-info">' +
+            '<div class="pc-apply-info-title">客户信息</div>' +
+            infoRow('客户名称', row.kh_name) +
+            infoRow('主电话', row.main_phone) +
+            infoRow('辅助电话', row.aux_phone) +
+            infoRow('产品名称', row.product_name) +
+            infoRow('负责人', row.pr_user) +
+            infoRow('最新跟进记录', row.last_up_records, 'pc-apply-follow') +
+            '</div>' +
+            '<div class="layui-form-item">' +
+            '<label class="layui-form-label"><span class="pc-required">*</span>成交凭证</label>' +
+            '<div class="layui-input-block">' +
+            '<div id="' + uploadSlotId + '" class="pc-proof-upload-slot">' +
+            '<button type="button" class="layui-btn layui-btn-sm" id="' + uploadBtnId + '"><i class="layui-icon">&#xe67c;</i>上传图片</button>' +
+            '</div>' +
+            '<input type="hidden" id="' + proofInputId + '" value="">' +
+            '<div id="' + proofPreviewId + '" class="pc-proof-preview" style="display:none;">' +
+            '<img src="" alt="成交凭证">' +
+            '<a href="javascript:;" class="pc-proof-del">删除重新上传</a>' +
+            '</div></div></div>' +
+            '<div class="layui-form-item">' +
+            '<label class="layui-form-label">申请说明</label>' +
+            '<div class="layui-input-block">' +
+            '<textarea id="' + remarkId + '" class="layui-textarea" placeholder="选填"></textarea>' +
+            '</div></div></div>';
+
+        var $dlgRoot;
+        var dlgIndex;
+
+        function bindProofUpload() {
+            upload.render({
+                elem: '#' + uploadBtnId,
+                url: "{:url('UpFiles/upload')}",
+                accept: 'images',
+                exts: 'jpg|jpeg|png|gif',
+                done: function (res) {
+                    if (res.code == 1 && res.url) {
+                        $dlgRoot.find('#' + proofInputId).val(res.url);
+                        $dlgRoot.find('#' + proofPreviewId + ' img').attr('src', res.url);
+                        $dlgRoot.find('#' + proofPreviewId).show();
+                        $dlgRoot.find('#' + uploadSlotId).hide();
+                    } else {
+                        layer.msg(res.info || '上传失败', { icon: 2 });
+                    }
+                },
+                error: function () {
+                    layer.msg('上传失败，请重试', { icon: 2 });
+                }
+            });
+        }
+
+        function clearProofImage() {
+            $dlgRoot.find('#' + proofInputId).val('');
+            $dlgRoot.find('#' + proofPreviewId + ' img').attr('src', '');
+            $dlgRoot.find('#' + proofPreviewId).hide();
+            $dlgRoot.find('#' + uploadSlotId).show().html(
+                '<button type="button" class="layui-btn layui-btn-sm" id="' + uploadBtnId + '"><i class="layui-icon">&#xe67c;</i>上传图片</button>'
+            );
+            bindProofUpload();
+        }
+
+        dlgIndex = layer.open({
+            type: 1,
+            title: '申请成交',
+            area: ['560px', 'auto'],
+            content: html,
+            btn: ['提交申请', '取消'],
+            yes: function () {
+                var proofImage = $.trim($dlgRoot.find('#' + proofInputId).val());
+                if (!proofImage) {
+                    layer.msg('请上传成交凭证', { icon: 2 });
+                    return;
+                }
+                var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+                $.post("{:url('Client/applySuccessClient')}", {
+                    leads_id: leadsId,
+                    proof_image: proofImage,
+                    apply_remark: $.trim($dlgRoot.find('#' + remarkId).val())
+                }, function (res) {
+                    layer.close(loadIdx);
+                    if (res.code === 0) {
+                        layer.msg(res.msg || '提交成功', { icon: 1, time: 1500 });
+                        layer.close(dlgIndex);
+                        if (typeof onSuccess === 'function') {
+                            onSuccess();
+                        }
+                    } else {
+                        layer.msg(res.msg || '提交失败', { icon: 2, time: 2500 });
+                    }
+                }).fail(function () {
+                    layer.close(loadIdx);
+                    layer.msg('网络异常，请稍后重试', { icon: 2 });
+                });
+            },
+            success: function (layero) {
+                $dlgRoot = layero.find('.pc-apply-success-dlg');
+                bindProofUpload();
+                $dlgRoot.on('click', '.pc-proof-del', function (e) {
+                    e.preventDefault();
+                    clearProofImage();
+                });
+            },
+            end: function () {
+                if ($dlgRoot) {
+                    $dlgRoot.off('click', '.pc-proof-del');
+                }
+            }
+        });
+    }
+
     /** 下次跟进时间展示归一（空值统一返回占位） */
     function normalizeNextUpTimeDisplay(value, emptyText) {
         var fallback = (emptyText == null) ? '' : String(emptyText);
@@ -2988,18 +3201,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 });
                 break;
             case 'chengjiaoAll':
-                if (data.length === 0) { layer.msg('请选择要操作的数据'); return; }
-                var ids3 = data.map(function(it){ return it.id; });
-                layer.confirm('确定将选中的 ' + data.length + ' 个客户标记为已成交吗？', function(index){
-                    $.post("{:url('Client/chengjiao')}", { ids: ids3 }, function(res){
-                        layer.close(index);
-                        if (res.code === 0) {
-                            layer.msg(res.msg, { time: 1000, icon: 1 });
-                            tableIns.reload();
-                        } else {
-                            layer.msg(res.msg || '操作失败', { time: 1500, icon: 2 });
-                        }
-                    });
+                if (data.length === 0) { layer.msg('请选择要申请成交的客户'); return; }
+                if (data.length > 1) {
+                    layer.msg('成交申请需逐条上传凭证，请使用行内「申请成交」按钮', { icon: 0, time: 2500 });
+                    return;
+                }
+                openApplySuccessClientDialog(data[0], function () {
+                    tableIns.reload();
                 });
                 break;
             case 'delAlls':
@@ -3024,8 +3232,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     // 行内事件
     table.on('tool(table-list)', function (obj) {
-        var layEvent = obj.event, id = obj.data.id;
-        lineEvent(layEvent, id);
+        lineEvent(obj.event, obj.data);
     });
     // 客户名称点击：与操作列“编辑客户”保持一致
     $(document).off('click.clientEditByName').on('click.clientEditByName', '.js-client-edit-link', function () {
@@ -3037,10 +3244,15 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     $('body').on('click', '.layui-layer-content [lay-event]', function(){
         var layEvent = $(this).attr('lay-event');
         var id = $(this).data('id');
-        lineEvent(layEvent, id);
+        var row = getPersonclientRowById(id) || { id: id };
+        lineEvent(layEvent, row);
     });
     // 行内事件处理
-    function lineEvent(event, id) {
+    function lineEvent(event, row) {
+        if (!row || !row.id) {
+            return;
+        }
+        var id = row.id;
         if (event === 'del') {
             layer.confirm('确定要删除这个客户吗？', function(index){
                 var loading = layer.load(1, { shade: [0.1,'#fff'] });
@@ -3067,16 +3279,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         } else if (event === 'alter') {
             layer_add("转移客户", "{:url('Client/alterPrUserPri')}?ids=" + id);
         } else if (event === 'chengjiao') {
-            layer.confirm('确定这个客户已成交吗？', function(index){
-                $.post("{:url('Client/chengjiao')}", { ids: id }, function(res){
-                    layer.close(index);
-                    if (res.code === 0) {
-                        layer.msg(res.msg, { time: 1000, icon: 1 });
-                        tableIns.reload();
-                    } else {
-                        layer.msg('操作失败！', { time: 1000, icon: 2 });
-                    }
-                });
+            openApplySuccessClientDialog(row, function () {
+                tableIns.reload();
             });
         }
     }

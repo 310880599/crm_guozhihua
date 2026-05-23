@@ -17,6 +17,7 @@ use app\admin\service\ClientStatusService;
 use app\admin\service\OrderService;
 use app\admin\service\PositionTitleService;
 use app\admin\service\SuccessClientOrderService;
+use app\admin\service\SuccessClientApplyService;
 
 class Client extends Common
 {
@@ -66,6 +67,17 @@ class Client extends Common
         return in_array($currentAid, array_map('strval', $jpIds), true);
     }
 
+    /**
+     * 成交客户申请权限：超级管理员或客户负责人/协同人
+     */
+    private function canApplySuccessClient(array $clientRow)
+    {
+        if ((int)Session::get('aid') === 1) {
+            return true;
+        }
+
+        return $this->canEditClientByOwnership($clientRow);
+    }
 
     const CONTACT_MAP = [
         'phone'         => 1,
@@ -5307,7 +5319,54 @@ class Client extends Common
         return $countries;
     }
 
-    //客户成交
+    /**
+     * 提交成交客户申请（不直接改 issuccess，待审核通过后生效）
+     */
+    public function applySuccessClient()
+    {
+        if (!Request::isPost()) {
+            return json(['code' => 1, 'msg' => '请求方式错误']);
+        }
+
+        $leadsId = input('leads_id/d', 0);
+        $proofImage = trim((string)input('proof_image', ''));
+        $applyRemark = trim((string)input('apply_remark', ''));
+
+        if ($leadsId <= 0) {
+            return json(['code' => 1, 'msg' => '客户ID不能为空']);
+        }
+        if ($proofImage === '') {
+            return json(['code' => 1, 'msg' => '请上传成交凭证']);
+        }
+
+        $lead = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (!$lead) {
+            return json(['code' => 1, 'msg' => '客户不存在']);
+        }
+        if ((int)($lead['status'] ?? 0) !== 1) {
+            return json(['code' => 1, 'msg' => '客户状态无效，无法提交成交申请']);
+        }
+        if ((int)($lead['issuccess'] ?? 0) !== -1) {
+            return json(['code' => 1, 'msg' => '仅未成交客户可提交成交申请']);
+        }
+        if (!$this->canApplySuccessClient($lead)) {
+            return json(['code' => 1, 'msg' => '仅客户负责人、协同人或超级管理员可提交申请']);
+        }
+
+        $service = new SuccessClientApplyService();
+        $result = $service->submitApply(
+            $leadsId,
+            $proofImage,
+            $applyRemark,
+            $lead,
+            (int)Session::get('aid'),
+            (string)Session::get('username')
+        );
+
+        return json($result);
+    }
+
+    //客户成交（保留原接口，前端列表已改为走 applySuccessClient）
     public function chengjiao()
     {
         if (!Request::isPost()) {

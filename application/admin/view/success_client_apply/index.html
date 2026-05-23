@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html>
+<head>
+    {include file="common/head"/}
+    <style>
+        script[type="text/html"] {
+            display: none !important;
+        }
+        .admin-main {
+            padding: 15px;
+            background: #f5f7fa;
+        }
+        .layui-elem-field {
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e8e8e8;
+            background: #fafafa;
+            margin-bottom: 15px;
+        }
+        .layui-elem-field legend {
+            font-size: 16px;
+            font-weight: 600;
+            background: #6695ea;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 8px;
+        }
+        .sca-page-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin: 0 0 12px 4px;
+        }
+        .sca-search-form .layui-form-label {
+            width: 96px;
+            font-weight: 500;
+            color: #555;
+        }
+        .sca-search-form .layui-input-inline {
+            width: 180px;
+        }
+        .sca-table-wrap {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            padding: 0;
+            overflow: hidden;
+        }
+        .sca-table-inner {
+            width: 100%;
+            overflow-x: auto;
+        }
+        .layui-table-view {
+            margin: 0;
+        }
+        .layui-table-view .layui-table {
+            width: max-content !important;
+            min-width: 100%;
+        }
+        .layui-table-view .layui-table td .layui-btn-xs {
+            margin: 2px 3px;
+        }
+        .sca-status-tag {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            line-height: 20px;
+            color: #fff;
+        }
+        .sca-status-pending { background: #ff9800; }
+        .sca-status-approved { background: #5fb878; }
+        .sca-status-rejected { background: #ff5722; }
+        .sca-detail-box {
+            padding: 16px 20px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        .sca-detail-section {
+            margin-bottom: 16px;
+            padding: 12px 14px;
+            background: #f8f9fa;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        .sca-detail-section h4 {
+            margin: 0 0 10px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+        }
+        .sca-detail-row {
+            display: flex;
+            line-height: 1.85;
+            font-size: 13px;
+        }
+        .sca-detail-row .label {
+            flex: 0 0 100px;
+            color: #666;
+        }
+        .sca-detail-row .value {
+            flex: 1;
+            color: #333;
+            word-break: break-word;
+        }
+        .sca-detail-proof img {
+            max-width: 280px;
+            max-height: 200px;
+            border: 1px solid #e6e6e6;
+            border-radius: 2px;
+            cursor: pointer;
+        }
+        .layuiadmin-btn-list {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+        }
+        #scaTable + .layui-table-view .layui-table-fixed-r,
+        #scaTable + .layui-table-view .layui-table-fixed-r th,
+        #scaTable + .layui-table-view .layui-table-fixed-r td {
+            background-color: #fff !important;
+        }
+    </style>
+</head>
+<body class="layui-layout-body">
+<div class="admin-main layui-anim layui-anim-upbit">
+    <h2 class="sca-page-title">成交客户审核管理</h2>
+
+    <fieldset class="layui-elem-field">
+        <legend>高级查询</legend>
+        <div class="layui-card" style="box-shadow:none;margin-top:10px;">
+            <div class="layui-form layui-card-header sca-search-form" lay-filter="sca-search-form"
+                 style="border-bottom:transparent;height:auto;">
+                <div class="layui-form-item" style="padding-left:12px;">
+                    <div class="layui-inline">
+                        <label class="layui-form-label">客户名称</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="kh_name" id="kh_name" placeholder="客户名称" class="layui-input" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">负责人</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="pr_user" id="pr_user" placeholder="负责人" class="layui-input" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">申请人</label>
+                        <div class="layui-input-inline">
+                            <input type="text" name="apply_user" id="apply_user" placeholder="申请人" class="layui-input" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">审核状态</label>
+                        <div class="layui-input-inline">
+                            <select name="check_status" id="check_status">
+                                <option value="">全部</option>
+                                <option value="0">待审核</option>
+                                <option value="1">已通过</option>
+                                <option value="2">已驳回</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">申请时间</label>
+                        <div class="layui-input-inline" style="width:220px;">
+                            <input type="text" name="apply_time" id="apply_time" placeholder="开始 - 结束" class="layui-input" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="layui-inline" style="float:right;padding-bottom:12px;">
+                        <button type="button" class="layui-btn layui-btn-primary" id="btnResetSearch">重置</button>
+                        <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-sca-search">
+                            <i class="layui-icon layui-icon-search"></i> 查询
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+
+    <div class="sca-table-wrap">
+        <div class="sca-table-inner">
+            <table class="layui-table" id="scaTable" lay-filter="scaTable"></table>
+        </div>
+    </div>
+</div>
+
+<script type="text/html" id="scaAction">
+{{# if(d.check_status == 0 || d.check_status == '0'){ }}
+    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="approve">通过</a>
+    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="reject">驳回</a>
+{{# } }}
+    <a class="layui-btn layui-btn-primary layui-btn-xs" lay-event="detail">详情</a>
+</script>
+
+{include file="common/foot"/}
+<script>
+layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
+    var table = layui.table;
+    var form = layui.form;
+    var laydate = layui.laydate;
+    var layer = layui.layer;
+    var $ = layui.jquery;
+
+    function escHtml(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function renderCheckStatus(status) {
+        var s = parseInt(status, 10);
+        if (s === 0) return '<span class="sca-status-tag sca-status-pending">待审核</span>';
+        if (s === 1) return '<span class="sca-status-tag sca-status-approved">已通过</span>';
+        if (s === 2) return '<span class="sca-status-tag sca-status-rejected">已驳回</span>';
+        return '<span class="sca-status-tag">未知</span>';
+    }
+
+    function previewProofImage(url, title) {
+        url = $.trim(url || '');
+        if (!url) {
+            layer.msg('暂无凭证图片', { icon: 0 });
+            return;
+        }
+        layer.photos({
+            photos: {
+                title: title || '成交凭证',
+                start: 0,
+                data: [{ alt: '成交凭证', src: url, thumb: url }]
+            },
+            anim: 5
+        });
+    }
+
+    function detailRow(label, value) {
+        var text = (value == null || String(value).trim() === '') ? '—' : String(value);
+        return '<div class="sca-detail-row"><span class="label">' + escHtml(label) + '</span>' +
+            '<span class="value">' + escHtml(text) + '</span></div>';
+    }
+
+    function openDetailDialog(id) {
+        var loadIdx = layer.load(1, { shade: [0.1, '#fff'] });
+        $.get("{:url('SuccessClientApply/detail')}", { id: id }, function (res) {
+            layer.close(loadIdx);
+            if (!res || res.code !== 0 || !res.data) {
+                layer.msg((res && res.msg) ? res.msg : '获取详情失败', { icon: 2 });
+                return;
+            }
+            var apply = res.data.apply || {};
+            var lead = res.data.lead || {};
+            var issuccessText = parseInt(lead.issuccess, 10) === 1 ? '已成交' : '未成交';
+            var statusText = parseInt(lead.status, 10) === 1 ? '有效' : '无效';
+            var proofUrl = $.trim(apply.proof_image || '');
+            var proofHtml = proofUrl
+                ? '<div class="sca-detail-proof"><img src="' + escHtml(proofUrl) + '" class="js-sca-proof-preview" data-src="' + escHtml(proofUrl) + '" alt="成交凭证">' +
+                  '<div style="margin-top:6px;"><a href="javascript:;" class="layui-btn layui-btn-xs layui-btn-primary js-sca-proof-preview" data-src="' + escHtml(proofUrl) + '">查看大图</a></div></div>'
+                : '—';
+
+            var html = '<div class="sca-detail-box">' +
+                '<div class="sca-detail-section"><h4>申请信息</h4>' +
+                detailRow('申请ID', apply.id) +
+                detailRow('客户名称', apply.kh_name) +
+                detailRow('负责人', apply.pr_user) +
+                detailRow('申请人', apply.apply_user) +
+                detailRow('申请时间', apply.apply_time) +
+                detailRow('申请说明', apply.apply_remark) +
+                '<div class="sca-detail-row"><span class="label">成交凭证</span><span class="value">' + proofHtml + '</span></div>' +
+                '</div>' +
+                '<div class="sca-detail-section"><h4>关联客户</h4>' +
+                detailRow('客户ID', lead.id) +
+                detailRow('客户名称', lead.kh_name) +
+                detailRow('负责人', lead.pr_user) +
+                detailRow('产品名称', lead.product_name) +
+                detailRow('客户状态', statusText) +
+                detailRow('成交状态', issuccessText) +
+                detailRow('更新时间', lead.ut_time) +
+                '</div>' +
+                '<div class="sca-detail-section"><h4>审核信息</h4>' +
+                detailRow('审核状态', apply.check_status_text || '') +
+                detailRow('审核人', apply.check_user) +
+                detailRow('审核时间', apply.check_time) +
+                detailRow('驳回原因', apply.reject_reason) +
+                '</div></div>';
+
+            layer.open({
+                type: 1,
+                title: '申请详情',
+                area: ['620px', 'auto'],
+                content: html,
+                success: function (layero) {
+                    layero.find('.js-sca-proof-preview').on('click', function () {
+                        previewProofImage($(this).data('src') || $(this).attr('src'), '成交凭证');
+                    });
+                }
+            });
+        }).fail(function () {
+            layer.close(loadIdx);
+            layer.msg('网络异常，请稍后重试', { icon: 2 });
+        });
+    }
+
+    function openRejectDialog(id) {
+        var html = '<div style="padding:16px 20px 6px;">' +
+            '<div class="layui-form-item layui-form-text">' +
+            '<label class="layui-form-label" style="width:88px;">驳回原因</label>' +
+            '<div class="layui-input-block" style="margin-left:108px;">' +
+            '<textarea id="scaRejectReason" class="layui-textarea" placeholder="请填写驳回原因（必填）" style="min-height:100px;"></textarea>' +
+            '</div></div></div>';
+        layer.open({
+            type: 1,
+            title: '驳回申请',
+            area: ['480px', '300px'],
+            content: html,
+            btn: ['确认驳回', '取消'],
+            yes: function (index) {
+                var reason = $.trim($('#scaRejectReason').val());
+                if (!reason) {
+                    layer.msg('请填写驳回原因', { icon: 2 });
+                    return;
+                }
+                var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+                $.post("{:url('SuccessClientApply/reject')}", {
+                    id: id,
+                    reject_reason: reason
+                }, function (res) {
+                    layer.close(loadIdx);
+                    if (res.code === 0) {
+                        layer.msg(res.msg || '已驳回', { icon: 1, time: 1500 });
+                        layer.close(index);
+                        tableIns.reload();
+                    } else {
+                        layer.msg(res.msg || '驳回失败', { icon: 2, time: 2500 });
+                    }
+                }).fail(function () {
+                    layer.close(loadIdx);
+                    layer.msg('网络异常，请稍后重试', { icon: 2 });
+                });
+            }
+        });
+    }
+
+    laydate.render({
+        elem: '#apply_time',
+        range: true,
+        trigger: 'click'
+    });
+
+    var tableIns = table.render({
+        elem: '#scaTable',
+        id: 'scaTable',
+        url: "{:url('SuccessClientApply/index')}",
+        method: 'post',
+        page: true,
+        limit: 15,
+        limits: [10, 15, 20, 30, 50],
+        loading: true,
+        cols: [[
+            { field: 'id', title: 'ID', width: 80, fixed: 'left' },
+            { field: 'kh_name', title: '客户名称', width: 140 },
+            { field: 'pr_user', title: '负责人', width: 110 },
+            { field: 'apply_user', title: '申请人', width: 110 },
+            { field: 'apply_time', title: '申请时间', width: 170 },
+            {
+                field: 'proof_image',
+                title: '成交凭证',
+                width: 110,
+                align: 'center',
+                templet: function (d) {
+                    var url = $.trim(d.proof_image || '');
+                    if (!url) return '—';
+                    return '<a class="layui-btn layui-btn-xs layui-btn-primary" lay-event="proof">查看凭证</a>';
+                }
+            },
+            {
+                field: 'apply_remark',
+                title: '申请说明',
+                width: 180,
+                templet: function (d) {
+                    var t = d.apply_remark || '';
+                    return t ? escHtml(t) : '—';
+                }
+            },
+            {
+                field: 'check_status',
+                title: '审核状态',
+                width: 100,
+                align: 'center',
+                templet: function (d) {
+                    return renderCheckStatus(d.check_status);
+                }
+            },
+            { field: 'check_user', title: '审核人', width: 110, templet: function (d) { return escHtml(d.check_user || '') || '—'; } },
+            { field: 'check_time', title: '审核时间', width: 170, templet: function (d) { return escHtml(d.check_time || '') || '—'; } },
+            {
+                field: 'reject_reason',
+                title: '驳回原因',
+                width: 180,
+                templet: function (d) {
+                    var t = d.reject_reason || '';
+                    return t ? escHtml(t) : '—';
+                }
+            },
+            { title: '操作', toolbar: '#scaAction', width: 200, fixed: 'right', align: 'center' }
+        ]],
+        done: function () {
+            form.render('select');
+        }
+    });
+
+    form.on('submit(LAY-sca-search)', function (data) {
+        tableIns.reload({
+            where: data.field,
+            page: { curr: 1 }
+        });
+        return false;
+    });
+
+    $('#btnResetSearch').on('click', function () {
+        $('#kh_name,#pr_user,#apply_user,#apply_time').val('');
+        $('#check_status').val('');
+        form.render('select');
+        tableIns.reload({
+            where: {
+                kh_name: '',
+                pr_user: '',
+                apply_user: '',
+                check_status: '',
+                apply_time: ''
+            },
+            page: { curr: 1 }
+        });
+    });
+
+    table.on('tool(scaTable)', function (obj) {
+        var data = obj.data;
+        var id = data.id;
+        if (obj.event === 'proof') {
+            previewProofImage(data.proof_image, data.kh_name ? (data.kh_name + ' - 成交凭证') : '成交凭证');
+        } else if (obj.event === 'approve') {
+            layer.confirm('确定审核通过该成交客户申请吗？', { icon: 3, title: '审核通过' }, function (index) {
+                var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+                $.post("{:url('SuccessClientApply/approve')}", { id: id }, function (res) {
+                    layer.close(loadIdx);
+                    layer.close(index);
+                    if (res.code === 0) {
+                        layer.msg(res.msg || '审核通过', { icon: 1, time: 1500 });
+                        tableIns.reload();
+                    } else {
+                        layer.msg(res.msg || '操作失败', { icon: 2, time: 2500 });
+                    }
+                }).fail(function () {
+                    layer.close(loadIdx);
+                    layer.close(index);
+                    layer.msg('网络异常，请稍后重试', { icon: 2 });
+                });
+            });
+        } else if (obj.event === 'reject') {
+            openRejectDialog(id);
+        } else if (obj.event === 'detail') {
+            openDetailDialog(id);
+        }
+    });
+});
+</script>
+</body>
+</html>

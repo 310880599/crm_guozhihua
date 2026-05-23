@@ -13,6 +13,9 @@
     return 'hello,CLTPHP!';
 });*/
 return [
+    // 成交客户申请审核：兼容菜单 href=SuccessClientApply/index 与 url_convert
+    'admin/SuccessClientApply/:action' => 'admin/SuccessClientApply/:action',
+    'admin/success_client_apply/:action' => 'admin/SuccessClientApply/:action',
     '/'=>'home/index/index',
     'about/:catId'=>'home/about/index',
     'download/:catId'=>'home/download/index',
