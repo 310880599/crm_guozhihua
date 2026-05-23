@@ -632,7 +632,6 @@
     {/if}
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="alterAll" lay-event="alterAll"><i class="layui-icon">&#xe60e;</i>转移客户</button>
     {if session('aid') eq 1}    
-    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="chengjiaoAll" lay-event="chengjiaoAll"><i class="layui-icon">&#xe63c;</i>批量申请成交</button>
     <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" id="batchClientUnSuccess"><i class="layui-icon">&#xe605;</i>客户未成交</button>
     <button type="button" id="delAlls" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" lay-event="delAlls"><i class="layui-icon">&#xe640;</i>选中删除</button>
     {/if}    
@@ -1711,17 +1710,7 @@
                         })();
                         break;
                     case 'chengjiaoAll':
-                        if (data.length === 0) {
-                            layer.msg('请选择要申请成交的客户');
-                            break;
-                        }
-                        if (data.length > 1) {
-                            layer.msg('成交申请需逐条上传凭证，请使用行内「申请成交」按钮', { icon: 0, time: 2500 });
-                            break;
-                        }
-                        openApplySuccessClientDialog(data[0].id, function () {
-                            reloadKeepColWidth();
-                        });
+                        layer.msg('成交客户已改为申请审核流程，暂不支持批量直接成交，请逐个客户提交成交申请。', { icon: 0, time: 3000 });
                         break;
                     case 'delAlls':
                         if (data.length === 0) {

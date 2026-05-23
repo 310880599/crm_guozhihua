@@ -117,14 +117,12 @@ class SuccessClientApplyService
 
         $applyTime = trim((string)($keyword['apply_time'] ?? ''));
         if ($applyTime !== '') {
-            $parts = preg_split('/\s*-\s*/', $applyTime, 2);
-            if (is_array($parts) && count($parts) === 2) {
+            $parts = explode(' - ', $applyTime);
+            if (count($parts) === 2) {
                 $start = trim($parts[0]);
                 $end = trim($parts[1]);
-                if ($start !== '') {
+                if ($start !== '' && $end !== '') {
                     $query->where('a.apply_time', '>=', $start . ' 00:00:00');
-                }
-                if ($end !== '') {
                     $query->where('a.apply_time', '<=', $end . ' 23:59:59');
                 }
             }
@@ -196,10 +194,10 @@ class SuccessClientApplyService
 
             $checkStatus = (int)($apply['check_status'] ?? -1);
             if ($checkStatus === self::CHECK_APPROVED) {
-                throw new \RuntimeException('该申请已审核通过，不能重复操作');
+                throw new \RuntimeException('该申请已审核通过，请勿重复操作');
             }
             if ($checkStatus === self::CHECK_REJECTED) {
-                throw new \RuntimeException('该申请已驳回，不能再次审核通过');
+                throw new \RuntimeException('该申请已被驳回，不能再审核通过');
             }
             if ($checkStatus !== self::CHECK_PENDING) {
                 throw new \RuntimeException('仅待审核状态的申请可审核通过');
@@ -218,7 +216,7 @@ class SuccessClientApplyService
                 throw new \RuntimeException('关联客户状态无效，无法审核通过');
             }
             if ((int)($lead['issuccess'] ?? 0) === 1) {
-                throw new \RuntimeException('该客户已是成交客户，无法重复审核通过');
+                throw new \RuntimeException('该客户已是成交客户，无需重复审核');
             }
             if ((int)($lead['issuccess'] ?? 0) !== -1) {
                 throw new \RuntimeException('关联客户成交状态异常，无法审核通过');
@@ -284,7 +282,7 @@ class SuccessClientApplyService
                 throw new \RuntimeException('该申请已审核通过，不能驳回');
             }
             if ($checkStatus === self::CHECK_REJECTED) {
-                throw new \RuntimeException('该申请已驳回，不能重复操作');
+                throw new \RuntimeException('该申请已被驳回，请勿重复操作');
             }
             if ($checkStatus !== self::CHECK_PENDING) {
                 throw new \RuntimeException('仅待审核状态的申请可驳回');
