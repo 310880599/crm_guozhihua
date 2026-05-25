@@ -61,6 +61,7 @@
 </div>
 
 {include file="common/foot"/}
+<script src="/static/admin/js/xm-select.js"></script>
 <script>
 layui.use(['layer', 'jquery'], function () {
     var layer = layui.layer;
@@ -107,6 +108,12 @@ layui.use(['layer', 'jquery'], function () {
             result.push(forceAdminId);
         }
         return result;
+    }
+
+    if (typeof xmSelect === 'undefined') {
+        console.error('xmSelect 未加载，请检查 xm-select.js 引入路径');
+        layer.msg('xmSelect 组件未引入，请检查 xm-select.js 文件路径', { icon: 2, time: 3000 });
+        return;
     }
 
     var selectIns = xmSelect.render({
