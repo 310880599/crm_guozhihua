@@ -227,7 +227,7 @@
 </div>
 
 <script type="text/html" id="scaAction">
-{{# if(d.check_status == 0 || d.check_status == '0'){ }}
+{{# if((d.can_audit === true || d.can_audit === 1 || d.can_audit === '1') && (d.check_status == 0 || d.check_status == '0')){ }}
     <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="approve">通过</a>
     <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="reject">驳回</a>
 {{# } }}
@@ -242,6 +242,8 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
     var laydate = layui.laydate;
     var layer = layui.layer;
     var $ = layui.jquery;
+    var pageCanAudit = false;
+    var currentUserId = 0;
 
     function escHtml(s) {
         if (s == null) return '';
@@ -446,6 +448,11 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
             },
             { title: '操作', toolbar: '#scaAction', width: 200, fixed: 'right', align: 'center' }
         ]],
+        parseData: function (res) {
+            pageCanAudit = !!(res && (res.can_audit === true || res.can_audit === 1 || res.can_audit === '1'));
+            currentUserId = parseInt((res && res.current_user_id) ? res.current_user_id : 0, 10) || 0;
+            return res || {};
+        },
         done: function () {
             form.render('select');
         }
@@ -481,6 +488,10 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
         if (obj.event === 'proof') {
             previewProofImage(data.proof_image, data.kh_name ? (data.kh_name + ' - 成交凭证') : '成交凭证');
         } else if (obj.event === 'approve') {
+            if (!pageCanAudit) {
+                layer.msg('无成交客户审核权限', { icon: 2 });
+                return;
+            }
             layer.confirm('确定审核通过该成交客户申请吗？', { icon: 3, title: '审核通过' }, function (index) {
                 var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
                 $.post("{:url('SuccessClientApply/approve')}", { id: id }, function (res) {
@@ -499,6 +510,10 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
                 });
             });
         } else if (obj.event === 'reject') {
+            if (!pageCanAudit) {
+                layer.msg('无成交客户审核权限', { icon: 2 });
+                return;
+            }
             openRejectDialog(id);
         } else if (obj.event === 'detail') {
             openDetailDialog(id);

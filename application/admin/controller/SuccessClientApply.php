@@ -80,4 +80,59 @@ class SuccessClientApply extends Common
 
         return json($this->service()->reject($id, $rejectReason));
     }
+
+    /**
+     * 成交客户审核配置（审核管理员）
+     * GET: 页面
+     * POST: 保存配置
+     */
+    public function config()
+    {
+        $service = $this->service();
+
+        if (request()->isPost()) {
+            $rawIds = input('post.audit_admin_ids/a', null);
+            if (!is_array($rawIds)) {
+                $rawIds = input('post.audit_admin_ids', '');
+                if (is_string($rawIds)) {
+                    $rawIds = $rawIds === '' ? [] : explode(',', $rawIds);
+                } else {
+                    $rawIds = [];
+                }
+            }
+
+            $ids = array_values(array_unique(array_filter(array_map('intval', (array)$rawIds), function ($id) {
+                return $id > 0;
+            })));
+
+            $result = $service->saveAuditAdminIds($ids);
+            if ((int)($result['code'] ?? 1) === 0) {
+                return json(['code' => 0, 'msg' => '保存成功']);
+            }
+            return json([
+                'code' => 1,
+                'msg' => (string)($result['msg'] ?? '保存失败'),
+            ]);
+        }
+
+        $userResult = $service->getAdminUserList();
+        $userList = (array)($userResult['data']['list'] ?? []);
+        $selectedIds = $service->getAuditAdminIds();
+
+        $adminId = 0;
+        foreach ($userList as $row) {
+            if (strtolower((string)($row['username'] ?? '')) === 'admin') {
+                $adminId = (int)($row['admin_id'] ?? 0);
+                break;
+            }
+        }
+        if ($adminId > 0 && !in_array($adminId, $selectedIds, true)) {
+            $selectedIds[] = $adminId;
+        }
+
+        $this->assign('adminUserListJson', json_encode($userList, JSON_UNESCAPED_UNICODE));
+        $this->assign('selectedAuditAdminIdsJson', json_encode(array_values($selectedIds), JSON_UNESCAPED_UNICODE));
+        $this->assign('forceAdminId', $adminId);
+        return $this->fetch('success_client_apply/config');
+    }
 }

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    {include file="common/head"/}
+    <style>
+        .sca-config-main {
+            padding: 15px;
+            background: #f5f7fa;
+        }
+        .sca-config-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin: 0 0 12px 4px;
+        }
+        .sca-config-card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e8e8e8;
+            padding: 20px 20px 6px;
+        }
+        .sca-config-form .layui-form-label {
+            width: 100px;
+            font-weight: 500;
+            color: #555;
+        }
+        .sca-config-form .layui-input-block {
+            margin-left: 130px;
+        }
+        .sca-config-tip {
+            margin-top: 8px;
+            color: #999;
+            font-size: 12px;
+        }
+        .sca-config-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+        }
+    </style>
+</head>
+<body class="layui-layout-body">
+<div class="sca-config-main layui-anim layui-anim-upbit">
+    <h2 class="sca-config-title">成交客户审核配置</h2>
+    <div class="sca-config-card">
+        <form class="layui-form sca-config-form" lay-filter="sca-config-form">
+            <div class="layui-form-item">
+                <label class="layui-form-label">审核管理员</label>
+                <div class="layui-input-block">
+                    <div id="auditAdminIdsSelect"></div>
+                    <div class="sca-config-tip">支持搜索多选；admin 为默认审核管理员且不可取消。</div>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <div class="layui-input-block">
+                    <button type="button" class="layui-btn sca-config-btn" id="btnSaveAuditAdmins">保存</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{include file="common/foot"/}
+<script>
+layui.use(['layer', 'jquery'], function () {
+    var layer = layui.layer;
+    var $ = layui.jquery;
+
+    var adminUserList = {$adminUserListJson|default='[]'|raw};
+    var selectedIds = {$selectedAuditAdminIdsJson|default='[]'|raw};
+    var forceAdminId = parseInt("{$forceAdminId|default='0'}", 10) || 0;
+
+    function toSelectData(list) {
+        var data = [];
+        $.each(list || [], function (_, item) {
+            var id = parseInt(item.admin_id, 10) || 0;
+            if (id <= 0) {
+                return;
+            }
+            var name = $.trim(item.username || '');
+            if (!name) {
+                return;
+            }
+            var label = name;
+            if (parseInt(item.is_open, 10) === 0) {
+                label += '（禁用）';
+            }
+            data.push({
+                name: label,
+                value: id,
+                selected: selectedIds.indexOf(id) > -1,
+                disabled: (forceAdminId > 0 && id === forceAdminId)
+            });
+        });
+        return data;
+    }
+
+    function ensureAdminSelected(values) {
+        var result = [];
+        $.each(values || [], function (_, v) {
+            var id = parseInt(v, 10) || 0;
+            if (id > 0 && result.indexOf(id) === -1) {
+                result.push(id);
+            }
+        });
+        if (forceAdminId > 0 && result.indexOf(forceAdminId) === -1) {
+            result.push(forceAdminId);
+        }
+        return result;
+    }
+
+    var selectIns = xmSelect.render({
+        el: '#auditAdminIdsSelect',
+        name: 'audit_admin_ids',
+        tips: '请选择审核管理员',
+        filterable: true,
+        toolbar: { show: true },
+        model: { label: { type: 'block' } },
+        data: toSelectData(adminUserList)
+    });
+
+    var initIds = ensureAdminSelected(selectedIds);
+    if (initIds.length) {
+        selectIns.setValue(initIds);
+    }
+
+    $('#btnSaveAuditAdmins').on('click', function () {
+        var selectedRows = selectIns.getValue();
+        var ids = [];
+        $.each(selectedRows || [], function (_, item) {
+            var id = parseInt(item.value, 10) || 0;
+            if (id > 0) {
+                ids.push(id);
+            }
+        });
+        ids = ensureAdminSelected(ids);
+
+        var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+        $.post("{:url('SuccessClientApply/config')}", { audit_admin_ids: ids }, function (res) {
+            layer.close(loadIdx);
+            if (res && parseInt(res.code, 10) === 0) {
+                layer.msg(res.msg || '保存成功', { icon: 1, time: 1500 });
+                selectedIds = ids.slice(0);
+                selectIns.setValue(selectedIds);
+                return;
+            }
+            layer.msg((res && res.msg) ? res.msg : '保存失败', { icon: 2, time: 2500 });
+        }).fail(function () {
+            layer.close(loadIdx);
+            layer.msg('网络异常，请稍后重试', { icon: 2, time: 2500 });
+        });
+    });
+});
+</script>
+</body>
+</html>

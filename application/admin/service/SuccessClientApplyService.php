@@ -12,6 +12,7 @@ use Throwable;
 class SuccessClientApplyService
 {
     private const TABLE_APPLY = 'crm_success_client_apply';
+    private const TABLE_APPLY_CONFIG = 'crm_success_client_apply_config';
     private const TABLE_LEADS = 'crm_leads';
 
     private const CHECK_PENDING = 0;
@@ -93,8 +94,19 @@ class SuccessClientApplyService
         $page = max(1, (int)$page);
         $limit = max(1, (int)$limit);
         $keyword = is_array($keyword) ? $keyword : [];
+        $currentUserId = (int)session('aid');
+        $canAudit = $this->isAuditAdmin($currentUserId);
 
         $query = Db::table(self::TABLE_APPLY)->alias('a')->order('a.id desc');
+
+        // 非审核管理员仅可查看自己提交的申请
+        if (!$canAudit) {
+            if ($currentUserId > 0) {
+                $query->where('a.apply_user_id', '=', $currentUserId);
+            } else {
+                $query->where('a.id', '=', 0);
+            }
+        }
 
         $khName = trim((string)($keyword['kh_name'] ?? ''));
         if ($khName !== '') {
@@ -132,6 +144,8 @@ class SuccessClientApplyService
         $rows = $list['data'] ?? [];
         foreach ($rows as &$row) {
             $row['check_status_text'] = $this->mapCheckStatusText($row['check_status'] ?? null);
+            $row['can_audit'] = $canAudit;
+            $row['current_user_id'] = $currentUserId;
         }
         unset($row);
 
@@ -141,6 +155,8 @@ class SuccessClientApplyService
             'data' => $rows,
             'count' => $list['total'] ?? 0,
             'rel' => 1,
+            'can_audit' => $canAudit,
+            'current_user_id' => $currentUserId,
         ];
     }
 
@@ -180,6 +196,9 @@ class SuccessClientApplyService
         $id = (int)$id;
         if ($id <= 0) {
             return $this->fail('参数错误');
+        }
+        if (!$this->isAuditAdmin((int)session('aid'))) {
+            return $this->fail('无成交客户审核权限');
         }
 
         $checker = $this->getCurrentChecker();
@@ -264,6 +283,9 @@ class SuccessClientApplyService
         if ($id <= 0) {
             return $this->fail('参数错误');
         }
+        if (!$this->isAuditAdmin((int)session('aid'))) {
+            return $this->fail('无成交客户审核权限');
+        }
         if ($rejectReason === '') {
             return $this->fail('请填写驳回原因');
         }
@@ -313,6 +335,141 @@ class SuccessClientApplyService
         }
     }
 
+    /**
+     * 获取成交客户审核员 admin_id 列表（强制包含 admin 账号）。
+     *
+     * @return int[]
+     */
+    public function getAuditAdminIds()
+    {
+        $ids = [];
+
+        $config = Db::table(self::TABLE_APPLY_CONFIG)
+            ->order('id desc')
+            ->find();
+        if (!empty($config)) {
+            $ids = $this->parseAuditAdminIds($config['audit_admin_ids'] ?? '');
+        }
+
+        $adminId = $this->getSuperAdminId();
+        if ($adminId > 0) {
+            $ids[] = $adminId;
+        }
+
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+            return $id > 0;
+        })));
+
+        sort($ids);
+        return $ids;
+    }
+
+    /**
+     * 当前用户是否有成交客户审核权限。
+     * 说明：admin 账号始终拥有权限，不依赖配置表。
+     *
+     * @param int $userId
+     * @return bool
+     */
+    public function isAuditAdmin($userId = 0)
+    {
+        $userId = (int)$userId;
+        if ($userId <= 0) {
+            $userId = (int)session('aid');
+        }
+        if ($userId <= 0) {
+            return false;
+        }
+
+        if (strtolower((string)session('username')) === 'admin') {
+            return true;
+        }
+
+        $account = Db::name('admin')
+            ->where('admin_id', $userId)
+            ->field('admin_id,username')
+            ->find();
+        if (!empty($account) && strtolower((string)($account['username'] ?? '')) === 'admin') {
+            return true;
+        }
+
+        return in_array($userId, $this->getAuditAdminIds(), true);
+    }
+
+    /**
+     * 保存成交客户审核员配置（强制包含 admin，且不可移除）。
+     *
+     * @param int[] $ids
+     * @return array
+     */
+    public function saveAuditAdminIds(array $ids)
+    {
+        $cleanIds = array_values(array_unique(array_filter(array_map('intval', $ids), function ($id) {
+            return $id > 0;
+        })));
+
+        $adminId = $this->getSuperAdminId();
+        if ($adminId > 0 && !in_array($adminId, $cleanIds, true)) {
+            $cleanIds[] = $adminId;
+        }
+
+        sort($cleanIds);
+
+        $payload = [
+            'audit_admin_ids' => implode(',', $cleanIds),
+            'update_user_id' => (int)session('aid'),
+            'update_user' => (string)session('username'),
+            'update_time' => date('Y-m-d H:i:s'),
+        ];
+
+        Db::startTrans();
+        try {
+            $latestId = (int)Db::table(self::TABLE_APPLY_CONFIG)->order('id desc')->value('id');
+            if ($latestId > 0) {
+                Db::table(self::TABLE_APPLY_CONFIG)->where('id', $latestId)->update($payload);
+            } else {
+                Db::table(self::TABLE_APPLY_CONFIG)->insert($payload);
+            }
+            Db::commit();
+            return $this->ok('保存成功', ['audit_admin_ids' => $cleanIds]);
+        } catch (Throwable $e) {
+            Db::rollback();
+            return $this->fail($e->getMessage() ?: '保存失败');
+        }
+    }
+
+    /**
+     * 审核权限配置页面的管理员可选数据（可用于搜索多选）。
+     *
+     * @return array
+     */
+    public function getAdminUserList($keyword = '')
+    {
+        $keyword = trim((string)$keyword);
+
+        $query = Db::name('admin')
+            ->where('username', '<>', '');
+        if ($keyword !== '') {
+            $query->where('username', 'like', '%' . $keyword . '%');
+        }
+
+        $list = $query
+            ->field('admin_id,username,is_open')
+            ->orderRaw("case when username = 'admin' then 0 else 1 end, admin_id asc")
+            ->select();
+
+        $rows = [];
+        foreach ((array)$list as $item) {
+            $rows[] = [
+                'admin_id' => (int)($item['admin_id'] ?? 0),
+                'username' => (string)($item['username'] ?? ''),
+                'is_open' => (int)($item['is_open'] ?? 0),
+            ];
+        }
+
+        return $this->ok('获取成功', ['list' => $rows]);
+    }
+
     private function ok($msg, $data = null)
     {
         $result = ['code' => 0, 'msg' => (string)$msg];
@@ -348,5 +505,40 @@ class SuccessClientApplyService
             'check_user' => (string)session('username'),
             'check_time' => date('Y-m-d H:i:s'),
         ];
+    }
+
+    /**
+     * 解析配置里的审核员 ID 串。
+     *
+     * @param string $raw
+     * @return int[]
+     */
+    private function parseAuditAdminIds($raw)
+    {
+        $raw = trim((string)$raw);
+        if ($raw === '') {
+            return [];
+        }
+
+        $parts = explode(',', $raw);
+        $ids = [];
+        foreach ($parts as $part) {
+            $id = (int)trim((string)$part);
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * 获取超级管理员 admin 账号对应 admin_id。
+     *
+     * @return int
+     */
+    private function getSuperAdminId()
+    {
+        return (int)Db::name('admin')->where('username', 'admin')->value('admin_id');
     }
 }
