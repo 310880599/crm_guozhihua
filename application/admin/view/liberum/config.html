@@ -16,19 +16,50 @@
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         padding: 22px 20px 10px 20px;
-        max-width: 760px;
+        max-width: 920px;
     }
     .config-form .layui-form-label {
         width: 180px;
     }
     .config-form .layui-input-inline {
-        width: 220px;
+        width: 280px;
     }
     .config-unit {
         color: #999;
         line-height: 38px;
         margin-left: 10px;
         display: inline-block;
+    }
+    .config-help {
+        color: #666;
+        margin-top: 6px;
+        margin-left: 180px;
+        line-height: 1.6;
+        max-width: 620px;
+    }
+    .config-alert {
+        margin-bottom: 16px;
+    }
+    .config-select-inline {
+        width: 280px;
+    }
+    @media screen and (max-width: 768px) {
+        .config-card {
+            max-width: 100%;
+            padding: 16px 12px 8px 12px;
+        }
+        .config-form .layui-form-label {
+            width: 120px;
+        }
+        .config-form .layui-input-inline,
+        .config-select-inline {
+            width: calc(100% - 150px);
+            min-width: 180px;
+        }
+        .config-help {
+            margin-left: 120px;
+            max-width: calc(100% - 130px);
+        }
     }
 </style>
 
@@ -38,6 +69,10 @@
     </fieldset>
 
     <div class="config-card">
+        <div class="layui-bg-orange config-alert" style="padding: 10px 12px; border-radius: 4px; color: #fff;">
+            auto_liberum_days 为旧版废弃配置，新版规则请使用下方配置项。
+        </div>
+
         <form class="layui-form config-form" lay-filter="liberum-config-form">
             <div class="layui-form-item">
                 <label class="layui-form-label">每人每天领取上限</label>
@@ -48,11 +83,59 @@
             </div>
 
             <div class="layui-form-item">
-                <label class="layui-form-label">自动公海超期天数</label>
+                <label class="layui-form-label">首次跟进超时天数</label>
                 <div class="layui-input-inline">
-                    <input type="number" name="auto_liberum_days" min="1" max="3650" autocomplete="off" class="layui-input" value="{$config.auto_liberum_days|default='90'}">
+                    <input type="number" name="first_follow_days" min="1" max="365" autocomplete="off" class="layui-input" value="{$config.first_follow_days|default='7'}">
                 </div>
                 <span class="config-unit">天</span>
+                <div class="config-help">公海新规则生效日期后新建客户，超过该天数未首次跟进，进入首次超时运营池。</div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">持续跟进超期间隔</label>
+                <div class="layui-input-inline">
+                    <input type="number" name="follow_interval_days" min="1" max="3650" autocomplete="off" class="layui-input" value="{$config.follow_interval_days|default='90'}">
+                </div>
+                <span class="config-unit">天</span>
+                <div class="config-help">两次跟进间隔或最后一次跟进距今超过该天数，进入普通公海。</div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">运营池自动释放天数</label>
+                <div class="layui-input-inline">
+                    <input type="number" name="operator_release_days" min="1" max="3650" autocomplete="off" class="layui-input" value="{$config.operator_release_days|default='90'}">
+                </div>
+                <span class="config-unit">天</span>
+                <div class="config-help">首次超时运营池客户超过该天数未分配，自动转入普通公海。</div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">是否启用首次超时运营池</label>
+                <div class="layui-input-inline config-select-inline">
+                    <select name="enable_operator_pool">
+                        <option value="1" {if condition="isset($config.enable_operator_pool) && (int)$config.enable_operator_pool===1"}selected{/if}>启用</option>
+                        <option value="0" {if condition="isset($config.enable_operator_pool) && (int)$config.enable_operator_pool===0"}selected{/if}>关闭</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">公海新规则生效日期</label>
+                <div class="layui-input-inline">
+                    <input type="date" name="rule_effective_date" autocomplete="off" class="layui-input" value="{$config.rule_effective_date|default='2026-06-01'}">
+                </div>
+                <div class="config-help">该日期之前的历史客户不追溯首次7天规则。</div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">首次超时运营池只触发一次</label>
+                <div class="layui-input-inline config-select-inline">
+                    <select name="first_timeout_only_once">
+                        <option value="1" {if condition="isset($config.first_timeout_only_once) && (int)$config.first_timeout_only_once===1"}selected{/if}>是</option>
+                        <option value="0" {if condition="isset($config.first_timeout_only_once) && (int)$config.first_timeout_only_once===0"}selected{/if}>否</option>
+                    </select>
+                </div>
+                <div class="config-help">建议开启。重新分配或重新领取后再次超时，直接进入普通公海。</div>
             </div>
 
             <div class="layui-form-item">
@@ -70,13 +153,36 @@
     layui.use(['form'], function () {
         var form = layui.form, $ = layui.jquery;
         var saveUrl = "{:url('Liberum/saveConfig')}";
-        var initialConfig = {
+        var initialConfig = normalizeConfig({
             daily_pick_limit: "{$config.daily_pick_limit|default='10'}",
-            auto_liberum_days: "{$config.auto_liberum_days|default='90'}"
-        };
+            first_follow_days: "{$config.first_follow_days|default='7'}",
+            follow_interval_days: "{$config.follow_interval_days|default='90'}",
+            operator_release_days: "{$config.operator_release_days|default='90'}",
+            enable_operator_pool: "{$config.enable_operator_pool|default='1'}",
+            rule_effective_date: "{$config.rule_effective_date|default='2026-06-01'}",
+            first_timeout_only_once: "{$config.first_timeout_only_once|default='1'}"
+        });
+
+        function normalizeConfig(raw) {
+            raw = raw || {};
+            return {
+                daily_pick_limit: String(raw.daily_pick_limit || 10),
+                first_follow_days: String(raw.first_follow_days || 7),
+                follow_interval_days: String(raw.follow_interval_days || 90),
+                operator_release_days: String(raw.operator_release_days || 90),
+                enable_operator_pool: String(raw.enable_operator_pool === undefined ? 1 : raw.enable_operator_pool),
+                rule_effective_date: String(raw.rule_effective_date || '2026-06-01'),
+                first_timeout_only_once: String(raw.first_timeout_only_once === undefined ? 1 : raw.first_timeout_only_once)
+            };
+        }
+
+        function applyConfig(config) {
+            form.val('liberum-config-form', config);
+            form.render('select');
+        }
 
         $('#liberum-config-reset').on('click', function () {
-            form.val('liberum-config-form', initialConfig);
+            applyConfig(initialConfig);
         });
 
         form.on('submit(liberum-config-submit)', function (data) {
@@ -89,11 +195,8 @@
                     if (res && parseInt(res.code, 10) === 0) {
                         layer.msg('配置保存成功');
                         var saved = (res.data && typeof res.data === 'object') ? res.data : {};
-                        initialConfig = {
-                            daily_pick_limit: String(saved.daily_pick_limit || data.field.daily_pick_limit || 10),
-                            auto_liberum_days: String(saved.auto_liberum_days || data.field.auto_liberum_days || 90)
-                        };
-                        form.val('liberum-config-form', initialConfig);
+                        initialConfig = normalizeConfig($.extend({}, data.field || {}, saved));
+                        applyConfig(initialConfig);
                         return;
                     }
                     layer.msg((res && res.msg) ? res.msg : '保存失败');
