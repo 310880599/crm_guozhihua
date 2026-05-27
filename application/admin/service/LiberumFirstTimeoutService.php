@@ -38,29 +38,30 @@ class LiberumFirstTimeoutService
     public function getList($params = [])
     {
         $params = is_array($params) ? $params : [];
+        try {
 
-        $page = max(1, (int)($params['page'] ?? 1));
-        $limit = (int)($params['limit'] ?? 0);
-        if ($limit <= 0) {
-            $limit = (int)config('pageSize');
-        }
-        if ($limit <= 0) {
-            $limit = 20;
-        }
-        if ($limit > 200) {
-            $limit = 200;
-        }
+            $page = max(1, (int)($params['page'] ?? 1));
+            $limit = (int)($params['limit'] ?? 0);
+            if ($limit <= 0) {
+                $limit = (int)config('pageSize');
+            }
+            if ($limit <= 0) {
+                $limit = 20;
+            }
+            if ($limit > 200) {
+                $limit = 200;
+            }
 
-        $firstFollowDays = $this->getLiberumConfigService()->getIntValue('first_follow_days', 7, 1, 3650);
-        $ruleEffectiveDate = $this->getLiberumConfigService()->getDateValue('rule_effective_date', '2026-06-01');
-        $enableOperatorPool = $this->getLiberumConfigService()->getIntValue('enable_operator_pool', 1, 0, 1);
-        $firstTimeoutOnlyOnce = $this->getLiberumConfigService()->getIntValue('first_timeout_only_once', 1, 0, 1);
-        $operatorReleaseDays = $this->getLiberumConfigService()->getIntValue('operator_release_days', 90, 1, 3650);
+            $firstFollowDays = $this->getLiberumConfigService()->getIntValue('first_follow_days', 7, 1, 3650);
+            $ruleEffectiveDate = $this->getLiberumConfigService()->getDateValue('rule_effective_date', '2026-06-01');
+            $enableOperatorPool = $this->getLiberumConfigService()->getIntValue('enable_operator_pool', 1, 0, 1);
+            $firstTimeoutOnlyOnce = $this->getLiberumConfigService()->getIntValue('first_timeout_only_once', 1, 0, 1);
+            $operatorReleaseDays = $this->getLiberumConfigService()->getIntValue('operator_release_days', 90, 1, 3650);
 
-        // 关闭运营池时直接返回空列表（不报错）
-        if ((int)$enableOperatorPool !== 1) {
-            return ['count' => 0, 'data' => []];
-        }
+            // 关闭运营池时直接返回空列表（不报错）
+            if ((int)$enableOperatorPool !== 1) {
+                return ['count' => 0, 'data' => []];
+            }
 
         $query = Db::table('crm_leads')->alias('l')
             ->where('l.status', 1)
@@ -188,10 +189,17 @@ class LiberumFirstTimeoutService
             ];
         }
 
-        return [
-            'count' => $count,
-            'data' => $data,
-        ];
+            return [
+                'count' => $count,
+                'data' => $data,
+            ];
+        } catch (\Throwable $e) {
+            Log::error([
+                'first_timeout_sql_error' => $e->getMessage(),
+                'params' => $params
+            ]);
+            return ['count' => 0, 'data' => []];
+        }
     }
 
     /**
@@ -672,18 +680,16 @@ class LiberumFirstTimeoutService
                 $startTs = strtotime($startText);
                 $endTs = strtotime($endText);
                 if ($startTs !== false && $endTs !== false && $startTs <= $endTs) {
+                    $startTs = (int)$startTs;
+                    $endTs = (int)$endTs;
+                    $startDt = addslashes(date('Y-m-d H:i:s', $startTs));
+                    $endDt = addslashes(date('Y-m-d H:i:s', $endTs));
                     $query->whereRaw(
                         '(('
-                        . 'l.at_time REGEXP "^[0-9]+$" AND CAST(l.at_time AS UNSIGNED) BETWEEN :range_start_ts AND :range_end_ts'
+                        . 'l.at_time REGEXP "^[0-9]+$" AND CAST(l.at_time AS UNSIGNED) BETWEEN ' . $startTs . ' AND ' . $endTs
                         . ') OR ('
-                        . '(l.at_time REGEXP "^[0-9]+$") = 0 AND l.at_time BETWEEN :range_start_dt AND :range_end_dt'
-                        . '))',
-                        [
-                            'range_start_ts' => $startTs,
-                            'range_end_ts' => $endTs,
-                            'range_start_dt' => date('Y-m-d H:i:s', $startTs),
-                            'range_end_dt' => date('Y-m-d H:i:s', $endTs),
-                        ]
+                        . '(l.at_time REGEXP "^[0-9]+$") = 0 AND l.at_time BETWEEN "' . $startDt . '" AND "' . $endDt . '"'
+                        . '))'
                     );
                 }
             }
@@ -717,41 +723,37 @@ class LiberumFirstTimeoutService
         if ($timeoutTs === false) {
             $timeoutTs = time();
         }
+        $effectiveTs = (int)$effectiveTs;
+        $timeoutTs = (int)$timeoutTs;
+        $effectiveStart = addslashes($effectiveStart);
+        $timeoutBefore = addslashes($timeoutBefore);
 
         // 规则1：客户创建时间 >= 生效日期（兼容 at_time 为时间戳或字符串）
         $query->whereRaw(
             '(('
-            . '(l.at_time REGEXP "^[0-9]+$" AND CAST(l.at_time AS UNSIGNED) >= :effective_ts)'
+            . '(l.at_time REGEXP "^[0-9]+$" AND CAST(l.at_time AS UNSIGNED) >= ' . $effectiveTs . ')'
             . ') OR ('
-            . '(l.at_time REGEXP "^[0-9]+$") = 0 AND l.at_time >= :effective_dt'
-            . '))',
-            [
-                'effective_ts' => $effectiveTs,
-                'effective_dt' => $effectiveStart,
-            ]
+            . '(l.at_time REGEXP "^[0-9]+$") = 0 AND l.at_time >= "' . $effectiveStart . '"'
+            . '))'
         );
 
         // 规则2：首次超时（优先按 to_kh_time 计时；无 to_kh_time 时按 at_time）
         $query->whereRaw(
             '('
-            . '(l.to_kh_time REGEXP "^[0-9]+$" AND CAST(l.to_kh_time AS UNSIGNED) > 0 AND CAST(l.to_kh_time AS UNSIGNED) <= :timeout_ts)'
+            . '(l.to_kh_time REGEXP "^[0-9]+$" AND CAST(l.to_kh_time AS UNSIGNED) > 0 AND CAST(l.to_kh_time AS UNSIGNED) <= ' . $timeoutTs . ')'
             . ' OR '
-            . '((l.to_kh_time REGEXP "^[0-9]+$") = 0 AND l.to_kh_time IS NOT NULL AND l.to_kh_time <> "" AND l.to_kh_time <> "0000-00-00 00:00:00" AND l.to_kh_time <= :timeout_dt)'
+            . '((l.to_kh_time REGEXP "^[0-9]+$") = 0 AND l.to_kh_time IS NOT NULL AND l.to_kh_time <> "" AND l.to_kh_time <> "0000-00-00 00:00:00" AND l.to_kh_time <= "' . $timeoutBefore . '")'
             . ' OR '
             . '('
             . '(l.to_kh_time IS NULL OR l.to_kh_time = "" OR l.to_kh_time = "0000-00-00 00:00:00" OR (l.to_kh_time REGEXP "^[0-9]+$" AND CAST(l.to_kh_time AS UNSIGNED) = 0))'
             . ' AND '
             . '(('
-            . '(l.at_time REGEXP "^[0-9]+$" AND CAST(l.at_time AS UNSIGNED) <= :timeout_ts)'
+            . '(l.at_time REGEXP "^[0-9]+$" AND CAST(l.at_time AS UNSIGNED) <= ' . $timeoutTs . ')'
             . ') OR ('
-            . '(l.at_time REGEXP "^[0-9]+$") = 0 AND l.at_time <= :timeout_dt'
+            . '(l.at_time REGEXP "^[0-9]+$") = 0 AND l.at_time <= "' . $timeoutBefore . '"'
             . '))'
             . ')'
-            . ')',
-            [
-                'timeout_ts' => $timeoutTs,
-                'timeout_dt' => $timeoutBefore,
-            ]
+            . ')'
         );
     }
 
