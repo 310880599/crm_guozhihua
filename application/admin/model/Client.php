@@ -81,17 +81,103 @@ class Client extends Model
      */
     public function getMyClientList($page, $pageSize, $username, $keyword = [])
     {
+        $mapAtTime = []; // 添加时间
+        $mapKhRank = []; // 客户级别
+        $mapPhone = []; // 手机号
+        $mapKhName = []; // 客户名称
+        $where = []; // 运营人员
+        $mapInquiry = []; // 所属渠道
+        $mapPort = []; // 运营端口
         $mapProductName = [];
+        $mapFollow = []; // 最近有跟进
+        $followNoFlag = false; // recent_no_follow 标记
+        $followBoundary = ''; // 边界时间
+        $obtainType = isset($keyword['obtain_type']) ? trim((string)$keyword['obtain_type']) : '';
 
+        if (!empty($keyword['timebucket'])) {
+            $mapAtTime[] = $keyword['timebucket'];
+        }
+        $selectedKhRank = isset($keyword['kh_rank']) ? trim((string)$keyword['kh_rank']) : '';
+        if ($selectedKhRank !== '') {
+            $mapKhRank = $this->buildKhRankCompatWhere($selectedKhRank, 'kh_rank');
+        }
+        if (!empty($keyword['phone'])) {
+            $mapPhone = $this->getContactSearch($keyword['phone']);
+        }
+        if (!empty($keyword['kh_name'])) {
+            $mapKhName = [['kh_name', 'like', '%' . $keyword['kh_name'] . '%']];
+        }
+        if (!empty($keyword['oper_user'])) {
+            $where[] = ['oper_user', 'like', '%' . $keyword['oper_user'] . '%'];
+        }
+        if (isset($keyword['inquiry_id']) && $keyword['inquiry_id'] !== '' && $keyword['inquiry_id'] !== null) {
+            $mapInquiry = ['inquiry_id' => $keyword['inquiry_id']];
+        }
+        if (isset($keyword['port_id']) && $keyword['port_id'] !== '' && $keyword['port_id'] !== null) {
+            $mapPort = ['port_id' => $keyword['port_id']];
+        }
         if (isset($keyword['product_name']) && trim((string)$keyword['product_name']) !== '') {
             $mapProductName = ['product_name' => trim((string)$keyword['product_name'])];
         }
 
-        return Db::table('crm_leads')
+        if (!empty($keyword['__follow_filter']) && !empty($keyword['__follow_boundary'])) {
+            $ff = $keyword['__follow_filter'];
+            $bd = $keyword['__follow_boundary'];
+            if ($ff === 'recent_follow') {
+                $mapFollow = [['last_up_time', '>=', $bd]];
+            } elseif ($ff === 'recent_no_follow') {
+                $followNoFlag = true;
+                $followBoundary = $bd;
+            }
+        }
+
+        $pickExistsSql = "EXISTS (
+            SELECT 1
+            FROM crm_liberum_pick_log p
+            WHERE p.is_deleted = 0
+              AND (
+                  p.leads_id = crm_leads.id
+                  OR p.active_leads_id = crm_leads.id
+              )
+        )";
+        $operationAssignSql = "(crm_leads.oper_user IS NOT NULL AND TRIM(crm_leads.oper_user) <> '')";
+        $obtainTypeNameSql = "CASE
+            WHEN {$pickExistsSql} THEN '公海领取'
+            WHEN {$operationAssignSql} THEN '运营分配'
+            ELSE '自己创建'
+        END AS obtain_type_name";
+
+        $query = Db::table('crm_leads')
+            ->where($mapPhone)
+            ->where($mapKhName)
+            ->where($mapInquiry)
+            ->where($mapKhRank)
+            ->where($mapPort)
+            ->where($mapAtTime)
+            ->where($mapFollow)
+            ->where($where)
             ->where(['status' => 1, 'issuccess' => -1])
             ->where(['pr_user' => $username])
             ->where($mapProductName)
-            ->field('*')
+            ->where(function ($q) use ($followNoFlag, $followBoundary) {
+                if ($followNoFlag) {
+                    $q->whereNull('last_up_time')
+                        ->whereOr('last_up_time', '<', $followBoundary);
+                }
+            });
+
+        if ($obtainType === 'liberum_pick') {
+            $query->whereRaw($pickExistsSql);
+        } elseif ($obtainType === 'operation_assign') {
+            $query->whereRaw('NOT (' . $pickExistsSql . ')')
+                ->whereRaw($operationAssignSql);
+        } elseif ($obtainType === 'self_create') {
+            $query->whereRaw('NOT (' . $pickExistsSql . ')')
+                ->whereRaw('NOT (' . $operationAssignSql . ')');
+        }
+
+        return $query
+            ->field('*, ' . $obtainTypeNameSql)
             ->order('at_time desc')
             ->paginate(['list_rows' => $pageSize, 'page' => $page])
             ->toArray();
@@ -427,6 +513,23 @@ class Client extends Model
             $mapSourcePort = ['source_port' => $keyword['source_port']];
         }
 
+        $obtainType = isset($keyword['obtain_type']) ? trim((string)$keyword['obtain_type']) : '';
+        $pickExistsSql = "EXISTS (
+            SELECT 1
+            FROM crm_liberum_pick_log p
+            WHERE p.is_deleted = 0
+              AND (
+                  p.leads_id = crm_leads.id
+                  OR p.active_leads_id = crm_leads.id
+              )
+        )";
+        $operationAssignSql = "(crm_leads.oper_user IS NOT NULL AND TRIM(crm_leads.oper_user) <> '')";
+        $obtainTypeNameSql = "CASE
+            WHEN {$pickExistsSql} THEN '公海领取'
+            WHEN {$operationAssignSql} THEN '运营分配'
+            ELSE '自己创建'
+        END AS obtain_type_name";
+
         // 【新增-跟进筛选】最新跟进时间筛选条件
         $mapFollow = [];
         $followNoFlag = false; // recent_no_follow 标记
@@ -448,7 +551,7 @@ class Client extends Model
             }
         }
 
-        $result  = Db::table('crm_leads')
+        $query  = Db::table('crm_leads')
             ->where($mapPhone)
             ->where($mapKhName)
             ->where($mapInquiry)     // 使用所属渠道筛选
@@ -467,7 +570,20 @@ class Client extends Model
                     $q->whereNull('last_up_time')
                       ->whereOr('last_up_time', '<', $followBoundary);
                 }
-            })
+            });
+
+        if ($obtainType === 'liberum_pick') {
+            $query->whereRaw($pickExistsSql);
+        } elseif ($obtainType === 'operation_assign') {
+            $query->whereRaw('NOT (' . $pickExistsSql . ')')
+                ->whereRaw($operationAssignSql);
+        } elseif ($obtainType === 'self_create') {
+            $query->whereRaw('NOT (' . $pickExistsSql . ')')
+                ->whereRaw('NOT (' . $operationAssignSql . ')');
+        }
+
+        $result = $query
+            ->field('*, ' . $obtainTypeNameSql)
             ->order('at_time desc')
             ->paginate(array('list_rows' => $limit, 'page' => $page))
             ->toArray();

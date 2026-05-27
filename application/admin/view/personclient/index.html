@@ -1224,6 +1224,18 @@
                     <div class="follow-filter-wrap"><!-- 【新增】联合条件容器 -->
 
                         <div class="layui-inline">
+                            <label class="layui-form-label">获取方式：</label>
+                            <div class="layui-input-inline">
+                                <select name="obtain_type" id="obtain_type" lay-search>
+                                    <option value="">不限</option>
+                                    <option value="self_create">自己创建</option>
+                                    <option value="operation_assign">运营分配</option>
+                                    <option value="liberum_pick">公海领取</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="layui-inline">
                             <label class="layui-form-label">跟进类型：</label>
                             <div class="layui-input-inline">
                                 <select name="follow_filter" id="follow_filter">
@@ -1254,6 +1266,9 @@
                 </div>
 
                 <div class="layui-inline" style="float:right;padding-bottom:15px">
+                    <button type="button" class="layui-btn layui-btn-primary" id="personclient-search-reset-btn">
+                        <i class="layui-icon">&#xe669;</i>重置
+                    </button>
                     <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
                         <i class="layui-icon layui-icon-search layuiadmin-button-btn" style="vertical-align:sub;"></i>查询数据
                     </button>
@@ -2018,6 +2033,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
          }},
          { field: 'inquiry_name', title: '所属渠道', width: 120},     // 原"询盘来源"列
          { field: 'port_name', title: '运营端口', width: 120 },       // 原"来源端口"列
+        { field: 'obtain_type_name', title: '获取方式', width: 100 },
         {
             field: 'main_phone_position_titles',
             title: '主电话职位身份',
@@ -2078,6 +2094,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             ut_time: 150,
             inquiry_name: 120,
             port_name: 120,
+            obtain_type_name: 100,
             main_phone_position_titles: 220,
             aux_phone_position_titles: 220,
             joint_person_names: 120,
@@ -3311,12 +3328,37 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         data.field.kh_rank = (data.field.kh_rank || '').toString().trim();
         data.field.product_name = ($('#product_name').val() || '').toString().trim();
+        data.field.obtain_type = (data.field.obtain_type || '').toString().trim();
         table.reload('table-list', {
             url: "{:url('Client/personClientSearch')}",
             where: { keyword: data.field },
             page: { curr: 1 }
         });
         return false;
+    });
+
+    // 高级搜索重置（不影响其它业务弹窗的 reset 按钮）
+    $(document).on('click', '#personclient-search-reset-btn', function () {
+        $('#kh_rank').val('');
+        $('#product_name').val('');
+        $('#inquiry_id').val('');
+        $('#port_id').html('<option value="">请先选择所属渠道</option>');
+        $('#phone').val('');
+        $('#kh_name').val('');
+        $('#oper_user_input').val('');
+        $('#dateRange').val('');
+        $('#at_time').val('');
+        $('#obtain_type').val('');
+        $('#follow_filter').val('');
+        $('#follow_days').val('');
+        $('#at_time').show();
+        form.render('select');
+
+        table.reload('table-list', {
+            url: "{:url('perClilist')}",
+            where: {},
+            page: { curr: 1 }
+        });
     });
 
     // 日期控件
