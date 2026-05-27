@@ -9,6 +9,7 @@ use app\admin\behavior\ContactMap;
 use app\admin\model\LiberumType as LiberumTypeModel;
 use app\admin\service\LiberumAutoCandidateService;
 use app\admin\service\LiberumConfigService;
+use app\admin\service\LiberumFirstTimeoutService;
 use app\admin\service\LiberumLogService;
 use app\admin\service\LiberumTypeService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -24,6 +25,7 @@ class Liberum extends Common{
     protected $liberumLogService;
     protected $liberumAutoCandidateService;
     protected $liberumConfigService;
+    protected $liberumFirstTimeoutService;
 
     protected function getLiberumTypeService()
     {
@@ -55,6 +57,14 @@ class Liberum extends Common{
             $this->liberumConfigService = new LiberumConfigService();
         }
         return $this->liberumConfigService;
+    }
+
+    protected function getLiberumFirstTimeoutService()
+    {
+        if (!$this->liberumFirstTimeoutService) {
+            $this->liberumFirstTimeoutService = new LiberumFirstTimeoutService();
+        }
+        return $this->liberumFirstTimeoutService;
     }
 
     // 公海列表
@@ -136,6 +146,12 @@ class Liberum extends Common{
         return $this->fetch('liberum/config');
     }
 
+    // 首次超时分配页面
+    public function firstTimeout()
+    {
+        return $this->fetch('liberum/first_timeout');
+    }
+
     public function saveConfig()
     {
         if (!request()->isPost()) {
@@ -157,6 +173,76 @@ class Liberum extends Common{
             'count' => (int)($list['count'] ?? 0),
             'data' => $list['data'] ?? [],
         ]);
+    }
+
+    // 首次超时分配列表
+    public function getFirstTimeoutList()
+    {
+        $params = Request::param();
+        $list = $this->getLiberumFirstTimeoutService()->getList($params);
+
+        return json([
+            'code' => 0,
+            'msg' => '',
+            'count' => (int)($list['count'] ?? 0),
+            'data' => $list['data'] ?? [],
+        ]);
+    }
+
+    // 首次超时分配：配置状态
+    public function getFirstTimeoutConfigStatus()
+    {
+        $data = $this->getLiberumFirstTimeoutService()->getPageConfigStatus();
+        return json([
+            'code' => 0,
+            'msg' => 'success',
+            'data' => $data,
+        ]);
+    }
+
+    // 首次超时分配：可分配业务员下拉
+    public function getAssignUserOptions()
+    {
+        $data = $this->getLiberumFirstTimeoutService()->getAssignUserOptions();
+        return json([
+            'code' => 0,
+            'msg' => 'success',
+            'data' => $data,
+        ]);
+    }
+
+    // 首次超时分配：执行重新分配
+    public function assignFirstTimeout()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $id = input('post.id/d', 0);
+        $assignUser = trim((string)input('post.assign_user', ''));
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        return $this->getLiberumFirstTimeoutService()->assign($id, $assignUser, $operatorInfo) + ['data' => []];
+    }
+
+    // 首次超时分配：批量重新分配
+    public function batchAssignFirstTimeout()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $ids = input('post.ids/a', []);
+        $assignUser = trim((string)input('post.assign_user', ''));
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        return $this->getLiberumFirstTimeoutService()->batchAssign($ids, $assignUser, $operatorInfo) + ['data' => []];
     }
 
     // 客户提取记录导出

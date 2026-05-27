@@ -40,6 +40,10 @@
     .config-alert {
         margin-bottom: 16px;
     }
+    .config-rule-alert {
+        margin: 8px 0 16px 180px;
+        max-width: 620px;
+    }
     .config-select-inline {
         width: 280px;
     }
@@ -57,6 +61,10 @@
             min-width: 180px;
         }
         .config-help {
+            margin-left: 120px;
+            max-width: calc(100% - 130px);
+        }
+        .config-rule-alert {
             margin-left: 120px;
             max-width: calc(100% - 130px);
         }
@@ -110,13 +118,16 @@
             </div>
 
             <div class="layui-form-item">
-                <label class="layui-form-label">是否启用首次超时运营池</label>
-                <div class="layui-input-inline config-select-inline">
-                    <select name="enable_operator_pool">
-                        <option value="1" {if condition="isset($config.enable_operator_pool) && (int)$config.enable_operator_pool===1"}selected{/if}>启用</option>
-                        <option value="0" {if condition="isset($config.enable_operator_pool) && (int)$config.enable_operator_pool===0"}selected{/if}>关闭</option>
-                    </select>
+                <label class="layui-form-label">首次超时运营池开关</label>
+                <div class="layui-input-inline" style="padding-top: 5px;">
+                    <input type="checkbox"
+                           name="enable_operator_pool"
+                           lay-skin="switch"
+                           lay-text="开启|关闭"
+                           value="1"
+                           {if condition="isset($config.enable_operator_pool) && (int)$config.enable_operator_pool===1"}checked{/if}>
                 </div>
+                <div class="config-help">开启后：新建客户首次超时进入运营池；关闭后：首次超时直接进入普通公海。</div>
             </div>
 
             <div class="layui-form-item">
@@ -136,6 +147,15 @@
                     </select>
                 </div>
                 <div class="config-help">建议开启。重新分配或重新领取后再次超时，直接进入普通公海。</div>
+            </div>
+
+            <div class="layui-bg-blue config-rule-alert" style="padding: 10px 12px; border-radius: 4px; color: #fff;">
+                <strong>首次超时规则：</strong><br>
+                1、新客户创建后7日内未跟进进入运营池<br>
+                2、首次跟进超过7日进入运营池<br>
+                3、运营重新分配后重新开始计时<br>
+                4、若 first_timeout_only_once=1，则仅首次触发运营池<br>
+                5、后续超时直接进入普通公海
             </div>
 
             <div class="layui-form-item">
@@ -177,8 +197,13 @@
         }
 
         function applyConfig(config) {
+            config = normalizeConfig(config || {});
+            var enablePool = String(config.enable_operator_pool || '1') === '1' ? '1' : '0';
+            config.enable_operator_pool = enablePool;
             form.val('liberum-config-form', config);
+            $('input[name="enable_operator_pool"]').prop('checked', enablePool === '1');
             form.render('select');
+            form.render('checkbox');
         }
 
         $('#liberum-config-reset').on('click', function () {
@@ -186,16 +211,18 @@
         });
 
         form.on('submit(liberum-config-submit)', function (data) {
+            var submitData = $.extend({}, data.field || {});
+            submitData.enable_operator_pool = $('input[name="enable_operator_pool"]').prop('checked') ? '1' : '0';
             $.ajax({
                 url: saveUrl,
                 type: 'post',
                 dataType: 'json',
-                data: data.field || {},
+                data: submitData,
                 success: function (res) {
                     if (res && parseInt(res.code, 10) === 0) {
                         layer.msg('配置保存成功');
                         var saved = (res.data && typeof res.data === 'object') ? res.data : {};
-                        initialConfig = normalizeConfig($.extend({}, data.field || {}, saved));
+                        initialConfig = normalizeConfig($.extend({}, submitData, saved));
                         applyConfig(initialConfig);
                         return;
                     }
