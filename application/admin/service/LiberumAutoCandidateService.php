@@ -36,9 +36,37 @@ class LiberumAutoCandidateService extends BaseAdminService
         return $this->liberumConfigService;
     }
 
+    /**
+     * 旧版自动公海天数配置（兼容保留）
+     *
+     * auto_liberum_days 为旧版废弃配置，仅保留兼容历史代码；
+     * 新版自动公海候选规则应使用 follow_interval_days。
+     *
+     * @return int
+     */
     protected function getAutoLiberumDays()
     {
         return $this->getLiberumConfigService()->getIntValue('auto_liberum_days', 90, 1, 3650);
+    }
+
+    /**
+     * 获取持续维护超期间隔天数
+     *
+     * @return int
+     */
+    protected function getFollowIntervalDays()
+    {
+        return $this->getLiberumConfigService()->getIntValue('follow_interval_days', 90, 1, 3650);
+    }
+
+    /**
+     * 获取公海新规则生效日期
+     *
+     * @return string
+     */
+    protected function getRuleEffectiveDate()
+    {
+        return $this->getLiberumConfigService()->getDateValue('rule_effective_date', '2026-06-01');
     }
 
     /**
@@ -322,8 +350,8 @@ class LiberumAutoCandidateService extends BaseAdminService
         $scannedLeadsCount = 0;
         $dataCount = 0;
         try {
-            $autoDays = (int)$this->getAutoLiberumDays();
-            $deadline = date('Y-m-d H:i:s', time() - $autoDays * 86400);
+            $followIntervalDays = (int)$this->getFollowIntervalDays();
+            $deadline = date('Y-m-d H:i:s', time() - $followIntervalDays * 86400);
             $khNameKeyword = trim((string)($params['kh_name'] ?? ($params['client_keyword'] ?? '')));
             $prUserKeyword = trim((string)($params['pr_user'] ?? ($params['pr_user_keyword'] ?? '')));
             $phoneKeyword = trim((string)($params['phone'] ?? ''));
@@ -369,7 +397,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                         . ', scanned_leads_count=' . $scannedLeadsCount
                         . ', data_count=0'
                         . ', total_ms=' . $totalMs
-                        . ', auto_liberum_days=' . $autoDays,
+                        . ', follow_interval_days=' . $followIntervalDays,
                         'info'
                     );
                     return [
@@ -536,7 +564,7 @@ class LiberumAutoCandidateService extends BaseAdminService
                 . ', scanned_leads_count=' . $scannedLeadsCount
                 . ', data_count=' . $dataCount
                 . ', total_ms=' . $totalMs
-                . ', auto_liberum_days=' . $autoDays
+                . ', follow_interval_days=' . $followIntervalDays
                 . ', batch_select_ms=' . $batchSelectMs,
                 'info'
             );
@@ -1143,15 +1171,11 @@ class LiberumAutoCandidateService extends BaseAdminService
             return ['rule' => '', 'reason' => '', 'overdue_days' => 0, 'overdue_seconds' => 0];
         }
 
-        $days = (int)$this->getAutoLiberumDays();
+        $days = (int)$this->getFollowIntervalDays();
         $thresholdSeconds = $days * 86400;
         $now = time();
-        $startInfo = $this->getRuleStartPoint($lead);
-        $startTs = (int)($startInfo['start_ts'] ?? 0);
-        $source = (string)($startInfo['source'] ?? 'created');
-        if ($startTs <= 0) {
-            return ['rule' => '', 'reason' => '', 'overdue_days' => 0, 'overdue_seconds' => 0];
-        }
+        $createdTs = $this->getLeadCreatedTimestamp($lead);
+        $toKhTs = $this->isValidDateTime($lead['to_kh_time'] ?? '') ? $this->normalizeTimeToTimestamp($lead['to_kh_time']) : 0;
 
         $stats = $this->getFollowStats($leadId);
         $followCount = (int)($stats['follow_count'] ?? 0);
@@ -1159,10 +1183,11 @@ class LiberumAutoCandidateService extends BaseAdminService
         $lastTs = (int)($stats['last_follow_ts'] ?? 0);
         $maxGapSeconds = (int)($stats['max_gap_seconds'] ?? 0);
 
-        if ($followCount <= 0) {
-            $diff = $now - $startTs;
-            if ($diff > $thresholdSeconds) {
-                if ($source === 'picked') {
+        // 领取后客户优先按 to_kh_time 为起点判断，不再按创建时间判断。
+        if ($toKhTs > 0) {
+            if ($followCount <= 0) {
+                $diff = $now - $toKhTs;
+                if ($diff > $thresholdSeconds) {
                     return [
                         'rule' => '领取后未跟进超时',
                         'reason' => '领取后超过' . $days . '天未跟进',
@@ -1170,20 +1195,11 @@ class LiberumAutoCandidateService extends BaseAdminService
                         'overdue_seconds' => $diff,
                     ];
                 }
-
-                return [
-                    'rule' => '创建未跟进超时',
-                    'reason' => '客户创建后超过' . $days . '天未跟进',
-                    'overdue_days' => (int)floor($diff / 86400),
-                    'overdue_seconds' => $diff,
-                ];
             }
-        }
 
-        if ($firstTs > 0) {
-            $firstGap = $firstTs - $startTs;
-            if ($firstGap > $thresholdSeconds) {
-                if ($source === 'picked') {
+            if ($firstTs > 0) {
+                $firstGap = $firstTs - $toKhTs;
+                if ($firstGap > $thresholdSeconds) {
                     return [
                         'rule' => '领取后首次跟进超时',
                         'reason' => '领取后首次跟进超过' . $days . '天',
@@ -1191,7 +1207,62 @@ class LiberumAutoCandidateService extends BaseAdminService
                         'overdue_seconds' => $firstGap,
                     ];
                 }
+            }
 
+            if ($maxGapSeconds > $thresholdSeconds) {
+                return [
+                    'rule' => '跟进间隔超时',
+                    'reason' => '存在相邻两次跟进间隔超过' . $days . '天',
+                    'overdue_days' => (int)floor($maxGapSeconds / 86400),
+                    'overdue_seconds' => $maxGapSeconds,
+                ];
+            }
+
+            if ($lastTs > 0) {
+                $lastGap = $now - $lastTs;
+                if ($lastGap > $thresholdSeconds) {
+                    return [
+                        'rule' => '最后跟进超时',
+                        'reason' => '最后一次跟进距今超过' . $days . '天',
+                        'overdue_days' => (int)floor($lastGap / 86400),
+                        'overdue_seconds' => $lastGap,
+                    ];
+                }
+            }
+
+            return ['rule' => '', 'reason' => '', 'overdue_days' => 0, 'overdue_seconds' => 0];
+        }
+
+        if ($createdTs <= 0) {
+            return ['rule' => '', 'reason' => '', 'overdue_days' => 0, 'overdue_seconds' => 0];
+        }
+
+        $isNewRuleClient = $this->isNewRuleClient($lead);
+
+        if ($followCount <= 0) {
+            $diff = $now - $createdTs;
+            if ($diff > $thresholdSeconds) {
+                if ($isNewRuleClient) {
+                    return [
+                        'rule' => '创建未跟进超时',
+                        'reason' => '客户创建后超过' . $days . '天未跟进',
+                        'overdue_days' => (int)floor($diff / 86400),
+                        'overdue_seconds' => $diff,
+                    ];
+                }
+                return [
+                    'rule' => '历史客户未跟进超时',
+                    'reason' => '历史客户创建后超过' . $days . '天无跟进记录',
+                    'overdue_days' => (int)floor($diff / 86400),
+                    'overdue_seconds' => $diff,
+                ];
+            }
+        }
+
+        // 历史客户不追溯“首次跟进超时”规则。
+        if ($isNewRuleClient && $firstTs > 0) {
+            $firstGap = $firstTs - $createdTs;
+            if ($firstGap > $thresholdSeconds) {
                 return [
                     'rule' => '首次跟进超时',
                     'reason' => '首次跟进距离创建时间超过' . $days . '天',
@@ -1253,7 +1324,7 @@ class LiberumAutoCandidateService extends BaseAdminService
      */
     protected function buildAutoInReasonText($rule = '')
     {
-        $days = (int)$this->getAutoLiberumDays();
+        $days = (int)$this->getFollowIntervalDays();
         if ($rule === '领取后未跟进超时') {
             return '自动流入公海：领取后' . $days . '天未跟进';
         }
@@ -1266,6 +1337,9 @@ class LiberumAutoCandidateService extends BaseAdminService
         if ($rule === '首次跟进超时') {
             return '自动流入公海：首次跟进超过' . $days . '天';
         }
+        if ($rule === '历史客户未跟进超时') {
+            return '自动流入公海：历史客户超过' . $days . '天无跟进记录';
+        }
         if ($rule === '跟进间隔超时') {
             return '自动流入公海：跟进间隔超过' . $days . '天';
         }
@@ -1274,6 +1348,41 @@ class LiberumAutoCandidateService extends BaseAdminService
         }
 
         return '自动流入公海：命中自动规则';
+    }
+
+    /**
+     * 获取客户创建时间戳（优先 at_time，其次 create_time）
+     *
+     * @param array $lead
+     * @return int
+     */
+    protected function getLeadCreatedTimestamp($lead)
+    {
+        $lead = is_array($lead) ? $lead : [];
+        $createdTime = $lead['at_time'] ?? ($lead['create_time'] ?? '');
+        return $this->normalizeTimeToTimestamp($createdTime);
+    }
+
+    /**
+     * 是否属于新规则客户（创建时间 >= 规则生效日）
+     *
+     * @param array $lead
+     * @return bool
+     */
+    protected function isNewRuleClient($lead)
+    {
+        $createdTs = $this->getLeadCreatedTimestamp($lead);
+        if ($createdTs <= 0) {
+            return false;
+        }
+
+        $effectiveDate = trim((string)$this->getRuleEffectiveDate());
+        $effectiveTs = $this->normalizeTimeToTimestamp($effectiveDate . ' 00:00:00');
+        if ($effectiveTs <= 0) {
+            $effectiveTs = $this->normalizeTimeToTimestamp('2026-06-01 00:00:00');
+        }
+
+        return $createdTs >= $effectiveTs;
     }
 
     /**
