@@ -70,6 +70,63 @@
     #firstTimeoutTable + .layui-table-view .layui-table-box {
         overflow: hidden !important;
     }
+    .first-timeout-toolbar {
+        width: 100%;
+        height: 100%;
+        min-height: 62px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px;
+        box-sizing: border-box;
+        background: linear-gradient(135deg, #eef5ff, #f7fbff);
+        border-radius: 0;
+        box-shadow: inset 0 0 0 1px rgba(30,159,255,0.10);
+    }
+    #firstTimeoutTable + .layui-table-view .layui-table-cell {
+        overflow: visible !important;
+    }
+    #firstTimeoutTable + .layui-table-view td[data-field="operation"] .layui-table-cell {
+        padding: 0 !important;
+        height: 100% !important;
+    }
+    #firstTimeoutTable + .layui-table-view td[data-field="operation"] {
+        padding: 0 !important;
+    }
+    .ft-btn-detail {
+        background: linear-gradient(135deg, #409EFF, #66B1FF) !important;
+        color: #fff !important;
+        border: none !important;
+        border-radius: 6px !important;
+        transition: all .25s ease;
+    }
+    .ft-btn-detail:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 10px rgba(64,158,255,.28);
+    }
+    .ft-btn-assign {
+        background: linear-gradient(135deg, #19be6b, #36d399) !important;
+        color: #fff !important;
+        border: none !important;
+        border-radius: 6px !important;
+        transition: all .25s ease;
+    }
+    .ft-btn-assign:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 10px rgba(25,190,107,.28);
+    }
+    .ft-btn-reset {
+        background: linear-gradient(135deg, #eef2f7, #dbe7f3) !important;
+        color: #3a506b !important;
+        border: none !important;
+        border-radius: 6px !important;
+        transition: all .25s ease;
+    }
+    .ft-btn-reset:hover {
+        background: linear-gradient(135deg, #dbe7f3, #c9d9ea) !important;
+        box-shadow: 0 3px 8px rgba(0,0,0,.08);
+    }
 </style>
 
 <div class="first-timeout-container">
@@ -130,7 +187,7 @@
                     <button class="layui-btn" lay-submit lay-filter="first-timeout-search">
                         <i class="layui-icon layui-icon-search"></i> 查询
                     </button>
-                    <button type="button" class="layui-btn layui-btn-primary" id="first-timeout-reset">重置</button>
+                    <button type="button" class="layui-btn ft-btn-reset" id="first-timeout-reset">重置</button>
                 </div>
             </div>
         </div>
@@ -142,8 +199,14 @@
 </div>
 
 <script type="text/html" id="firstTimeoutRowBarTpl">
-    <button type="button" class="layui-btn layui-btn-primary layui-btn-xs" lay-event="detail">查看详情</button>
-    <button type="button" class="layui-btn layui-btn-normal layui-btn-xs" lay-event="assign">重新分配</button>
+    <div class="first-timeout-toolbar">
+        <button type="button" class="layui-btn layui-btn-xs ft-btn-detail" lay-event="detail">
+            查看详情
+        </button>
+        <button type="button" class="layui-btn layui-btn-xs ft-btn-assign" lay-event="assign">
+            重新分配
+        </button>
+    </div>
 </script>
 
 {include file="common/foot"/}
