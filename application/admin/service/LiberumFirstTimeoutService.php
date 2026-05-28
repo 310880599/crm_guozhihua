@@ -450,6 +450,135 @@ class LiberumFirstTimeoutService
     }
 
     /**
+     * 首次超时客户详情（仅限当前列表可见范围）
+     *
+     * @param int $id
+     * @return array
+     */
+    public function getDetail($id)
+    {
+        $id = (int)$id;
+        if ($id <= 0) {
+            return ['code' => -200, 'msg' => '参数错误：客户ID无效', 'data' => []];
+        }
+
+        try {
+            $firstFollowDays = $this->getLiberumConfigService()->getIntValue('first_follow_days', 7, 1, 3650);
+            $ruleEffectiveDate = $this->getLiberumConfigService()->getDateValue('rule_effective_date', '2026-06-01');
+            $enableOperatorPool = $this->getLiberumConfigService()->getIntValue('enable_operator_pool', 1, 0, 1);
+            $firstTimeoutOnlyOnce = $this->getLiberumConfigService()->getIntValue('first_timeout_only_once', 1, 0, 1);
+            $operatorReleaseDays = $this->getLiberumConfigService()->getIntValue('operator_release_days', 90, 1, 3650);
+            if ((int)$enableOperatorPool !== 1) {
+                return ['code' => -200, 'msg' => '客户不存在、已处理或无权限查看', 'data' => []];
+            }
+
+            $query = Db::table('crm_leads')->alias('l')
+                ->where('l.id', $id)
+                ->where('l.status', 1)
+                ->where('l.issuccess', -1);
+            $adminInfo = $this->getCurrentAdminInfo();
+            $this->applyOperatorScope($query, $adminInfo);
+            if ((int)$firstTimeoutOnlyOnce === 1 && $this->tableHasColumn('crm_leads', 'first_timeout_handled')) {
+                $query->whereRaw('(l.first_timeout_handled IS NULL OR l.first_timeout_handled <> 1)');
+            }
+            $this->applyFirstTimeoutRuleFilters($query, $firstFollowDays, $ruleEffectiveDate);
+            $query->whereRaw($this->buildNoFollowExistsSql('l.id'));
+
+            $fields = ['l.id', 'l.kh_name', 'l.pr_user', 'l.inquiry_id', 'l.port_id', 'l.at_time', 'l.ut_time', 'l.status', 'l.issuccess'];
+            if ($this->tableHasColumn('crm_leads', 'to_kh_time')) {
+                $fields[] = 'l.to_kh_time';
+            }
+            if ($this->tableHasColumn('crm_leads', 'first_timeout_handled')) {
+                $fields[] = 'l.first_timeout_handled';
+            }
+
+            $lead = $query->field(implode(',', $fields))->find();
+            if (!is_array($lead) || empty($lead)) {
+                return ['code' => -200, 'msg' => '客户不存在、已处理或无权限查看', 'data' => []];
+            }
+
+            $leadId = (int)($lead['id'] ?? 0);
+            if ($leadId <= 0) {
+                return ['code' => -200, 'msg' => '客户不存在、已处理或无权限查看', 'data' => []];
+            }
+
+            $inquiryId = (int)($lead['inquiry_id'] ?? 0);
+            $portRaw = trim((string)($lead['port_id'] ?? ''));
+            $portIds = [];
+            if ($portRaw !== '') {
+                foreach (explode(',', $portRaw) as $item) {
+                    $pid = (int)trim($item);
+                    if ($pid > 0) {
+                        $portIds[] = $pid;
+                    }
+                }
+            }
+            $portIds = array_values(array_unique($portIds));
+
+            $mainPhoneMap = $this->buildMainPhoneMap([$leadId]);
+            $assistPhoneMap = $this->buildAssistPhoneMap([$leadId]);
+            $inquiryMap = $this->buildInquiryMap($inquiryId > 0 ? [$inquiryId] : []);
+            $portMap = $this->buildPortMap($portIds);
+
+            $portName = '';
+            if (!empty($portIds)) {
+                $names = [];
+                foreach ($portIds as $pid) {
+                    if (isset($portMap[$pid])) {
+                        $names[] = (string)$portMap[$pid];
+                    }
+                }
+                if (!empty($names)) {
+                    $portName = implode(',', array_values(array_unique($names)));
+                }
+            }
+
+            $atTs = $this->normalizeTimeToTimestamp($lead['at_time'] ?? '');
+            $utTs = $this->normalizeTimeToTimestamp($lead['ut_time'] ?? '');
+            $toKhTs = $this->normalizeTimeToTimestamp($lead['to_kh_time'] ?? '');
+
+            $atTimeDisplay = $atTs > 0 ? date('Y-m-d H:i:s', $atTs) : (string)($lead['at_time'] ?? '');
+            $utTimeDisplay = $utTs > 0 ? date('Y-m-d H:i:s', $utTs) : (string)($lead['ut_time'] ?? '');
+            $toKhTimeDisplay = $toKhTs > 0 ? date('Y-m-d H:i:s', $toKhTs) : '';
+
+            $timeoutDays = 0;
+            if ($atTs > 0) {
+                $diff = time() - $atTs;
+                if ($diff > 0) {
+                    $timeoutDays = (int)floor($diff / 86400);
+                }
+            }
+
+            return [
+                'code' => 0,
+                'msg' => 'success',
+                'data' => [
+                    'id' => $leadId,
+                    'kh_name' => (string)($lead['kh_name'] ?? ''),
+                    'main_phone' => (string)($mainPhoneMap[$leadId] ?? ''),
+                    'assist_phone' => (string)($assistPhoneMap[$leadId] ?? ''),
+                    'inquiry_name' => (string)($inquiryMap[$inquiryId] ?? ''),
+                    'port_name' => $portName,
+                    'pr_user' => (string)($lead['pr_user'] ?? ''),
+                    'at_time' => $atTimeDisplay,
+                    'ut_time' => $utTimeDisplay,
+                    'to_kh_time' => $toKhTimeDisplay,
+                    'timeout_days' => $timeoutDays,
+                    'status_text' => $this->buildStatusText($lead, $operatorReleaseDays),
+                    'recent_operate_time' => $this->buildRecentOperateTime($lead),
+                    'last_follow_time' => '',
+                ],
+            ];
+        } catch (\Throwable $e) {
+            Log::error([
+                'first_timeout_detail_error' => $e->getMessage(),
+                'id' => $id,
+            ]);
+            return ['code' => -200, 'msg' => '客户不存在、已处理或无权限查看', 'data' => []];
+        }
+    }
+
+    /**
      * 获取首次超时页面配置状态
      *
      * @return array
@@ -832,6 +961,59 @@ class LiberumFirstTimeoutService
                 continue;
             }
             $result[$leadId] = trim((string)($row['contact_value'] ?? ''));
+        }
+
+        return $result;
+    }
+
+    /**
+     * 辅助电话映射：contact_type=3，多个号码用逗号连接
+     *
+     * @param array $leadIds
+     * @return array<int,string>
+     */
+    protected function buildAssistPhoneMap(array $leadIds)
+    {
+        $result = [];
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($leadIds)) {
+            return $result;
+        }
+
+        $query = Db::table('crm_contacts')
+            ->field('leads_id,contact_value')
+            ->whereIn('leads_id', $leadIds)
+            ->where('contact_type', 3)
+            ->order('id asc');
+        if ($this->tableHasColumn('crm_contacts', 'is_delete')) {
+            $query->where('is_delete', 0);
+        }
+
+        $rows = $query->select();
+        if (is_object($rows) && method_exists($rows, 'toArray')) {
+            $rows = $rows->toArray();
+        } elseif (!is_array($rows)) {
+            $rows = [];
+        }
+
+        $grouped = [];
+        foreach ($rows as $row) {
+            $leadId = (int)($row['leads_id'] ?? 0);
+            $value = trim((string)($row['contact_value'] ?? ''));
+            if ($leadId <= 0 || $value === '') {
+                continue;
+            }
+            if (!isset($grouped[$leadId])) {
+                $grouped[$leadId] = [];
+            }
+            $grouped[$leadId][] = $value;
+        }
+
+        foreach ($grouped as $leadId => $phones) {
+            $phones = array_values(array_unique($phones));
+            $result[(int)$leadId] = implode(',', $phones);
         }
 
         return $result;

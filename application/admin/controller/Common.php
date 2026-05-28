@@ -42,7 +42,7 @@ class Common extends Controller
         //权限管理
         //当前操作权限ID
         if (session('aid') != 1) {
-            if (!$this->shouldBypassClientEditAuth()) {
+            if (!$this->shouldBypassClientEditAuth() && !$this->shouldBypassFirstTimeoutChildAuth()) {
                 $this->HrefId = db('auth_rule')->where('href', MODULE_NAME . '/' . ACTION_NAME)->value('id');
                 //当前管理员权限
                 $map['a.admin_id'] = session('aid');
@@ -91,6 +91,60 @@ class Common extends Controller
         $gid = (int)($currentAdmin['group_id'] ?? session('gid'));
 
         return $gid === 15;
+    }
+
+    /**
+     * 首次超时分配子接口权限放行：
+     * 只要拥有 Liberum/firstTimeout 页面权限，即可访问其配套接口。
+     * 注意：仅放行节点权限拦截，业务数据范围仍由 Service 层控制。
+     *
+     * @return bool
+     */
+    protected function shouldBypassFirstTimeoutChildAuth()
+    {
+        $currentController = strtolower((string)request()->controller());
+        $currentAction = strtolower((string)request()->action());
+        if ($currentController !== 'liberum') {
+            return false;
+        }
+
+        $allowedActions = [
+            'getfirsttimeoutlist',
+            'getfirsttimeoutconfigstatus',
+            'getassignuseroptions',
+            'assignfirsttimeout',
+            'batchassignfirsttimeout',
+            'firsttimeoutdetail',
+        ];
+        if (!in_array($currentAction, $allowedActions, true)) {
+            return false;
+        }
+
+        $pageRuleId = db('auth_rule')
+            ->where('href', 'Liberum/firstTimeout')
+            ->value('id');
+        if (!$pageRuleId) {
+            $pageRuleId = db('auth_rule')
+                ->where('href', 'liberum/firsttimeout')
+                ->value('id');
+        }
+        $pageRuleId = (int)$pageRuleId;
+        if ($pageRuleId <= 0) {
+            return false;
+        }
+
+        $rules = Db::table(config('database.prefix') . 'admin')->alias('a')
+            ->join(config('database.prefix') . 'auth_group ag', 'a.group_id = ag.group_id', 'left')
+            ->where('a.admin_id', (int)session('aid'))
+            ->value('ag.rules');
+        if (!is_string($rules) || trim($rules) === '') {
+            return false;
+        }
+
+        $ruleList = array_values(array_filter(array_map('trim', explode(',', $rules)), function ($item) {
+            return $item !== '';
+        }));
+        return in_array((string)$pageRuleId, $ruleList, true);
     }
     //空操作
     public function _empty()

@@ -1,0 +1,85 @@
+{include file="common/head"/}
+<style>
+    body {
+        background: #f5f7fa !important;
+    }
+    .ft-detail-wrap {
+        padding: 16px;
+    }
+    .ft-detail-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 14px 16px;
+    }
+    .ft-detail-title {
+        font-size: 16px;
+        color: #333;
+        margin-bottom: 12px;
+    }
+    .ft-detail-table .label-cell {
+        width: 170px;
+        background: #fafafa;
+        color: #666;
+    }
+</style>
+
+<div class="ft-detail-wrap">
+    <div class="ft-detail-card">
+        <div class="ft-detail-title">首次超时客户详情（只读）</div>
+        <table class="layui-table ft-detail-table">
+            <colgroup>
+                <col width="170">
+                <col>
+                <col width="170">
+                <col>
+            </colgroup>
+            <tbody>
+            <tr>
+                <td class="label-cell">客户ID</td>
+                <td>{$detail.id|default=''}</td>
+                <td class="label-cell">客户名称</td>
+                <td>{$detail.kh_name|default=''}</td>
+            </tr>
+            <tr>
+                <td class="label-cell">主电话</td>
+                <td>{$detail.main_phone|default=''}</td>
+                <td class="label-cell">辅助电话</td>
+                <td>{$detail.assist_phone|default=''}</td>
+            </tr>
+            <tr>
+                <td class="label-cell">所属渠道</td>
+                <td>{$detail.inquiry_name|default=''}</td>
+                <td class="label-cell">运营端口</td>
+                <td>{$detail.port_name|default=''}</td>
+            </tr>
+            <tr>
+                <td class="label-cell">原负责人</td>
+                <td>{$detail.pr_user|default=''}</td>
+                <td class="label-cell">状态说明</td>
+                <td>{$detail.status_text|default=''}</td>
+            </tr>
+            <tr>
+                <td class="label-cell">创建时间</td>
+                <td>{$detail.at_time|default=''}</td>
+                <td class="label-cell">超时天数</td>
+                <td>{$detail.timeout_days|default='0'}</td>
+            </tr>
+            <tr>
+                <td class="label-cell">最近操作时间</td>
+                <td>{$detail.recent_operate_time|default=''}</td>
+                <td class="label-cell">最后更新时间</td>
+                <td>{$detail.ut_time|default=''}</td>
+            </tr>
+            <tr>
+                <td class="label-cell">最近分配时间</td>
+                <td>{$detail.to_kh_time|default=''}</td>
+                <td class="label-cell">最后跟进时间</td>
+                <td>{$detail.last_follow_time|default=''}</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{include file="common/foot"/}

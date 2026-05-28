@@ -152,6 +152,19 @@ class Liberum extends Common{
         return $this->fetch('liberum/first_timeout');
     }
 
+    // 首次超时分配：详情页（专用权限口径）
+    public function firstTimeoutDetail()
+    {
+        $id = input('get.id/d', 0);
+        $result = $this->getLiberumFirstTimeoutService()->getDetail($id);
+        if ((int)($result['code'] ?? -200) !== 0) {
+            return $this->error((string)($result['msg'] ?? '客户不存在、已处理或无权限查看'));
+        }
+
+        $this->assign('detail', $result['data'] ?? []);
+        return $this->fetch('liberum/first_timeout_detail');
+    }
+
     public function saveConfig()
     {
         if (!request()->isPost()) {
