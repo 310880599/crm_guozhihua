@@ -204,6 +204,7 @@
 <script type="text/html" id="autoCandidateToolbarTpl">
     <div class="layui-btn-container">
         <button type="button" class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchConfirmIn">批量确认流入公海</button>
+        <button type="button" class="layui-btn layui-btn-danger layui-btn-sm" lay-event="confirmAllCandidatesIn">一键确认全部候选流入公海</button>
     </div>
 </script>
 
@@ -220,6 +221,7 @@
         var prUserOptionsUrl = "{:url('Liberum/getPrUserOptions')}";
         var confirmUrl = "{:url('Liberum/confirmAutoLiberum')}";
         var batchConfirmUrl = "{:url('Liberum/batchConfirmAutoLiberum')}";
+        var confirmAllUrl = "{:url('Liberum/confirmAllAutoLiberum')}";
         var ghTypeList = <?php echo json_encode(isset($ghTypeList) ? $ghTypeList : [], JSON_UNESCAPED_UNICODE); ?>;
         var prUserSelectInstance = null;
         var currentFilters = {};
@@ -341,6 +343,18 @@
                 last_id: lastId || 0,
                 direction: 'next'
             });
+        }
+
+        function getCurrentSearchParams() {
+            var field = form.val('auto-candidate-search-form') || {};
+            field.pr_user = getSelectedPrUser();
+            return {
+                client_keyword: $.trim(field.client_keyword || ''),
+                phone: $.trim(field.phone || ''),
+                pr_user: $.trim(field.pr_user || ''),
+                candidate_rule: $.trim(field.candidate_rule || ''),
+                overdue_days: $.trim(field.overdue_days || '')
+            };
         }
 
         function syncCursorFromResponse(res) {
@@ -544,68 +558,126 @@
         });
 
         table.on('toolbar(' + tableId + ')', function (obj) {
-            if (obj.event !== 'batchConfirmIn') {
-                return;
-            }
+            if (obj.event === 'batchConfirmIn') {
+                var checkStatus = table.checkStatus(tableId);
+                var selected = checkStatus.data || [];
+                var ids = [];
+                $.each(selected, function (_, row) {
+                    var id = parseInt(row.id, 10);
+                    if (id > 0) {
+                        ids.push(id);
+                    }
+                });
+                ids = Array.from(new Set(ids));
 
-            var checkStatus = table.checkStatus(tableId);
-            var selected = checkStatus.data || [];
-            var ids = [];
-            $.each(selected, function (_, row) {
-                var id = parseInt(row.id, 10);
-                if (id > 0) {
-                    ids.push(id);
+                if (!ids.length) {
+                    layer.msg('请选择需要流入公海的客户');
+                    return;
                 }
-            });
-            ids = Array.from(new Set(ids));
 
-            if (!ids.length) {
-                layer.msg('请选择需要流入公海的客户');
-                return;
-            }
+                var $batchBtn = $('.layui-table-tool button[lay-event="batchConfirmIn"]');
+                if ($batchBtn.hasClass('layui-btn-disabled')) {
+                    return;
+                }
 
-            var $batchBtn = $('.layui-table-tool button[lay-event="batchConfirmIn"]');
-            if ($batchBtn.hasClass('layui-btn-disabled')) {
-                return;
-            }
-
-            openGhTypeDialog('批量确认流入公海', function (ghTypeId, dialogIndex) {
-                layer.confirm('确认将选中的客户批量流入所选公海类型吗？', {icon: 3, title: '二次确认'}, function (confirmIndex) {
-                    layer.close(confirmIndex);
-                    $batchBtn.addClass('layui-btn-disabled').attr('disabled', true);
-                    var loading = layer.load(1, {shade: [0.1, '#fff']});
-                    $.ajax({
-                        url: batchConfirmUrl,
-                        type: 'post',
-                        dataType: 'json',
-                        data: {
-                            ids: ids,
-                            gh_type_id: ghTypeId
-                        },
-                        traditional: true,
-                        success: function (res) {
-                            layer.close(loading);
-                            $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
-                            if (res && parseInt(res.code, 10) === 0) {
-                                layer.msg(res.msg || '批量处理成功', {icon: 1});
-                                reloadByCursor(currentCursorLastId, {showNoMoreTip: false});
-                                layer.close(dialogIndex);
-                                return;
+                openGhTypeDialog('批量确认流入公海', function (ghTypeId, dialogIndex) {
+                    layer.confirm('确认将选中的客户批量流入所选公海类型吗？', {icon: 3, title: '二次确认'}, function (confirmIndex) {
+                        layer.close(confirmIndex);
+                        $batchBtn.addClass('layui-btn-disabled').attr('disabled', true);
+                        var loading = layer.load(1, {shade: [0.1, '#fff']});
+                        $.ajax({
+                            url: batchConfirmUrl,
+                            type: 'post',
+                            dataType: 'json',
+                            data: {
+                                ids: ids,
+                                gh_type_id: ghTypeId
+                            },
+                            traditional: true,
+                            success: function (res) {
+                                layer.close(loading);
+                                $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                                if (res && parseInt(res.code, 10) === 0) {
+                                    layer.msg(res.msg || '批量处理成功', {icon: 1});
+                                    reloadByCursor(currentCursorLastId, {showNoMoreTip: false});
+                                    layer.close(dialogIndex);
+                                    return;
+                                }
+                                layer.msg((res && res.msg) ? res.msg : '批量处理失败', {icon: 2});
+                            },
+                            error: function (xhr) {
+                                layer.close(loading);
+                                $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
+                                var errMsg = '请求失败，请稍后重试';
+                                if (xhr && xhr.responseJSON && xhr.responseJSON.msg) {
+                                    errMsg = xhr.responseJSON.msg;
+                                }
+                                layer.msg(errMsg, {icon: 2});
                             }
-                            layer.msg((res && res.msg) ? res.msg : '批量处理失败', {icon: 2});
-                        },
-                        error: function (xhr) {
-                            layer.close(loading);
-                            $batchBtn.removeClass('layui-btn-disabled').removeAttr('disabled');
-                            var errMsg = '请求失败，请稍后重试';
-                            if (xhr && xhr.responseJSON && xhr.responseJSON.msg) {
-                                errMsg = xhr.responseJSON.msg;
-                            }
-                            layer.msg(errMsg, {icon: 2});
-                        }
+                        });
                     });
                 });
-            });
+                return;
+            }
+
+            if (obj.event === 'confirmAllCandidatesIn') {
+                var $confirmAllBtn = $('.layui-table-tool button[lay-event="confirmAllCandidatesIn"]');
+                if (!$confirmAllBtn.length || $confirmAllBtn.hasClass('layui-btn-disabled')) {
+                    return;
+                }
+                openGhTypeDialog('一键确认全部候选流入公海', function (ghTypeId, dialogIndex) {
+                    var confirmText = ''
+                        + '确认后，系统将按当前筛选条件，分批扫描所有仍符合自动公海规则的候选客户，并流入所选公海。<br>'
+                        + '系统会逐条二次校验，已成交、已变化、不再符合规则的客户会自动跳过。<br>'
+                        + '该操作不可批量撤销，是否继续？';
+                    layer.confirm(confirmText, {icon: 3, title: '二次确认'}, function (confirmIndex) {
+                        layer.close(confirmIndex);
+                        var searchParams = getCurrentSearchParams();
+                        var btnOriginalHtml = $confirmAllBtn.html();
+                        $confirmAllBtn
+                            .addClass('layui-btn-disabled')
+                            .attr('disabled', true)
+                            .html('<i class="layui-icon layui-icon-loading layui-anim layui-anim-rotate layui-anim-loop"></i>处理中');
+                        $.ajax({
+                            url: confirmAllUrl,
+                            type: 'post',
+                            dataType: 'json',
+                            data: {
+                                gh_type_id: ghTypeId,
+                                client_keyword: searchParams.client_keyword,
+                                phone: searchParams.phone,
+                                pr_user: searchParams.pr_user,
+                                candidate_rule: searchParams.candidate_rule,
+                                overdue_days: searchParams.overdue_days
+                            },
+                            success: function (res) {
+                                $confirmAllBtn
+                                    .removeClass('layui-btn-disabled')
+                                    .removeAttr('disabled')
+                                    .html(btnOriginalHtml);
+                                if (res && parseInt(res.code, 10) === 0) {
+                                    layer.msg(res.msg || '操作成功', {icon: 1});
+                                    layer.close(dialogIndex);
+                                    refreshFirstBatch();
+                                    return;
+                                }
+                                layer.msg((res && res.msg) ? res.msg : '操作失败', {icon: 2});
+                            },
+                            error: function (xhr) {
+                                $confirmAllBtn
+                                    .removeClass('layui-btn-disabled')
+                                    .removeAttr('disabled')
+                                    .html(btnOriginalHtml);
+                                var errMsg = '请求失败，请稍后重试';
+                                if (xhr && xhr.responseJSON && xhr.responseJSON.msg) {
+                                    errMsg = xhr.responseJSON.msg;
+                                }
+                                layer.msg(errMsg, {icon: 2});
+                            }
+                        });
+                    });
+                });
+            }
         });
 
         initPrUserOptions();

@@ -318,6 +318,117 @@ class LiberumAutoCandidateService extends BaseAdminService
     }
 
     /**
+     * 一键确认全部候选客户流入公海（分批扫描 + 游标循环）
+     *
+     * @param array $params
+     * @param array $operatorInfo
+     * @param int $ghTypeId
+     * @return array
+     */
+    public function confirmAllCandidatesToLiberum(array $params, array $operatorInfo, $ghTypeId)
+    {
+        try {
+            $ghTypeId = (int)$ghTypeId;
+            if ($ghTypeId <= 0) {
+                return ['code' => -200, 'msg' => '请选择需要流入的公海类型', 'data' => []];
+            }
+
+            $successCount = 0;
+            $skipCount = 0;
+            $failCount = 0;
+            $loopCount = 0;
+            $lastId = 0;
+            $batchSize = 100;
+            $maxLoop = 200;
+            $failMessages = [];
+            $skipMsgKeywords = ['已成交', '不符合', '已被处理', '已不在候选', '已进入公海', '状态已变化'];
+
+            while ($loopCount < $maxLoop) {
+                $loopCount++;
+                $list = $this->getCandidateList(array_merge($params, [
+                    'last_id' => $lastId,
+                    'direction' => 'next',
+                    'limit' => $batchSize,
+                ]));
+
+                $rows = isset($list['data']) && is_array($list['data']) ? $list['data'] : [];
+                if (empty($rows)) {
+                    break;
+                }
+
+                foreach ($rows as $row) {
+                    $leadId = (int)($row['id'] ?? 0);
+                    if ($leadId <= 0) {
+                        $skipCount++;
+                        continue;
+                    }
+
+                    $result = $this->confirmToLiberum($leadId, $operatorInfo, $ghTypeId);
+                    if ((int)($result['code'] ?? -200) === 0) {
+                        $successCount++;
+                        continue;
+                    }
+
+                    $errMsg = trim((string)($result['msg'] ?? '处理失败'));
+                    $isSkip = false;
+                    foreach ($skipMsgKeywords as $keyword) {
+                        if ($this->containsText($errMsg, $keyword)) {
+                            $isSkip = true;
+                            break;
+                        }
+                    }
+                    if ($isSkip) {
+                        $skipCount++;
+                        continue;
+                    }
+
+                    $failCount++;
+                    if (count($failMessages) < 20) {
+                        $failMessages[] = 'ID' . $leadId . '：' . ($errMsg !== '' ? $errMsg : '处理失败');
+                    }
+                }
+
+                $cursor = isset($list['cursor']) && is_array($list['cursor']) ? $list['cursor'] : [];
+                $nextLastId = (int)($cursor['next_last_id'] ?? 0);
+                if ($nextLastId <= 0 || $nextLastId == $lastId) {
+                    break;
+                }
+                $lastId = $nextLastId;
+
+                if (empty($cursor['has_more'])) {
+                    break;
+                }
+            }
+
+            $msg = '一键处理完成：成功' . $successCount . '条，跳过' . $skipCount . '条，失败' . $failCount . '条';
+            if (!empty($failMessages)) {
+                $examples = array_slice($failMessages, 0, 3);
+                $msg .= '；失败示例：' . implode('；', $examples);
+            }
+
+            return [
+                'code' => 0,
+                'msg' => $msg,
+                'data' => [
+                    'success_count' => $successCount,
+                    'skip_count' => $skipCount,
+                    'fail_count' => $failCount,
+                    'loop_count' => $loopCount,
+                    'last_id' => $lastId,
+                    'fail_list' => $failMessages,
+                ],
+            ];
+        } catch (\Throwable $e) {
+            Log::error('[LiberumAutoCandidateService::confirmAllCandidatesToLiberum] ' . $e->getMessage());
+            return [
+                'code' => -200,
+                'msg' => '一键处理失败：' . $e->getMessage(),
+                'data' => [],
+            ];
+        }
+    }
+
+    /**
      * 获取自动公海候选列表（游标分页 + 筛选）
      *
      * @param array $params 支持：last_id、direction、limit、kh_name、phone、pr_user

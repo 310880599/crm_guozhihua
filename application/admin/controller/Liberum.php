@@ -462,6 +462,44 @@ class Liberum extends Common{
         return $result + ['data' => []];
     }
 
+    // 一键确认全部自动流入公海
+    public function confirmAllAutoLiberum()
+    {
+        if (!request()->isPost()) {
+            return ['code' => -200, 'msg' => '非法请求', 'data' => []];
+        }
+
+        $ghTypeId = input('post.gh_type_id/d', 0);
+        if ($ghTypeId <= 0) {
+            return ['code' => -200, 'msg' => '请选择需要流入的公海类型', 'data' => []];
+        }
+
+        $params = [
+            'client_keyword' => trim((string)input('post.client_keyword', '')),
+            'phone' => trim((string)input('post.phone', '')),
+            'pr_user' => trim((string)input('post.pr_user', '')),
+            'candidate_rule' => trim((string)input('post.candidate_rule', '')),
+            'overdue_days' => trim((string)input('post.overdue_days', '')),
+        ];
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => (string)Session::get('username'),
+        ];
+
+        $result = $this->getLiberumAutoCandidateService()
+            ->confirmAllCandidatesToLiberum($params, $operatorInfo, $ghTypeId);
+
+        $this->recordLiberumDangerOperationLog(
+            '自动公海一键全部确认',
+            [],
+            $operatorInfo,
+            $result
+        );
+
+        return $result + ['data' => []];
+    }
+
     // 客户流入公海记录导出
     public function exportInLog()
     {
