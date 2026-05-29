@@ -3,6 +3,7 @@
 namespace app\admin\model;
 
 use app\admin\controller\Client as ControllerClient;
+use app\admin\service\LiberumConfigService;
 use think\Model;
 use think\Db;
 use app\admin\model\Contacts;
@@ -131,6 +132,10 @@ class Client extends Model
             }
         }
 
+        $configService = new LiberumConfigService();
+        $ruleEffectiveDate = $configService->getDateValue('rule_effective_date', '2026-06-01');
+        $operationAssignStartTime = $ruleEffectiveDate . ' 00:00:00';
+
         $pickExistsSql = "EXISTS (
             SELECT 1
             FROM crm_liberum_pick_log p
@@ -141,9 +146,10 @@ class Client extends Model
               )
         )";
         $operationAssignSql = "(crm_leads.oper_user IS NOT NULL AND TRIM(crm_leads.oper_user) <> '')";
+        $operationAssignEffectiveSql = "({$operationAssignSql} AND crm_leads.at_time >= '{$operationAssignStartTime}')";
         $obtainTypeNameSql = "CASE
             WHEN {$pickExistsSql} THEN '公海领取'
-            WHEN {$operationAssignSql} THEN '运营分配'
+            WHEN {$operationAssignEffectiveSql} THEN '运营分配'
             ELSE '自己创建'
         END AS obtain_type_name";
 
@@ -170,10 +176,11 @@ class Client extends Model
             $query->whereRaw($pickExistsSql);
         } elseif ($obtainType === 'operation_assign') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
-                ->whereRaw($operationAssignSql);
+                ->whereRaw($operationAssignSql)
+                ->where('at_time', '>=', $operationAssignStartTime);
         } elseif ($obtainType === 'self_create') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
-                ->whereRaw('NOT (' . $operationAssignSql . ')');
+                ->whereRaw('NOT (' . $operationAssignEffectiveSql . ')');
         }
 
         return $query
@@ -514,6 +521,10 @@ class Client extends Model
         }
 
         $obtainType = isset($keyword['obtain_type']) ? trim((string)$keyword['obtain_type']) : '';
+        $configService = new LiberumConfigService();
+        $ruleEffectiveDate = $configService->getDateValue('rule_effective_date', '2026-06-01');
+        $operationAssignStartTime = $ruleEffectiveDate . ' 00:00:00';
+
         $pickExistsSql = "EXISTS (
             SELECT 1
             FROM crm_liberum_pick_log p
@@ -524,9 +535,10 @@ class Client extends Model
               )
         )";
         $operationAssignSql = "(crm_leads.oper_user IS NOT NULL AND TRIM(crm_leads.oper_user) <> '')";
+        $operationAssignEffectiveSql = "({$operationAssignSql} AND crm_leads.at_time >= '{$operationAssignStartTime}')";
         $obtainTypeNameSql = "CASE
             WHEN {$pickExistsSql} THEN '公海领取'
-            WHEN {$operationAssignSql} THEN '运营分配'
+            WHEN {$operationAssignEffectiveSql} THEN '运营分配'
             ELSE '自己创建'
         END AS obtain_type_name";
 
@@ -576,10 +588,11 @@ class Client extends Model
             $query->whereRaw($pickExistsSql);
         } elseif ($obtainType === 'operation_assign') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
-                ->whereRaw($operationAssignSql);
+                ->whereRaw($operationAssignSql)
+                ->where('at_time', '>=', $operationAssignStartTime);
         } elseif ($obtainType === 'self_create') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
-                ->whereRaw('NOT (' . $operationAssignSql . ')');
+                ->whereRaw('NOT (' . $operationAssignEffectiveSql . ')');
         }
 
         $result = $query
