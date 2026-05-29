@@ -277,10 +277,12 @@
             }
 
             if (obj.event === 'detail') {
+                var detailWidth = Math.min(1000, Math.floor($(window).width() * 0.92));
+                var detailHeight = Math.min(620, Math.floor($(window).height() * 0.86));
                 layer.open({
                     type: 2,
                     title: '客户详情',
-                    area: ['1000px', '720px'],
+                    area: [detailWidth + 'px', detailHeight + 'px'],
                     shadeClose: true,
                     maxmin: true,
                     content: clientDetailBaseUrl + '?id=' + leadId
