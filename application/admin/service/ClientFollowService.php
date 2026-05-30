@@ -325,7 +325,7 @@ class ClientFollowService
         $comments = Db::table('crm_comment')
             ->alias('com')
             ->join('admin adm', 'com.user_id = adm.admin_id')
-            ->where(['leads_id' => (int)$clientId])
+            ->where(['leads_id' => (int)$clientId, 'is_deleted' => 0])
             ->field('com.*, adm.username, adm.avatar')
             ->order('com.create_date desc')
             ->select();
@@ -336,6 +336,87 @@ class ClientFollowService
         unset($comment);
 
         return $comments;
+    }
+
+    /**
+     * 删除客户跟进记录（逻辑删除）并回写客户最新跟进摘要。
+     *
+     * @param int|string $commentId
+     * @param array $operatorInfo ['admin_id' => int, 'username' => string]
+     * @return array
+     */
+    public function deleteFollowComment($commentId, $operatorInfo = [])
+    {
+        $commentId = (int)$commentId;
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+
+        if ($commentId <= 0) {
+            return $this->fail('缺少跟进记录ID');
+        }
+        if ($operatorId <= 0) {
+            return $this->fail('登录状态已失效，请重新登录');
+        }
+
+        $comment = Db::table('crm_comment')
+            ->where('id', $commentId)
+            ->where('is_deleted', 0)
+            ->find();
+        if (!$comment) {
+            return $this->fail('跟进记录不存在或已删除');
+        }
+
+        if ($operatorId !== 1 && (int)$comment['user_id'] !== $operatorId) {
+            return $this->fail('您无权删除该跟进记录');
+        }
+
+        $leadsId = (int)$comment['leads_id'];
+        $client = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (!$client) {
+            return $this->fail('客户不存在');
+        }
+
+        $nowTimestamp = time();
+        $nowDateTime = date('Y-m-d H:i:s', $nowTimestamp);
+
+        Db::startTrans();
+        try {
+            $affectedRows = Db::table('crm_comment')
+                ->where('id', $commentId)
+                ->where('is_deleted', 0)
+                ->update([
+                    'is_deleted' => 1,
+                    'deleted_by' => $operatorId,
+                    'deleted_at' => $nowTimestamp,
+                ]);
+            if ((int)$affectedRows <= 0) {
+                throw new \RuntimeException('跟进记录已被删除，请刷新后重试');
+            }
+
+            $latestComment = Db::table('crm_comment')
+                ->where('leads_id', $leadsId)
+                ->where('is_deleted', 0)
+                ->order('create_date desc,id desc')
+                ->find();
+
+            $leadUpdate = [
+                'ut_time' => $nowDateTime,
+            ];
+            if ($latestComment) {
+                $leadUpdate['last_up_records'] = (string)$latestComment['reply_msg'];
+                $leadUpdate['last_up_time'] = date('Y-m-d H:i:s', (int)$latestComment['create_date']);
+            } else {
+                $leadUpdate['last_up_records'] = '';
+                $leadUpdate['last_up_time'] = null;
+            }
+
+            Db::table('crm_leads')->where('id', $leadsId)->update($leadUpdate);
+
+            Db::commit();
+            return ['code' => 0, 'msg' => '删除成功', 'data' => []];
+        } catch (Throwable $e) {
+            Db::rollback();
+            return $this->fail('删除失败：' . $e->getMessage());
+        }
     }
 
     /**

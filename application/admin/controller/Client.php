@@ -4823,6 +4823,34 @@ class Client extends Common
     }
 
     /**
+     * 删除跟进记录（逻辑删除）
+     */
+    public function deleteFollowComment()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 1, 'msg' => '请求方式错误']);
+        }
+
+        $commentId = (int)Request::param('comment_id', 0);
+        if ($commentId <= 0) {
+            return json(['code' => 1, 'msg' => '缺少跟进记录ID']);
+        }
+
+        $operatorInfo = [
+            'admin_id' => Session::get('aid'),
+            'username' => Session::get('username'),
+        ];
+        if ((int)$operatorInfo['admin_id'] <= 0) {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录']);
+        }
+
+        $service = new ClientFollowService();
+        $result = $service->deleteFollowComment($commentId, $operatorInfo);
+
+        return json($result);
+    }
+
+    /**
      * 跟进弹窗 - 获取客户级别下拉候选项（AJAX）
      * 复用 getClientRankOptionsForEdit，兼容已删除级别
      */
@@ -4946,7 +4974,7 @@ class Client extends Common
         }
 
         // 构建查询条件
-        $where = [['com.leads_id', '=', $leadsId]];
+        $where = [['com.leads_id', '=', $leadsId], ['com.is_deleted', '=', 0]];
 
         // 关键字搜索（跟进内容）
         if (!empty($keyword)) {

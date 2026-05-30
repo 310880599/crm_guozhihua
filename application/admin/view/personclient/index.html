@@ -2410,6 +2410,14 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                                 : txt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
                             return '<div class="af-reply-msg-cell">' + esc + '</div>';
                         }
+                    },
+                    {
+                        field: 'operate',
+                        title: '操作',
+                        width: 100,
+                        templet: function(d){
+                            return '<button class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + d.id + '">删除</button>';
+                        }
                     }
                 ]],
                 where: {
@@ -2462,6 +2470,57 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 setTimeout(syncAllFollowTableRowHeights, 0);
                 setTimeout(syncAllFollowTableRowHeights, 50);
             }
+        });
+    });
+
+    $(document).on('click', '.delete-follow-btn', function(){
+        var commentId = $(this).data('id');
+        if (!commentId) {
+            layer.msg('参数错误', {icon: 2});
+            return;
+        }
+
+        layer.confirm('确定删除这条跟进记录吗？删除后不可恢复！', {
+            title: '信息',
+            zIndex: layer.zIndex + 100,
+            success: function(layero) {
+                layer.setTop(layero);
+            }
+        }, function(index){
+            $.post('/admin/client/deleteFollowComment', {
+                comment_id: commentId
+            }, function(res){
+                if(res.code === 0){
+                    layer.msg(res.msg || '删除成功', {icon:1});
+                    table.reload('af-table', {
+                        where: {
+                            leads_id: currentLeadsId,
+                            keyword: $('#af-keyword').val().trim(),
+                            start_date: (function(){
+                                var dateRange = $('#af-date-range').val().trim();
+                                if (!dateRange) return '';
+                                var parts = dateRange.split(' - ');
+                                return parts.length === 2 ? parts[0].trim() : '';
+                            })(),
+                            end_date: (function(){
+                                var dateRange = $('#af-date-range').val().trim();
+                                if (!dateRange) return '';
+                                var parts = dateRange.split(' - ');
+                                return parts.length === 2 ? parts[1].trim() : '';
+                            })()
+                        },
+                        done: function () {
+                            syncAllFollowTableRowHeights();
+                            setTimeout(syncAllFollowTableRowHeights, 0);
+                            setTimeout(syncAllFollowTableRowHeights, 50);
+                        }
+                    });
+                }else{
+                    layer.msg(res.msg || '删除失败', {icon:2});
+                }
+            });
+
+            layer.close(index);
         });
     });
 
