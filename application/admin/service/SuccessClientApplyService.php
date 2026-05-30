@@ -14,6 +14,7 @@ class SuccessClientApplyService
     private const TABLE_APPLY = 'crm_success_client_apply';
     private const TABLE_APPLY_CONFIG = 'crm_success_client_apply_config';
     private const TABLE_LEADS = 'crm_leads';
+    private const BATCH_APPROVE_MAX = 500;
 
     private const CHECK_PENDING = 0;
     private const CHECK_APPROVED = 1;
@@ -156,6 +157,7 @@ class SuccessClientApplyService
             'count' => $list['total'] ?? 0,
             'rel' => 1,
             'can_audit' => $canAudit,
+            'is_super_admin' => $this->isSuperAdminAccount(),
             'current_user_id' => $currentUserId,
         ];
     }
@@ -204,73 +206,103 @@ class SuccessClientApplyService
         $checker = $this->getCurrentChecker();
         $now = date('Y-m-d H:i:s');
 
-        Db::startTrans();
         try {
-            $apply = Db::table(self::TABLE_APPLY)->where('id', $id)->lock(true)->find();
-            if (!$apply) {
-                throw new \RuntimeException('申请记录不存在');
-            }
-
-            $checkStatus = (int)($apply['check_status'] ?? -1);
-            if ($checkStatus === self::CHECK_APPROVED) {
-                throw new \RuntimeException('该申请已审核通过，请勿重复操作');
-            }
-            if ($checkStatus === self::CHECK_REJECTED) {
-                throw new \RuntimeException('该申请已被驳回，不能再审核通过');
-            }
-            if ($checkStatus !== self::CHECK_PENDING) {
-                throw new \RuntimeException('仅待审核状态的申请可审核通过');
-            }
-
-            $leadsId = (int)($apply['leads_id'] ?? 0);
-            if ($leadsId <= 0) {
-                throw new \RuntimeException('申请关联客户无效');
-            }
-
-            $lead = Db::table(self::TABLE_LEADS)->where('id', $leadsId)->lock(true)->find();
-            if (!$lead) {
-                throw new \RuntimeException('关联客户不存在');
-            }
-            if ((int)($lead['status'] ?? 0) !== 1) {
-                throw new \RuntimeException('关联客户状态无效，无法审核通过');
-            }
-            if ((int)($lead['issuccess'] ?? 0) === 1) {
-                throw new \RuntimeException('该客户已是成交客户，无需重复审核');
-            }
-            if ((int)($lead['issuccess'] ?? 0) !== -1) {
-                throw new \RuntimeException('关联客户成交状态异常，无法审核通过');
-            }
-
-            $applyUpdated = Db::table(self::TABLE_APPLY)->where('id', $id)->where('check_status', self::CHECK_PENDING)->update([
-                'check_status' => self::CHECK_APPROVED,
-                'check_user_id' => $checker['check_user_id'],
-                'check_user' => $checker['check_user'],
-                'check_time' => $checker['check_time'],
-            ]);
-            if ($applyUpdated === false || $applyUpdated === 0) {
-                throw new \RuntimeException('申请状态更新失败，可能已被其他操作处理');
-            }
-
-            $leadUpdated = Db::table(self::TABLE_LEADS)
-                ->where('id', $leadsId)
-                ->where('status', 1)
-                ->where('issuccess', -1)
-                ->update([
-                    'issuccess' => 1,
-                    'ut_time' => $now,
-                ]);
-            if ($leadUpdated === false || $leadUpdated === 0) {
-                throw new \RuntimeException('客户成交状态更新失败，请刷新后重试');
-            }
-
-            ClientController::addOperLog($leadsId, '成交客户申请审核', '成交客户申请审核通过');
-
-            Db::commit();
+            $this->approveOne($id, $checker, $now, '成交客户申请审核通过');
             return $this->ok('审核通过');
         } catch (Throwable $e) {
-            Db::rollback();
             return $this->fail($e->getMessage() ?: '审核通过失败');
         }
+    }
+
+    /**
+     * 批量审核通过（仅当前筛选条件下待审核申请）
+     */
+    public function batchApprove($keyword = [])
+    {
+        if (!$this->isSuperAdminAccount()) {
+            return $this->fail('仅超级管理员admin可以执行批量审核通过');
+        }
+
+        $keyword = is_array($keyword) ? $keyword : [];
+        $checker = $this->getCurrentChecker();
+        $now = date('Y-m-d H:i:s');
+
+        $query = Db::table(self::TABLE_APPLY)->alias('a')
+            ->where('a.check_status', self::CHECK_PENDING)
+            ->order('a.id asc');
+
+        $khName = trim((string)($keyword['kh_name'] ?? ''));
+        if ($khName !== '') {
+            $query->where('a.kh_name', 'like', "%{$khName}%");
+        }
+
+        $prUser = trim((string)($keyword['pr_user'] ?? ''));
+        if ($prUser !== '') {
+            $query->where('a.pr_user', 'like', "%{$prUser}%");
+        }
+
+        $applyUser = trim((string)($keyword['apply_user'] ?? ''));
+        if ($applyUser !== '') {
+            $query->where('a.apply_user', 'like', "%{$applyUser}%");
+        }
+
+        $applyTime = trim((string)($keyword['apply_time'] ?? ''));
+        if ($applyTime !== '') {
+            $parts = explode(' - ', $applyTime);
+            if (count($parts) === 2) {
+                $start = trim($parts[0]);
+                $end = trim($parts[1]);
+                if ($start !== '' && $end !== '') {
+                    $query->where('a.apply_time', '>=', $start . ' 00:00:00');
+                    $query->where('a.apply_time', '<=', $end . ' 23:59:59');
+                }
+            }
+        }
+
+        $idRows = $query
+            ->limit(self::BATCH_APPROVE_MAX + 1)
+            ->field('a.id')
+            ->select();
+        $idRows = array_column((array)$idRows, 'id');
+        $idRows = array_values(array_filter(array_map('intval', (array)$idRows), function ($v) {
+            return $v > 0;
+        }));
+        if (empty($idRows)) {
+            return $this->fail('当前筛选条件下没有待审核申请');
+        }
+
+        $hasMore = count($idRows) > self::BATCH_APPROVE_MAX;
+        $ids = array_slice($idRows, 0, self::BATCH_APPROVE_MAX);
+
+        $successCount = 0;
+        $failCount = 0;
+        $failList = [];
+
+        foreach ($ids as $id) {
+            try {
+                $this->approveOne($id, $checker, $now, '批量审核通过成交客户申请');
+                $successCount++;
+            } catch (Throwable $e) {
+                $failCount++;
+                if (count($failList) < 10) {
+                    $failList[] = '申请ID ' . $id . '：' . ($e->getMessage() ?: '审核通过失败');
+                }
+            }
+        }
+
+        $processedCount = count($ids);
+        $msg = '批量审核完成：成功' . $successCount . '条，失败' . $failCount . '条';
+        if ($hasMore) {
+            $msg .= '。本次最多处理500条，请继续点击处理剩余待审核申请';
+        }
+
+        return $this->ok($msg, [
+            'success_count' => $successCount,
+            'fail_count' => $failCount,
+            'fail_list' => $failList,
+            'processed_count' => $processedCount,
+            'has_more' => $hasMore,
+        ]);
     }
 
     /**
@@ -505,6 +537,113 @@ class SuccessClientApplyService
             'check_user' => (string)session('username'),
             'check_time' => date('Y-m-d H:i:s'),
         ];
+    }
+
+    /**
+     * 当前登录用户是否为超级管理员 admin 账号。
+     *
+     * @return bool
+     */
+    private function isSuperAdminAccount()
+    {
+        if (strtolower((string)session('username')) === 'admin') {
+            return true;
+        }
+
+        $userId = (int)session('aid');
+        if ($userId <= 0) {
+            return false;
+        }
+
+        $username = Db::name('admin')
+            ->where('admin_id', $userId)
+            ->value('username');
+
+        return strtolower((string)$username) === 'admin';
+    }
+
+    /**
+     * 审核通过单条申请（单条事务，供单审/批量复用）。
+     *
+     * @param int   $id
+     * @param array $checker
+     * @param string $now
+     * @param string $logContent
+     * @throws \RuntimeException
+     */
+    private function approveOne($id, array $checker, $now, $logContent)
+    {
+        $id = (int)$id;
+        if ($id <= 0) {
+            throw new \RuntimeException('参数错误');
+        }
+
+        Db::startTrans();
+        try {
+            $apply = Db::table(self::TABLE_APPLY)->where('id', $id)->lock(true)->find();
+            if (!$apply) {
+                throw new \RuntimeException('申请记录不存在');
+            }
+
+            $checkStatus = (int)($apply['check_status'] ?? -1);
+            if ($checkStatus === self::CHECK_APPROVED) {
+                throw new \RuntimeException('该申请已审核通过，请勿重复操作');
+            }
+            if ($checkStatus === self::CHECK_REJECTED) {
+                throw new \RuntimeException('该申请已被驳回，不能再审核通过');
+            }
+            if ($checkStatus !== self::CHECK_PENDING) {
+                throw new \RuntimeException('仅待审核状态的申请可审核通过');
+            }
+
+            $leadsId = (int)($apply['leads_id'] ?? 0);
+            if ($leadsId <= 0) {
+                throw new \RuntimeException('申请关联客户无效');
+            }
+
+            $lead = Db::table(self::TABLE_LEADS)->where('id', $leadsId)->lock(true)->find();
+            if (!$lead) {
+                throw new \RuntimeException('关联客户不存在');
+            }
+            if ((int)($lead['status'] ?? 0) !== 1) {
+                throw new \RuntimeException('关联客户状态无效，无法审核通过');
+            }
+            if ((int)($lead['issuccess'] ?? 0) === 1) {
+                throw new \RuntimeException('该客户已是成交客户，无需重复审核');
+            }
+            if ((int)($lead['issuccess'] ?? 0) !== -1) {
+                throw new \RuntimeException('关联客户成交状态异常，无法审核通过');
+            }
+
+            $applyUpdated = Db::table(self::TABLE_APPLY)->where('id', $id)->where('check_status', self::CHECK_PENDING)->update([
+                'check_status' => self::CHECK_APPROVED,
+                'check_user_id' => (int)($checker['check_user_id'] ?? 0),
+                'check_user' => (string)($checker['check_user'] ?? ''),
+                'check_time' => (string)($checker['check_time'] ?? $now),
+            ]);
+            if ($applyUpdated === false || $applyUpdated === 0) {
+                throw new \RuntimeException('申请状态更新失败，可能已被其他操作处理');
+            }
+
+            $leadUpdated = Db::table(self::TABLE_LEADS)
+                ->where('id', $leadsId)
+                ->where('status', 1)
+                ->where('issuccess', -1)
+                ->update([
+                    'issuccess' => 1,
+                    'ut_time' => $now,
+                ]);
+            if ($leadUpdated === false || $leadUpdated === 0) {
+                throw new \RuntimeException('客户成交状态更新失败，请刷新后重试');
+            }
+
+            ClientController::addOperLog($leadsId, '成交客户申请审核', (string)$logContent);
+
+            Db::commit();
+        } catch (Throwable $e) {
+            Db::rollback();
+            throw new \RuntimeException($e->getMessage() ?: '审核通过失败');
+        }
     }
 
     /**

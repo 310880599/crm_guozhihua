@@ -134,6 +134,17 @@
             border-radius: 14px;
             transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
         }
+        .sca-btn-batch-approve {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            border: none;
+            color: #fff !important;
+            border-radius: 6px;
+        }
+        .sca-btn-batch-approve:hover,
+        .sca-btn-batch-approve:focus {
+            color: #fff !important;
+            opacity: .95;
+        }
         .sca-btn-proof {
             background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
             box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28);
@@ -213,6 +224,9 @@
                         <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-sca-search">
                             <i class="layui-icon layui-icon-search"></i> 查询
                         </button>
+                        <button type="button" class="layui-btn layui-btn-warm sca-btn-batch-approve" id="btnBatchApprove" style="display:none;">
+                            <i class="layui-icon layui-icon-ok-circle"></i> 批量通过待审核
+                        </button>
                     </div>
                 </div>
             </div>
@@ -243,7 +257,9 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
     var layer = layui.layer;
     var $ = layui.jquery;
     var pageCanAudit = false;
+    var pageIsSuperAdmin = false;
     var currentUserId = 0;
+    var $btnBatchApprove = $('#btnBatchApprove');
 
     function escHtml(s) {
         if (s == null) return '';
@@ -260,6 +276,23 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
         if (s === 1) return '<span class="sca-status-tag sca-status-approved">已通过</span>';
         if (s === 2) return '<span class="sca-status-tag sca-status-rejected">已驳回</span>';
         return '<span class="sca-status-tag">未知</span>';
+    }
+
+    function updateBatchApproveBtn() {
+        if (pageIsSuperAdmin) {
+            $btnBatchApprove.show();
+        } else {
+            $btnBatchApprove.hide();
+        }
+    }
+
+    function getCurrentSearchFilters() {
+        return {
+            kh_name: $.trim($('#kh_name').val() || ''),
+            pr_user: $.trim($('#pr_user').val() || ''),
+            apply_user: $.trim($('#apply_user').val() || ''),
+            apply_time: $.trim($('#apply_time').val() || '')
+        };
     }
 
     function previewProofImage(url, title) {
@@ -450,11 +483,14 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
         ]],
         parseData: function (res) {
             pageCanAudit = !!(res && (res.can_audit === true || res.can_audit === 1 || res.can_audit === '1'));
+            pageIsSuperAdmin = !!(res && (res.is_super_admin === true || res.is_super_admin === 1 || res.is_super_admin === '1'));
             currentUserId = parseInt((res && res.current_user_id) ? res.current_user_id : 0, 10) || 0;
+            updateBatchApproveBtn();
             return res || {};
         },
         done: function () {
             form.render('select');
+            updateBatchApproveBtn();
         }
     });
 
@@ -479,6 +515,40 @@ layui.use(['table', 'form', 'laydate', 'layer', 'jquery'], function () {
                 apply_time: ''
             },
             page: { curr: 1 }
+        });
+    });
+
+    $btnBatchApprove.on('click', function () {
+        if (!pageIsSuperAdmin) {
+            layer.msg('仅超级管理员admin可以执行批量审核通过', { icon: 2 });
+            return;
+        }
+
+        var filters = getCurrentSearchFilters();
+        var confirmText = '确定要通过当前筛选条件下的全部待审核申请吗？<br>' +
+            '系统只会处理待审核记录，已通过/已驳回不会处理。<br>' +
+            '审核通过后，对应客户会变成成交客户。';
+
+        layer.confirm(confirmText, { icon: 3, title: '批量审核通过' }, function (index) {
+            var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+            $.post("{:url('SuccessClientApply/batchApprove')}", filters, function (res) {
+                layer.close(loadIdx);
+                layer.close(index);
+                if (res && res.code === 0) {
+                    var msg = res.msg || '批量审核完成';
+                    if (res.data && (res.data.has_more === true || res.data.has_more === 1 || res.data.has_more === '1')) {
+                        msg += '<br>还有剩余待审核申请，请继续点击批量通过';
+                    }
+                    layer.msg(msg, { icon: 1, time: 3000 });
+                    tableIns.reload();
+                } else {
+                    layer.msg((res && res.msg) ? res.msg : '批量审核失败', { icon: 2, time: 2500 });
+                }
+            }).fail(function () {
+                layer.close(loadIdx);
+                layer.close(index);
+                layer.msg('网络异常，请稍后重试', { icon: 2 });
+            });
         });
     });
 

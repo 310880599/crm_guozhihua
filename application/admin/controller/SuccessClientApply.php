@@ -82,6 +82,25 @@ class SuccessClientApply extends Common
     }
 
     /**
+     * 批量审核通过（仅当前筛选条件下待审核数据）
+     */
+    public function batchApprove()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 1, 'msg' => '非法请求']);
+        }
+
+        $keyword = [
+            'kh_name' => trim((string)input('kh_name', '')),
+            'pr_user' => trim((string)input('pr_user', '')),
+            'apply_user' => trim((string)input('apply_user', '')),
+            'apply_time' => trim((string)input('apply_time', '')),
+        ];
+
+        return json($this->service()->batchApprove($keyword));
+    }
+
+    /**
      * 成交客户审核配置（审核管理员）
      * GET: 页面
      * POST: 保存配置
