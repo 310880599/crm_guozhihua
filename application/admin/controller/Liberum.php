@@ -79,6 +79,44 @@ class Liberum extends Common{
 
         $ghTypeList = LiberumTypeModel::where('is_deleted', 0)->order('id desc')->select();
         $this->assign('ghTypeList', $ghTypeList);
+
+        $inquiryQuery = Db::table('crm_inquiry')->field('id,inquiry_name');
+        try {
+            $inquiryFields = Db::query("SHOW COLUMNS FROM crm_inquiry");
+            $inquiryFieldMap = [];
+            if (is_array($inquiryFields)) {
+                foreach ($inquiryFields as $fieldRow) {
+                    if (isset($fieldRow['Field'])) {
+                        $inquiryFieldMap[$fieldRow['Field']] = 1;
+                    }
+                }
+            }
+            if (isset($inquiryFieldMap['is_deleted'])) {
+                $inquiryQuery->where('is_deleted', 0);
+            }
+        } catch (\Exception $e) {
+        }
+        $inquiryList = $inquiryQuery->order('id desc')->select();
+        $this->assign('inquiryList', $inquiryList);
+
+        $rankQuery = Db::table('crm_client_rank')->field('id,rank_name');
+        try {
+            $rankFields = Db::query("SHOW COLUMNS FROM crm_client_rank");
+            $rankFieldMap = [];
+            if (is_array($rankFields)) {
+                foreach ($rankFields as $fieldRow) {
+                    if (isset($fieldRow['Field'])) {
+                        $rankFieldMap[$fieldRow['Field']] = 1;
+                    }
+                }
+            }
+            if (isset($rankFieldMap['is_deleted'])) {
+                $rankQuery->where('is_deleted', 0);
+            }
+        } catch (\Exception $e) {
+        }
+        $rankList = $rankQuery->order('id asc')->select();
+        $this->assign('rankList', $rankList);
         return $this->fetch();
     }
 

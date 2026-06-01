@@ -7,8 +7,8 @@
     .wukong-search-card .search-form-row {
         display: flex !important;
         align-items: center;
-        flex-wrap: nowrap;
-        gap: 16px;
+        flex-wrap: wrap;
+        gap: 12px 16px;
         width: 100%;
     }
     .liberum-list-container {
@@ -255,6 +255,44 @@
                 <label class="layui-form-label">客户名称：</label>
                 <div class="layui-input-inline">
                     <input type="text" id="kh_name" name="kh_name" placeholder="请输入客户名称" class="layui-input">
+                </div>
+            </div>
+
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">产品名称：</label>
+                <div class="layui-input-inline">
+                    <input type="text" id="product_name" name="product_name" placeholder="请输入产品名称" class="layui-input">
+                </div>
+            </div>
+
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">所属渠道：</label>
+                <div class="layui-input-inline">
+                    <select name="inquiry_id" id="inquiry_id">
+                        <option value="">请选择所属渠道</option>
+                        {volist name='inquiryList' id='vo'}
+                        <option value="{$vo.id}">{$vo.inquiry_name}</option>
+                        {/volist}
+                    </select>
+                </div>
+            </div>
+
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">客户级别：</label>
+                <div class="layui-input-inline">
+                    <select name="kh_rank" id="kh_rank">
+                        <option value="">请选择客户级别</option>
+                        {volist name='rankList' id='vo'}
+                        <option value="{$vo.id}">{$vo.rank_name}</option>
+                        {/volist}
+                    </select>
+                </div>
+            </div>
+
+            <div class="layui-inline search-item">
+                <label class="layui-form-label">创建时间晚于：</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" autocomplete="off" name="created_after" id="created_after" placeholder="请选择创建时间">
                 </div>
             </div>
 
@@ -517,6 +555,11 @@
 
         laydate.render({
             elem: '#at_time'
+        });
+
+        laydate.render({
+            elem: '#created_after',
+            type: 'date'
         });
 
 

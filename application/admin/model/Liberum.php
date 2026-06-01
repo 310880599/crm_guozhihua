@@ -55,6 +55,49 @@ class Liberum extends Model
             }
         }
 
+        if (isset($keyword['product_name']) && trim((string)$keyword['product_name']) !== '') {
+            $productName = trim((string)$keyword['product_name']);
+            $query->where(function ($subQuery) use ($productName) {
+                if (preg_match('/^\d+$/', $productName)) {
+                    $subQuery->where('l.product_name', '=', $productName);
+                    return;
+                }
+
+                $productRows = Db::table('crm_products')
+                    ->where('product_name', 'like', '%' . $productName . '%')
+                    ->field('id')
+                    ->select();
+
+                if (is_object($productRows) && method_exists($productRows, 'toArray')) {
+                    $productRows = $productRows->toArray();
+                } elseif (!is_array($productRows)) {
+                    $productRows = [];
+                }
+                $productIds = array_values(array_unique(array_filter(array_column($productRows, 'id'))));
+
+                $subQuery->whereLike('l.product_name', '%' . $productName . '%');
+                if (!empty($productIds)) {
+                    $subQuery->whereOr('l.product_name', 'in', $productIds);
+                }
+            });
+        }
+
+        if (isset($keyword['inquiry_id']) && trim((string)$keyword['inquiry_id']) !== '') {
+            $query->where('l.inquiry_id', '=', trim((string)$keyword['inquiry_id']));
+        }
+
+        if (isset($keyword['kh_rank']) && trim((string)$keyword['kh_rank']) !== '') {
+            $query->where('l.kh_rank', '=', trim((string)$keyword['kh_rank']));
+        }
+
+        if (isset($keyword['created_after']) && trim((string)$keyword['created_after']) !== '') {
+            $createdAfter = trim((string)$keyword['created_after']);
+            $createdAfterTimestamp = strtotime($createdAfter);
+            if ($createdAfterTimestamp !== false) {
+                $query->where('l.at_time', '>=', $createdAfterTimestamp);
+            }
+        }
+
         $total = (int)(clone $query)->count('l.id');
         if ($total === 0) {
             return ['data' => [], 'total' => 0];
