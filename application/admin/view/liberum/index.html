@@ -471,6 +471,18 @@
                 {field:'kh_rank_display', title:'客户级别', width:100},
                 {field:'remark', title:'备注', width:160},
                 {field:'to_gh_time', title:'最新转入时间', width:170},
+                {
+                    field:'at_time',
+                    title:'创建时间',
+                    width:170,
+                    templet:function(d){
+                        if (!d.at_time) return '';
+                        if (/^\d+$/.test(String(d.at_time))) {
+                            return layui.util.toDateString(parseInt(d.at_time, 10) * 1000, 'yyyy-MM-dd HH:mm:ss');
+                        }
+                        return d.at_time;
+                    }
+                },
                 {field:'at_user', title:'创建人', width:110},
                 {field:'pr_user', title:'负责人', width:110},
                 {field:'pr_user_bef', title:'前负责人', width:110},
