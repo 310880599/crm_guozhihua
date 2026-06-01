@@ -1236,6 +1236,13 @@
                         </div>
 
                         <div class="layui-inline">
+                            <label class="layui-form-label">获取时间：</label>
+                            <div class="layui-input-inline">
+                                <input type="text" class="layui-input" id="obtain_time" name="obtain_time" placeholder="选择获取时间范围">
+                            </div>
+                        </div>
+
+                        <div class="layui-inline">
                             <label class="layui-form-label">跟进类型：</label>
                             <div class="layui-input-inline">
                                 <select name="follow_filter" id="follow_filter">
@@ -3388,6 +3395,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         data.field.kh_rank = (data.field.kh_rank || '').toString().trim();
         data.field.product_name = ($('#product_name').val() || '').toString().trim();
         data.field.obtain_type = (data.field.obtain_type || '').toString().trim();
+        data.field.obtain_time = (data.field.obtain_time || '').toString().trim();
+        if (data.field.obtain_time && !data.field.obtain_type) {
+            layer.msg('请选择获取方式后，再使用获取时间筛选', {icon: 0});
+            return false;
+        }
         table.reload('table-list', {
             url: "{:url('Client/personClientSearch')}",
             where: { keyword: data.field },
@@ -3408,6 +3420,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#dateRange').val('');
         $('#at_time').val('');
         $('#obtain_type').val('');
+        $('#obtain_time').val('');
         $('#follow_filter').val('');
         $('#follow_days').val('');
         $('#at_time').show();
@@ -3422,6 +3435,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     // 日期控件
     laydate.render({ elem: '#at_time', range: true, trigger: 'click' });
+    laydate.render({ elem: '#obtain_time', range: true, trigger: 'click' });
     laydate.render({
         elem: '#next_up_time',
         type: 'datetime',

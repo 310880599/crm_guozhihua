@@ -13,6 +13,7 @@ use think\facade\Log;
 class Client extends Model
 {
     protected $table = 'crm_leads';
+    private static $liberumPickTimeFieldCache = null;
 
     /**
      * 客户级别筛选兼容条件：
@@ -58,6 +59,67 @@ class Client extends Model
         return [[$field, 'in', $values]];
     }
 
+    /**
+     * 解析 layui 日期范围（yyyy-MM-dd - yyyy-MM-dd）。
+     * 返回 [startDateTime, endDateTime]，解析失败返回 ['', '']。
+     */
+    private function parseDateRangeString($rangeText)
+    {
+        $rangeText = trim((string)$rangeText);
+        if ($rangeText === '') {
+            return ['', ''];
+        }
+
+        if (!preg_match('/^(\d{4}-\d{2}-\d{2})\s+-\s+(\d{4}-\d{2}-\d{2})$/', $rangeText, $m)) {
+            return ['', ''];
+        }
+
+        $startDate = $m[1];
+        $endDate = $m[2];
+
+        $startTs = strtotime($startDate . ' 00:00:00');
+        $endTs = strtotime($endDate . ' 23:59:59');
+        if ($startTs === false || $endTs === false || $startTs > $endTs) {
+            return ['', ''];
+        }
+
+        return [date('Y-m-d H:i:s', $startTs), date('Y-m-d H:i:s', $endTs)];
+    }
+
+    /**
+     * 公海领取日志时间字段：created_at > at_time > pick_time（兜底）。
+     */
+    private function getLiberumPickLogTimeField()
+    {
+        if (self::$liberumPickTimeFieldCache !== null) {
+            return self::$liberumPickTimeFieldCache;
+        }
+
+        try {
+            $columns = Db::query("SHOW COLUMNS FROM crm_liberum_pick_log");
+            $fieldSet = [];
+            foreach ((array)$columns as $col) {
+                if (!empty($col['Field'])) {
+                    $fieldSet[$col['Field']] = true;
+                }
+            }
+
+            if (isset($fieldSet['created_at'])) {
+                self::$liberumPickTimeFieldCache = 'created_at';
+            } elseif (isset($fieldSet['at_time'])) {
+                self::$liberumPickTimeFieldCache = 'at_time';
+            } elseif (isset($fieldSet['pick_time'])) {
+                self::$liberumPickTimeFieldCache = 'pick_time';
+            } else {
+                self::$liberumPickTimeFieldCache = '';
+            }
+        } catch (\Exception $e) {
+            self::$liberumPickTimeFieldCache = '';
+        }
+
+        return self::$liberumPickTimeFieldCache;
+    }
+
 
     public function contacts()
     {
@@ -94,6 +156,10 @@ class Client extends Model
         $followNoFlag = false; // recent_no_follow 标记
         $followBoundary = ''; // 边界时间
         $obtainType = isset($keyword['obtain_type']) ? trim((string)$keyword['obtain_type']) : '';
+        $obtainTimeRange = isset($keyword['obtain_time']) ? trim((string)$keyword['obtain_time']) : '';
+        $obtainStartTime = '';
+        $obtainEndTime = '';
+        list($obtainStartTime, $obtainEndTime) = $this->parseDateRangeString($obtainTimeRange);
 
         if (!empty($keyword['timebucket'])) {
             $mapAtTime[] = $keyword['timebucket'];
@@ -145,6 +211,20 @@ class Client extends Model
                   OR p.active_leads_id = crm_leads.id
               )
         )";
+        $pickTimeField = $this->getLiberumPickLogTimeField();
+        $pickExistsWithTimeSql = $pickExistsSql;
+        if ($obtainStartTime !== '' && $obtainEndTime !== '' && $pickTimeField !== '') {
+            $pickExistsWithTimeSql = "EXISTS (
+                SELECT 1
+                FROM crm_liberum_pick_log p
+                WHERE p.is_deleted = 0
+                  AND (
+                      p.leads_id = crm_leads.id
+                      OR p.active_leads_id = crm_leads.id
+                  )
+                  AND p.{$pickTimeField} BETWEEN '{$obtainStartTime}' AND '{$obtainEndTime}'
+            )";
+        }
         $operationAssignSql = "(crm_leads.oper_user IS NOT NULL AND TRIM(crm_leads.oper_user) <> '')";
         $operationAssignEffectiveSql = "({$operationAssignSql} AND crm_leads.at_time >= '{$operationAssignStartTime}')";
         $obtainTypeNameSql = "CASE
@@ -174,13 +254,26 @@ class Client extends Model
 
         if ($obtainType === 'liberum_pick') {
             $query->whereRaw($pickExistsSql);
+            if ($obtainStartTime !== '' && $obtainEndTime !== '') {
+                if ($pickTimeField !== '') {
+                    $query->whereRaw($pickExistsWithTimeSql);
+                } else {
+                    $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
+                }
+            }
         } elseif ($obtainType === 'operation_assign') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
                 ->whereRaw($operationAssignSql)
                 ->where('at_time', '>=', $operationAssignStartTime);
+            if ($obtainStartTime !== '' && $obtainEndTime !== '') {
+                $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
+            }
         } elseif ($obtainType === 'self_create') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
                 ->whereRaw('NOT (' . $operationAssignEffectiveSql . ')');
+            if ($obtainStartTime !== '' && $obtainEndTime !== '') {
+                $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
+            }
         }
 
         return $query
@@ -521,6 +614,10 @@ class Client extends Model
         }
 
         $obtainType = isset($keyword['obtain_type']) ? trim((string)$keyword['obtain_type']) : '';
+        $obtainTimeRange = isset($keyword['obtain_time']) ? trim((string)$keyword['obtain_time']) : '';
+        $obtainStartTime = '';
+        $obtainEndTime = '';
+        list($obtainStartTime, $obtainEndTime) = $this->parseDateRangeString($obtainTimeRange);
         $configService = new LiberumConfigService();
         $ruleEffectiveDate = $configService->getDateValue('rule_effective_date', '2026-06-01');
         $operationAssignStartTime = $ruleEffectiveDate . ' 00:00:00';
@@ -534,6 +631,20 @@ class Client extends Model
                   OR p.active_leads_id = crm_leads.id
               )
         )";
+        $pickTimeField = $this->getLiberumPickLogTimeField();
+        $pickExistsWithTimeSql = $pickExistsSql;
+        if ($obtainStartTime !== '' && $obtainEndTime !== '' && $pickTimeField !== '') {
+            $pickExistsWithTimeSql = "EXISTS (
+                SELECT 1
+                FROM crm_liberum_pick_log p
+                WHERE p.is_deleted = 0
+                  AND (
+                      p.leads_id = crm_leads.id
+                      OR p.active_leads_id = crm_leads.id
+                  )
+                  AND p.{$pickTimeField} BETWEEN '{$obtainStartTime}' AND '{$obtainEndTime}'
+            )";
+        }
         $operationAssignSql = "(crm_leads.oper_user IS NOT NULL AND TRIM(crm_leads.oper_user) <> '')";
         $operationAssignEffectiveSql = "({$operationAssignSql} AND crm_leads.at_time >= '{$operationAssignStartTime}')";
         $obtainTypeNameSql = "CASE
@@ -586,13 +697,26 @@ class Client extends Model
 
         if ($obtainType === 'liberum_pick') {
             $query->whereRaw($pickExistsSql);
+            if ($obtainStartTime !== '' && $obtainEndTime !== '') {
+                if ($pickTimeField !== '') {
+                    $query->whereRaw($pickExistsWithTimeSql);
+                } else {
+                    $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
+                }
+            }
         } elseif ($obtainType === 'operation_assign') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
                 ->whereRaw($operationAssignSql)
                 ->where('at_time', '>=', $operationAssignStartTime);
+            if ($obtainStartTime !== '' && $obtainEndTime !== '') {
+                $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
+            }
         } elseif ($obtainType === 'self_create') {
             $query->whereRaw('NOT (' . $pickExistsSql . ')')
                 ->whereRaw('NOT (' . $operationAssignEffectiveSql . ')');
+            if ($obtainStartTime !== '' && $obtainEndTime !== '') {
+                $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
+            }
         }
 
         $result = $query
