@@ -284,6 +284,14 @@ class Client extends Model
     }
 
     /**
+     * 快速跟进列表（查询口径完全复用“我的客户”）
+     */
+    public function getQuickFollowList($page, $pageSize, $username, $keyword = [])
+    {
+        return $this->getMyClientList($page, $pageSize, $username, $keyword);
+    }
+
+    /**
      * 跟进弹窗客户详情
      * 通过模型层统一查询，保证返回 next_up_time。
      */

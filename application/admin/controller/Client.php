@@ -4795,6 +4795,78 @@ class Client extends Common
         ]);
     }
 
+    /**
+     * 批量快速添加跟进：我的客户列表（layui table）
+     */
+    public function quickFollowList()
+    {
+        $page = input('page/d', 1);
+        $limit = input('limit/d', config('pageSize'));
+        $keyword = input('keyword/a', []);
+
+        if (!empty($keyword['timebucket'])) {
+            $keyword['timebucket'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
+        }
+        if (!empty($keyword['at_time'])) {
+            $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
+        }
+
+        $keyword = is_array($keyword) ? $keyword : [];
+        $keyword['kh_name'] = isset($keyword['kh_name']) ? trim((string)$keyword['kh_name']) : '';
+        $keyword['phone'] = isset($keyword['phone']) ? trim((string)$keyword['phone']) : '';
+        $keyword['product_name'] = isset($keyword['product_name']) ? trim((string)$keyword['product_name']) : '';
+        $keyword['kh_rank'] = isset($keyword['kh_rank']) ? trim((string)$keyword['kh_rank']) : '';
+        $keyword['inquiry_id'] = isset($keyword['inquiry_id']) ? trim((string)$keyword['inquiry_id']) : '';
+        $keyword['port_id'] = isset($keyword['port_id']) ? trim((string)$keyword['port_id']) : '';
+        $keyword = $this->normalizeFollowFilterKeyword($keyword);
+
+        $username = trim((string)Session::get('username'));
+        if ($username === '') {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => [], 'count' => 0]);
+        }
+
+        $list = model('Client')->getQuickFollowList($page, $limit, $username, $keyword);
+        if (empty($list) || empty($list['data'])) {
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => [], 'count' => 0]);
+        }
+
+        $service = new ClientFollowService();
+        $rows = $service->buildQuickFollowListRows((array)$list['data']);
+
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => $rows,
+            'count' => (int)($list['total'] ?? 0),
+        ]);
+    }
+
+    /**
+     * 批量快速添加跟进：单行保存
+     */
+    public function quickSaveFollow()
+    {
+        $leadsId = (int)Request::param('leads_id', Request::param('leads_id/d', 0));
+        $content = trim((string)Request::param('content', ''));
+        $nextUpTime = trim((string)Request::param('next_up_time', ''));
+
+        if ($leadsId <= 0) {
+            return json(['code' => 1, 'msg' => '缺少客户ID', 'data' => []]);
+        }
+        if ($content === '') {
+            return json(['code' => 1, 'msg' => '请输入跟进内容', 'data' => []]);
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => trim((string)Session::get('username')),
+        ];
+
+        $service = new ClientFollowService();
+        $result = $service->saveFollow($leadsId, $content, $nextUpTime, $operatorInfo);
+        return json($result);
+    }
+
     // 获取客户详情和评论记录
     public function getClientDetailAndComments()
     {

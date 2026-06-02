@@ -339,6 +339,97 @@ class ClientFollowService
     }
 
     /**
+     * 批量快速跟进列表行组装（字段口径与“我的客户”保持一致）
+     */
+    public function buildQuickFollowListRows(array $rows)
+    {
+        if (empty($rows)) {
+            return [];
+        }
+
+        $leadIds = array_values(array_filter(array_map('intval', array_column($rows, 'id'))));
+        if (empty($leadIds)) {
+            return [];
+        }
+
+        $inquiryMap = Db::table('crm_inquiry')->column('inquiry_name', 'id');
+        $portMap = Db::table('crm_inquiry_port')->column('port_name', 'id');
+
+        $productIds = array_values(array_unique(array_filter(array_map('intval', array_column($rows, 'product_name')))));
+        $productNameMap = [];
+        if (!empty($productIds)) {
+            $productRows = Db::table('crm_products')->whereIn('id', $productIds)->select();
+            $categoryIds = array_values(array_unique(array_filter(array_map('intval', array_column($productRows, 'category_id')))));
+            $categoryNameMap = !empty($categoryIds)
+                ? Db::table('crm_product_category')->whereIn('id', $categoryIds)->column('category_name', 'id')
+                : [];
+            foreach ($productRows as $prod) {
+                $prodId = (int)($prod['id'] ?? 0);
+                if ($prodId <= 0) {
+                    continue;
+                }
+                $supplierName = isset($categoryNameMap[$prod['category_id']]) ? $categoryNameMap[$prod['category_id']] : '';
+                $productNameMap[$prodId] = $prod['product_name'] . ($supplierName ? "({$supplierName})" : '');
+            }
+        }
+
+        $phoneMap = [];
+        $contacts = Db::table('crm_contacts')
+            ->where('is_delete', 0)
+            ->whereIn('leads_id', $leadIds)
+            ->whereIn('contact_type', [1, 3])
+            ->order('id', 'asc')
+            ->field('leads_id, contact_type, contact_value')
+            ->select();
+        foreach ($contacts as $c) {
+            $lid = (int)$c['leads_id'];
+            if (!isset($phoneMap[$lid])) {
+                $phoneMap[$lid] = ['main' => '', 'aux' => ''];
+            }
+            if ((int)$c['contact_type'] === 1 && $phoneMap[$lid]['main'] === '') {
+                $phoneMap[$lid]['main'] = (string)$c['contact_value'];
+            } elseif ((int)$c['contact_type'] === 3 && $phoneMap[$lid]['aux'] === '') {
+                $phoneMap[$lid]['aux'] = (string)$c['contact_value'];
+            }
+        }
+
+        $out = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id <= 0) {
+                continue;
+            }
+
+            $productRaw = $row['product_name'] ?? '';
+            $productDisplay = (string)$productRaw;
+            if ($productRaw !== '' && is_numeric($productRaw)) {
+                $productId = (int)$productRaw;
+                $productDisplay = isset($productNameMap[$productId]) ? (string)$productNameMap[$productId] : (string)$productRaw;
+            }
+
+            $inquiryId = $row['inquiry_id'] ?? '';
+            $portId = $row['port_id'] ?? '';
+
+            $out[] = [
+                'id' => $id,
+                'kh_name' => (string)($row['kh_name'] ?? ''),
+                'main_phone' => isset($phoneMap[$id]) ? (string)$phoneMap[$id]['main'] : '',
+                'aux_phone' => isset($phoneMap[$id]) ? (string)$phoneMap[$id]['aux'] : '',
+                'product_name' => $productDisplay,
+                'inquiry_name' => isset($inquiryMap[$inquiryId]) ? (string)$inquiryMap[$inquiryId] : (string)$inquiryId,
+                'port_name' => isset($portMap[$portId]) ? (string)$portMap[$portId] : (string)$portId,
+                'kh_rank' => (string)($row['kh_rank'] ?? ''),
+                'last_up_records' => (string)($row['last_up_records'] ?? ''),
+                'last_up_time' => $this->formatLastUpTimeForDisplay($row['last_up_time'] ?? ''),
+                'next_up_time' => $this->formatNextUpTimeForDisplay($row['next_up_time'] ?? ''),
+                'pr_user' => (string)($row['pr_user'] ?? ''),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * 删除客户跟进记录（逻辑删除）并回写客户最新跟进摘要。
      *
      * @param int|string $commentId
