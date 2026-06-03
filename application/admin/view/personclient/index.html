@@ -2391,6 +2391,70 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowForceClose = false;
     var QUICK_FOLLOW_DEBOUNCE_MS = 1500;
 
+    function applyQuickFollowParentFullMode() {
+        try {
+            var pWin = window.parent;
+            var pDoc = pWin.document;
+            var $p = pWin.layui && pWin.layui.jquery ? pWin.layui.jquery : pWin.$;
+
+            if (!$p || !pDoc) return;
+
+            if (!$p('#quick-follow-parent-full-style').length) {
+                $p('head').append(
+                    '<style id="quick-follow-parent-full-style">' +
+                    'body.quick-follow-parent-fullscreen .layui-header,' +
+                    'body.quick-follow-parent-fullscreen .layui-side,' +
+                    'body.quick-follow-parent-fullscreen .layui-side-scroll,' +
+                    'body.quick-follow-parent-fullscreen .layui-logo,' +
+                    'body.quick-follow-parent-fullscreen .layui-tab-title,' +
+                    'body.quick-follow-parent-fullscreen .layui-layout-left,' +
+                    'body.quick-follow-parent-fullscreen .layui-layout-right,' +
+                    'body.quick-follow-parent-fullscreen .admin-side,' +
+                    'body.quick-follow-parent-fullscreen .admin-header,' +
+                    'body.quick-follow-parent-fullscreen .left-nav,' +
+                    'body.quick-follow-parent-fullscreen .top-panel,' +
+                    'body.quick-follow-parent-fullscreen .page-tabs {' +
+                    'display:none !important;' +
+                    '}' +
+                    'body.quick-follow-parent-fullscreen .layui-body,' +
+                    'body.quick-follow-parent-fullscreen .admin-main,' +
+                    'body.quick-follow-parent-fullscreen .layui-tab-content,' +
+                    'body.quick-follow-parent-fullscreen .layui-tab-item.layui-show {' +
+                    'left:0 !important;' +
+                    'top:0 !important;' +
+                    'right:0 !important;' +
+                    'bottom:0 !important;' +
+                    'width:100vw !important;' +
+                    'height:100vh !important;' +
+                    'padding:0 !important;' +
+                    'margin:0 !important;' +
+                    '}' +
+                    'body.quick-follow-parent-fullscreen iframe {' +
+                    'width:100vw !important;' +
+                    'height:100vh !important;' +
+                    '}' +
+                    '</style>'
+                );
+            }
+
+            $p('body').addClass('quick-follow-parent-fullscreen');
+        } catch (e) {
+            console.warn('进入父级全屏布局失败', e);
+        }
+    }
+
+    function restoreQuickFollowParentFullMode() {
+        try {
+            var pWin = window.parent;
+            var $p = pWin.layui && pWin.layui.jquery ? pWin.layui.jquery : pWin.$;
+            if ($p) {
+                $p('body').removeClass('quick-follow-parent-fullscreen');
+            }
+        } catch (e) {
+            console.warn('退出父级全屏布局失败', e);
+        }
+    }
+
     $(document).on('click', '.all-follow-btn', function() {
         var clientId = $(this).data('id');
         openAllFollowDialog(clientId);
@@ -3059,6 +3123,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             layer.close(quickFollowLayerIndex);
             quickFollowLayerIndex = null;
             quickFollowIsFull = false;
+            restoreQuickFollowParentFullMode();
             $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
             $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
             $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
@@ -3098,6 +3163,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
                 $('#quick-follow-fullscreen-btn').off('click').click(function() {
                     if(!quickFollowIsFull){
+                        applyQuickFollowParentFullMode();
                         layer.full(quickFollowLayerIndex);
                         $(this).html('<i class="layui-icon layui-icon-screen-restore"></i>退出全屏');
                         quickFollowIsFull = true;
@@ -3105,6 +3171,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         $('#quick-follow-dialog .quick-follow-dialog').addClass('full-screen-mode');
                     } else {
                         layer.restore(quickFollowLayerIndex);
+                        restoreQuickFollowParentFullMode();
                         $(this).html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
                         quickFollowIsFull = false;
                         $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
@@ -3120,6 +3187,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             },
             end: function () {
                 $('#quick-follow-dialog').hide().appendTo('body');
+                restoreQuickFollowParentFullMode();
                 quickFollowLayerIndex = null;
                 quickFollowIsFull = false;
                 $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
