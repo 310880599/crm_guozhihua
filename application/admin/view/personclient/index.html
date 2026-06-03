@@ -2381,6 +2381,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowLayerIndex = null;
     var quickFollowIsFull = false;
     var quickFollowTableId = 'quick-follow-table';
+    var quickFollowPageKey = 'personclient_quick_follow';
+    var quickFollowColumnWidthKey = 'layui_col_width_personclient_quick_follow_quick-follow-table_' + currentUsername;
+    var quickFollowLastWidthSnapshot = {};
     var quickFollowDraftMap = {};
     var quickFollowStatusMap = {};
     var quickFollowDebounceTimerMap = {};
@@ -2992,8 +2995,152 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }, QUICK_FOLLOW_DEBOUNCE_MS);
     }
 
+    function applyQuickFollowWidthsToCols(cols, widths) {
+        if (!cols || !cols.length || !widths) return;
+        cols.forEach(function (col) {
+            if (!col || !col.field) return;
+            var w = parseInt(widths[col.field], 10);
+            if (!isNaN(w) && w >= 30 && w <= 3000) {
+                col.width = w;
+            }
+        });
+    }
+
+    function readQuickFollowHeaderWidths() {
+        var widths = {};
+        try {
+            var $view = $('#quick-follow-table').next('.layui-table-view');
+            if (!$view.length) return widths;
+            var $headerTable = $view.find('.layui-table-header table').eq(0);
+            if (!$headerTable.length) return widths;
+            $headerTable.find('thead tr th').each(function () {
+                var $th = $(this);
+                var field = $.trim($th.attr('data-field') || '');
+                if (!field || field === '0') return;
+                var w = parseInt($th.width(), 10);
+                if (!isNaN(w) && w >= 30 && w <= 3000) {
+                    widths[field] = w;
+                }
+            });
+        } catch (e) {
+            console.warn('读取批量跟进表头列宽失败:', e);
+        }
+        return widths;
+    }
+
+    function loadQuickFollowWidths() {
+        var dbWidths = {};
+        $.ajax({
+            url: "{:url('Client/getColWidths')}",
+            type: 'GET',
+            dataType: 'json',
+            data: {
+                page_key: quickFollowPageKey,
+                table_id: quickFollowTableId
+            },
+            async: false,
+            success: function (res) {
+                if (res && parseInt(res.code, 10) === 0 && res.data && Object.keys(res.data).length > 0) {
+                    dbWidths = res.data;
+                }
+            },
+            error: function () {}
+        });
+
+        var localWidths = {};
+        try {
+            localWidths = JSON.parse(localStorage.getItem(quickFollowColumnWidthKey) || '{}');
+        } catch (e) {
+            localWidths = {};
+        }
+
+        var finalWidths = localWidths;
+        if (Object.keys(dbWidths).length > 0) {
+            finalWidths = Object.assign({}, localWidths, dbWidths);
+            try {
+                localStorage.setItem(quickFollowColumnWidthKey, JSON.stringify(finalWidths));
+            } catch (e) {}
+        }
+        return finalWidths;
+    }
+
+    function saveQuickFollowWidths() {
+        var widths = readQuickFollowHeaderWidths();
+        if (!widths || !Object.keys(widths).length) return;
+
+        quickFollowLastWidthSnapshot = $.extend({}, widths);
+        try {
+            localStorage.setItem(quickFollowColumnWidthKey, JSON.stringify(widths));
+        } catch (e) {}
+
+        $.ajax({
+            url: "{:url('Client/saveColWidths')}",
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                page_key: quickFollowPageKey,
+                table_id: quickFollowTableId,
+                widths: JSON.stringify(widths)
+            }
+        });
+    }
+
+    function bindQuickFollowResizeSave() {
+        quickFollowLastWidthSnapshot = readQuickFollowHeaderWidths();
+        $(document).off('mouseup.quickFollowColWidth').on('mouseup.quickFollowColWidth', function () {
+            var $view = $('#quick-follow-table').next('.layui-table-view');
+            if (!$view.length) return;
+            setTimeout(function () {
+                var latest = readQuickFollowHeaderWidths();
+                if (!latest || !Object.keys(latest).length) return;
+                if (JSON.stringify(latest) !== JSON.stringify(quickFollowLastWidthSnapshot || {})) {
+                    saveQuickFollowWidths();
+                }
+            }, 200);
+        });
+    }
+
     function renderQuickFollowTable() {
         var tableHeight = Math.max(320, Math.floor($(window).height() * 0.85) - 250);
+        var quickFollowCols = [[
+            { field: 'kh_name', title: '客户名称', minWidth: 180, fixed: 'left' },
+            { field: 'main_phone', title: '主电话', width: 130 },
+            { field: 'aux_phone', title: '辅助电话', width: 130 },
+            { field: 'product_name', title: '产品名称', minWidth: 180 },
+            { field: 'inquiry_name', title: '所属渠道', width: 130 },
+            { field: 'kh_rank', title: '客户级别', width: 110 },
+            { field: 'last_up_records', title: '最新跟进', minWidth: 220 },
+            { field: 'last_up_time', title: '最新跟进时间', width: 180 },
+            {
+                field: 'follow_content',
+                title: '本次跟进内容',
+                minWidth: 260,
+                templet: function (d) {
+                    var draft = getQuickFollowDraft(d.id);
+                    return '<textarea class="layui-textarea quick-follow-content-input" data-leads-id="' + quickFollowEscapeHtml(d.id) + '" placeholder="请输入本次跟进内容">' + quickFollowEscapeHtml(draft.content || '') + '</textarea>';
+                }
+            },
+            {
+                field: 'next_up_time_input',
+                title: '下次跟进时间',
+                width: 200,
+                templet: function (d) {
+                    var draft = getQuickFollowDraft(d.id);
+                    return '<input type="text" class="layui-input quick-follow-next-input" data-leads-id="' + quickFollowEscapeHtml(d.id) + '" value="' + quickFollowEscapeHtml(draft.next_up_time || '') + '" placeholder="选择日期时间">';
+                }
+            },
+            {
+                field: 'save_status',
+                title: '保存状态',
+                width: 180,
+                fixed: 'right',
+                templet: function (d) {
+                    return getQuickFollowStatusRender(d.id);
+                }
+            }
+        ]];
+        applyQuickFollowWidthsToCols(quickFollowCols[0], loadQuickFollowWidths());
+
         table.render({
             elem: '#quick-follow-table',
             id: quickFollowTableId,
@@ -3008,44 +3155,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 pageName: 'page',
                 limitName: 'limit'
             },
-            cols: [[
-                { field: 'kh_name', title: '客户名称', minWidth: 180, fixed: 'left' },
-                { field: 'main_phone', title: '主电话', width: 130 },
-                { field: 'aux_phone', title: '辅助电话', width: 130 },
-                { field: 'product_name', title: '产品名称', minWidth: 180 },
-                { field: 'inquiry_name', title: '所属渠道', width: 130 },
-                { field: 'kh_rank', title: '客户级别', width: 110 },
-                { field: 'last_up_records', title: '最新跟进', minWidth: 220 },
-                { field: 'last_up_time', title: '最新跟进时间', width: 180 },
-                {
-                    field: 'follow_content',
-                    title: '本次跟进内容',
-                    minWidth: 260,
-                    templet: function (d) {
-                        var draft = getQuickFollowDraft(d.id);
-                        return '<textarea class="layui-textarea quick-follow-content-input" data-leads-id="' + quickFollowEscapeHtml(d.id) + '" placeholder="请输入本次跟进内容">' + quickFollowEscapeHtml(draft.content || '') + '</textarea>';
-                    }
-                },
-                {
-                    field: 'next_up_time_input',
-                    title: '下次跟进时间',
-                    width: 200,
-                    templet: function (d) {
-                        var draft = getQuickFollowDraft(d.id);
-                        return '<input type="text" class="layui-input quick-follow-next-input" data-leads-id="' + quickFollowEscapeHtml(d.id) + '" value="' + quickFollowEscapeHtml(draft.next_up_time || '') + '" placeholder="选择日期时间">';
-                    }
-                },
-                {
-                    field: 'save_status',
-                    title: '保存状态',
-                    width: 180,
-                    fixed: 'right',
-                    templet: function (d) {
-                        return getQuickFollowStatusRender(d.id);
-                    }
-                }
-            ]],
+            cols: quickFollowCols,
             done: function () {
+                bindQuickFollowResizeSave();
                 bindQuickFollowRowWidgets();
             }
         });
