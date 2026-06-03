@@ -1148,6 +1148,20 @@
     .quick-follow-table-wrap {
         margin-top: 2px;
     }
+    .full-screen-wrapper {
+        max-height: calc(85vh - 140px);
+        overflow: auto;
+    }
+    .full-screen-wrapper.full-screen-active {
+        height: 100vh;
+        max-height: 100vh;
+        overflow: auto;
+    }
+    .quick-follow-dialog.full-screen-mode .layui-table-cell {
+        height: auto;
+        line-height: 24px;
+        white-space: normal;
+    }
     .quick-follow-content-input {
         min-height: 38px !important;
         max-height: 60px !important;
@@ -1545,11 +1559,16 @@
                     <button type="button" class="layui-btn layui-btn-primary" id="quick-follow-reset-btn">
                         <i class="layui-icon layui-icon-refresh"></i>重置
                     </button>
+                    <button type="button" class="layui-btn layui-btn-warm" id="quick-follow-fullscreen-btn">
+                        <i class="layui-icon layui-icon-screen-full"></i>全屏
+                    </button>
                 </div>
             </div>
         </div>
         <div class="quick-follow-table-wrap">
-            <table id="quick-follow-table" lay-filter="quick-follow-table"></table>
+            <div class="full-screen-wrapper" id="quickFollowFullScreenWrapper">
+                <table id="quick-follow-table" lay-filter="quick-follow-table"></table>
+            </div>
         </div>
     </div>
 </div>
@@ -1567,7 +1586,7 @@
 <!-- 顶部工具栏 -->
 <script type="text/html" id="topBtn">
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加客户</button>
-    <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" lay-event="quickFollowBatch"><i class="layui-icon layui-icon-edit"></i>批量添加跟进记录</button>
+    <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="batchAddFollowBtn" lay-event="quickFollowBatch"><i class="layui-icon layui-icon-edit"></i>批量添加跟进记录</button>
     <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="toAll" style="margin-right:10px"><i class="layui-icon">&#xe681;</i>导入客户</button>
     <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="downloadTemplate">
         <i class="layui-icon">&#xe601;</i>下载模板
@@ -2360,6 +2379,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var afTableIns = null; // 全部跟进表格实例
     var currentLeadsId = null; // 当前查看的客户ID
     var quickFollowLayerIndex = null;
+    var quickFollowIsFull = false;
     var quickFollowTableId = 'quick-follow-table';
     var quickFollowDraftMap = {};
     var quickFollowStatusMap = {};
@@ -3038,6 +3058,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         if (quickFollowLayerIndex !== null) {
             layer.close(quickFollowLayerIndex);
             quickFollowLayerIndex = null;
+            quickFollowIsFull = false;
+            $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
+            $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
+            $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
         }
 
         resetQuickFollowRuntime();
@@ -3064,13 +3088,43 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 });
                 return false;
             },
-            success: function () {
+            success: function (layero, index) {
                 $('#quick-follow-dialog').show();
                 renderQuickFollowTable();
+                quickFollowLayerIndex = index;
+                quickFollowIsFull = false;
+                $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
+                $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
+                $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+                $('#quick-follow-fullscreen-btn').off('click').click(function() {
+                    if(!quickFollowIsFull){
+                        layer.full(quickFollowLayerIndex);
+                        $(this).html('<i class="layui-icon layui-icon-screen-restore"></i>退出全屏');
+                        quickFollowIsFull = true;
+                        $('#quickFollowFullScreenWrapper').addClass('full-screen-active');
+                        $('#quick-follow-dialog .quick-follow-dialog').addClass('full-screen-mode');
+                    } else {
+                        layer.restore(quickFollowLayerIndex);
+                        $(this).html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
+                        quickFollowIsFull = false;
+                        $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
+                        $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+                    }
+                    setTimeout(function () {
+                        table.resize('quick-follow-table');
+                        if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                            syncQuickFollowFixedRowHeights();
+                        }
+                    }, 300);
+                });
             },
             end: function () {
                 $('#quick-follow-dialog').hide().appendTo('body');
                 quickFollowLayerIndex = null;
+                quickFollowIsFull = false;
+                $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
+                $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
+                $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
                 resetQuickFollowRuntime();
             }
         });
