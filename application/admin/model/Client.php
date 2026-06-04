@@ -40,12 +40,12 @@ class Client extends Model
         $values = [(string)$rankIdInt];
         $rankRow = Db::table('crm_client_rank')
             ->where('id', $rankIdInt)
-            ->field('id,rank_name')
+            ->field('id,rank_code')
             ->find();
-        if (!empty($rankRow) && isset($rankRow['rank_name'])) {
-            $rankName = trim((string)$rankRow['rank_name']);
-            if ($rankName !== '') {
-                $values[] = $rankName;
+        if (!empty($rankRow) && isset($rankRow['rank_code'])) {
+            $rankCode = trim((string)$rankRow['rank_code']);
+            if ($rankCode !== '') {
+                $values[] = $rankCode;
             }
         }
 

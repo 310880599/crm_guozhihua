@@ -239,7 +239,7 @@ class ClientFollowService
         $client['kh_status_name'] = $statusName;
 
         // 客户级别展示名（兼容新老数据）
-        $rankMap = Db::table('crm_client_rank')->column('rank_name', 'id');
+        $rankMap = Db::table('crm_client_rank')->column('rank_code', 'id');
         $rankNameMap = [];
         foreach ($rankMap as $rankId => $rankName) {
             $rankNameMap[(string)$rankId] = trim((string)$rankName);
@@ -354,6 +354,7 @@ class ClientFollowService
 
         $inquiryMap = Db::table('crm_inquiry')->column('inquiry_name', 'id');
         $portMap = Db::table('crm_inquiry_port')->column('port_name', 'id');
+        $rankMap = Db::table('crm_client_rank')->column('rank_code', 'id');
 
         $productIds = array_values(array_unique(array_filter(array_map('intval', array_column($rows, 'product_name')))));
         $productNameMap = [];
@@ -409,6 +410,16 @@ class ClientFollowService
 
             $inquiryId = $row['inquiry_id'] ?? '';
             $portId = $row['port_id'] ?? '';
+            $rawKhRank = trim((string)($row['kh_rank'] ?? ''));
+            if ($rawKhRank === '') {
+                $rankDisplay = '';
+            } elseif (preg_match('/^\d+$/', $rawKhRank)) {
+                $rankDisplay = isset($rankMap[$rawKhRank]) && trim((string)$rankMap[$rawKhRank]) !== ''
+                    ? trim((string)$rankMap[$rawKhRank])
+                    : $rawKhRank;
+            } else {
+                $rankDisplay = $rawKhRank;
+            }
 
             $out[] = [
                 'id' => $id,
@@ -419,6 +430,7 @@ class ClientFollowService
                 'inquiry_name' => isset($inquiryMap[$inquiryId]) ? (string)$inquiryMap[$inquiryId] : (string)$inquiryId,
                 'port_name' => isset($portMap[$portId]) ? (string)$portMap[$portId] : (string)$portId,
                 'kh_rank' => (string)($row['kh_rank'] ?? ''),
+                'kh_rank_name' => $rankDisplay,
                 'last_up_records' => (string)($row['last_up_records'] ?? ''),
                 'last_up_time' => $this->formatLastUpTimeForDisplay($row['last_up_time'] ?? ''),
                 'next_up_time' => $this->formatNextUpTimeForDisplay($row['next_up_time'] ?? ''),
