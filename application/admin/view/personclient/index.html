@@ -3103,7 +3103,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     function renderQuickFollowTable() {
         var tableHeight = Math.max(320, Math.floor($(window).height() * 0.85) - 250);
         var quickFollowCols = [[
-            { field: 'kh_name', title: '客户名称', minWidth: 180, fixed: 'left' },
+            { field: 'kh_name', title: '客户名称', minWidth: 180 },
             { field: 'main_phone', title: '主电话', width: 130 },
             { field: 'aux_phone', title: '辅助电话', width: 130 },
             { field: 'product_name', title: '产品名称', minWidth: 180 },
@@ -3133,7 +3133,6 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 field: 'save_status',
                 title: '保存状态',
                 width: 180,
-                fixed: 'right',
                 templet: function (d) {
                     return getQuickFollowStatusRender(d.id);
                 }
