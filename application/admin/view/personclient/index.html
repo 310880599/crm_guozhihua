@@ -2386,13 +2386,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowLastWidthSnapshot = {};
     var quickFollowDraftMap = {};
     var quickFollowStatusMap = {};
-    var quickFollowDebounceTimerMap = {};
     var quickFollowSavingMap = {};
-    var quickFollowPendingMap = {};
-    var quickFollowLastSavedSignatureMap = {};
     var quickFollowBypassPageGuardOnce = false;
     var quickFollowForceClose = false;
-    var QUICK_FOLLOW_DEBOUNCE_MS = 1500;
+    var QUICK_FOLLOW_DRAFT_PREFIX = 'quick_follow_draft_';
 
     function applyQuickFollowParentFullMode() {
         try {
@@ -2767,9 +2764,38 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         var key = String(leadsId || '');
         if (!key) return { content: '', next_up_time: '' };
         if (!quickFollowDraftMap[key]) {
-            quickFollowDraftMap[key] = { content: '', next_up_time: '' };
+            var saved = null;
+            try {
+                saved = JSON.parse(localStorage.getItem(QUICK_FOLLOW_DRAFT_PREFIX + key) || 'null');
+            } catch (e) {
+                saved = null;
+            }
+            quickFollowDraftMap[key] = {
+                content: normalizeQuickFollowText(saved && saved.content),
+                next_up_time: normalizeQuickFollowText(saved && saved.next_up_time)
+            };
         }
         return quickFollowDraftMap[key];
+    }
+
+    function saveQuickFollowDraftToStorage(leadsId, draft) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        var payload = {
+            content: normalizeQuickFollowText(draft && draft.content),
+            next_up_time: normalizeQuickFollowText(draft && draft.next_up_time)
+        };
+        try {
+            localStorage.setItem(QUICK_FOLLOW_DRAFT_PREFIX + key, JSON.stringify(payload));
+        } catch (e) {}
+    }
+
+    function clearQuickFollowDraftStorage(leadsId) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        try {
+            localStorage.removeItem(QUICK_FOLLOW_DRAFT_PREFIX + key);
+        } catch (e) {}
     }
 
     function setQuickFollowStatus(leadsId, status, extra) {
@@ -2787,24 +2813,24 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         var st = quickFollowStatusMap[key];
 
         if (!st || !st.status) {
-            if (!content) {
+            if (!content && !$.trim(draft.next_up_time || '')) {
                 return '<span class="quick-follow-status quick-follow-status-empty">未填写</span>';
             }
-            return '<span class="quick-follow-status quick-follow-status-waiting">等待保存</span>';
+            return '<span class="quick-follow-status quick-follow-status-saved">已保存草稿</span>';
         }
 
         if (st.status === 'empty') {
             return '<span class="quick-follow-status quick-follow-status-empty">未填写</span>';
         }
-        if (st.status === 'waiting') {
-            return '<span class="quick-follow-status quick-follow-status-waiting">等待保存</span>';
+        if (st.status === 'draft') {
+            return '<span class="quick-follow-status quick-follow-status-saved">已保存草稿</span>';
         }
         if (st.status === 'saving') {
             return '<span class="quick-follow-status quick-follow-status-saving">保存中...</span>';
         }
         if (st.status === 'saved') {
             var t = st.time || '';
-            return '<span class="quick-follow-status quick-follow-status-saved">已保存 ' + quickFollowEscapeHtml(t) + '</span>';
+            return '<span class="quick-follow-status quick-follow-status-saved">跟进记录已保存' + (t ? ' ' + quickFollowEscapeHtml(t) : '') + '</span>';
         }
         if (st.status === 'failed') {
             return '<span class="quick-follow-status quick-follow-status-failed quick-follow-retry" data-leads-id="' + key + '">保存失败，点击重试</span>';
@@ -2816,29 +2842,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     function resetQuickFollowRuntime() {
         quickFollowDraftMap = {};
         quickFollowStatusMap = {};
-        quickFollowDebounceTimerMap = {};
         quickFollowSavingMap = {};
-        quickFollowPendingMap = {};
-        quickFollowLastSavedSignatureMap = {};
         quickFollowBypassPageGuardOnce = false;
         quickFollowForceClose = false;
     }
 
-    function clearQuickFollowDebounce(leadsId) {
-        var key = String(leadsId || '');
-        if (!key) return;
-        if (quickFollowDebounceTimerMap[key]) {
-            clearTimeout(quickFollowDebounceTimerMap[key]);
-            delete quickFollowDebounceTimerMap[key];
-        }
-    }
-
     function normalizeQuickFollowText(s) {
         return $.trim(String(s == null ? '' : s));
-    }
-
-    function getQuickFollowSaveSignature(content, nextUpTime) {
-        return normalizeQuickFollowText(content) + '||' + normalizeQuickFollowText(nextUpTime);
     }
 
     function buildNowDateTimeText() {
@@ -2901,9 +2911,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         if (!id) return;
                         var d = getQuickFollowDraft(id);
                         d.next_up_time = $.trim(value || '');
-                        if ($.trim(d.content || '') !== '') {
-                            setQuickFollowStatus(id, 'waiting');
-                            queueQuickFollowSave(id);
+                        saveQuickFollowDraftToStorage(id, d);
+                        if ($.trim(d.content || '') !== '' || $.trim(d.next_up_time || '') !== '') {
+                            setQuickFollowStatus(id, 'draft');
+                        } else {
+                            setQuickFollowStatus(id, 'empty');
                         }
                     }
                 });
@@ -2921,13 +2933,17 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     function hasQuickFollowPendingChange() {
-        if (Object.keys(quickFollowDebounceTimerMap).length > 0) {
-            return true;
-        }
         var statusKeys = Object.keys(quickFollowStatusMap);
         for (var i = 0; i < statusKeys.length; i++) {
             var st = quickFollowStatusMap[statusKeys[i]] || {};
-            if (st.status === 'waiting' || st.status === 'saving') {
+            if (st.status === 'draft' || st.status === 'saving' || st.status === 'failed') {
+                return true;
+            }
+        }
+        var draftKeys = Object.keys(quickFollowDraftMap);
+        for (var j = 0; j < draftKeys.length; j++) {
+            var draft = quickFollowDraftMap[draftKeys[j]] || {};
+            if (normalizeQuickFollowText(draft.content) !== '' || normalizeQuickFollowText(draft.next_up_time) !== '') {
                 return true;
             }
         }
@@ -2939,7 +2955,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             if (typeof onConfirm === 'function') onConfirm();
             return;
         }
-        layer.confirm('存在等待保存或保存中的内容，确认继续吗？', { icon: 0, title: '提示' }, function (idx) {
+        layer.confirm('存在未提交草稿，确认继续吗？', { icon: 0, title: '提示' }, function (idx) {
             layer.close(idx);
             if (typeof onConfirm === 'function') onConfirm();
         });
@@ -2958,41 +2974,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         var nextText = normalizeQuickFollowText(savedNextUpTime);
         var $nextInput = $tr.find('.quick-follow-next-input[data-leads-id="' + key + '"]');
-        if ($nextInput.length && nextText !== '') {
+        if ($nextInput.length) {
             $nextInput.val(nextText);
         }
-    }
-
-    function shouldSkipQuickFollowSaveByRule(leadsId, content, nextUpTime) {
-        var key = String(leadsId || '');
-        var normalizedContent = normalizeQuickFollowText(content);
-        var normalizedNext = normalizeQuickFollowText(nextUpTime);
-
-        if (!normalizedContent) {
-            setQuickFollowStatus(key, 'empty');
-            return true;
-        }
-        if (normalizedContent.length < 2) {
-            setQuickFollowStatus(key, 'waiting');
-            layer.msg('内容太短', { icon: 0, time: 1200 });
-            return true;
-        }
-        var sig = getQuickFollowSaveSignature(normalizedContent, normalizedNext);
-        if ((quickFollowLastSavedSignatureMap[key] || '') === sig) {
-            setQuickFollowStatus(key, 'saved', { time: buildNowClockText() });
-            return true;
-        }
-        return false;
-    }
-
-    function queueQuickFollowSave(leadsId) {
-        var key = String(leadsId || '');
-        if (!key) return;
-        clearQuickFollowDebounce(key);
-        quickFollowDebounceTimerMap[key] = setTimeout(function () {
-            delete quickFollowDebounceTimerMap[key];
-            autoSaveQuickFollowRow(key);
-        }, QUICK_FOLLOW_DEBOUNCE_MS);
     }
 
     function applyQuickFollowWidthsToCols(cols, widths) {
@@ -3117,7 +3101,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 minWidth: 260,
                 templet: function (d) {
                     var draft = getQuickFollowDraft(d.id);
-                    return '<textarea class="layui-textarea quick-follow-content-input" data-leads-id="' + quickFollowEscapeHtml(d.id) + '" placeholder="请输入本次跟进内容">' + quickFollowEscapeHtml(draft.content || '') + '</textarea>';
+                    var leadsId = quickFollowEscapeHtml(d.id);
+                    return '<textarea class="layui-textarea quick-follow-content-input" data-leads-id="' + leadsId + '" placeholder="请输入本次跟进内容">' + quickFollowEscapeHtml(draft.content || '') + '</textarea>' +
+                        '<div style="margin-top:6px;">' +
+                        '<button type="button" class="layui-btn layui-btn-xs layui-btn-normal quick-follow-save-btn" data-leads-id="' + leadsId + '">保存跟进</button>' +
+                        '</div>';
                 }
             },
             {
@@ -3162,25 +3150,30 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     }
 
-    function autoSaveQuickFollowRow(leadsId) {
+    function submitQuickFollowRow(leadsId) {
         var key = String(leadsId || '');
         if (!key) return;
-        clearQuickFollowDebounce(key);
         var draft = getQuickFollowDraft(key);
         draft.content = normalizeQuickFollowText(draft.content || '');
         draft.next_up_time = normalizeQuickFollowText(draft.next_up_time || '');
 
-        if (shouldSkipQuickFollowSaveByRule(key, draft.content, draft.next_up_time)) {
+        if (quickFollowSavingMap[key]) {
+            layer.msg('正在保存中，请稍候', { icon: 0, time: 1000 });
             return;
         }
 
-        if (quickFollowSavingMap[key]) {
-            quickFollowPendingMap[key] = true;
+        if (!draft.content) {
+            setQuickFollowStatus(key, 'empty');
+            layer.msg('请输入本次跟进内容', { icon: 0, time: 1200 });
+            return;
+        }
+        if (draft.content.length < 2) {
+            setQuickFollowStatus(key, 'draft');
+            layer.msg('内容太短', { icon: 0, time: 1200 });
             return;
         }
 
         quickFollowSavingMap[key] = true;
-        quickFollowPendingMap[key] = false;
         setQuickFollowStatus(key, 'saving');
 
         $.ajax({
@@ -3195,18 +3188,20 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             success: function (res) {
                 if (res && parseInt(res.code, 10) === 0) {
                     var savedNextTime = normalizeQuickFollowText((res.data && res.data.next_up_time) || draft.next_up_time);
-                    quickFollowLastSavedSignatureMap[key] = getQuickFollowSaveSignature(draft.content, draft.next_up_time);
                     updateQuickFollowRowAfterSuccess(key, draft.content, savedNextTime);
+                    clearQuickFollowDraftStorage(key);
                     draft.content = '';
-                    if (savedNextTime !== '') {
-                        draft.next_up_time = savedNextTime;
-                    }
+                    draft.next_up_time = '';
                     var $textarea = $('#quick-follow-dialog .quick-follow-content-input[data-leads-id="' + key + '"]');
                     if ($textarea.length) {
                         $textarea.val('');
                     }
+                    var $nextInput = $('#quick-follow-dialog .quick-follow-next-input[data-leads-id="' + key + '"]');
+                    if ($nextInput.length) {
+                        $nextInput.val('');
+                    }
                     setQuickFollowStatus(key, 'saved', { time: buildNowClockText() });
-                    layer.msg('保存成功', { icon: 1, time: 900 });
+                    layer.msg('跟进记录已保存', { icon: 1, time: 1000 });
                 } else {
                     setQuickFollowStatus(key, 'failed', { msg: (res && res.msg) || '保存失败' });
                     layer.msg((res && res.msg) || '保存失败', { icon: 2, time: 1500 });
@@ -3218,10 +3213,6 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             },
             complete: function () {
                 quickFollowSavingMap[key] = false;
-                if (quickFollowPendingMap[key]) {
-                    quickFollowPendingMap[key] = false;
-                    queueQuickFollowSave(key);
-                }
             }
         });
     }
@@ -3336,12 +3327,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         if (!leadsId) return;
         var draft = getQuickFollowDraft(leadsId);
         draft.content = $(this).val();
-        if (normalizeQuickFollowText(draft.content) === '') {
-            clearQuickFollowDebounce(leadsId);
+        saveQuickFollowDraftToStorage(leadsId, draft);
+        if (normalizeQuickFollowText(draft.content) === '' && normalizeQuickFollowText(draft.next_up_time) === '') {
             setQuickFollowStatus(leadsId, 'empty');
         } else {
-            setQuickFollowStatus(leadsId, 'waiting');
-            queueQuickFollowSave(leadsId);
+            setQuickFollowStatus(leadsId, 'draft');
         }
     });
 
@@ -3350,10 +3340,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         if (!leadsId) return;
         var draft = getQuickFollowDraft(leadsId);
         draft.content = $(this).val();
-        if (normalizeQuickFollowText(draft.content) !== '') {
-            clearQuickFollowDebounce(leadsId);
+        saveQuickFollowDraftToStorage(leadsId, draft);
+        if (normalizeQuickFollowText(draft.content) === '' && normalizeQuickFollowText(draft.next_up_time) === '') {
+            setQuickFollowStatus(leadsId, 'empty');
+        } else {
+            setQuickFollowStatus(leadsId, 'draft');
         }
-        autoSaveQuickFollowRow(leadsId);
     });
 
     $(document).on('blur', '.quick-follow-next-input', function () {
@@ -3361,17 +3353,24 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         if (!leadsId) return;
         var draft = getQuickFollowDraft(leadsId);
         draft.next_up_time = normalizeQuickFollowText($(this).val() || '');
-        if (normalizeQuickFollowText(draft.content || '') !== '') {
-            setQuickFollowStatus(leadsId, 'waiting');
-            queueQuickFollowSave(leadsId);
+        saveQuickFollowDraftToStorage(leadsId, draft);
+        if (normalizeQuickFollowText(draft.content) === '' && normalizeQuickFollowText(draft.next_up_time) === '') {
+            setQuickFollowStatus(leadsId, 'empty');
+        } else {
+            setQuickFollowStatus(leadsId, 'draft');
         }
+    });
+
+    $(document).on('click', '.quick-follow-save-btn', function () {
+        var leadsId = String($(this).data('leads-id') || '');
+        if (!leadsId) return;
+        submitQuickFollowRow(leadsId);
     });
 
     $(document).on('click', '.quick-follow-retry', function () {
         var leadsId = String($(this).data('leads-id') || '');
         if (!leadsId) return;
-        clearQuickFollowDebounce(leadsId);
-        autoSaveQuickFollowRow(leadsId);
+        submitQuickFollowRow(leadsId);
     });
 
     $(document).on('click', '#quick-follow-dialog .layui-table-page .layui-laypage a, #quick-follow-dialog .layui-table-page .layui-laypage button', function (e) {
