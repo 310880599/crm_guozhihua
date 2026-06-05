@@ -4882,7 +4882,26 @@ class Client extends Common
         }
         $followService = new ClientFollowService();
         $client = $followService->buildFollowClientDetailData($client, $clientId);
-        $comments = $followService->getFollowComments($clientId);
+        $comments = Db::table('crm_comment')
+            ->alias('c')
+            ->leftJoin('admin a', 'a.admin_id = c.user_id')
+            ->where([
+                'c.leads_id' => (int)$clientId,
+                'c.is_deleted' => 0
+            ])
+            ->field('c.id,c.leads_id,c.user_id,c.reply_msg,c.create_date,a.username as username')
+            ->order('c.create_date desc')
+            ->select();
+        foreach ($comments as &$comment) {
+            $ts = (int)($comment['create_date'] ?? 0);
+            if ($ts > 0) {
+                $comment['create_date'] = date('Y-m-d H:i:s', $ts);
+            } else {
+                $comment['create_date'] = '';
+            }
+            $comment['username'] = trim((string)($comment['username'] ?? ''));
+        }
+        unset($comment);
 
         return json([
             'code' => 0,

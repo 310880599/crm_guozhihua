@@ -1184,6 +1184,83 @@
     .quick-follow-status-saving { color: #1e9fff; }
     .quick-follow-status-saved { color: #16b777; }
     .quick-follow-status-failed { color: #ff5722; cursor: pointer; text-decoration: underline; }
+    .batch-follow-history-hover {
+        display: inline-block;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+        color: #333;
+    }
+    .quick-follow-history-tooltip {
+        position: fixed;
+        z-index: 2000000000;
+        width: 420px;
+        max-width: calc(100vw - 24px);
+        max-height: none;
+        overflow: visible;
+        background: #fff;
+        border: 1px solid #e5e6eb;
+        border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+        padding: 12px;
+        box-sizing: border-box;
+        color: #333;
+        line-height: 1.55;
+    }
+    .quick-follow-history-tooltip .qf-history-item {
+        padding: 0 0 10px;
+        margin: 0 0 10px;
+        border-bottom: 1px dashed #efefef;
+    }
+    .quick-follow-history-tooltip .qf-history-item:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    .quick-follow-history-tooltip .qf-history-header {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        word-break: break-word;
+        white-space: normal;
+    }
+    .quick-follow-history-tooltip .qf-history-time {
+        flex: 1;
+        min-width: 0;
+    }
+    .quick-follow-history-tooltip .qf-history-user {
+        flex: 0 0 auto;
+        color: #555;
+    }
+    .quick-follow-history-tooltip .qf-history-content {
+        font-size: 13px;
+        color: #333;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+    }
+    .quick-follow-history-tooltip .qf-history-empty,
+    .quick-follow-history-tooltip .qf-history-loading {
+        color: #999;
+        font-size: 13px;
+    }
+    .quick-follow-history-tooltip .qf-history-more {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid #f2f2f2;
+        color: #999;
+        font-size: 12px;
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域：高级查询（默认折叠，状态见 localStorage） -->
@@ -2390,6 +2467,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowBypassPageGuardOnce = false;
     var quickFollowForceClose = false;
     var QUICK_FOLLOW_DRAFT_PREFIX = 'quick_follow_draft_';
+    var followHistoryCache = {};
+    var followHistoryRequestMap = {};
+    var followHistoryHoverTimer = null;
+    var followHistoryHoverTarget = null;
+    var followHistoryMousePos = { x: 0, y: 0 };
+    var FOLLOW_HISTORY_HOVER_DELAY = 300;
+    var FOLLOW_HISTORY_MAX_COUNT = 10;
 
     function applyQuickFollowParentFullMode() {
         try {
@@ -2759,6 +2843,237 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
+    function escapeHtml(text) {
+        return quickFollowEscapeHtml(text);
+    }
+
+    function sanitizeAvatarSrc(src) {
+        var val = $.trim(String(src || ''));
+        if (!val) return '/static/admin/images/0.jpg';
+        if (/^(https?:)?\/\//i.test(val) || /^\//.test(val)) {
+            return val.replace(/"/g, '%22').replace(/'/g, '%27');
+        }
+        return '/static/admin/images/0.jpg';
+    }
+
+    function clearFollowHistoryCache(leadsId) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        delete followHistoryCache[key];
+        delete followHistoryRequestMap[key];
+    }
+
+    function buildQuickFollowLastRecordCell(row) {
+        var leadsId = String((row && (row.id || row.leads_id)) || '');
+        var latest = $.trim(String((row && row.last_up_records) == null ? '' : row.last_up_records));
+        var text = latest || '暂无跟进记录';
+        return '<span class="batch-follow-history-hover" data-leads-id="' + quickFollowEscapeHtml(leadsId) + '">' + quickFollowEscapeHtml(text) + '</span>';
+    }
+
+    function parseFollowHistoryTimestamp(timeText) {
+        var text = $.trim(String(timeText || ''));
+        if (!text) return 0;
+        if (/^\d{10,13}$/.test(text)) {
+            var num = parseInt(text, 10);
+            if (text.length === 13) {
+                return num;
+            }
+            return num * 1000;
+        }
+        var ts = Date.parse(text.replace(/-/g, '/'));
+        return isNaN(ts) ? 0 : ts;
+    }
+
+    function padFollowTimeNum(num) {
+        return String(num).padStart(2, '0');
+    }
+
+    function formatFollowHistoryTime(rawTime) {
+        var text = $.trim(String(rawTime == null ? '' : rawTime));
+        if (!text) return '';
+        var ts = parseFollowHistoryTimestamp(text);
+        if (!ts && /年|月|日/.test(text)) {
+            var normalizedText = text.replace(/年/g, '-').replace(/月/g, '-').replace(/日/g, ' ').replace(/\s+/g, ' ').trim();
+            ts = parseFollowHistoryTimestamp(normalizedText);
+        }
+        if (!ts) {
+            return text;
+        }
+        var d = new Date(ts);
+        if (isNaN(d.getTime())) {
+            return text;
+        }
+        var y = d.getFullYear();
+        var m = padFollowTimeNum(d.getMonth() + 1);
+        var day = padFollowTimeNum(d.getDate());
+        var hh = padFollowTimeNum(d.getHours());
+        var mm = padFollowTimeNum(d.getMinutes());
+        var ss = padFollowTimeNum(d.getSeconds());
+        return y + '-' + m + '-' + day + ' ' + hh + ':' + mm + ':' + ss;
+    }
+
+    function normalizeFollowHistoryRecords(records) {
+        var list = [];
+        $.each(records || [], function (_, item) {
+            item = item || {};
+            var timeVal = item.time || item.create_date || item.created_at || item.create_time || item.add_time || '';
+            list.push({
+                time: formatFollowHistoryTime(timeVal),
+                user: item.user || item.username || item.user_name || item.realname || item.oper_user || item.create_user || '系统',
+                content: item.content || item.reply_msg || item.comment || '',
+                avatar: item.avatar || ''
+            });
+        });
+        list.sort(function (a, b) {
+            return parseFollowHistoryTimestamp(b.time) - parseFollowHistoryTimestamp(a.time);
+        });
+        return list;
+    }
+
+    function ensureFollowHistoryTooltipEl() {
+        var $tip = $('#quick-follow-history-tooltip');
+        if (!$tip.length) {
+            $('body').append('<div id="quick-follow-history-tooltip" class="quick-follow-history-tooltip" style="display:none;"></div>');
+            $tip = $('#quick-follow-history-tooltip');
+        }
+        return $tip;
+    }
+
+    function updateFollowHistoryTooltipPosition(target) {
+        var $tip = ensureFollowHistoryTooltipEl();
+        if (!$tip.is(':visible')) return;
+        var margin = 12;
+        var offset = 14;
+        var viewportW = window.innerWidth || document.documentElement.clientWidth;
+        var viewportH = window.innerHeight || document.documentElement.clientHeight;
+        var tipW = $tip.outerWidth();
+        var tipH = $tip.outerHeight();
+        var x = followHistoryMousePos.x || 0;
+        var y = followHistoryMousePos.y || 0;
+
+        if ((!x || !y) && target && target.getBoundingClientRect) {
+            var rect = target.getBoundingClientRect();
+            x = rect.left + 8;
+            y = rect.bottom;
+        }
+
+        var left = x + offset;
+        var top = y + offset;
+        if (left + tipW > viewportW - margin) {
+            left = x - tipW - offset;
+        }
+        if (left < margin) {
+            left = Math.max(margin, viewportW - tipW - margin);
+        }
+        if (top + tipH > viewportH - margin) {
+            top = y - tipH - offset;
+        }
+        if (top < margin) {
+            top = Math.max(margin, viewportH - tipH - margin);
+        }
+        $tip.css({ left: left + 'px', top: top + 'px' });
+    }
+
+    function showFollowHistoryTooltip(target, html) {
+        var $tip = ensureFollowHistoryTooltipEl();
+        $tip.html(html || '').show();
+        updateFollowHistoryTooltipPosition(target);
+    }
+
+    function hideFollowHistoryTooltip() {
+        clearTimeout(followHistoryHoverTimer);
+        followHistoryHoverTimer = null;
+        followHistoryHoverTarget = null;
+        $('#quick-follow-history-tooltip').hide().empty();
+    }
+
+    function getFollowHistory(leadsId) {
+        var key = String(leadsId || '');
+        var cached = followHistoryCache[key];
+        if (!key) {
+            return $.Deferred().resolve([]).promise();
+        }
+        if (cached) {
+            return $.Deferred().resolve(cached).promise();
+        }
+        if (followHistoryRequestMap[key]) {
+            return followHistoryRequestMap[key];
+        }
+        var dfd = $.Deferred();
+        followHistoryRequestMap[key] = dfd.promise();
+        $.ajax({
+            url: "{:url('Client/getClientDetailAndComments')}",
+            method: 'GET',
+            data: { id: key, leads_id: key },
+            success: function (res) {
+                if (res && parseInt(res.code, 10) === 0) {
+                    var payload = res.data || {};
+                    var comments = payload.comments || payload.comment_list || payload.commentList || [];
+                    var normalized = normalizeFollowHistoryRecords(comments);
+                    followHistoryCache[key] = normalized;
+                    dfd.resolve(normalized);
+                    return;
+                }
+                dfd.resolve([]);
+            },
+            error: function () {
+                dfd.reject();
+            },
+            complete: function () {
+                delete followHistoryRequestMap[key];
+            }
+        });
+        return followHistoryRequestMap[key];
+    }
+
+    function bindQuickFollowHistoryHover() {
+        var selector = '#quick-follow-dialog .batch-follow-history-hover';
+        $(document)
+            .off('mouseenter.quickFollowHistory mouseleave.quickFollowHistory mousemove.quickFollowHistory', selector)
+            .on('mouseenter.quickFollowHistory', selector, function (e) {
+                var target = this;
+                var leadsId = String($(target).data('leads-id') || '');
+                if (!leadsId) return;
+                followHistoryMousePos.x = e.clientX || 0;
+                followHistoryMousePos.y = e.clientY || 0;
+                followHistoryHoverTarget = target;
+                clearTimeout(followHistoryHoverTimer);
+                followHistoryHoverTimer = setTimeout(function () {
+                    if (followHistoryHoverTarget !== target) return;
+                    showFollowHistoryTooltip(target, '<div class="qf-history-loading">加载中...</div>');
+                    getFollowHistory(leadsId).done(function (records) {
+                        if (followHistoryHoverTarget !== target) return;
+                        showFollowHistoryTooltip(target, renderFollowHistory(records, { forTooltip: true }));
+                    }).fail(function () {
+                        if (followHistoryHoverTarget !== target) return;
+                        showFollowHistoryTooltip(target, '<div class="qf-history-empty">获取跟进记录失败，请稍后重试</div>');
+                    });
+                }, FOLLOW_HISTORY_HOVER_DELAY);
+            })
+            .on('mousemove.quickFollowHistory', selector, function (e) {
+                if (followHistoryHoverTarget !== this) return;
+                followHistoryMousePos.x = e.clientX || 0;
+                followHistoryMousePos.y = e.clientY || 0;
+                updateFollowHistoryTooltipPosition(this);
+            })
+            .on('mouseleave.quickFollowHistory', selector, function () {
+                if (followHistoryHoverTarget === this) {
+                    hideFollowHistoryTooltip();
+                }
+            });
+
+        var $view = $('#quick-follow-table').next('.layui-table-view');
+        if ($view.length) {
+            $view.find('.layui-table-main, .layui-table-fixed-r .layui-table-body, .layui-table-fixed-l .layui-table-body')
+                .off('scroll.quickFollowHistory')
+                .on('scroll.quickFollowHistory', function () {
+                    hideFollowHistoryTooltip();
+                });
+        }
+    }
+    $(window).off('resize.quickFollowHistory').on('resize.quickFollowHistory', function () {
+        hideFollowHistoryTooltip();
+    });
 
     function getQuickFollowDraft(leadsId) {
         var key = String(leadsId || '');
@@ -2843,8 +3158,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         quickFollowDraftMap = {};
         quickFollowStatusMap = {};
         quickFollowSavingMap = {};
+        followHistoryCache = {};
+        followHistoryRequestMap = {};
         quickFollowBypassPageGuardOnce = false;
         quickFollowForceClose = false;
+        hideFollowHistoryTooltip();
     }
 
     function normalizeQuickFollowText(s) {
@@ -2969,7 +3287,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         var $tr = $textarea.closest('tr');
         var nowText = buildNowDateTimeText();
 
-        $tr.find('td[data-field="last_up_records"] .layui-table-cell').text(savedContent);
+        $tr.find('td[data-field="last_up_records"] .layui-table-cell').html(buildQuickFollowLastRecordCell({
+            id: key,
+            leads_id: key,
+            last_up_records: savedContent
+        }));
         $tr.find('td[data-field="last_up_time"] .layui-table-cell').text(nowText);
 
         var nextText = normalizeQuickFollowText(savedNextUpTime);
@@ -3093,7 +3415,14 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             { field: 'product_name', title: '产品名称', minWidth: 180 },
             { field: 'inquiry_name', title: '所属渠道', width: 130 },
             { field: 'kh_rank_name', title: '客户级别', width: 110, templet: function (d) { return d.kh_rank_name || ''; } },
-            { field: 'last_up_records', title: '最新跟进', minWidth: 220 },
+            {
+                field: 'last_up_records',
+                title: '最新跟进',
+                minWidth: 220,
+                templet: function (d) {
+                    return buildQuickFollowLastRecordCell(d);
+                }
+            },
             { field: 'last_up_time', title: '最新跟进时间', width: 180 },
             {
                 field: 'follow_content',
@@ -3146,6 +3475,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             done: function () {
                 bindQuickFollowResizeSave();
                 bindQuickFollowRowWidgets();
+                bindQuickFollowHistoryHover();
             }
         });
     }
@@ -3189,6 +3519,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 if (res && parseInt(res.code, 10) === 0) {
                     var savedNextTime = normalizeQuickFollowText((res.data && res.data.next_up_time) || draft.next_up_time);
                     updateQuickFollowRowAfterSuccess(key, draft.content, savedNextTime);
+                    clearFollowHistoryCache(key);
                     clearQuickFollowDraftStorage(key);
                     draft.content = '';
                     draft.next_up_time = '';
@@ -3296,6 +3627,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
                 $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
                 resetQuickFollowRuntime();
+                $(document).off('mouseenter.quickFollowHistory mouseleave.quickFollowHistory mousemove.quickFollowHistory', '#quick-follow-dialog .batch-follow-history-hover');
             }
         });
     }
@@ -3654,23 +3986,48 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             .text(followSubmitting ? '提交中...' : followSubmitDefaultText);
     }
 
-    function renderFollowHistory(comments) {
-        var html = '';
-        if (comments.length > 0) {
-            $.each(comments, function(index, item) {
-                html += '<div class="timeline-item">' +
-                    '<div class="timeline-title">' + (item.create_date || '') + '</div>' +
+    function renderFollowHistory(comments, options) {
+        options = options || {};
+        var normalized = normalizeFollowHistoryRecords(comments || []);
+        if (options.forTooltip) {
+            if (!normalized.length) {
+                return '<div class="qf-history-empty">暂无跟进记录</div>';
+            }
+            var list = normalized.slice(0, FOLLOW_HISTORY_MAX_COUNT);
+            var html = '';
+            $.each(list, function (_, item) {
+                html += '<div class="qf-history-item">' +
+                    '<div class="qf-history-header">' +
+                    '<span class="qf-history-time">' + escapeHtml(item.time || '--') + '</span>' +
+                    '<span class="qf-history-user">' + escapeHtml(item.user || '系统') + '</span>' +
+                    '</div>' +
+                    '<div class="qf-history-content">' + escapeHtml(item.content || '') + '</div>' +
+                    '</div>';
+            });
+            if (normalized.length > FOLLOW_HISTORY_MAX_COUNT) {
+                html += '<div class="qf-history-more">仅显示最近10条，更多请查看全部跟进记录</div>';
+            }
+            return html;
+        }
+
+        var timelineHtml = '';
+        if (normalized.length > 0) {
+            $.each(normalized, function(index, item) {
+                var avatar = sanitizeAvatarSrc(item.avatar);
+                timelineHtml += '<div class="timeline-item">' +
+                    '<div class="timeline-title">' + escapeHtml(item.time || '') + '</div>' +
                     '<div class="timeline-content">' +
-                    '<img src="' + (item.avatar || '/static/admin/images/0.jpg') + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
-                    '<strong>' + (item.username || '系统') + '：</strong>' +
-                    (item.reply_msg || '') +
+                    '<img src="' + avatar + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
+                    '<strong>' + escapeHtml(item.user || '系统') + '：</strong>' +
+                    escapeHtml(item.content || '') +
                     '</div>' +
                     '</div>';
             });
         } else {
-            html = '<p>暂无跟进记录</p>';
+            timelineHtml = '<p>暂无跟进记录</p>';
         }
-        $('#follow-history-list').html(html);
+        $('#follow-history-list').html(timelineHtml);
+        return timelineHtml;
     }
 
     function renderFollowDialogData(clientData, comments, options) {
@@ -3830,6 +4187,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                     layer.msg(res.msg || '保存成功', {icon: 1});
                     $('#reply_msg').val('');
                     initFollowNextUpTimeDefault('');
+                    clearFollowHistoryCache(leadsId);
 
                     requestFollowDialogData(leadsId, {
                         showLoading: false,
