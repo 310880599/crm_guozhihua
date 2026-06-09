@@ -186,7 +186,19 @@ class ProductCategory extends Common
             return json(['code' => 0, 'msg' => '无权限或记录不存在']);
         }
 
-        // 使用事务进行软删除（供应商 + 级联产品）
+        // 删除前校验：供应商下存在正常产品则禁止删除
+        $productCount = \think\Db::name('crm_products')
+            ->where('category_id', $id)
+            ->where('is_deleted', 0)
+            ->count();
+        if ($productCount > 0) {
+            return json([
+                'code' => 0,
+                'msg'  => '该供应商下还有产品，不能直接删除。请先删除或转移该供应商下的产品后再删除供应商。'
+            ]);
+        }
+
+        // 使用事务进行软删除（仅供应商）
         \think\Db::startTrans();
         try {
             $current_time = time();
@@ -209,36 +221,9 @@ class ProductCategory extends Common
                 throw new \Exception('软删除供应商失败');
             }
 
-            // 2. 查询并逐条级联软删除该供应商下产品，保证每条记录名唯一
-            $products = \think\Db::name('crm_products')
-                ->where('category_id', $id)
-                ->where('is_deleted', 0)
-                ->field('id,product_name')
-                ->select();
-
-            $deletedProducts = 0;
-            foreach ($products as $product) {
-                $aff2 = \think\Db::name('crm_products')
-                    ->where('id', $product['id'])
-                    ->where('is_deleted', 0)
-                    ->update([
-                        'product_name' => $product['product_name'] . '_DEL_' . $product['id'],
-                        'is_deleted' => 1,
-                        'deleted_time' => $deleted_time,
-                        'deleted_by' => $current_aid,
-                        'edit_time' => $current_time
-                    ]);
-                if ($aff2 === false) {
-                    throw new \Exception('级联软删除产品失败，产品ID：' . $product['id']);
-                }
-                if ($aff2 > 0) {
-                    $deletedProducts += $aff2;
-                }
-            }
-
             // 提交事务
             \think\Db::commit();
-            return json(['code' => 1, 'msg' => '删除成功', 'data' => ['deleted_products' => $deletedProducts]]);
+            return json(['code' => 1, 'msg' => '删除成功']);
         } catch (\Throwable $e) {
             // 回滚事务
             \think\Db::rollback();
@@ -279,6 +264,19 @@ class ProductCategory extends Common
                 return json(['code' => -200, 'msg' => '无可删除的记录（仅能删除本人提交的记录）']);
             }
 
+            // 删除前校验：选中的供应商中，任意存在正常产品则整批禁止删除
+            $productRows = \think\Db::name('crm_products')
+                ->whereIn('category_id', $allowedIds)
+                ->where('is_deleted', 0)
+                ->field('category_id, product_name')
+                ->select();
+            if (!empty($productRows)) {
+                return json([
+                    'code' => -200,
+                    'msg'  => '选中的供应商中存在正常产品，不能直接删除。请先删除或转移这些供应商下的产品后再删除供应商。'
+                ]);
+            }
+
             // 开启事务
             \think\Db::startTrans();
 
@@ -286,7 +284,6 @@ class ProductCategory extends Common
             $current_aid = session('aid') ?: 0;
             $deleted_time = date('Y-m-d H:i:s');
             $deletedSuppliers = 0;
-            $deletedProducts = 0;
 
             // 2) 逐条软删除供应商（改名+删除）
             foreach ($allowedMap as $supplierId => $categoryName) {
@@ -308,32 +305,6 @@ class ProductCategory extends Common
                 }
             }
 
-            // 3) 查询并逐条级联软删除产品（改名+删除）
-            $products = \think\Db::name('crm_products')
-                ->whereIn('category_id', $allowedIds)
-                ->where('is_deleted', 0)
-                ->field('id,product_name')
-                ->select();
-
-            foreach ($products as $product) {
-                $affProduct = \think\Db::name('crm_products')
-                    ->where('id', $product['id'])
-                    ->where('is_deleted', 0)
-                    ->update([
-                        'product_name' => $product['product_name'] . '_DEL_' . $product['id'],
-                        'is_deleted' => 1,
-                        'deleted_time' => $deleted_time,
-                        'deleted_by' => $current_aid,
-                        'edit_time' => $current_time
-                    ]);
-                if ($affProduct === false) {
-                    throw new \Exception('级联软删除产品失败，产品ID：' . $product['id']);
-                }
-                if ($affProduct > 0) {
-                    $deletedProducts += $affProduct;
-                }
-            }
-
             // 提交事务
             \think\Db::commit();
 
@@ -341,7 +312,7 @@ class ProductCategory extends Common
             $skippedPermission = count($ids) - count($allowedIds);
 
             $parts = [];
-            $parts[] = '删除成功：供应商' . $deletedSuppliers . '条，产品' . $deletedProducts . '条';
+            $parts[] = '删除成功：供应商' . $deletedSuppliers . '条';
             if ($skippedPermission > 0) {
                 $parts[] = '跳过(无权限/不存在)：' . $skippedPermission . ' 条';
             }
@@ -351,7 +322,6 @@ class ProductCategory extends Common
                 'msg'  => implode('，', $parts),
                 'data' => [
                     'deleted_suppliers' => (int)$deletedSuppliers,
-                    'deleted_products'  => (int)$deletedProducts,
                     'skipped_permission' => $skippedPermission,
                 ],
             ]);
