@@ -51,7 +51,6 @@ class ProductCategory extends Common
     public function add()
     {
         if (request()->isPost()) {
-            // ★软删除改造 start
             $category_name = Request::param('category_name');
             $current_admin = Admin::getMyInfo();
             if (empty($category_name)) {
@@ -69,31 +68,6 @@ class ProductCategory extends Common
                 return $this->result([], 500, '供应商已存在');
             }
 
-            // 检查是否存在同名但已删除的记录（is_deleted=1）
-            $deletedExists = Db::name('crm_product_category')
-                ->where('category_name', $category_name)
-                ->where('is_deleted', 1)
-                ->where([$this->getOrgWhere($current_admin['org'])])
-                ->find();
-
-            if ($deletedExists) {
-                // 恢复已删除的记录
-                $aff = Db::name('crm_product_category')
-                    ->where('id', $deletedExists['id'])
-                    ->update([
-                        'is_deleted' => 0,
-                        'deleted_time' => null,
-                        'deleted_by' => null,
-                        'edit_time' => time(),
-                        'submit_person' => $current_admin['username']
-                    ]);
-                if ($aff) {
-                    return $this->result([], 200, '操作成功（已恢复）');
-                } else {
-                    return $this->result([], 500, '恢复失败');
-                }
-            }
-
             // 插入新记录
             $data = [
                 'category_name' => $category_name,
@@ -105,7 +79,6 @@ class ProductCategory extends Common
             ];
             Db::name('crm_product_category')->insert($data);
             return $this->result([], 200, '操作成功');
-            // ★软删除改造 end
         }
         return $this->fetch();
     }
@@ -195,7 +168,6 @@ class ProductCategory extends Common
 
     public function del()
     {
-        // ★软删除改造 start
         $id = (int)\think\facade\Request::param('id');
         if ($id <= 0) {
             return json(['code' => 0, 'msg' => '参数错误']);
@@ -219,42 +191,59 @@ class ProductCategory extends Common
         try {
             $current_time = time();
             $current_aid = session('aid') ?: 0;
+            $deleted_time = date('Y-m-d H:i:s');
 
             // 1. 软删除供应商
             $aff1 = \think\Db::name('crm_product_category')
                 ->where('id', $id)
                 ->where('is_deleted', 0)
                 ->update([
+                    'category_name' => $row['category_name'] . '_DEL_' . $id,
                     'is_deleted' => 1,
-                    'deleted_time' => date('Y-m-d H:i:s'),
+                    'deleted_time' => $deleted_time,
                     'deleted_by' => $current_aid,
                     'edit_time' => $current_time
                 ]);
 
-            if ($aff1 === false) {
+            if ($aff1 !== 1) {
                 throw new \Exception('软删除供应商失败');
             }
 
-            // 2. 级联软删除该供应商下的所有产品（只软删除 is_deleted=0 的产品）
-            $aff2 = \think\Db::name('crm_products')
+            // 2. 查询并逐条级联软删除该供应商下产品，保证每条记录名唯一
+            $products = \think\Db::name('crm_products')
                 ->where('category_id', $id)
                 ->where('is_deleted', 0)
-                ->update([
-                    'is_deleted' => 1,
-                    'deleted_time' => date('Y-m-d H:i:s'),
-                    'deleted_by' => $current_aid,
-                    'edit_time' => $current_time
-                ]);
+                ->field('id,product_name')
+                ->select();
+
+            $deletedProducts = 0;
+            foreach ($products as $product) {
+                $aff2 = \think\Db::name('crm_products')
+                    ->where('id', $product['id'])
+                    ->where('is_deleted', 0)
+                    ->update([
+                        'product_name' => $product['product_name'] . '_DEL_' . $product['id'],
+                        'is_deleted' => 1,
+                        'deleted_time' => $deleted_time,
+                        'deleted_by' => $current_aid,
+                        'edit_time' => $current_time
+                    ]);
+                if ($aff2 === false) {
+                    throw new \Exception('级联软删除产品失败，产品ID：' . $product['id']);
+                }
+                if ($aff2 > 0) {
+                    $deletedProducts += $aff2;
+                }
+            }
 
             // 提交事务
             \think\Db::commit();
-            return json(['code' => 1, 'msg' => '删除成功']);
+            return json(['code' => 1, 'msg' => '删除成功', 'data' => ['deleted_products' => $deletedProducts]]);
         } catch (\Throwable $e) {
             // 回滚事务
             \think\Db::rollback();
             return json(['code' => 0, 'msg' => '删除失败：' . $e->getMessage()]);
         }
-        // ★软删除改造 end
     }
 
 
@@ -263,7 +252,6 @@ class ProductCategory extends Common
     // 批量删除
     public function batchDel()
     {
-        // ★软删除改造 start
         if (!request()->isPost()) {
             return json(['code' => -200, 'msg' => '非法请求']);
         }
@@ -296,31 +284,55 @@ class ProductCategory extends Common
 
             $current_time = time();
             $current_aid = session('aid') ?: 0;
+            $deleted_time = date('Y-m-d H:i:s');
+            $deletedSuppliers = 0;
+            $deletedProducts = 0;
 
-            // 2) 一次性软删除供应商
-            $deletedSuppliers = \think\Db::name('crm_product_category')
-                ->whereIn('id', $allowedIds)
-                ->update([
-                    'is_deleted' => 1,
-                    'deleted_time' => date('Y-m-d H:i:s'),
-                    'deleted_by' => $current_aid,
-                    'edit_time' => $current_time
-                ]);
-
-            if ($deletedSuppliers === false) {
-                throw new \Exception('软删除供应商失败');
+            // 2) 逐条软删除供应商（改名+删除）
+            foreach ($allowedMap as $supplierId => $categoryName) {
+                $affSupplier = \think\Db::name('crm_product_category')
+                    ->where('id', (int)$supplierId)
+                    ->where('is_deleted', 0)
+                    ->update([
+                        'category_name' => $categoryName . '_DEL_' . (int)$supplierId,
+                        'is_deleted' => 1,
+                        'deleted_time' => $deleted_time,
+                        'deleted_by' => $current_aid,
+                        'edit_time' => $current_time
+                    ]);
+                if ($affSupplier === false) {
+                    throw new \Exception('软删除供应商失败，供应商ID：' . $supplierId);
+                }
+                if ($affSupplier > 0) {
+                    $deletedSuppliers += $affSupplier;
+                }
             }
 
-            // 3) 一次性级联软删除产品（只软删除 is_deleted=0 的产品）
-            $deletedProducts = \think\Db::name('crm_products')
+            // 3) 查询并逐条级联软删除产品（改名+删除）
+            $products = \think\Db::name('crm_products')
                 ->whereIn('category_id', $allowedIds)
                 ->where('is_deleted', 0)
-                ->update([
-                    'is_deleted' => 1,
-                    'deleted_time' => date('Y-m-d H:i:s'),
-                    'deleted_by' => $current_aid,
-                    'edit_time' => $current_time
-                ]);
+                ->field('id,product_name')
+                ->select();
+
+            foreach ($products as $product) {
+                $affProduct = \think\Db::name('crm_products')
+                    ->where('id', $product['id'])
+                    ->where('is_deleted', 0)
+                    ->update([
+                        'product_name' => $product['product_name'] . '_DEL_' . $product['id'],
+                        'is_deleted' => 1,
+                        'deleted_time' => $deleted_time,
+                        'deleted_by' => $current_aid,
+                        'edit_time' => $current_time
+                    ]);
+                if ($affProduct === false) {
+                    throw new \Exception('级联软删除产品失败，产品ID：' . $product['id']);
+                }
+                if ($affProduct > 0) {
+                    $deletedProducts += $affProduct;
+                }
+            }
 
             // 提交事务
             \think\Db::commit();
@@ -348,7 +360,6 @@ class ProductCategory extends Common
             \think\Db::rollback();
             return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
         }
-        // ★软删除改造 end
     }
 
 
@@ -490,37 +501,16 @@ class ProductCategory extends Common
                 continue;
             }
 
-            // 检查是否存在同名但已删除的记录（is_deleted=1）
-            $deletedExists = \think\Db::name('crm_product_category')
-                ->where('category_name', $category_name)
-                ->where('is_deleted', 1)
-                ->where([$this->getOrgWhere($orgToUse)])
-                ->find();
-
-            if ($deletedExists) {
-                // 恢复已删除的记录
-                $ok = \think\Db::name('crm_product_category')
-                    ->where('id', $deletedExists['id'])
-                    ->update([
-                        'is_deleted' => 0,
-                        'deleted_time' => null,
-                        'deleted_by' => null,
-                        'edit_time' => $now,
-                        'submit_person' => $user
-                    ]);
-                if ($ok) $inserted++;
-            } else {
-                // 插入新记录
-                $ok = \think\Db::name('crm_product_category')->insert([
-                    'category_name' => $category_name,
-                    'org'           => $orgToUse,
-                    'add_time'      => $now,
-                    'edit_time'     => $now,
-                    'submit_person' => $user,
-                    'is_deleted' => 0
-                ]);
-                if ($ok) $inserted++;
-            }
+            // 插入新记录
+            $ok = \think\Db::name('crm_product_category')->insert([
+                'category_name' => $category_name,
+                'org'           => $orgToUse,
+                'add_time'      => $now,
+                'edit_time'     => $now,
+                'submit_person' => $user,
+                'is_deleted' => 0
+            ]);
+            if ($ok) $inserted++;
             // ★软删除改造 end
         }
 

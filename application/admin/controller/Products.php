@@ -64,29 +64,7 @@ class Products extends Common
             }
             
             $current_admin = Admin::getMyInfo();
-            
-            // soft delete by is_deleted: 检查是否存在相同名称且已删除的产品（is_deleted = 1）
-            $deletedProduct = Db::name('crm_products')
-                ->where('product_name', $product_name)
-                ->where('category_id', $category_id)
-                ->where([$this->getOrgWhere($current_admin['org'])])
-                ->where('is_deleted', 1)
-                ->find();
-            
-            if ($deletedProduct) {
-                // 如果存在已删除的相同产品，恢复它
-                Db::name('crm_products')
-                    ->where('id', $deletedProduct['id'])
-                    ->update([
-                        'is_deleted' => 0,
-                        'deleted_time' => null,
-                        'deleted_by' => null,
-                        'edit_time' => time(),
-                        'submit_person' => $current_admin['username']
-                    ]);
-                return $this->result([], 200, '操作成功（已恢复已删除的产品）');
-            }
-            
+
             // soft delete by is_deleted: 检查是否存在相同名称且正常的产品（is_deleted = 0）
             $product = Db::name('crm_products')
                 ->where('product_name', $product_name)
@@ -209,7 +187,7 @@ class Products extends Common
 
     public function del()
     {
-        $id = Request::param('id');
+        $id = (int)Request::param('id');
         if (empty($id)) {
             return $this->result([], 500, '参数错误');
         }
@@ -217,26 +195,32 @@ class Products extends Common
         $current_admin = Admin::getMyInfo();
         $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin') || ($current_admin['group_id'] == 13);
 
-        $query = Db::name('crm_products')->where('id', $id);
-        // soft delete by is_deleted: 只允许删除正常状态的产品，避免重复删除
-        $query->where('is_deleted', 0);
+        $query = Db::name('crm_products')
+            ->where('id', $id)
+            ->where('is_deleted', 0);
         if (!$isSuper) {
             $query->where('submit_person', $current_admin['username']);
         }
 
-        // soft delete by is_deleted: 软删除，更新 is_deleted 字段
-        $aff = $query->update([
-            'is_deleted' => 1,
-            'deleted_time' => date('Y-m-d H:i:s'),
-            'deleted_by' => session('aid'),
-            'edit_time' => time()
-        ]);
-        if ($aff) {
-            return $this->result([], 200, '删除成功');
-        } else {
-            // 可能是记录不存在或无权限
+        $row = $query->field('id,product_name,submit_person,is_deleted')->find();
+        if (empty($row)) {
             return $this->result([], 500, '无权限或记录不存在');
         }
+
+        $aff = Db::name('crm_products')
+            ->where('id', $id)
+            ->where('is_deleted', 0)
+            ->update([
+                'product_name' => $row['product_name'] . '_DEL_' . $id,
+                'is_deleted' => 1,
+                'deleted_time' => date('Y-m-d H:i:s'),
+                'deleted_by' => session('aid'),
+                'edit_time' => time()
+            ]);
+        if ($aff === 1) {
+            return $this->result([], 200, '删除成功');
+        }
+        return $this->result([], 500, '无权限或记录不存在');
     }
 
 
@@ -257,54 +241,47 @@ class Products extends Common
         // soft delete by is_deleted: 使用事务保证数据一致性
         Db::startTrans();
         try {
-            if ($isSuper) {
-                // soft delete by is_deleted: 超管批量软删除（只更新 is_deleted=0 的）
-                $delCount = Db::name('crm_products')
-                    ->whereIn('id', $ids)
-                    ->where('is_deleted', 0)
-                    ->update([
-                        'is_deleted' => 1,
-                        'deleted_time' => date('Y-m-d H:i:s'),
-                        'deleted_by' => session('aid'),
-                        'edit_time' => time()
-                    ]);
-                Db::commit();
-                if ($delCount > 0) {
-                    return json(['code' => 0, 'msg' => '删除成功', 'data' => ['count' => $delCount]]);
-                }
-                return json(['code' => -200, 'msg' => '删除失败或记录不存在']);
-            } else {
-                // 仅允许删除本人提交的记录
-                $ownIds = Db::name('crm_products')
-                    ->whereIn('id', $ids)
-                    ->where('submit_person', $current_admin['username'])
-                    ->where('is_deleted', 0)
-                    ->column('id');
-
-                if (empty($ownIds)) {
-                    Db::rollback();
-                    return json(['code' => -200, 'msg' => '无可删除的记录（仅能删除本人提交的记录）']);
-                }
-
-                // soft delete by is_deleted: 批量软删除
-                $delCount = Db::name('crm_products')
-                    ->whereIn('id', $ownIds)
-                    ->update([
-                        'is_deleted' => 1,
-                        'deleted_time' => date('Y-m-d H:i:s'),
-                        'deleted_by' => session('aid'),
-                        'edit_time' => time()
-                    ]);
-                $skipped  = count($ids) - $delCount;
-                Db::commit();
-
-                if ($delCount > 0) {
-                    $msg = '删除成功：' . $delCount . ' 条';
-                    if ($skipped > 0) $msg .= '，跳过(非本人记录)：' . $skipped . ' 条';
-                    return json(['code' => 0, 'msg' => $msg, 'data' => ['count' => $delCount, 'skipped' => $skipped]]);
-                }
-                return json(['code' => -200, 'msg' => '删除失败或记录不存在（或无权限）']);
+            $baseQuery = Db::name('crm_products')
+                ->whereIn('id', $ids)
+                ->where('is_deleted', 0);
+            if (!$isSuper) {
+                $baseQuery->where('submit_person', $current_admin['username']);
             }
+
+            $products = $baseQuery->field('id,product_name')->select();
+            if (empty($products)) {
+                Db::rollback();
+                return json(['code' => -200, 'msg' => '无可删除的记录（仅能删除本人提交的记录）']);
+            }
+
+            $delCount = 0;
+            foreach ($products as $product) {
+                $aff = Db::name('crm_products')
+                    ->where('id', $product['id'])
+                    ->where('is_deleted', 0)
+                    ->update([
+                        'product_name' => $product['product_name'] . '_DEL_' . $product['id'],
+                        'is_deleted' => 1,
+                        'deleted_time' => date('Y-m-d H:i:s'),
+                        'deleted_by' => session('aid'),
+                        'edit_time' => time()
+                    ]);
+                if ($aff === false) {
+                    throw new \Exception('删除产品失败，产品ID：' . $product['id']);
+                }
+                if ($aff > 0) {
+                    $delCount += $aff;
+                }
+            }
+
+            $skipped = count($ids) - $delCount;
+            Db::commit();
+
+            $msg = '删除成功：' . $delCount . ' 条';
+            if ($skipped > 0) {
+                $msg .= '，跳过(无权限/不存在)：' . $skipped . ' 条';
+            }
+            return json(['code' => 0, 'msg' => $msg, 'data' => ['count' => $delCount, 'skipped' => $skipped]]);
         } catch (\Throwable $e) {
             Db::rollback();
             return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
@@ -482,31 +459,6 @@ class Products extends Common
                 continue;
             }
 
-            // soft delete by is_deleted: DB去重：同 org 范围 + category_id + product_name
-            // 先检查是否有已删除的相同产品（is_deleted = 1）
-            $deletedProduct = \think\Db::name('crm_products')
-                ->where('product_name', $product_name)
-                ->where('category_id', $category_id)
-                ->where([$this->getOrgWhere($org)])
-                ->where('is_deleted', 1)
-                ->find();
-            
-            if ($deletedProduct) {
-                // 如果存在已删除的相同产品，恢复它
-                \think\Db::name('crm_products')
-                    ->where('id', $deletedProduct['id'])
-                    ->update([
-                        'is_deleted' => 0,
-                        'deleted_time' => null,
-                        'deleted_by' => null,
-                        'edit_time' => $now,
-                        'submit_person' => $user
-                    ]);
-                $inserted++;
-                $seenKeys[$key] = 1;
-                continue;
-            }
-            
             // soft delete by is_deleted: 检查是否存在正常的相同产品（is_deleted = 0）
             $exists = \think\Db::name('crm_products')
                 ->where('product_name', $product_name)
