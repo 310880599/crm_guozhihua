@@ -3808,7 +3808,7 @@ class DataStatistics extends Common
             $username = trim((string)Request::param('username', ''));
 
             $exportData = $this->collectOrderProductExportData($timebucket, $at_time, $month_keys, $team_name, $username);
-            $totalRows = count($exportData['company_rows']) + count($exportData['team_rows']) + count($exportData['user_rows']) + count($exportData['raw_rows']);
+            $totalRows = count($exportData['company_rows']) + count($exportData['team_rows']) + count($exportData['team_product_rows']) + count($exportData['user_rows']) + count($exportData['raw_rows']);
             if ($totalRows <= 0) {
                 return json([
                     'code' => 404,
@@ -3826,6 +3826,11 @@ class DataStatistics extends Common
                     'title' => '团队产品汇总',
                     'headers' => ['排名', '团队名称', '总利润', '总销量', '成员数'],
                     'rows' => $exportData['team_rows'],
+                ],
+                [
+                    'title' => '团队产品明细',
+                    'headers' => ['团队名称', '产品名称', '订单数', '总利润', '总销量'],
+                    'rows' => $exportData['team_product_rows'],
                 ],
                 [
                     'title' => '个人产品汇总',
@@ -4364,6 +4369,7 @@ class DataStatistics extends Common
     private function collectOrderProductExportData(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
     {
         $teamExpr = $this->getOrderProductSummaryTeamExpr();
+        $productExpr = "IFNULL(NULLIF(TRIM(oi.product_name), ''), '未命名产品')";
 
         $baseQuery = $this->buildOrderProductSummaryBaseQuery($timebucket, $at_time, $month_keys);
         if (trim($team_name) !== '') {
@@ -4402,6 +4408,23 @@ class DataStatistics extends Common
                 number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
                 (float)($row['sale_qty'] ?? 0),
                 (int)($row['member_count'] ?? 0),
+            ];
+        }
+
+        $teamProductRowsRaw = (clone $baseQuery)
+            ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
+            ->field($teamExpr . " as team_name, " . $productExpr . " as product_name, COUNT(DISTINCT o.id) as order_count, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
+            ->group($teamExpr . "," . $productExpr)
+            ->order('team_name asc, total_profit desc, sale_qty desc, product_name asc')
+            ->select();
+        $teamProductRows = [];
+        foreach ((array)$teamProductRowsRaw as $row) {
+            $teamProductRows[] = [
+                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
+                (string)($row['product_name'] ?? '未命名产品'),
+                (int)($row['order_count'] ?? 0),
+                round((float)($row['total_profit'] ?? 0), 2),
+                round((float)($row['sale_qty'] ?? 0), 2),
             ];
         }
 
@@ -4445,6 +4468,7 @@ class DataStatistics extends Common
         return [
             'company_rows' => $companyRows,
             'team_rows' => $teamRows,
+            'team_product_rows' => $teamProductRows,
             'user_rows' => $userRows,
             'raw_rows' => $rawRows,
         ];
