@@ -16,7 +16,7 @@ class Products extends Common
         if (request()->isPost()) {
             return $this->productSearch();
         }
-        $category_list = $this->getCategoryList();
+        $category_list = $this->getActiveCategoryList();
         $this->assign('category_list', $category_list);
         return $this->fetch();
     }
@@ -38,6 +38,7 @@ class Products extends Common
         $list = $query->field('p.*, c.category_name')
             ->where([$this->getOrgWhere($current_admin['org'], 'p')])
             ->where('p.is_deleted', '=', 0)
+            ->where('c.is_deleted', '=', 0)
             ->order('p.id desc')
             ->paginate([
                 'list_rows' => $pageSize,
@@ -64,6 +65,9 @@ class Products extends Common
             }
             
             $current_admin = Admin::getMyInfo();
+            if (!$this->isActiveCategoryInOrg($category_id, $current_admin['org'])) {
+                return $this->result([], 500, '供应商不存在或已删除，请重新选择供应商');
+            }
 
             // soft delete by is_deleted: 检查是否存在相同名称且正常的产品（is_deleted = 0）
             $product = Db::name('crm_products')
@@ -86,7 +90,7 @@ class Products extends Common
                 return $this->result([], 500, '商品已存在');
             }
         }
-        $category_rows = $this->getCategoryList();
+        $category_rows = $this->getActiveCategoryList();
         $category_list = array_map(function ($row) {
             return [
                 'id'   => (int)$row['id'],
@@ -125,6 +129,9 @@ class Products extends Common
 
             if (empty($product_name)) {
                 return $this->result([], 500, '商品名称不能为空');
+            }
+            if (!$this->isActiveCategoryInOrg($category_id, $current_admin['org'])) {
+                return $this->result([], 500, '供应商不存在或已删除，请重新选择供应商');
             }
 
             // soft delete by is_deleted: 同组织 + 同供应商 下产品名不可重复（排除当前ID和已删除的记录）
@@ -171,7 +178,7 @@ class Products extends Common
 
         // 非提交：准备下拉数据为 {id,name} + 默认ID
         $defaultCategoryId = (int)$result['category_id'];
-        $category_rows = $this->getCategoryList();
+        $category_rows = $this->getActiveCategoryList();
         $category_list = array_map(function ($row) {
             return [
                 'id'   => (int)$row['id'],
@@ -183,6 +190,32 @@ class Products extends Common
         $this->assign('default_category_id', $defaultCategoryId);
         $this->assign('result', $result);
         return $this->fetch();
+    }
+
+    // 仅获取当前组织下未删除的供应商（产品分类）
+    private function getActiveCategoryList()
+    {
+        $current_admin = Admin::getMyInfo();
+        return Db::name('crm_product_category')
+            ->where([$this->getOrgWhere($current_admin['org'])])
+            ->where('is_deleted', 0)
+            ->order('id desc')
+            ->select();
+    }
+
+    // 校验供应商是否存在、未删除且属于当前组织
+    private function isActiveCategoryInOrg($categoryId, $org)
+    {
+        $categoryId = (int)$categoryId;
+        if ($categoryId <= 0) {
+            return false;
+        }
+        $row = Db::name('crm_product_category')
+            ->where('id', $categoryId)
+            ->where([$this->getOrgWhere($org)])
+            ->where('is_deleted', 0)
+            ->find();
+        return !empty($row);
     }
 
     public function del()
@@ -415,6 +448,10 @@ class Products extends Common
             $category_id = 0;
             if ($category_id_raw !== '' && is_numeric($category_id_raw)) {
                 $category_id = (int)$category_id_raw;
+                if (!$this->isActiveCategoryInOrg($category_id, $org)) {
+                    $skippedEmpty++;
+                    continue;
+                }
             } elseif ($category_name !== '') {
                 $cat = \think\Db::name('crm_product_category')
                     ->where('category_name', $category_name)
