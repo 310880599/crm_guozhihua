@@ -1665,6 +1665,28 @@
                     </div>
                 </div>
                 <div class="layui-inline">
+                    <label class="layui-form-label">所属渠道</label>
+                    <div class="layui-input-inline">
+                        <select id="quick-follow-inquiry-id" lay-search>
+                            <option value="">全部渠道</option>
+                            {volist name='inquiryList' id='vo'}
+                            <option value="{$vo.id}">{$vo.inquiry_name}</option>
+                            {/volist}
+                        </select>
+                    </div>
+                </div>
+                <div class="layui-inline">
+                    <label class="layui-form-label">客户级别</label>
+                    <div class="layui-input-inline">
+                        <select id="quick-follow-kh-rank" lay-search>
+                            <option value="">全部级别</option>
+                            {volist name='khRankList' id='vo'}
+                            <option value="{$vo.id}">{$vo.rank_name}</option>
+                            {/volist}
+                        </select>
+                    </div>
+                </div>
+                <div class="layui-inline">
                     <button type="button" class="layui-btn" id="quick-follow-search-btn">
                         <i class="layui-icon layui-icon-search"></i>查询
                     </button>
@@ -3281,7 +3303,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         return {
             kh_name: $.trim($('#quick-follow-kh-name').val() || ''),
             phone: $.trim($('#quick-follow-phone').val() || ''),
-            product_name: $.trim($('#quick-follow-product-name').val() || '')
+            product_name: $.trim($('#quick-follow-product-name').val() || ''),
+            inquiry_id: $.trim($('#quick-follow-inquiry-id').val() || ''),
+            kh_rank: $.trim($('#quick-follow-kh-rank').val() || '')
         };
     }
 
@@ -3630,6 +3654,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#quick-follow-kh-name').val('');
         $('#quick-follow-phone').val('');
         $('#quick-follow-product-name').val('');
+        $('#quick-follow-inquiry-id').val('');
+        $('#quick-follow-kh-rank').val('');
         form.render('select');
 
         quickFollowLayerIndex = layer.open({
@@ -3723,6 +3749,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             $('#quick-follow-kh-name').val('');
             $('#quick-follow-phone').val('');
             $('#quick-follow-product-name').val('');
+            $('#quick-follow-inquiry-id').val('');
+            $('#quick-follow-kh-rank').val('');
             form.render('select');
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
