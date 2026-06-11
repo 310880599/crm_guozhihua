@@ -1124,6 +1124,9 @@
         padding: 12px 14px 8px;
         background: #fff;
     }
+    #quick-follow-dialog .quick-follow-dialog {
+        padding-bottom: 24px !important;
+    }
     .quick-follow-search {
         padding: 10px 12px 4px;
         margin-bottom: 10px;
@@ -1153,14 +1156,46 @@
         overflow: auto;
     }
     .full-screen-wrapper.full-screen-active {
-        height: 100vh;
-        max-height: 100vh;
-        overflow: auto;
+        height: auto;
+        max-height: none;
+        overflow: visible;
+    }
+    .quick-follow-dialog.full-screen-mode {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        display: flex;
+        flex-direction: column;
+    }
+    #quick-follow-dialog .quick-follow-dialog.full-screen-mode {
+        padding-bottom: 30px !important;
+    }
+    .quick-follow-dialog.full-screen-mode .quick-follow-search {
+        flex-shrink: 0;
+    }
+    .quick-follow-dialog.full-screen-mode .quick-follow-table-wrap {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        flex: none;
+    }
+    .quick-follow-dialog.full-screen-mode .full-screen-wrapper {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        flex: none;
     }
     .quick-follow-dialog.full-screen-mode .layui-table-cell {
         height: auto;
         line-height: 24px;
         white-space: normal;
+    }
+    #quick-follow-dialog .layui-table-page {
+        height: 46px !important;
+        line-height: 28px !important;
+        padding: 8px 20px 10px !important;
+        box-sizing: border-box !important;
+        overflow: visible !important;
     }
     .quick-follow-content-input {
         min-height: 38px !important;
@@ -3406,8 +3441,37 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     }
 
+    function getQuickFollowTableHeight() {
+        if (quickFollowIsFull) {
+            var $search = $('#quick-follow-dialog .quick-follow-search');
+            var viewportHeight = $(window).height();
+            var searchHeight = $search.outerHeight(true) || 0;
+            var reserveHeight = 210;
+            var fiveRowsHeight = 490;
+            var availableHeight = viewportHeight - searchHeight - reserveHeight;
+
+            return Math.max(420, Math.min(fiveRowsHeight, availableHeight));
+        }
+
+        return Math.max(320, Math.floor($(window).height() * 0.85) - 250);
+    }
+
+    function refreshQuickFollowTableForViewport() {
+        var hasRenderedTable = table && table.cache && Object.prototype.hasOwnProperty.call(table.cache, quickFollowTableId);
+        if (hasRenderedTable) {
+            setTimeout(function () {
+                table.reload('quick-follow-table', {
+                    height: getQuickFollowTableHeight()
+                });
+                table.resize('quick-follow-table');
+            }, 80);
+            return;
+        }
+        renderQuickFollowTable();
+    }
+
     function renderQuickFollowTable() {
-        var tableHeight = Math.max(320, Math.floor($(window).height() * 0.85) - 250);
+        var tableHeight = getQuickFollowTableHeight();
         var quickFollowCols = [[
             { field: 'kh_name', title: '客户名称', minWidth: 180 },
             { field: 'main_phone', title: '主电话', width: 130 },
@@ -3602,6 +3666,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         quickFollowIsFull = true;
                         $('#quickFollowFullScreenWrapper').addClass('full-screen-active');
                         $('#quick-follow-dialog .quick-follow-dialog').addClass('full-screen-mode');
+                        setTimeout(function () {
+                            refreshQuickFollowTableForViewport();
+                        }, 100);
+                        setTimeout(function () {
+                            refreshQuickFollowTableForViewport();
+                            table.resize('quick-follow-table');
+                            if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                                syncQuickFollowFixedRowHeights();
+                            }
+                        }, 350);
                     } else {
                         layer.restore(quickFollowLayerIndex);
                         restoreQuickFollowParentFullMode();
@@ -3609,13 +3683,14 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         quickFollowIsFull = false;
                         $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
                         $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+                        setTimeout(function () {
+                            refreshQuickFollowTableForViewport();
+                            table.resize('quick-follow-table');
+                            if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                                syncQuickFollowFixedRowHeights();
+                            }
+                        }, 300);
                     }
-                    setTimeout(function () {
-                        table.resize('quick-follow-table');
-                        if (typeof syncQuickFollowFixedRowHeights === 'function') {
-                            syncQuickFollowFixedRowHeights();
-                        }
-                    }, 300);
                 });
             },
             end: function () {
@@ -3636,8 +3711,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         confirmQuickFollowPendingAction(function () {
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
+                height: getQuickFollowTableHeight(),
                 where: { keyword: collectQuickFollowSearchKeyword() }
             });
+            refreshQuickFollowTableForViewport();
         });
     });
 
@@ -3649,8 +3726,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             form.render('select');
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
+                height: getQuickFollowTableHeight(),
                 where: { keyword: collectQuickFollowSearchKeyword() }
             });
+            refreshQuickFollowTableForViewport();
         });
     });
 
