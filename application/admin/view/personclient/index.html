@@ -2514,6 +2514,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var currentLeadsId = null; // 当前查看的客户ID
     var quickFollowLayerIndex = null;
     var quickFollowIsFull = false;
+    var quickFollowFullscreenBoundDocs = [];
+    var quickFollowFullscreenChangeHandler = null;
     var quickFollowTableId = 'quick-follow-table';
     var quickFollowPageKey = 'personclient_quick_follow';
     var quickFollowColumnWidthKey = 'layui_col_width_personclient_quick_follow_quick-follow-table_' + currentUsername;
@@ -2594,6 +2596,275 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         } catch (e) {
             console.warn('退出父级全屏布局失败', e);
         }
+    }
+
+    function getQuickFollowFullscreenDocument() {
+        try {
+            if (window.parent && window.parent !== window && window.parent.document) {
+                return window.parent.document;
+            }
+        } catch (e) {}
+        return document;
+    }
+
+    function getQuickFollowFullscreenElement(doc) {
+        if (!doc) {
+            return null;
+        }
+        return doc.fullscreenElement ||
+            doc.webkitFullscreenElement ||
+            doc.mozFullScreenElement ||
+            doc.msFullscreenElement ||
+            null;
+    }
+
+    function requestQuickFollowBrowserFullscreen() {
+        return new Promise(function (resolve, reject) {
+            var docs = [];
+            var parentDoc = getQuickFollowFullscreenDocument();
+            if (parentDoc) {
+                docs.push(parentDoc);
+            }
+            if (document && docs.indexOf(document) === -1) {
+                docs.push(document);
+            }
+            if (!docs.length) {
+                reject(new Error('fullscreen-not-supported'));
+                return;
+            }
+
+            var hasSupportedApi = false;
+
+            function tryRequestAt(index) {
+                if (index >= docs.length) {
+                    reject(new Error(hasSupportedApi ? 'fullscreen-request-failed' : 'fullscreen-not-supported'));
+                    return;
+                }
+                var doc = docs[index];
+                var root = doc && doc.documentElement ? doc.documentElement : null;
+                if (!root) {
+                    tryRequestAt(index + 1);
+                    return;
+                }
+                var requestFn = root.requestFullscreen ||
+                    root.webkitRequestFullscreen ||
+                    root.mozRequestFullScreen ||
+                    root.msRequestFullscreen;
+                if (!requestFn) {
+                    tryRequestAt(index + 1);
+                    return;
+                }
+                hasSupportedApi = true;
+                try {
+                    var result = requestFn.call(root);
+                    if (result && typeof result.then === 'function') {
+                        result.then(function () {
+                            resolve();
+                        }).catch(function () {
+                            tryRequestAt(index + 1);
+                        });
+                    } else {
+                        resolve();
+                    }
+                } catch (e) {
+                    tryRequestAt(index + 1);
+                }
+            }
+
+            tryRequestAt(0);
+        });
+    }
+
+    function exitQuickFollowBrowserFullscreen() {
+        return new Promise(function (resolve, reject) {
+            var docs = [];
+            var parentDoc = getQuickFollowFullscreenDocument();
+            if (parentDoc) {
+                docs.push(parentDoc);
+            }
+            if (document && docs.indexOf(document) === -1) {
+                docs.push(document);
+            }
+            if (!docs.length) {
+                resolve();
+                return;
+            }
+
+            var hasExitApi = false;
+
+            function tryExitAt(index) {
+                if (index >= docs.length) {
+                    if (hasExitApi) {
+                        reject(new Error('fullscreen-exit-failed'));
+                    } else {
+                        resolve();
+                    }
+                    return;
+                }
+                var doc = docs[index];
+                var exitFn = doc && (
+                    doc.exitFullscreen ||
+                    doc.webkitExitFullscreen ||
+                    doc.mozCancelFullScreen ||
+                    doc.msExitFullscreen
+                );
+                if (!exitFn) {
+                    tryExitAt(index + 1);
+                    return;
+                }
+                hasExitApi = true;
+                try {
+                    var result = exitFn.call(doc);
+                    if (result && typeof result.then === 'function') {
+                        result.then(function () {
+                            resolve();
+                        }).catch(function () {
+                            tryExitAt(index + 1);
+                        });
+                    } else {
+                        resolve();
+                    }
+                } catch (e) {
+                    tryExitAt(index + 1);
+                }
+            }
+
+            tryExitAt(0);
+        });
+    }
+
+    function syncQuickFollowFullscreenButtonState() {
+        var isBrowserFullscreen = !!getQuickFollowFullscreenElement(getQuickFollowFullscreenDocument()) || !!getQuickFollowFullscreenElement(document);
+        if (isBrowserFullscreen) {
+            $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-restore"></i>退出全屏');
+            $('#quickFollowFullScreenWrapper').addClass('full-screen-active');
+            $('#quick-follow-dialog .quick-follow-dialog').addClass('full-screen-mode');
+            quickFollowIsFull = true;
+        } else {
+            $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
+            $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
+            $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+            quickFollowIsFull = false;
+        }
+    }
+
+    function refreshQuickFollowFullscreenViewport(delay) {
+        setTimeout(function () {
+            refreshQuickFollowTableForViewport();
+            table.resize('quick-follow-table');
+            if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                syncQuickFollowFixedRowHeights();
+            }
+        }, delay || 0);
+    }
+
+    function enterQuickFollowFullscreenMode() {
+        requestQuickFollowBrowserFullscreen().then(function () {
+            applyQuickFollowParentFullMode();
+            try {
+                if (quickFollowLayerIndex !== null) {
+                    layer.full(quickFollowLayerIndex);
+                }
+            } catch (e) {
+                console.warn('批量跟进弹窗全屏失败', e);
+            }
+            syncQuickFollowFullscreenButtonState();
+            setTimeout(function () {
+                refreshQuickFollowTableForViewport();
+            }, 100);
+            refreshQuickFollowFullscreenViewport(350);
+        }).catch(function (err) {
+            console.warn('浏览器全屏请求失败', err);
+            layer.msg('当前浏览器不支持浏览器全屏，请使用 F11', { icon: 0, time: 1800 });
+        });
+    }
+
+    function exitQuickFollowFullscreenMode() {
+        exitQuickFollowBrowserFullscreen().catch(function (err) {
+            console.warn('退出浏览器全屏失败', err);
+        }).then(function () {
+            try {
+                if (quickFollowLayerIndex !== null) {
+                    layer.restore(quickFollowLayerIndex);
+                }
+            } catch (e) {
+                console.warn('恢复批量跟进弹窗尺寸失败', e);
+            }
+            restoreQuickFollowParentFullMode();
+            syncQuickFollowFullscreenButtonState();
+            refreshQuickFollowFullscreenViewport(300);
+        });
+    }
+
+    function bindQuickFollowFullscreenChangeListeners() {
+        unbindQuickFollowFullscreenChangeListeners();
+        var docs = [];
+        docs.push(document);
+        try {
+            var parentDoc = getQuickFollowFullscreenDocument();
+            if (parentDoc && docs.indexOf(parentDoc) === -1) {
+                docs.push(parentDoc);
+            }
+        } catch (e) {}
+
+        var events = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+
+        quickFollowFullscreenChangeHandler = function () {
+            var isBrowserFullscreen = !!getQuickFollowFullscreenElement(getQuickFollowFullscreenDocument()) || !!getQuickFollowFullscreenElement(document);
+            if (!isBrowserFullscreen) {
+                quickFollowIsFull = false;
+                restoreQuickFollowParentFullMode();
+                try {
+                    if (quickFollowLayerIndex !== null) {
+                        layer.restore(quickFollowLayerIndex);
+                    }
+                } catch (e) {
+                    console.warn('Esc 退出后恢复弹窗失败', e);
+                }
+                syncQuickFollowFullscreenButtonState();
+                refreshQuickFollowFullscreenViewport(120);
+                return;
+            }
+
+            quickFollowIsFull = true;
+            syncQuickFollowFullscreenButtonState();
+            refreshQuickFollowFullscreenViewport(120);
+        };
+
+        for (var i = 0; i < docs.length; i++) {
+            var doc = docs[i];
+            if (!doc || !doc.addEventListener) {
+                continue;
+            }
+            for (var j = 0; j < events.length; j++) {
+                try {
+                    doc.addEventListener(events[j], quickFollowFullscreenChangeHandler, false);
+                } catch (e) {}
+            }
+            quickFollowFullscreenBoundDocs.push(doc);
+        }
+    }
+
+    function unbindQuickFollowFullscreenChangeListeners() {
+        if (!quickFollowFullscreenBoundDocs.length || !quickFollowFullscreenChangeHandler) {
+            quickFollowFullscreenBoundDocs = [];
+            quickFollowFullscreenChangeHandler = null;
+            return;
+        }
+        var events = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+        for (var i = 0; i < quickFollowFullscreenBoundDocs.length; i++) {
+            var doc = quickFollowFullscreenBoundDocs[i];
+            if (!doc || !doc.removeEventListener) {
+                continue;
+            }
+            for (var j = 0; j < events.length; j++) {
+                try {
+                    doc.removeEventListener(events[j], quickFollowFullscreenChangeHandler, false);
+                } catch (e) {}
+            }
+        }
+        quickFollowFullscreenBoundDocs = [];
+        quickFollowFullscreenChangeHandler = null;
     }
 
     $(document).on('click', '.all-follow-btn', function() {
@@ -3645,9 +3916,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             quickFollowLayerIndex = null;
             quickFollowIsFull = false;
             restoreQuickFollowParentFullMode();
-            $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
-            $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
-            $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+            syncQuickFollowFullscreenButtonState();
+            unbindQuickFollowFullscreenChangeListeners();
         }
 
         resetQuickFollowRuntime();
@@ -3681,52 +3951,26 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 renderQuickFollowTable();
                 quickFollowLayerIndex = index;
                 quickFollowIsFull = false;
-                $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
-                $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
-                $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+                syncQuickFollowFullscreenButtonState();
+                bindQuickFollowFullscreenChangeListeners();
                 $('#quick-follow-fullscreen-btn').off('click').click(function() {
                     if(!quickFollowIsFull){
-                        applyQuickFollowParentFullMode();
-                        layer.full(quickFollowLayerIndex);
-                        $(this).html('<i class="layui-icon layui-icon-screen-restore"></i>退出全屏');
-                        quickFollowIsFull = true;
-                        $('#quickFollowFullScreenWrapper').addClass('full-screen-active');
-                        $('#quick-follow-dialog .quick-follow-dialog').addClass('full-screen-mode');
-                        setTimeout(function () {
-                            refreshQuickFollowTableForViewport();
-                        }, 100);
-                        setTimeout(function () {
-                            refreshQuickFollowTableForViewport();
-                            table.resize('quick-follow-table');
-                            if (typeof syncQuickFollowFixedRowHeights === 'function') {
-                                syncQuickFollowFixedRowHeights();
-                            }
-                        }, 350);
+                        enterQuickFollowFullscreenMode();
                     } else {
-                        layer.restore(quickFollowLayerIndex);
-                        restoreQuickFollowParentFullMode();
-                        $(this).html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
-                        quickFollowIsFull = false;
-                        $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
-                        $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
-                        setTimeout(function () {
-                            refreshQuickFollowTableForViewport();
-                            table.resize('quick-follow-table');
-                            if (typeof syncQuickFollowFixedRowHeights === 'function') {
-                                syncQuickFollowFixedRowHeights();
-                            }
-                        }, 300);
+                        exitQuickFollowFullscreenMode();
                     }
                 });
             },
             end: function () {
                 $('#quick-follow-dialog').hide().appendTo('body');
+                unbindQuickFollowFullscreenChangeListeners();
+                exitQuickFollowBrowserFullscreen().catch(function (err) {
+                    console.warn('关闭弹窗时退出浏览器全屏失败', err);
+                });
                 restoreQuickFollowParentFullMode();
                 quickFollowLayerIndex = null;
                 quickFollowIsFull = false;
-                $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
-                $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
-                $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+                syncQuickFollowFullscreenButtonState();
                 resetQuickFollowRuntime();
                 $(document).off('mouseenter.quickFollowHistory mouseleave.quickFollowHistory mousemove.quickFollowHistory', '#quick-follow-dialog .batch-follow-history-hover');
             }
