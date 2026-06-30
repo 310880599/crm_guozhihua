@@ -1190,6 +1190,24 @@
         line-height: 24px;
         white-space: normal;
     }
+    /* 批量跟进表格：右上角列设置按钮面板层级修复 */
+    #quick-follow-dialog .layui-table-tool {
+        position: relative;
+        z-index: 20;
+        background: #fff !important;
+    }
+    #quick-follow-dialog .layui-table-tool-self {
+        right: 10px;
+    }
+    #quick-follow-dialog .layui-table-tool-panel {
+        z-index: 2000000000 !important;
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+    /* 全屏时列设置面板也不能被遮挡 */
+    #quick-follow-dialog .full-screen-mode .layui-table-tool-panel {
+        z-index: 2000000000 !important;
+    }
     #quick-follow-dialog .layui-table-page {
         height: 46px !important;
         line-height: 28px !important;
@@ -3741,8 +3759,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             var $search = $('#quick-follow-dialog .quick-follow-search');
             var viewportHeight = $(window).height();
             var searchHeight = $search.outerHeight(true) || 0;
-            var reserveHeight = 210;
-            var fiveRowsHeight = 490;
+            var reserveHeight = 190;
+            var fiveRowsHeight = 540;
             var availableHeight = viewportHeight - searchHeight - reserveHeight;
 
             return Math.max(420, Math.min(fiveRowsHeight, availableHeight));
@@ -3821,6 +3839,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             id: quickFollowTableId,
             url: "{:url('Client/quickFollowList')}",
             method: 'post',
+            toolbar: true,
+            defaultToolbar: ['filter'],
             page: true,
             limit: 10,
             limits: [10, 20, 50, 100],
@@ -3835,6 +3855,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 bindQuickFollowResizeSave();
                 bindQuickFollowRowWidgets();
                 bindQuickFollowHistoryHover();
+                setTimeout(function () {
+                    table.resize(quickFollowTableId);
+                }, 80);
             }
         });
     }
