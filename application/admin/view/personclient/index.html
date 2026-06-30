@@ -2600,6 +2600,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowPageKey = 'personclient_quick_follow';
     var quickFollowColumnWidthKey = 'layui_col_width_personclient_quick_follow_quick-follow-table_' + currentUsername;
     var quickFollowColumnOrder = [];
+    var quickFollowHideConfig = {};
+    var quickFollowTableConfigLoaded = false;
+    var quickFollowTableConfigSaving = false;
     var quickFollowLastWidthSnapshot = {};
     var quickFollowDraftMap = {};
     var quickFollowStatusMap = {};
@@ -3857,6 +3860,165 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     }
 
+    function loadQuickFollowTableConfig() {
+        var config = {
+            hide_config: {},
+            column_order: []
+        };
+
+        $.ajax({
+            url: "{:url('Client/getQuickFollowTableConfig')}",
+            type: 'GET',
+            dataType: 'json',
+            async: false,
+            data: {
+                page_key: quickFollowPageKey,
+                table_key: quickFollowTableId
+            },
+            success: function (res) {
+                if (res && parseInt(res.code, 10) === 0 && res.data) {
+                    if (res.data.hide_config && typeof res.data.hide_config === 'object') {
+                        config.hide_config = res.data.hide_config;
+                    }
+                    if ($.isArray(res.data.column_order)) {
+                        config.column_order = res.data.column_order;
+                    }
+                }
+            },
+            error: function () {}
+        });
+
+        quickFollowHideConfig = config.hide_config || {};
+        quickFollowColumnOrder = config.column_order || [];
+        quickFollowTableConfigLoaded = true;
+    }
+
+    function collectQuickFollowHideConfig() {
+        var hideConfig = $.extend({}, quickFollowHideConfig || {});
+        var baseCols = buildQuickFollowBaseCols();
+
+        baseCols.forEach(function (col) {
+            var field = getQuickFollowColField(col);
+            if (field && typeof hideConfig[field] === 'undefined') {
+                hideConfig[field] = 0;
+            }
+        });
+
+        try {
+            var $view = $('#quick-follow-table').next('.layui-table-view');
+
+            $view.find('.layui-table-tool-panel input[type="checkbox"]').each(function () {
+                var $checkbox = $(this);
+                var field = $.trim($checkbox.attr('name') || $checkbox.attr('data-field') || '');
+
+                if (!field) {
+                    var titleText = $.trim($checkbox.next('div').text() || $checkbox.parent().text() || '');
+                    baseCols.forEach(function (col) {
+                        if (!field && $.trim(col.title || '') === titleText) {
+                            field = getQuickFollowColField(col);
+                        }
+                    });
+                }
+
+                if (field) {
+                    hideConfig[field] = $checkbox.prop('checked') ? 0 : 1;
+                }
+            });
+
+            baseCols.forEach(function (col) {
+                var field = getQuickFollowColField(col);
+                if (!field) return;
+
+                var $headerCell = $view.find('.layui-table-header th[data-field="' + field + '"]');
+                if ($headerCell.length && $headerCell.css('display') === 'none') {
+                    hideConfig[field] = 1;
+                }
+            });
+        } catch (e) {
+            console.warn('收集批量跟进字段隐藏配置失败:', e);
+        }
+
+        return hideConfig;
+    }
+
+    function saveQuickFollowTableConfig(options) {
+        options = options || {};
+        if (quickFollowTableConfigSaving) return;
+
+        var order = [];
+        if (quickFollowColumnOrder && quickFollowColumnOrder.length) {
+            order = quickFollowColumnOrder.slice();
+        } else {
+            buildQuickFollowBaseCols().forEach(function (col) {
+                var field = getQuickFollowColField(col);
+                if (field) order.push(field);
+            });
+        }
+
+        var hideConfig = options.hide_config || collectQuickFollowHideConfig();
+
+        quickFollowTableConfigSaving = true;
+        $.ajax({
+            url: "{:url('Client/saveQuickFollowTableConfig')}",
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                page_key: quickFollowPageKey,
+                table_key: quickFollowTableId,
+                hide_config: JSON.stringify(hideConfig),
+                column_order: JSON.stringify(order)
+            },
+            complete: function () {
+                quickFollowTableConfigSaving = false;
+            },
+            success: function (res) {
+                if (!res || parseInt(res.code, 10) !== 0) {
+                    console.warn('保存批量跟进字段配置失败:', res && res.msg ? res.msg : res);
+                }
+            },
+            error: function () {
+                console.warn('保存批量跟进字段配置请求失败');
+            }
+        });
+    }
+
+    function bindQuickFollowHideConfigSave() {
+        var $view = $('#quick-follow-table').next('.layui-table-view');
+        if (!$view.length) return;
+
+        function bindPanelCheckboxChange() {
+            $view.find('.layui-table-tool-panel input[type="checkbox"]')
+                .off('change.quickFollowHideConfig')
+                .on('change.quickFollowHideConfig', function () {
+                    setTimeout(function () {
+                        quickFollowHideConfig = collectQuickFollowHideConfig();
+                        saveQuickFollowTableConfig({
+                            hide_config: quickFollowHideConfig
+                        });
+                    }, 150);
+                });
+        }
+
+        bindPanelCheckboxChange();
+
+        $view.off('click.quickFollowHidePanel', '.layui-table-tool-self')
+            .on('click.quickFollowHidePanel', '.layui-table-tool-self', function () {
+                setTimeout(function () {
+                    bindPanelCheckboxChange();
+                }, 120);
+            });
+
+        $view.off('click.quickFollowHidePanelItem', '.layui-table-tool-panel')
+            .on('click.quickFollowHidePanelItem', '.layui-table-tool-panel', function () {
+                setTimeout(function () {
+                    quickFollowHideConfig = collectQuickFollowHideConfig();
+                    saveQuickFollowTableConfig({
+                        hide_config: quickFollowHideConfig
+                    });
+                }, 200);
+            });
+    }
+
     function getQuickFollowTableHeight() {
         if (quickFollowIsFull) {
             var $search = $('#quick-follow-dialog .quick-follow-search');
@@ -3976,7 +4138,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         var html = [
             '<div class="quick-follow-col-sort-dialog">',
-            '<div class="quick-follow-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”。本次只做当前页面临时生效，永久记忆下次再做。</div>',
+            '<div class="quick-follow-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”，排序将自动保存。</div>',
             '<ul id="quickFollowColumnSortList" class="quick-follow-col-sort-list">'
         ];
 
@@ -4011,11 +4173,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                     if (field) order.push(field);
                 });
                 quickFollowColumnOrder = order;
+                quickFollowHideConfig = collectQuickFollowHideConfig();
+                saveQuickFollowTableConfig({
+                    hide_config: quickFollowHideConfig
+                });
                 layer.close(sortIndex);
                 renderQuickFollowTable();
             },
             btn2: function () {
                 quickFollowColumnOrder = [];
+                quickFollowHideConfig = {};
+                saveQuickFollowTableConfig({
+                    hide_config: quickFollowHideConfig
+                });
                 layer.close(sortIndex);
                 renderQuickFollowTable();
                 return false;
@@ -4025,8 +4195,21 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     function renderQuickFollowTable() {
         var tableHeight = getQuickFollowTableHeight();
+
+        if (!quickFollowTableConfigLoaded) {
+            loadQuickFollowTableConfig();
+        }
+
         var quickFollowColList = buildQuickFollowBaseCols();
         quickFollowColList = applyQuickFollowColumnOrder(quickFollowColList);
+
+        quickFollowColList.forEach(function (col) {
+            var field = getQuickFollowColField(col);
+            if (field && Object.prototype.hasOwnProperty.call(quickFollowHideConfig, field)) {
+                col.hide = parseInt(quickFollowHideConfig[field], 10) === 1;
+            }
+        });
+
         applyQuickFollowWidthsToCols(quickFollowColList, loadQuickFollowWidths());
         var quickFollowCols = [quickFollowColList];
 
@@ -4051,6 +4234,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 bindQuickFollowResizeSave();
                 bindQuickFollowRowWidgets();
                 bindQuickFollowHistoryHover();
+                bindQuickFollowHideConfigSave();
                 setTimeout(function () {
                     table.resize(quickFollowTableId);
                 }, 80);

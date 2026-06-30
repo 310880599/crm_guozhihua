@@ -5996,5 +5996,188 @@ class Client extends Common
         }
     }
 
+    /**
+     * 读取批量跟进表格的显示/隐藏配置和字段顺序配置
+     * 路由：Client/getQuickFollowTableConfig
+     */
+    public function getQuickFollowTableConfig()
+    {
+        if (!request()->isAjax()) {
+            return json(['code' => 500, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $adminId = (int)Session::get('aid');
+        $pageKey = Request::param('page_key', 'personclient_quick_follow');
+        $tableKey = Request::param('table_key', 'quick-follow-table');
+
+        if ($adminId <= 0) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        $hideConfig = [];
+        $columnOrder = [];
+
+        try {
+            $configRow = Db::table('crm_table_col_config')
+                ->where('uid', $adminId)
+                ->where('page_key', $pageKey)
+                ->find();
+
+            if ($configRow && !empty($configRow['config_json'])) {
+                $tmp = json_decode($configRow['config_json'], true);
+                if (is_array($tmp)) {
+                    $hideConfig = $tmp;
+                }
+            }
+
+            $orderRow = Db::table('crm_table_column_order')
+                ->where('admin_id', $adminId)
+                ->where('page_key', $pageKey)
+                ->where('table_key', $tableKey)
+                ->find();
+
+            if ($orderRow && !empty($orderRow['column_order'])) {
+                $tmp = json_decode($orderRow['column_order'], true);
+                if (is_array($tmp)) {
+                    $columnOrder = array_values($tmp);
+                }
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [
+                    'hide_config' => $hideConfig,
+                    'column_order' => $columnOrder,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [
+                    'hide_config' => [],
+                    'column_order' => [],
+                ]
+            ]);
+        }
+    }
+
+    /**
+     * 保存批量跟进表格的显示/隐藏配置和字段顺序配置
+     * 路由：Client/saveQuickFollowTableConfig
+     */
+    public function saveQuickFollowTableConfig()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 500, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $adminId = (int)Session::get('aid');
+        $pageKey = Request::param('page_key', 'personclient_quick_follow');
+        $tableKey = Request::param('table_key', 'quick-follow-table');
+        $hideConfigParam = Request::param('hide_config', '');
+        $columnOrderParam = Request::param('column_order', '');
+
+        if ($adminId <= 0) {
+            return json(['code' => 401, 'msg' => '未登录', 'data' => []]);
+        }
+
+        if ($pageKey === '' || $tableKey === '') {
+            return json(['code' => 500, 'msg' => '参数不完整', 'data' => []]);
+        }
+
+        $hideConfig = [];
+        if (is_array($hideConfigParam)) {
+            $hideConfig = $hideConfigParam;
+        } elseif ($hideConfigParam !== '') {
+            $tmp = json_decode($hideConfigParam, true);
+            if (is_array($tmp)) {
+                $hideConfig = $tmp;
+            }
+        }
+
+        $columnOrder = [];
+        if (is_array($columnOrderParam)) {
+            $columnOrder = $columnOrderParam;
+        } elseif ($columnOrderParam !== '') {
+            $tmp = json_decode($columnOrderParam, true);
+            if (is_array($tmp)) {
+                $columnOrder = $tmp;
+            }
+        }
+
+        $safeHideConfig = [];
+        foreach ($hideConfig as $field => $hidden) {
+            $field = trim((string)$field);
+            if ($field !== '' && preg_match('/^[a-zA-Z0-9_]+$/', $field)) {
+                $safeHideConfig[$field] = ((int)$hidden) ? 1 : 0;
+            }
+        }
+
+        $safeColumnOrder = [];
+        foreach ($columnOrder as $field) {
+            $field = trim((string)$field);
+            if ($field !== '' && preg_match('/^[a-zA-Z0-9_]+$/', $field)) {
+                $safeColumnOrder[] = $field;
+            }
+        }
+        $safeColumnOrder = array_values(array_unique($safeColumnOrder));
+
+        try {
+            $now = time();
+
+            $existsConfig = Db::table('crm_table_col_config')
+                ->where('uid', $adminId)
+                ->where('page_key', $pageKey)
+                ->find();
+
+            if ($existsConfig) {
+                Db::table('crm_table_col_config')
+                    ->where('id', $existsConfig['id'])
+                    ->update([
+                        'config_json' => json_encode($safeHideConfig, JSON_UNESCAPED_UNICODE),
+                        'ut_time' => $now,
+                    ]);
+            } else {
+                Db::table('crm_table_col_config')->insert([
+                    'uid' => $adminId,
+                    'page_key' => $pageKey,
+                    'config_json' => json_encode($safeHideConfig, JSON_UNESCAPED_UNICODE),
+                    'create_time' => $now,
+                    'ut_time' => $now,
+                ]);
+            }
+
+            $existsOrder = Db::table('crm_table_column_order')
+                ->where('admin_id', $adminId)
+                ->where('page_key', $pageKey)
+                ->where('table_key', $tableKey)
+                ->find();
+
+            if ($existsOrder) {
+                Db::table('crm_table_column_order')
+                    ->where('id', $existsOrder['id'])
+                    ->update([
+                        'column_order' => json_encode($safeColumnOrder, JSON_UNESCAPED_UNICODE),
+                        'update_time' => $now,
+                    ]);
+            } else {
+                Db::table('crm_table_column_order')->insert([
+                    'admin_id' => $adminId,
+                    'page_key' => $pageKey,
+                    'table_key' => $tableKey,
+                    'column_order' => json_encode($safeColumnOrder, JSON_UNESCAPED_UNICODE),
+                    'create_time' => $now,
+                    'update_time' => $now,
+                ]);
+            }
+
+            return json(['code' => 0, 'msg' => '保存成功', 'data' => []]);
+        } catch (\Exception $e) {
+            return json(['code' => 500, 'msg' => '保存失败：' . $e->getMessage(), 'data' => []]);
+        }
+    }
+
 
 }
