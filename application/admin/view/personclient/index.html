@@ -1187,8 +1187,27 @@
     }
     .quick-follow-dialog.full-screen-mode .layui-table-cell {
         height: auto;
-        line-height: 24px;
+        line-height: 20px;
         white-space: normal;
+    }
+    /* 批量跟进表格紧凑行高：只作用于批量添加跟进记录弹窗，避免影响我的客户主列表 */
+    #quick-follow-dialog .layui-table-view .layui-table th,
+    #quick-follow-dialog .layui-table-view .layui-table td {
+        padding: 4px 0 !important;
+    }
+    #quick-follow-dialog .layui-table-view .layui-table-cell {
+        min-height: 30px !important;
+        height: auto !important;
+        line-height: 20px !important;
+        padding: 0 8px !important;
+        box-sizing: border-box !important;
+    }
+    #quick-follow-dialog .layui-table-view th .layui-table-cell {
+        min-height: 30px !important;
+        line-height: 30px !important;
+    }
+    #quick-follow-dialog .layui-table-view td[data-field="follow_content"] .layui-table-cell {
+        overflow: visible !important;
     }
     /* 批量跟进表格：右上角列设置按钮面板层级修复 */
     #quick-follow-dialog .layui-table-tool {
@@ -1216,16 +1235,19 @@
         overflow: visible !important;
     }
     .quick-follow-content-input {
-        min-height: 38px !important;
-        max-height: 60px !important;
-        padding: 6px 8px !important;
-        line-height: 1.5 !important;
-        resize: vertical;
+        height: 32px !important;
+        min-height: 32px !important;
+        max-height: 44px !important;
+        padding: 4px 8px !important;
+        line-height: 20px !important;
+        resize: none;
+        overflow-y: auto;
+        box-sizing: border-box !important;
     }
     .quick-follow-content-wrap {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         width: 100%;
         box-sizing: border-box;
     }
@@ -1236,15 +1258,16 @@
     .quick-follow-content-wrap .quick-follow-save-btn {
         flex: 0 0 auto;
         white-space: nowrap;
-        height: 32px !important;
-        line-height: 32px !important;
-        padding: 0 10px !important;
+        height: 28px !important;
+        line-height: 28px !important;
+        padding: 0 8px !important;
         margin: 0 !important;
     }
     .quick-follow-next-input {
-        height: 34px;
-        line-height: 34px;
+        height: 30px;
+        line-height: 30px;
         padding: 0 8px;
+        box-sizing: border-box;
     }
     .quick-follow-status {
         font-size: 12px;
