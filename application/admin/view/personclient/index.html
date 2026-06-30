@@ -1222,6 +1222,25 @@
         line-height: 1.5 !important;
         resize: vertical;
     }
+    .quick-follow-content-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .quick-follow-content-wrap .quick-follow-content-input {
+        flex: 1;
+        min-width: 0;
+    }
+    .quick-follow-content-wrap .quick-follow-save-btn {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        height: 32px !important;
+        line-height: 32px !important;
+        padding: 0 10px !important;
+        margin: 0 !important;
+    }
     .quick-follow-next-input {
         height: 34px;
         line-height: 34px;
@@ -4068,12 +4087,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             {
                 field: 'follow_content',
                 title: '本次跟进内容',
-                minWidth: 260,
+                minWidth: 340,
                 templet: function (d) {
                     var draft = getQuickFollowDraft(d.id);
                     var leadsId = quickFollowEscapeHtml(d.id);
-                    return '<textarea class="layui-textarea quick-follow-content-input" data-leads-id="' + leadsId + '" placeholder="请输入本次跟进内容">' + quickFollowEscapeHtml(draft.content || '') + '</textarea>' +
-                        '<div style="margin-top:6px;">' +
+                    return '<div class="quick-follow-content-wrap">' +
+                        '<textarea class="layui-textarea quick-follow-content-input" data-leads-id="' + leadsId + '" placeholder="请输入本次跟进内容">' + quickFollowEscapeHtml(draft.content || '') + '</textarea>' +
                         '<button type="button" class="layui-btn layui-btn-xs layui-btn-normal quick-follow-save-btn" data-leads-id="' + leadsId + '">保存跟进</button>' +
                         '</div>';
                 }
