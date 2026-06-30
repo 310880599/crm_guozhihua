@@ -1314,6 +1314,61 @@
         color: #999;
         font-size: 12px;
     }
+    .quick-follow-col-sort-dialog {
+        padding: 14px 16px;
+        box-sizing: border-box;
+    }
+    .quick-follow-col-sort-tip {
+        padding: 8px 10px;
+        margin-bottom: 10px;
+        background: #f8fafd;
+        border: 1px solid #eef2f8;
+        border-radius: 4px;
+        color: #666;
+        font-size: 12px;
+        line-height: 1.6;
+    }
+    .quick-follow-col-sort-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        max-height: 420px;
+        overflow-y: auto;
+    }
+    .quick-follow-col-sort-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px;
+        margin-bottom: 6px;
+        border: 1px solid #e6e8ef;
+        border-radius: 4px;
+        background: #fff;
+        cursor: move;
+        user-select: none;
+    }
+    .quick-follow-col-sort-item:hover {
+        border-color: #4285f4;
+        background: #f6f9ff;
+    }
+    .quick-follow-col-sort-item.dragging {
+        opacity: .55;
+        border-color: #4285f4;
+        background: #eef5ff;
+    }
+    .quick-follow-col-sort-item .drag-handle {
+        color: #999;
+        font-size: 14px;
+    }
+    .quick-follow-col-sort-item .col-title {
+        flex: 1;
+        color: #333;
+        font-size: 13px;
+    }
+    .quick-follow-col-sort-item .col-field {
+        color: #999;
+        font-size: 12px;
+    }
 </style>
 <div class="personclient-list-container">
     <!-- 查询区域：高级查询（默认折叠，状态见 localStorage） -->
@@ -1753,6 +1808,13 @@
     {if session('aid') eq 1}
     <button type="button" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" id="delAlls" lay-event="delAlls"><i class="layui-icon">&#xe640;</i>选中删除</button>
     {/if}
+</script>
+<script type="text/html" id="quickFollowTableToolbar">
+    <div class="layui-btn-container">
+        <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" lay-event="quickFollowColumnSort">
+            <i class="layui-icon layui-icon-cols"></i>字段排序
+        </button>
+    </div>
 </script>
 
 {include file="common/foot"/}
@@ -2537,6 +2599,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowTableId = 'quick-follow-table';
     var quickFollowPageKey = 'personclient_quick_follow';
     var quickFollowColumnWidthKey = 'layui_col_width_personclient_quick_follow_quick-follow-table_' + currentUsername;
+    var quickFollowColumnOrder = [];
     var quickFollowLastWidthSnapshot = {};
     var quickFollowDraftMap = {};
     var quickFollowStatusMap = {};
@@ -2551,6 +2614,46 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var followHistoryMousePos = { x: 0, y: 0 };
     var FOLLOW_HISTORY_HOVER_DELAY = 300;
     var FOLLOW_HISTORY_MAX_COUNT = 10;
+
+    function getQuickFollowColField(col) {
+        return col && col.field ? String(col.field) : '';
+    }
+
+    function applyQuickFollowColumnOrder(cols) {
+        if (!cols || !cols.length || !quickFollowColumnOrder || !quickFollowColumnOrder.length) {
+            return cols;
+        }
+
+        var colMap = {};
+        var noFieldCols = [];
+
+        cols.forEach(function (col) {
+            var field = getQuickFollowColField(col);
+            if (field) {
+                colMap[field] = col;
+            } else {
+                noFieldCols.push(col);
+            }
+        });
+
+        var orderedCols = [];
+        quickFollowColumnOrder.forEach(function (field) {
+            if (colMap[field]) {
+                orderedCols.push(colMap[field]);
+                delete colMap[field];
+            }
+        });
+
+        cols.forEach(function (col) {
+            var field = getQuickFollowColField(col);
+            if (field && colMap[field]) {
+                orderedCols.push(colMap[field]);
+                delete colMap[field];
+            }
+        });
+
+        return noFieldCols.concat(orderedCols);
+    }
 
     function applyQuickFollowParentFullMode() {
         try {
@@ -3783,9 +3886,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         renderQuickFollowTable();
     }
 
-    function renderQuickFollowTable() {
-        var tableHeight = getQuickFollowTableHeight();
-        var quickFollowCols = [[
+    function buildQuickFollowBaseCols() {
+        return [
             { field: 'kh_name', title: '客户名称', minWidth: 180 },
             { field: 'main_phone', title: '主电话', width: 130 },
             { field: 'aux_phone', title: '辅助电话', width: 130 },
@@ -3831,15 +3933,109 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                     return getQuickFollowStatusRender(d.id);
                 }
             }
-        ]];
-        applyQuickFollowWidthsToCols(quickFollowCols[0], loadQuickFollowWidths());
+        ];
+    }
+
+    function bindQuickFollowColumnDragSort() {
+        var draggedEl = null;
+
+        $('#quickFollowColumnSortList')
+            .off('dragstart.qfColSort dragover.qfColSort drop.qfColSort dragend.qfColSort')
+            .on('dragstart.qfColSort', '.quick-follow-col-sort-item', function (e) {
+                draggedEl = this;
+                $(this).addClass('dragging');
+                if (e.originalEvent && e.originalEvent.dataTransfer) {
+                    e.originalEvent.dataTransfer.effectAllowed = 'move';
+                    e.originalEvent.dataTransfer.setData('text/plain', $(this).attr('data-field') || '');
+                }
+            })
+            .on('dragover.qfColSort', '.quick-follow-col-sort-item', function (e) {
+                e.preventDefault();
+                if (!draggedEl || draggedEl === this) return;
+
+                var rect = this.getBoundingClientRect();
+                var offsetY = e.originalEvent.clientY - rect.top;
+                if (offsetY > rect.height / 2) {
+                    $(this).after(draggedEl);
+                } else {
+                    $(this).before(draggedEl);
+                }
+            })
+            .on('drop.qfColSort', '.quick-follow-col-sort-item', function (e) {
+                e.preventDefault();
+            })
+            .on('dragend.qfColSort', '.quick-follow-col-sort-item', function () {
+                $(this).removeClass('dragging');
+                draggedEl = null;
+            });
+    }
+
+    function openQuickFollowColumnSortDialog() {
+        var cols = buildQuickFollowBaseCols();
+        cols = applyQuickFollowColumnOrder(cols);
+
+        var html = [
+            '<div class="quick-follow-col-sort-dialog">',
+            '<div class="quick-follow-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”。本次只做当前页面临时生效，永久记忆下次再做。</div>',
+            '<ul id="quickFollowColumnSortList" class="quick-follow-col-sort-list">'
+        ];
+
+        cols.forEach(function (col) {
+            var field = getQuickFollowColField(col);
+            if (!field) return;
+            html.push(
+                '<li class="quick-follow-col-sort-item" draggable="true" data-field="' + quickFollowEscapeHtml(field) + '">' +
+                    '<span class="drag-handle">☰</span>' +
+                    '<span class="col-title">' + quickFollowEscapeHtml(col.title || field) + '</span>' +
+                    '<span class="col-field">' + quickFollowEscapeHtml(field) + '</span>' +
+                '</li>'
+            );
+        });
+
+        html.push('</ul></div>');
+
+        var sortIndex = layer.open({
+            type: 1,
+            title: '批量跟进表格字段排序',
+            area: ['420px', '560px'],
+            shadeClose: true,
+            content: html.join(''),
+            btn: ['应用排序', '恢复默认顺序', '取消'],
+            success: function () {
+                bindQuickFollowColumnDragSort();
+            },
+            yes: function () {
+                var order = [];
+                $('#quickFollowColumnSortList .quick-follow-col-sort-item').each(function () {
+                    var field = $.trim($(this).attr('data-field') || '');
+                    if (field) order.push(field);
+                });
+                quickFollowColumnOrder = order;
+                layer.close(sortIndex);
+                renderQuickFollowTable();
+            },
+            btn2: function () {
+                quickFollowColumnOrder = [];
+                layer.close(sortIndex);
+                renderQuickFollowTable();
+                return false;
+            }
+        });
+    }
+
+    function renderQuickFollowTable() {
+        var tableHeight = getQuickFollowTableHeight();
+        var quickFollowColList = buildQuickFollowBaseCols();
+        quickFollowColList = applyQuickFollowColumnOrder(quickFollowColList);
+        applyQuickFollowWidthsToCols(quickFollowColList, loadQuickFollowWidths());
+        var quickFollowCols = [quickFollowColList];
 
         table.render({
             elem: '#quick-follow-table',
             id: quickFollowTableId,
             url: "{:url('Client/quickFollowList')}",
             method: 'post',
-            toolbar: true,
+            toolbar: '#quickFollowTableToolbar',
             defaultToolbar: ['filter'],
             page: true,
             limit: 10,
@@ -4824,6 +5020,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     });
 
     // 顶部工具栏事件
+    table.on('toolbar(quick-follow-table)', function (obj) {
+        if (obj.event === 'quickFollowColumnSort') {
+            openQuickFollowColumnSortDialog();
+        }
+    });
+
     table.on('toolbar(table-list)', function (obj) {
         var checkStatus = table.checkStatus(obj.config.id), data = checkStatus.data;
         switch (obj.event) {
