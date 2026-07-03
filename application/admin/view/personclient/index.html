@@ -1151,39 +1151,38 @@
     .quick-follow-table-wrap {
         margin-top: 2px;
     }
-    .full-screen-wrapper {
-        max-height: calc(85vh - 140px);
-        overflow: auto;
-    }
-    .full-screen-wrapper.full-screen-active {
-        height: auto;
-        max-height: none;
-        overflow: visible;
-    }
+    /* 旧的 .full-screen-wrapper 高度/滚动规则已废弃，改由文件末尾 #quickFollowFullScreenWrapper 重构版接管 */
     .quick-follow-dialog.full-screen-mode {
-        height: auto;
-        max-height: none;
-        overflow: visible;
-        display: flex;
-        flex-direction: column;
+        height: 100vh !important;
+        max-height: none !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
+        box-sizing: border-box !important;
     }
     #quick-follow-dialog .quick-follow-dialog.full-screen-mode {
-        padding-bottom: 30px !important;
+        padding-bottom: 8px !important;
     }
     .quick-follow-dialog.full-screen-mode .quick-follow-search {
-        flex-shrink: 0;
+        flex: 0 0 auto !important;
     }
     .quick-follow-dialog.full-screen-mode .quick-follow-table-wrap {
-        height: auto;
-        max-height: none;
-        overflow: visible;
-        flex: none;
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
     }
     .quick-follow-dialog.full-screen-mode .full-screen-wrapper {
-        height: auto;
-        max-height: none;
-        overflow: visible;
-        flex: none;
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
     }
     .quick-follow-dialog.full-screen-mode .layui-table-cell {
         height: auto;
@@ -1410,6 +1409,117 @@
     .quick-follow-col-sort-item .col-field {
         color: #999;
         font-size: 12px;
+    }
+
+    /* ===============================
+       批量添加跟进记录：重构版布局
+       只作用于 #quick-follow-dialog
+       =============================== */
+    #quick-follow-dialog {
+        height: 100%;
+        box-sizing: border-box;
+    }
+    #quick-follow-dialog .quick-follow-dialog {
+        box-sizing: border-box !important;
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100% !important;
+        background: #fff !important;
+        overflow: hidden !important;
+    }
+    #quick-follow-dialog .quick-follow-search {
+        flex: 0 0 auto !important;
+        margin: 0 0 12px 0 !important;
+        box-sizing: border-box !important;
+    }
+    #quick-follow-dialog .quick-follow-table-wrap {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        height: auto !important;
+        margin-top: 0 !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    #quickFollowFullScreenWrapper {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        max-height: none !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    /* Layui table 外层占满 wrapper */
+    #quick-follow-dialog .layui-table-view {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+    }
+    /* 表格 box 占满，避免外层再产生滚动 */
+    #quick-follow-dialog .layui-table-box {
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+    /* 只允许表格主体滚动 */
+    #quick-follow-dialog .layui-table-main {
+        overflow: auto !important;
+    }
+    /* 分页栏必须保留在底部 */
+    #quick-follow-dialog .layui-table-page {
+        height: 46px !important;
+        flex: 0 0 46px !important;
+        line-height: 28px !important;
+        padding: 8px 20px 10px !important;
+        box-sizing: border-box !important;
+        overflow: visible !important;
+        background: #fff !important;
+    }
+
+    /* ===============================
+       批量添加跟进记录：全屏工作台布局
+       =============================== */
+    body.quick-follow-parent-fullscreen {
+        overflow: hidden !important;
+    }
+    body.quick-follow-parent-fullscreen .layui-layer-shade {
+        display: none !important;
+    }
+    #quick-follow-dialog .quick-follow-dialog.full-screen-mode {
+        position: fixed !important;
+        left: 0 !important;
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: none !important;
+        max-height: none !important;
+        padding: 12px 14px 8px !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        box-sizing: border-box !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+        background: #fff !important;
+        z-index: 999999 !important;
+    }
+    #quick-follow-dialog .quick-follow-dialog.full-screen-mode .quick-follow-search {
+        flex: 0 0 auto !important;
+    }
+    #quick-follow-dialog .quick-follow-dialog.full-screen-mode .quick-follow-table-wrap {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+    #quick-follow-dialog .quick-follow-dialog.full-screen-mode #quickFollowFullScreenWrapper {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        max-height: none !important;
+        overflow: hidden !important;
     }
 </style>
 <div class="personclient-list-container">
@@ -2900,17 +3010,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     function syncQuickFollowFullscreenButtonState() {
-        var isBrowserFullscreen = !!getQuickFollowFullscreenElement(getQuickFollowFullscreenDocument()) || !!getQuickFollowFullscreenElement(document);
-        if (isBrowserFullscreen) {
+        // 按钮与布局类统一以内部状态 quickFollowIsFull 为准，
+        // 这样即使浏览器 Fullscreen API 失败，页面内全屏布局也不会被回退。
+        if (quickFollowIsFull) {
             $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-restore"></i>退出全屏');
             $('#quickFollowFullScreenWrapper').addClass('full-screen-active');
             $('#quick-follow-dialog .quick-follow-dialog').addClass('full-screen-mode');
-            quickFollowIsFull = true;
         } else {
             $('#quick-follow-fullscreen-btn').html('<i class="layui-icon layui-icon-screen-full"></i>全屏');
             $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
             $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
-            quickFollowIsFull = false;
         }
     }
 
@@ -2918,6 +3027,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         setTimeout(function () {
             refreshQuickFollowTableForViewport();
             table.resize('quick-follow-table');
+            setTimeout(function () {
+                table.resize('quick-follow-table');
+                if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                    syncQuickFollowFixedRowHeights();
+                }
+            }, 180);
             if (typeof syncQuickFollowFixedRowHeights === 'function') {
                 syncQuickFollowFixedRowHeights();
             }
@@ -2925,41 +3040,58 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     function enterQuickFollowFullscreenMode() {
-        requestQuickFollowBrowserFullscreen().then(function () {
-            applyQuickFollowParentFullMode();
-            try {
-                if (quickFollowLayerIndex !== null) {
-                    layer.full(quickFollowLayerIndex);
-                }
-            } catch (e) {
-                console.warn('批量跟进弹窗全屏失败', e);
+        // 第一步：无条件应用页面内全屏工作台布局（不依赖浏览器 Fullscreen API 成功与否）
+        quickFollowIsFull = true;
+
+        $('body').addClass('quick-follow-parent-fullscreen');
+        applyQuickFollowParentFullMode();
+        $('#quick-follow-dialog .quick-follow-dialog').addClass('full-screen-mode');
+        $('#quickFollowFullScreenWrapper').addClass('full-screen-active');
+
+        try {
+            if (quickFollowLayerIndex !== null) {
+                layer.full(quickFollowLayerIndex);
             }
-            syncQuickFollowFullscreenButtonState();
-            setTimeout(function () {
-                refreshQuickFollowTableForViewport();
-            }, 100);
-            refreshQuickFollowFullscreenViewport(350);
-        }).catch(function (err) {
-            console.warn('浏览器全屏请求失败', err);
-            layer.msg('当前浏览器不支持浏览器全屏，请使用 F11', { icon: 0, time: 1800 });
+        } catch (e) {
+            console.warn('批量跟进弹窗 layer.full 失败', e);
+        }
+
+        syncQuickFollowFullscreenButtonState();
+
+        setTimeout(refreshQuickFollowTableForViewport, 50);
+        setTimeout(refreshQuickFollowTableForViewport, 150);
+        setTimeout(refreshQuickFollowTableForViewport, 300);
+
+        // 第二步：可选地尝试浏览器原生全屏，失败也不影响上面的布局
+        requestQuickFollowBrowserFullscreen().catch(function (err) {
+            console.warn('浏览器全屏请求失败（已使用页面内全屏布局）', err);
         });
     }
 
     function exitQuickFollowFullscreenMode() {
+        quickFollowIsFull = false;
+
+        $('body').removeClass('quick-follow-parent-fullscreen');
+        restoreQuickFollowParentFullMode();
+        $('#quick-follow-dialog .quick-follow-dialog').removeClass('full-screen-mode');
+        $('#quickFollowFullScreenWrapper').removeClass('full-screen-active');
+
+        try {
+            if (quickFollowLayerIndex !== null) {
+                layer.restore(quickFollowLayerIndex);
+            }
+        } catch (e) {
+            console.warn('恢复批量跟进弹窗尺寸失败', e);
+        }
+
         exitQuickFollowBrowserFullscreen().catch(function (err) {
             console.warn('退出浏览器全屏失败', err);
-        }).then(function () {
-            try {
-                if (quickFollowLayerIndex !== null) {
-                    layer.restore(quickFollowLayerIndex);
-                }
-            } catch (e) {
-                console.warn('恢复批量跟进弹窗尺寸失败', e);
-            }
-            restoreQuickFollowParentFullMode();
-            syncQuickFollowFullscreenButtonState();
-            refreshQuickFollowFullscreenViewport(300);
         });
+
+        syncQuickFollowFullscreenButtonState();
+
+        setTimeout(refreshQuickFollowTableForViewport, 50);
+        setTimeout(refreshQuickFollowTableForViewport, 150);
     }
 
     function bindQuickFollowFullscreenChangeListeners() {
@@ -2979,6 +3111,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             var isBrowserFullscreen = !!getQuickFollowFullscreenElement(getQuickFollowFullscreenDocument()) || !!getQuickFollowFullscreenElement(document);
             if (!isBrowserFullscreen) {
                 quickFollowIsFull = false;
+                $('body').removeClass('quick-follow-parent-fullscreen');
                 restoreQuickFollowParentFullMode();
                 try {
                     if (quickFollowLayerIndex !== null) {
@@ -2993,6 +3126,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             }
 
             quickFollowIsFull = true;
+            $('body').addClass('quick-follow-parent-fullscreen');
             syncQuickFollowFullscreenButtonState();
             refreshQuickFollowFullscreenViewport(120);
         };
@@ -4133,33 +4267,93 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     }
 
-    function getQuickFollowTableHeight() {
-        if (quickFollowIsFull) {
-            var $search = $('#quick-follow-dialog .quick-follow-search');
-            var viewportHeight = $(window).height();
-            var searchHeight = $search.outerHeight(true) || 0;
-            var reserveHeight = 190;
-            var fiveRowsHeight = 540;
-            var availableHeight = viewportHeight - searchHeight - reserveHeight;
+    function isQuickFollowActuallyFull() {
+        var isFull = false;
 
-            return Math.max(420, Math.min(fiveRowsHeight, availableHeight));
+        try {
+            if (quickFollowIsFull) {
+                isFull = true;
+            }
+
+            if ($('#quick-follow-dialog .quick-follow-dialog').hasClass('full-screen-mode')) {
+                isFull = true;
+            }
+
+            if ($('#quickFollowFullScreenWrapper').hasClass('full-screen-active')) {
+                isFull = true;
+            }
+
+            if ($('body').hasClass('quick-follow-parent-fullscreen')) {
+                isFull = true;
+            }
+
+            if (window.parent && window.parent !== window) {
+                var $p = window.parent.layui && window.parent.layui.jquery
+                    ? window.parent.layui.jquery
+                    : window.parent.$;
+                if ($p && $p('body').hasClass('quick-follow-parent-fullscreen')) {
+                    isFull = true;
+                }
+            }
+        } catch (e) {}
+
+        return isFull;
+    }
+
+    function getQuickFollowTableHeight() {
+        // 直接测量表格外层容器的真实高度，Layui table 高度等于 wrapper 高度
+        var $wrapper = $('#quickFollowFullScreenWrapper');
+
+        if ($wrapper.length && $wrapper.is(':visible')) {
+            var h = $wrapper.innerHeight();
+
+            if (h && h > 300) {
+                return Math.floor(h);
+            }
         }
 
-        return Math.max(320, Math.floor($(window).height() * 0.85) - 250);
+        var viewportHeight = window.innerHeight || $(window).height();
+
+        if (typeof isQuickFollowActuallyFull === 'function' && isQuickFollowActuallyFull()) {
+            return Math.max(520, viewportHeight - 170);
+        }
+
+        return Math.max(420, Math.floor(viewportHeight * 0.75));
+    }
+
+    function getQuickFollowPageLimit() {
+        // 固定每页 30 条，尽可能多显示客户；不再根据全屏状态动态判断
+        return 30;
     }
 
     function refreshQuickFollowTableForViewport() {
         var hasRenderedTable = table && table.cache && Object.prototype.hasOwnProperty.call(table.cache, quickFollowTableId);
-        if (hasRenderedTable) {
-            setTimeout(function () {
-                table.reload('quick-follow-table', {
-                    height: getQuickFollowTableHeight()
-                });
-                table.resize('quick-follow-table');
-            }, 80);
+
+        if (!hasRenderedTable) {
+            renderQuickFollowTable();
             return;
         }
-        renderQuickFollowTable();
+
+        table.reload(quickFollowTableId, {
+            height: getQuickFollowTableHeight(),
+            limit: 30,
+            page: { curr: 1 },
+            where: { keyword: collectQuickFollowSearchKeyword() }
+        });
+
+        setTimeout(function () {
+            table.resize(quickFollowTableId);
+            if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                syncQuickFollowFixedRowHeights();
+            }
+        }, 80);
+
+        setTimeout(function () {
+            table.resize(quickFollowTableId);
+            if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                syncQuickFollowFixedRowHeights();
+            }
+        }, 220);
     }
 
     function buildQuickFollowBaseCols() {
@@ -4309,6 +4503,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     function renderQuickFollowTable() {
         var tableHeight = getQuickFollowTableHeight();
+        var pageLimit = 30;
 
         if (!quickFollowTableConfigLoaded) {
             loadQuickFollowTableConfig();
@@ -4335,8 +4530,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             toolbar: '#quickFollowTableToolbar',
             defaultToolbar: ['filter'],
             page: true,
-            limit: 10,
-            limits: [10, 20, 50, 100],
+            limit: 30,
+            limits: [10, 20, 30, 50, 100],
             height: tableHeight,
             where: { keyword: collectQuickFollowSearchKeyword() },
             request: {
@@ -4351,6 +4546,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 bindQuickFollowHideConfigSave();
                 setTimeout(function () {
                     table.resize(quickFollowTableId);
+                    if (typeof syncQuickFollowFixedRowHeights === 'function') {
+                        syncQuickFollowFixedRowHeights();
+                    }
                 }, 80);
             }
         });
@@ -4477,6 +4675,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         exitQuickFollowFullscreenMode();
                     }
                 });
+                // 普通弹窗模式：等 layer 布局完成后按 wrapper 真实高度设置表格
+                setTimeout(refreshQuickFollowTableForViewport, 100);
+                setTimeout(refreshQuickFollowTableForViewport, 300);
             },
             end: function () {
                 $('#quick-follow-dialog').hide().appendTo('body');
@@ -4499,6 +4700,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
                 height: getQuickFollowTableHeight(),
+                limit: 30,
                 where: { keyword: collectQuickFollowSearchKeyword() }
             });
             refreshQuickFollowTableForViewport();
@@ -4516,6 +4718,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
                 height: getQuickFollowTableHeight(),
+                limit: 30,
                 where: { keyword: collectQuickFollowSearchKeyword() }
             });
             refreshQuickFollowTableForViewport();
@@ -4805,6 +5008,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         resizeTimer = setTimeout(function() {
             syncFixedRowHeights();
             syncAllFollowTableRowHeights();
+            if (quickFollowLayerIndex !== null) {
+                refreshQuickFollowTableForViewport();
+            }
         }, 150);
     });
 
