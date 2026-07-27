@@ -101,10 +101,6 @@
             display: none;
         }
 
-        .main-phone-tips {
-            margin-left: 110px;
-        }
-
         .layui-disabled,
         .layui-disabled:hover {
             color: #333 !important;
@@ -137,14 +133,15 @@
         }
 
         .client-details-left {
-            flex: 1 1 auto;
+            flex: 0 0 55%;
+            width: 55%;
             min-width: 0;
         }
 
         .client-details-right {
-            flex: 0 0 520px;
-            width: 520px;
-            min-width: 320px;
+            flex: 1 1 auto;
+            width: auto;
+            min-width: 500px;
         }
 
         .history-order-card .layui-card-header {
@@ -226,9 +223,6 @@
                 flex: 0 0 100%;
             }
 
-            .main-phone-tips {
-                margin-left: 0 !important;
-            }
         }
     </style>
 </head>
@@ -268,7 +262,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="layui-form-mid layui-word-aux main-phone-tips">主电话仅用于查看，详情页不支持新增或删除。</div>
                 </div>
 
                 <!-- 辅助电话 -->
