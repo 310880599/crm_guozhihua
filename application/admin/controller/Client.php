@@ -13,6 +13,7 @@ use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
 use app\admin\service\ClientDetailService;
 use app\admin\service\ClientFollowService;
+use app\admin\service\ClientOrderService;
 use app\admin\service\ClientStatusService;
 use app\admin\service\OrderService;
 use app\admin\service\PositionTitleService;
@@ -3372,6 +3373,47 @@ class Client extends Common
         }
 
         return $this->fetch('client/details');
+    }
+
+    /**
+     * 客户详情页：历史审核通过订单列表
+     */
+    public function historyApprovedOrders()
+    {
+        $clientId = (int)Request::param('client_id/d', 0);
+        $page = (int)Request::param('page/d', 1);
+        $limit = (int)Request::param('limit/d', 10);
+        $excludeOrderId = (int)Request::param('exclude_order_id/d', 0);
+
+        if ($clientId <= 0) {
+            return json(['code' => 500, 'msg' => '缺少客户ID', 'count' => 0, 'data' => []]);
+        }
+
+        $client = model('Client')->getClientDetailById($clientId);
+        if (!$client) {
+            return json(['code' => 500, 'msg' => '客户不存在或已删除', 'count' => 0, 'data' => []]);
+        }
+
+        // 与客户详情页保持一致的权限口径：超级权限或客户负责人/协同人
+        $clientForPermission = [
+            'id' => (int)($client['id'] ?? 0),
+            'pr_user' => (string)($client['pr_user'] ?? ''),
+            'joint_person' => (string)($client['joint_person'] ?? ''),
+        ];
+        $canEditAnyClient = $this->canEditAnyClientForOrder();
+        if (!$canEditAnyClient && !$this->canEditClientByOwnership($clientForPermission)) {
+            return json(['code' => 500, 'msg' => '您无此操作权限', 'count' => 0, 'data' => []]);
+        }
+
+        $service = new ClientOrderService();
+        $result = $service->getHistoryApprovedOrders($clientId, $page, $limit, $excludeOrderId);
+
+        return json([
+            'code' => 0,
+            'msg' => '',
+            'count' => (int)($result['count'] ?? 0),
+            'data' => $result['data'] ?? [],
+        ]);
     }
 
 

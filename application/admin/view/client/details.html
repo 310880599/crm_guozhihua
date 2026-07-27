@@ -130,7 +130,38 @@
             margin-left: 0;
         }
 
+        .client-details-layout {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+        }
+
+        .client-details-left {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+
+        .client-details-right {
+            flex: 0 0 520px;
+            width: 520px;
+            min-width: 320px;
+        }
+
+        .history-order-card .layui-card-header {
+            font-weight: 600;
+        }
+
         @media (max-width: 768px) {
+            .client-details-layout {
+                display: block;
+            }
+
+            .client-details-right {
+                width: 100%;
+                min-width: 0;
+                margin-top: 12px;
+            }
+
             .input-row {
                 flex-wrap: wrap;
                 align-items: flex-start;
@@ -204,142 +235,156 @@
 <body class="skin-<?php echo !empty($_COOKIE['skin'])?$_COOKIE['skin']:'0'; setcookie('skin','0'); ?>">
 
 <div class="admin-main layui-anim layui-anim-upbit">
-    <form class="layui-form layui-form-pane" action="" method="post">
-        <input type="hidden" name="id" value="{$result.id}" />
+    <div class="client-details-layout">
+        <div class="client-details-left">
+            <form class="layui-form layui-form-pane" action="" method="post">
+                <input type="hidden" name="id" value="{$result.id}" />
 
-        <!-- 客户名称 -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">客户名称<span style="color:red;">*</span></label>
-            <div class="layui-input-4">
-                <input type="text" name="kh_name" placeholder="请输入客户名称" class="layui-input" value="{$result.kh_name|default=''}" readonly>
-            </div>
-        </div>
-
-        <!-- 主电话 -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">电话<span style="color:red;">*</span></label>
-            <div class="layui-input-4" id="mainPhoneBox">
-                <div class="input-row has-action-btn">
-                    <div class="phone">
-                        <!-- 统一改为 more_phones[]，作为主电话数组的第一项 -->
-                        <input type="text" name="more_phones[]" placeholder="电话" class="layui-input multiple_telephone" readonly>
+                <!-- 客户名称 -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">客户名称<span style="color:red;">*</span></label>
+                    <div class="layui-input-4">
+                        <input type="text" name="kh_name" placeholder="请输入客户名称" class="layui-input" value="{$result.kh_name|default=''}" readonly>
                     </div>
-                    <div class="position-title mobile-position-row">
-                        <span class="position-label">职位身份</span>
-                        <select name="more_position_title_ids[]" lay-search class="position-title-select" disabled>
-                            <option value="">职位身份（选填）</option>
-                            {volist name="positionTitleList" id="vo"}
-                            <option value="{$vo.id}">{$vo.position_title}</option>
+                </div>
+
+                <!-- 主电话 -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">电话<span style="color:red;">*</span></label>
+                    <div class="layui-input-4" id="mainPhoneBox">
+                        <div class="input-row has-action-btn">
+                            <div class="phone">
+                                <!-- 统一改为 more_phones[]，作为主电话数组的第一项 -->
+                                <input type="text" name="more_phones[]" placeholder="电话" class="layui-input multiple_telephone" readonly>
+                            </div>
+                            <div class="position-title mobile-position-row">
+                                <span class="position-label">职位身份</span>
+                                <select name="more_position_title_ids[]" lay-search class="position-title-select" disabled>
+                                    <option value="">职位身份（选填）</option>
+                                    {volist name="positionTitleList" id="vo"}
+                                    <option value="{$vo.id}">{$vo.position_title}</option>
+                                    {/volist}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="layui-form-mid layui-word-aux main-phone-tips">主电话仅用于查看，详情页不支持新增或删除。</div>
+                </div>
+
+                <!-- 辅助电话 -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">辅助电话</label>
+                    <div class="layui-input-4">
+                        <div class="input-row">
+                            <div class="phone">
+                                <input type="text" name="phone2" placeholder="辅助电话" class="layui-input" value="{$auxPhone|default=''}" readonly>
+                            </div>
+                            <div class="position-title mobile-position-row">
+                                <span class="position-label">职位身份</span>
+                                <select name="phone2_position_title_id" lay-search class="position-title-select" disabled>
+                                    <option value="">职位身份（必填）</option>
+                                    {volist name="positionTitleList" id="vo"}
+                                    <option value="{$vo.id}" {eq name="auxPhonePositionTitleId" value="$vo.id"}selected{/eq}>{$vo.position_title}</option>
+                                    {/volist}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 产品名称 -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">产品名称<span style="color:red;">*</span></label>
+                    <div class="layui-input-4">
+                        <select name="product_name" lay-search disabled>
+                            <option value="">请选择产品名称</option>
+                            {volist name="productList" id="vo"}
+                            <option value="{$vo.id}" {eq name="result.product_name" value="$vo.id"}selected{/eq}>{$vo.product_name} ({$vo.category_name|default='无'})</option>
                             {/volist}
                         </select>
                     </div>
                 </div>
-            </div>
-            <div class="layui-form-mid layui-word-aux main-phone-tips">主电话仅用于查看，详情页不支持新增或删除。</div>
-        </div>
 
-        <!-- 辅助电话 -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">辅助电话</label>
-            <div class="layui-input-4">
-                <div class="input-row">
-                    <div class="phone">
-                        <input type="text" name="phone2" placeholder="辅助电话" class="layui-input" value="{$auxPhone|default=''}" readonly>
-                    </div>
-                    <div class="position-title mobile-position-row">
-                        <span class="position-label">职位身份</span>
-                        <select name="phone2_position_title_id" lay-search class="position-title-select" disabled>
-                            <option value="">职位身份（必填）</option>
-                            {volist name="positionTitleList" id="vo"}
-                            <option value="{$vo.id}" {eq name="auxPhonePositionTitleId" value="$vo.id"}selected{/eq}>{$vo.position_title}</option>
+                <!-- 所属渠道 inquiry_id 下拉框 -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">所属渠道<span style="color:red;">*</span></label>
+                    <div class="layui-input-4">
+                        <select name="inquiry_id" id="inquiry_id" disabled>
+                            <option value="">请选择所属渠道</option>
+                            {volist name="channelList" id="ch"} 
+                                <option value="{$ch.id}" {if isset($result) && $result.inquiry_id == $ch.id}selected{/if}>{$ch.inquiry_name}</option>
                             {/volist}
                         </select>
                     </div>
                 </div>
-            </div>
+                <!-- 运营端口 port_id 下拉框（多选） -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">运营端口<span style="color:red;">*</span></label>
+                    <div class="layui-input-4">
+                        <select name="port_id[]" id="port_id" multiple lay-search disabled>
+                            <option value="">请选择运营端口（支持搜索）</option>
+                            {volist name="portList" id="pt"} 
+                                <option value="{$pt.id}" {if isset($selectedPorts) && in_array($pt.id, $selectedPorts)}selected{/if}>{$pt.port_name}</option>
+                            {/volist}
+                        </select>
+                    </div>
+                </div>
+                <!-- 协同人（多选） -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">协同人</label>
+                    <div class="layui-input-4">
+                        <div id="collaboratorSelect"></div>
+                    </div>
+                </div>
+                <!-- 客户级别（可搜索单选下拉，非必填） -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">客户级别</label>
+                    <div class="layui-input-4">
+                        <select name="kh_rank" id="kh_rank" lay-search disabled>
+                            <option value="">请选择客户级别</option>
+                            {volist name="clientRankList" id="vo"}
+                            <option value="{$vo.id}" {eq name="khRankValue" value="$vo.id"}selected{/eq}>{$vo.rank_name_display|default=$vo.rank_name}</option>
+                            {/volist}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 其他信息 -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">其他信息</label>
+                    <div class="layui-input-4">
+                        <textarea name="remark" class="layui-textarea" placeholder="请输入其他信息" readonly>{$result.remark|default=''}</textarea>
+                    </div>
+                </div>
+
+                <!-- 关闭按钮 -->
+                <div class="layui-form-item client-submit-bar">
+                    <div class="layui-input-block">
+                        <button type="button" class="layui-btn layui-btn-primary" id="closeBtn">关闭</button>
+                    </div>
+                </div>
+            </form>
         </div>
 
-        <!-- 产品名称 -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">产品名称<span style="color:red;">*</span></label>
-            <div class="layui-input-4">
-                <select name="product_name" lay-search disabled>
-                    <option value="">请选择产品名称</option>
-                    {volist name="productList" id="vo"}
-                    <option value="{$vo.id}" {eq name="result.product_name" value="$vo.id"}selected{/eq}>{$vo.product_name} ({$vo.category_name|default='无'})</option>
-                    {/volist}
-                </select>
+        <div class="client-details-right">
+            <div class="layui-card history-order-card">
+                <div class="layui-card-header">客户历史成交订单</div>
+                <div class="layui-card-body">
+                    <table id="historyApprovedOrderTable" lay-filter="historyApprovedOrderTable"></table>
+                </div>
             </div>
         </div>
-
-        <!-- 所属渠道 inquiry_id 下拉框 -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">所属渠道<span style="color:red;">*</span></label>
-            <div class="layui-input-4">
-                <select name="inquiry_id" id="inquiry_id" disabled>
-                    <option value="">请选择所属渠道</option>
-                    {volist name="channelList" id="ch"} 
-                        <option value="{$ch.id}" {if isset($result) && $result.inquiry_id == $ch.id}selected{/if}>{$ch.inquiry_name}</option>
-                    {/volist}
-                </select>
-            </div>
-        </div>
-        <!-- 运营端口 port_id 下拉框（多选） -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">运营端口<span style="color:red;">*</span></label>
-            <div class="layui-input-4">
-                <select name="port_id[]" id="port_id" multiple lay-search disabled>
-                    <option value="">请选择运营端口（支持搜索）</option>
-                    {volist name="portList" id="pt"} 
-                        <option value="{$pt.id}" {if isset($selectedPorts) && in_array($pt.id, $selectedPorts)}selected{/if}>{$pt.port_name}</option>
-                    {/volist}
-                </select>
-            </div>
-        </div>
-        <!-- 协同人（多选） -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">协同人</label>
-            <div class="layui-input-4">
-                <div id="collaboratorSelect"></div>
-            </div>
-        </div>
-        <!-- 客户级别（可搜索单选下拉，非必填） -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">客户级别</label>
-            <div class="layui-input-4">
-                <select name="kh_rank" id="kh_rank" lay-search disabled>
-                    <option value="">请选择客户级别</option>
-                    {volist name="clientRankList" id="vo"}
-                    <option value="{$vo.id}" {eq name="khRankValue" value="$vo.id"}selected{/eq}>{$vo.rank_name_display|default=$vo.rank_name}</option>
-                    {/volist}
-                </select>
-            </div>
-        </div>
-
-        <!-- 其他信息 -->
-        <div class="layui-form-item">
-            <label class="layui-form-label">其他信息</label>
-            <div class="layui-input-4">
-                <textarea name="remark" class="layui-textarea" placeholder="请输入其他信息" readonly>{$result.remark|default=''}</textarea>
-            </div>
-        </div>
-
-        <!-- 关闭按钮 -->
-        <div class="layui-form-item client-submit-bar">
-            <div class="layui-input-block">
-                <button type="button" class="layui-btn layui-btn-primary" id="closeBtn">关闭</button>
-            </div>
-        </div>
-    </form>
+    </div>
 </div>
 
 {include file="common/foot"/}
 
 <script>
-layui.use(['form', 'layer', 'jquery'], function () {
+layui.use(['form', 'layer', 'jquery', 'table'], function () {
     var form = layui.form
       , layer = layui.layer
-      , $ = layui.jquery;
+      , $ = layui.jquery
+      , table = layui.table;
     var positionTitleList = {$positionTitleListJson|raw};
 
     var collaboratorData = {$collaboratorList|raw};          // [{name, value}]
@@ -406,6 +451,46 @@ layui.use(['form', 'layer', 'jquery'], function () {
     })();
 
     form.render('select');
+
+    function getQueryParam(key) {
+        var reg = new RegExp('(^|&)' + key + '=([^&]*)(&|$)', 'i');
+        var r = window.location.search.substr(1).match(reg);
+        if (r !== null) {
+            return decodeURIComponent(r[2]);
+        }
+        return '';
+    }
+
+    function renderHistoryApprovedOrderTable() {
+        var clientId = parseInt($('input[name="id"]').val(), 10) || 0;
+        var excludeOrderId = parseInt(getQueryParam('exclude_order_id') || getQueryParam('order_id') || '0', 10) || 0;
+        table.render({
+            elem: '#historyApprovedOrderTable',
+            id: 'historyApprovedOrderTable',
+            url: "{:url('Client/historyApprovedOrders')}",
+            method: 'get',
+            where: {
+                client_id: clientId,
+                exclude_order_id: excludeOrderId
+            },
+            page: true,
+            limit: 10,
+            limits: [10, 20, 30, 50],
+            text: {
+                none: '暂无历史成交订单'
+            },
+            cols: [[
+                { field: 'order_no', title: '订单编号', minWidth: 140 },
+                { field: 'order_time', title: '成交时间', minWidth: 160 },
+                { field: 'money', title: '成交金额', minWidth: 120, templet: function (d) { return d.money || d.money === 0 ? d.money : ''; } },
+                { field: 'profit', title: '利润', minWidth: 100, templet: function (d) { return d.profit || d.profit === 0 ? d.profit : ''; } },
+                { field: 'product_name', title: '产品名称', minWidth: 140, templet: function (d) { return d.product_name || ''; } },
+                { field: 'pr_user', title: '负责人', minWidth: 120, templet: function (d) { return d.pr_user || ''; } }
+            ]]
+        });
+    }
+
+    renderHistoryApprovedOrderTable();
 
     $('#closeBtn').on('click', function () {
         var index = parent.layer.getFrameIndex(window.name);
