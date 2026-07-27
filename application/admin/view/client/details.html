@@ -126,37 +126,92 @@
             margin-left: 0;
         }
 
-        .client-details-layout {
+        .client-details-container {
             display: flex;
             gap: 16px;
             align-items: flex-start;
+            width: 100%;
         }
 
-        .client-details-left {
-            flex: 0 0 55%;
-            width: 55%;
-            min-width: 0;
+        .client-info-panel {
+            flex: 0 0 520px;
+            width: 520px;
+            max-width: 520px;
+            box-sizing: border-box;
         }
 
-        .client-details-right {
+        .client-order-panel {
             flex: 1 1 auto;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+
+        .client-info-form {
+            width: 100%;
+        }
+
+        .client-form-item-body {
+            margin-left: 110px;
             width: auto;
-            min-width: 500px;
+            min-width: 0;
         }
 
         .history-order-card .layui-card-header {
             font-weight: 600;
         }
 
+        .history-order-card {
+            width: 100%;
+        }
+
+        .history-order-card .layui-card-body {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 0;
+        }
+
+        .history-order-table-wrap {
+            width: 100%;
+            padding: 10px 15px;
+            box-sizing: border-box;
+        }
+
+        #historyApprovedOrderTable {
+            width: 100%;
+        }
+
+        .history-order-card .layui-table-view {
+            width: 100%;
+        }
+
+        .history-order-card .layui-table-box {
+            width: 100%;
+        }
+
+        .history-order-card .layui-table-header table,
+        .history-order-card .layui-table-body table {
+            width: 100%;
+        }
+
         @media (max-width: 768px) {
-            .client-details-layout {
+            .client-details-container {
                 display: block;
             }
 
-            .client-details-right {
+            .client-info-panel,
+            .client-order-panel {
                 width: 100%;
+                max-width: none;
+                flex: none;
                 min-width: 0;
+            }
+
+            .client-order-panel {
                 margin-top: 12px;
+            }
+
+            .client-form-item-body {
+                margin-left: 0;
             }
 
             .input-row {
@@ -229,15 +284,15 @@
 <body class="skin-<?php echo !empty($_COOKIE['skin'])?$_COOKIE['skin']:'0'; setcookie('skin','0'); ?>">
 
 <div class="admin-main layui-anim layui-anim-upbit">
-    <div class="client-details-layout">
-        <div class="client-details-left">
-            <form class="layui-form layui-form-pane" action="" method="post">
+    <div class="client-details-container">
+        <div class="client-info-panel">
+            <form class="layui-form layui-form-pane client-info-form" action="" method="post">
                 <input type="hidden" name="id" value="{$result.id}" />
 
                 <!-- 客户名称 -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">客户名称<span style="color:red;">*</span></label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <input type="text" name="kh_name" placeholder="请输入客户名称" class="layui-input" value="{$result.kh_name|default=''}" readonly>
                     </div>
                 </div>
@@ -245,7 +300,7 @@
                 <!-- 主电话 -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">电话<span style="color:red;">*</span></label>
-                    <div class="layui-input-4" id="mainPhoneBox">
+                    <div class="client-form-item-body" id="mainPhoneBox">
                         <div class="input-row has-action-btn">
                             <div class="phone">
                                 <!-- 统一改为 more_phones[]，作为主电话数组的第一项 -->
@@ -267,7 +322,7 @@
                 <!-- 辅助电话 -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">辅助电话</label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <div class="input-row">
                             <div class="phone">
                                 <input type="text" name="phone2" placeholder="辅助电话" class="layui-input" value="{$auxPhone|default=''}" readonly>
@@ -288,7 +343,7 @@
                 <!-- 产品名称 -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">产品名称<span style="color:red;">*</span></label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <select name="product_name" lay-search disabled>
                             <option value="">请选择产品名称</option>
                             {volist name="productList" id="vo"}
@@ -301,7 +356,7 @@
                 <!-- 所属渠道 inquiry_id 下拉框 -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">所属渠道<span style="color:red;">*</span></label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <select name="inquiry_id" id="inquiry_id" disabled>
                             <option value="">请选择所属渠道</option>
                             {volist name="channelList" id="ch"} 
@@ -313,7 +368,7 @@
                 <!-- 运营端口 port_id 下拉框（多选） -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">运营端口<span style="color:red;">*</span></label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <select name="port_id[]" id="port_id" multiple lay-search disabled>
                             <option value="">请选择运营端口（支持搜索）</option>
                             {volist name="portList" id="pt"} 
@@ -325,14 +380,14 @@
                 <!-- 协同人（多选） -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">协同人</label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <div id="collaboratorSelect"></div>
                     </div>
                 </div>
                 <!-- 客户级别（可搜索单选下拉，非必填） -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">客户级别</label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <select name="kh_rank" id="kh_rank" lay-search disabled>
                             <option value="">请选择客户级别</option>
                             {volist name="clientRankList" id="vo"}
@@ -345,7 +400,7 @@
                 <!-- 其他信息 -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">其他信息</label>
-                    <div class="layui-input-4">
+                    <div class="client-form-item-body">
                         <textarea name="remark" class="layui-textarea" placeholder="请输入其他信息" readonly>{$result.remark|default=''}</textarea>
                     </div>
                 </div>
@@ -359,11 +414,13 @@
             </form>
         </div>
 
-        <div class="client-details-right">
+        <div class="client-order-panel">
             <div class="layui-card history-order-card">
                 <div class="layui-card-header">客户历史成交订单</div>
                 <div class="layui-card-body">
-                    <table id="historyApprovedOrderTable" lay-filter="historyApprovedOrderTable"></table>
+                    <div class="history-order-table-wrap">
+                        <table id="historyApprovedOrderTable" lay-filter="historyApprovedOrderTable"></table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -462,6 +519,7 @@ layui.use(['form', 'layer', 'jquery', 'table'], function () {
             id: 'historyApprovedOrderTable',
             url: "{:url('Client/historyApprovedOrders')}",
             method: 'get',
+            cellMinWidth: 100,
             where: {
                 client_id: clientId,
                 exclude_order_id: excludeOrderId
