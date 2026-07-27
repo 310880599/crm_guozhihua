@@ -536,12 +536,41 @@ layui.use(['form', 'layer', 'jquery', 'table'], function () {
                 { field: 'money', title: '成交金额', minWidth: 120, templet: function (d) { return d.money || d.money === 0 ? d.money : ''; } },
                 { field: 'profit', title: '利润', minWidth: 100, templet: function (d) { return d.profit || d.profit === 0 ? d.profit : ''; } },
                 { field: 'product_name', title: '产品名称', minWidth: 140, templet: function (d) { return d.product_name || ''; } },
-                { field: 'pr_user', title: '负责人', minWidth: 120, templet: function (d) { return d.pr_user || ''; } }
+                { field: 'pr_user', title: '负责人', minWidth: 120, templet: function (d) { return d.pr_user || ''; } },
+                {
+                    title: '操作',
+                    minWidth: 90,
+                    align: 'center',
+                    templet: function () {
+                        return '<a class="layui-btn layui-btn-xs" lay-event="details">详情</a>';
+                    }
+                }
             ]]
         });
     }
 
     renderHistoryApprovedOrderTable();
+
+    table.on('tool(historyApprovedOrderTable)', function (obj) {
+        var data = obj.data || {};
+        if (obj.event !== 'details') {
+            return;
+        }
+        if (!data.id) {
+            layer.msg('订单ID缺失', { icon: 2, time: 1500 });
+            return;
+        }
+        layer.open({
+            type: 2,
+            title: '订单详情',
+            closeBtn: 1,
+            area: ['100%', '86%'],
+            anim: 2,
+            shadeClose: false,
+            maxmin: false,
+            content: ["{:url('Order/details')}?id=" + data.id]
+        });
+    });
 
     $('#closeBtn').on('click', function () {
         var index = parent.layer.getFrameIndex(window.name);
