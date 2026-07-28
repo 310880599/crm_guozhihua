@@ -67,9 +67,30 @@
                 style="border-bottom: transparent;height: auto">
                 <div class="layui-form-item" style="text-align: left;padding-left: 20px;">
                     <div class="layui-inline">
-                        <label class="layui-form-label" style="margin-left: 5px">收款账户：</label>
+                        <label class="layui-form-label" style="margin-left: 5px">客户手机号：</label>
                         <div class="layui-input-inline">
-                            <input type="text" id="account" name="account" placeholder="请输入收款账户："
+                            <input type="text" id="client_phone" name="client_phone" placeholder="请输入客户手机号"
+                                class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="margin-left: 5px">订单编号：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="order_no" name="order_no" placeholder="请输入订单编号"
+                                class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="margin-left: 5px">产品名称：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="product_name" name="product_name" placeholder="请输入产品名称"
+                                class="layui-input">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="margin-left: 5px">负责人：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="pr_user" name="pr_user" placeholder="请输入负责人"
                                 class="layui-input">
                         </div>
                     </div>
@@ -97,7 +118,7 @@
 <!-- 表格顶部工具栏模板：新增按钮 -->
 <script type="text/html" id="topBtn">
   <button class="layui-btn layui-btn-success layui-btn-sm" lay-event="add">
-    <i class="layui-icon">&#xe608;</i> 添加收款账户
+    <i class="layui-icon">&#xe608;</i> 新增历史订单
   </button>
   <button class="layui-btn layui-btn-danger layui-btn-sm" lay-event="batchDel">
     <i class="layui-icon">&#xe640;</i> 批量删除
@@ -121,15 +142,27 @@ layui.use(['table','form','util','jquery'], function() {
     var tableIns = table.render({
         elem: '#table-list',
         id: 'table-list',              // ★新增
-        url: "{:url('ReceiveAccount/index')}",  // 获取数据接口:contentReference[oaicite:6]{index=6}
+        url: "{:url('HistoryOrder/index')}",  // 获取数据接口:contentReference[oaicite:6]{index=6}
         method: 'post',
         toolbar: '#topBtn',  // 顶部工具栏：添加按钮:contentReference[oaicite:7]{index=7}:contentReference[oaicite:8]{index=8}
         page: true,
         cols: [[
             {type:'checkbox', fixed: 'left'},
             {field: 'id', title: 'ID', width: 80, sort: true},
-            {field: 'account', title: '收款账户',width: 180},
-            {field: 'receiver', title: '创建人',width: 100},
+            {field: 'client_phone', title: '客户手机号', width: 140},
+            {field: 'order_no', title: '订单编号', width: 160},
+            {field: 'order_time', title: '订单时间', width: 180},
+            {field: 'money', title: '金额', width: 120, templet: function(d){
+                var v = parseFloat(d.money);
+                return isNaN(v) ? '0.00' : v.toFixed(2);
+            }},
+            {field: 'profit', title: '利润', width: 120, templet: function(d){
+                var v = parseFloat(d.profit);
+                return isNaN(v) ? '0.00' : v.toFixed(2);
+            }},
+            {field: 'product_name', title: '产品名称', width: 180},
+            {field: 'pr_user', title: '负责人', width: 120},
+            {field: 'create_user', title: '创建人', width: 120},
             {field:'create_time', title:'创建时间',width: 180,
                 templet: function(d){
                   var v = d.create_time;
@@ -159,8 +192,8 @@ layui.use(['table','form','util','jquery'], function() {
     table.on('tool(table-list)', function(obj) {
         var data = obj.data;
         if (obj.event === 'del') {
-            layer.confirm('确认删除该来源吗？', function(index) {
-                $.post("{:url('ReceiveAccount/del')}", {id: data.id}, function(res) {
+            layer.confirm('确认删除该历史订单吗？', function(index) {
+                $.post("{:url('HistoryOrder/del')}", {id: data.id}, function(res) {
                     if (res.code === 0) {
                         layer.msg(res.msg, {icon:1, time:1000});
                         tableIns.reload();  // 刷新表格:contentReference[oaicite:9]{index=9}
@@ -173,10 +206,10 @@ layui.use(['table','form','util','jquery'], function() {
         } else if (obj.event === 'edit') {
             layer.open({
                 type: 2,
-                title: '编辑询盘来源',
+                title: '编辑历史订单',
                 area: ['600px', '400px'],
                 shadeClose: false,
-                content: ["{:url('ReceiveAccount/edit')}?id=" + data.id, 'no']
+                content: ["{:url('HistoryOrder/edit')}?id=" + data.id, 'no']
             });
         }
     });
@@ -188,17 +221,17 @@ layui.use(['table','form','util','jquery'], function() {
       if (obj.event === 'add') {
         layer.open({
           type: 2,
-          title: '添加收款账户',
+          title: '新增历史订单',
           area: ['600px','400px'],
           shadeClose: true,
-          content: ["{:url('ReceiveAccount/add')}", 'no']
+          content: ["{:url('HistoryOrder/add')}", 'no']
         });
       } else if (obj.event === 'batchDel') {
         var rows = table.checkStatus('table-list').data || [];
         if (!rows.length) return layer.msg('请先勾选要删除的记录', {icon:0});
         var ids = rows.map(function(r){return r.id;});
-        layer.confirm('确认删除选中的 '+ids.length+' 条记录吗？', function(index){
-          $.post("{:url('ReceiveAccount/batchDel')}", {ids: ids}, function(res){
+        layer.confirm('确认删除选中的 '+ids.length+' 条历史订单吗？', function(index){
+          $.post("{:url('HistoryOrder/batchDel')}", {ids: ids}, function(res){
             if (res.code === 0) {
               layer.msg('删除成功', {icon:1, time:800});
               tableIns.reload({page:{curr:1}});
@@ -211,24 +244,24 @@ layui.use(['table','form','util','jquery'], function() {
       }else if (obj.event === 'importExcel') {
         layer.open({
           type: 2,
-          title: '批量导入（Excel/CSV）',
+          title: '导入历史订单（Excel/CSV）',
           area: ['600px','360px'],
           shadeClose: true,
-          content: ["{:url('ReceiveAccount/import')}", 'no']
+          content: ["{:url('HistoryOrder/import')}", 'no']
         });
       }else if (obj.event === 'downloadTpl') {
         // 方式一：当前窗口直接下载
-        window.location.href = "{:url('ReceiveAccount/tpl')}";
+        window.location.href = "{:url('HistoryOrder/tpl')}";
     
         // （可选）方式二：新标签下载
-        // window.open("{:url('ReceiveAccount/tpl')}", "_blank");
+        // window.open("{:url('HistoryOrder/tpl')}", "_blank");
       }
     });
 
     //监听搜索
     form.on('submit(LAY-app-contlist-search)', function (data) {
         table.reload('table-list', {
-            url: "{:url('ReceiveAccount/accountSearch')}",
+            url: "{:url('HistoryOrder/index')}",
             where: data.field,
             page: { curr: 1 }
         });
