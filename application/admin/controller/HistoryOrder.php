@@ -83,7 +83,8 @@ class HistoryOrder extends Common
             $admin = Admin::getMyInfo();
             $service = new HistoryOrderService();
             $data['order_no'] = $service->generateOrderNo();
-            $data['client_id'] = isset($data['client_id']) ? (int)$data['client_id'] : 0;
+            $data['client_phone'] = trim((string)($data['client_phone'] ?? ''));
+            $data['client_id'] = $this->resolveClientIdByPhone($data['client_phone']);
             $data['create_user_id'] = (int)session('aid');
             $data['create_user'] = (string)($admin['username'] ?? '');
             $data['is_deleted'] = 0;
@@ -125,6 +126,16 @@ class HistoryOrder extends Common
                 'remark',
             ], 'post');
             unset($data['order_no']);
+
+            if (array_key_exists('client_phone', $data)) {
+                $newClientPhone = trim((string)$data['client_phone']);
+                $oldClientPhone = trim((string)($entry['client_phone'] ?? ''));
+                $data['client_phone'] = $newClientPhone;
+
+                if ($newClientPhone !== $oldClientPhone) {
+                    $data['client_id'] = $this->resolveClientIdByPhone($newClientPhone);
+                }
+            }
 
             $res = Db::name('crm_client_history_order')
                 ->where('id', $id)
@@ -338,6 +349,13 @@ class HistoryOrder extends Common
         $historyOrderService = new HistoryOrderService();
         $reservedOrderNos = $providedOrderNos;
         $insertData = [];
+        $phoneSet = [];
+        foreach ($rows as $row) {
+            if ($row['client_phone'] !== '') {
+                $phoneSet[$row['client_phone']] = true;
+            }
+        }
+        $clientIdMap = $this->buildClientIdMapByPhones(array_keys($phoneSet));
 
         foreach ($rows as $row) {
             $orderNo = $row['order_no'];
@@ -347,7 +365,7 @@ class HistoryOrder extends Common
             $reservedOrderNos[$orderNo] = true;
 
             $insertData[] = [
-                'client_id' => 0,
+                'client_id' => (int)($clientIdMap[$row['client_phone']] ?? 0),
                 'client_phone' => $row['client_phone'],
                 'order_no' => $orderNo,
                 'order_time' => $row['order_time'],
@@ -440,5 +458,58 @@ class HistoryOrder extends Common
         }
 
         return trim((string)$rawOrderTime);
+    }
+
+    /**
+     * 根据手机号查找 CRM 客户ID（lead_id）
+     *
+     * @param string $clientPhone
+     * @return int
+     */
+    private function resolveClientIdByPhone(string $clientPhone): int
+    {
+        if ($clientPhone === '') {
+            return 0;
+        }
+
+        $leadId = Db::name('crm_contacts')
+            ->where('contact_value', $clientPhone)
+            ->where('is_delete', 0)
+            ->order('id desc')
+            ->value('lead_id');
+
+        return (int)$leadId;
+    }
+
+    /**
+     * 批量构建手机号到 CRM 客户ID（lead_id）的映射
+     *
+     * @param array $phones
+     * @return array<string, int>
+     */
+    private function buildClientIdMapByPhones(array $phones): array
+    {
+        $phones = array_values(array_filter(array_unique(array_map('trim', $phones))));
+        if (empty($phones)) {
+            return [];
+        }
+
+        $contacts = Db::name('crm_contacts')
+            ->field('contact_value, lead_id')
+            ->whereIn('contact_value', $phones)
+            ->where('is_delete', 0)
+            ->order('id desc')
+            ->select();
+
+        $map = [];
+        foreach ($contacts as $contact) {
+            $contactValue = trim((string)($contact['contact_value'] ?? ''));
+            if ($contactValue === '' || isset($map[$contactValue])) {
+                continue;
+            }
+            $map[$contactValue] = (int)($contact['lead_id'] ?? 0);
+        }
+
+        return $map;
     }
 }
