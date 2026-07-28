@@ -2,9 +2,25 @@
 <html>
 <head>
   {include file="common/head"/}
+  <style>
+    /* 修复 layui.layer type:2 iframe 弹窗无法纵向滚动的问题：
+       让页面自身可以随内容自适应高度并出现滚动条，不使用固定高度 */
+    html,
+    body {
+      height: 100%;
+      overflow-y: auto !important;
+    }
+    body {
+      margin: 0;
+    }
+    .layui-form {
+      min-height: 100%;
+      box-sizing: border-box;
+    }
+  </style>
 </head>
 <body>
-<form class="layui-form" style="padding:18px 20px;">
+<form class="layui-form" style="padding:18px 20px 30px 20px;">
   <div class="layui-form-item">
     <blockquote class="layui-elem-quote">
       <b>历史订单导入说明：</b><br>

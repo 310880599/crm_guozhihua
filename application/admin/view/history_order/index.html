@@ -55,6 +55,18 @@
             white-space: nowrap;   /* 不允许换行 */
         }
 
+        /* 修复 layui.layer type:2 (iframe) 弹窗无法纵向滚动的问题：
+           让 iframe 及其容器撑满弹窗高度，真正的滚动条交给子页面内部处理 */
+        .layui-layer-iframe .layui-layer-content {
+            height: 100% !important;
+            overflow: hidden !important;
+        }
+
+        .layui-layer-iframe iframe {
+            height: 100% !important;
+            display: block;
+        }
+
     </style>
 </head>
 <body class="layui-layout-body">
@@ -207,7 +219,7 @@ layui.use(['table','form','util','jquery'], function() {
             layer.open({
                 type: 2,
                 title: '编辑历史订单',
-                area: ['600px', '400px'],
+                area: ['650px', '80%'],
                 shadeClose: false,
                 content: ["{:url('HistoryOrder/edit')}?id=" + data.id, 'no']
             });
@@ -222,7 +234,7 @@ layui.use(['table','form','util','jquery'], function() {
         layer.open({
           type: 2,
           title: '新增历史订单',
-          area: ['600px','400px'],
+          area: ['650px','80%'],
           shadeClose: true,
           content: ["{:url('HistoryOrder/add')}", 'no']
         });
@@ -245,7 +257,7 @@ layui.use(['table','form','util','jquery'], function() {
         layer.open({
           type: 2,
           title: '导入历史订单（Excel/CSV）',
-          area: ['600px','360px'],
+          area: ['650px','70%'],
           shadeClose: true,
           content: ["{:url('HistoryOrder/import')}", 'no']
         });
