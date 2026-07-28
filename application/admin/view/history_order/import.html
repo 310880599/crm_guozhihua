@@ -7,9 +7,21 @@
 <form class="layui-form" style="padding:18px 20px;">
   <div class="layui-form-item">
     <blockquote class="layui-elem-quote">
-      支持 <b>.xlsx / .xls / .csv</b> 文件。字段顺序：A=收款管理、B=创建人。<br>
-      第一行可写表头（含“收款”字样自动识别并跳过）。<br>
-      <span style="color:#FF5722;">account为空的行将被跳过。</span>
+      <b>历史订单导入说明：</b><br>
+      支持格式：<b>.xlsx / .xls / .csv</b><br>
+      Excel字段顺序：A客户手机号，B订单编号，C成交时间，D成交金额，E利润，F产品名称，G负责人，H备注<br>
+      订单编号规则：<br>
+      1. B列订单编号可以为空。<br>
+      2. 为空时系统自动生成：H+YYYYMMDD+4位流水号。<br>
+      3. 如果填写订单编号，必须保证唯一（包含已软删除历史订单）。<br>
+      数据格式说明：<br>
+      客户手机号：建议填写完整手机号。<br>
+      成交时间：yyyy-MM-dd HH:mm:ss<br>
+      成交金额：数字<br>
+      利润：数字<br>
+      产品名称：填写产品名称<br>
+      负责人：填写负责人姓名<br>
+      备注：可选
     </blockquote>
   </div>
 
@@ -45,7 +57,7 @@ layui.use(['jquery','layer'], function(){
 
     var loadIdx = layer.load(2, {shade:0.2});
     $.ajax({
-      url: "{:url('ReceiveAccount/importDo')}",
+      url: "{:url('HistoryOrder/importDo')}",
       type: 'POST',
       data: fd,
       processData: false,
@@ -72,7 +84,7 @@ layui.use(['jquery','layer'], function(){
 </script>
 <script>
     $('#btn-tpl').on('click', function(){
-      window.location.href = "{:url('ReceiveAccount/tpl')}";
+      window.location.href = "{:url('HistoryOrder/tpl')}";
     });
 </script>
 </body>
