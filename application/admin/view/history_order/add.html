@@ -14,55 +14,297 @@
             border-color: #c0c0c0 !important;
             color: #000 !important;
         }
+        .voucher-preview {
+            margin-top: 10px;
+            max-width: 240px;
+            max-height: 180px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            display: none;
+        }
     </style>
 </head>
 <body>
 <form class="layui-form" style="padding:15px 20px 0 20px;">
-  <div class="layui-form-item">
-    <label class="layui-form-label">收款管理</label>
-    <div class="layui-input-block">
-      <input type="text" name="account" required lay-verify="required" placeholder="请输入收款管理" 
-             autocomplete="off" class="layui-input">
+    <div class="layui-form-item">
+        <label class="layui-form-label">客户手机号</label>
+        <div class="layui-input-block">
+            <input type="text" name="client_phone" lay-verify="required" placeholder="请输入客户手机号" autocomplete="off" class="layui-input">
+        </div>
     </div>
-  </div>
-  <div class="layui-form-item">
-    <label class="layui-form-label">创建人</label>
-    <div class="layui-input-block">
-      <input type="text" name="receiver" class="layui-input layui-bg-gray" value="{$currentAdmin.username}" readonly>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">订单编号</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="订单编号保存后自动生成（例如：H202607280001）" readonly>
+        </div>
     </div>
-  </div>
-  <div class="layui-form-item">
-    <div class="layui-input-block">
-      <button type="submit" class="layui-btn" lay-submit lay-filter="formSubmit">立即提交</button>
-      <button type="button"
-        class="layui-btn layui-btn-secondary"
-        onclick="var i = parent.layer.getFrameIndex(window.name); parent.layer.close(i);">
-        取消
-      </button>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">成交时间</label>
+        <div class="layui-input-block">
+            <input type="text" id="order_time" name="order_time" lay-verify="required" placeholder="请选择成交时间" autocomplete="off" class="layui-input">
+        </div>
     </div>
-  </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">成交金额</label>
+        <div class="layui-input-block">
+            <input type="number" step="0.01" min="0" name="money" lay-verify="required" placeholder="请输入成交金额" autocomplete="off" class="layui-input">
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">利润</label>
+        <div class="layui-input-block">
+            <input type="number" step="0.01" min="0" name="profit" lay-verify="required" placeholder="请输入利润" autocomplete="off" class="layui-input">
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">产品</label>
+        <div class="layui-input-block">
+            <select id="product_select" lay-filter="product_select" lay-search>
+                <option value="">请选择产品</option>
+            </select>
+            <input type="hidden" name="product_id" id="product_id" value="">
+            <input type="hidden" name="product_name" id="product_name" value="">
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">负责人</label>
+        <div class="layui-input-block">
+            <select id="pr_user_select" lay-filter="pr_user_select" lay-search>
+                <option value="">请选择负责人</option>
+            </select>
+            <input type="hidden" name="pr_user_id" id="pr_user_id" value="">
+            <input type="hidden" name="pr_user" id="pr_user" value="">
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">订单证明截图</label>
+        <div class="layui-input-block">
+            <button type="button" class="layui-btn layui-btn-primary" id="voucherUploadBtn">
+                <i class="layui-icon">&#xe67c;</i>上传截图
+            </button>
+            <input type="hidden" name="voucher_image" id="voucher_image" value="">
+            <div class="layui-upload-list">
+                <img class="voucher-preview" id="voucherPreview" alt="订单证明截图预览">
+                <p id="voucherUploadText"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">备注</label>
+        <div class="layui-input-block">
+            <textarea name="remark" placeholder="请输入备注" class="layui-textarea"></textarea>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <div class="layui-input-block">
+            <button type="submit" class="layui-btn" lay-submit lay-filter="formSubmit">立即提交</button>
+            <button type="button"
+                class="layui-btn layui-btn-secondary"
+                onclick="var i = parent.layer.getFrameIndex(window.name); parent.layer.close(i);">
+                取消
+            </button>
+        </div>
+    </div>
 </form>
 
 {include file="common/foot"/}
 <script>
-layui.use(['form','jquery'], function(){
-  var form = layui.form, $ = layui.jquery;
-  // 监听表单提交
-  form.on('submit(formSubmit)', function(data){
-    $.post("{:url('ReceiveAccount/add')}", data.field, function(res){
-        if(res.code === 0){
-            layer.msg('添加成功！', {icon:1, time:1000}, function(){
-                // 刷新父窗口表格，并关闭弹窗
-                parent.layui.table.reload('table-list');
-                var index = parent.layer.getFrameIndex(window.name);
-                parent.layer.close(index);
-            });
-        } else {
-            layer.msg(res.msg || '添加失败', {icon:2, time:1500});
+layui.use(['upload', 'form', 'jquery', 'layer', 'laydate'], function(){
+    var upload = layui.upload,
+        form = layui.form,
+        $ = layui.jquery,
+        layer = layui.layer,
+        laydate = layui.laydate;
+    var defaultPrUserId = "{$currentAdmin.admin_id|default=''}";
+    var defaultPrUserName = "{$currentAdmin.username|default=''}";
+
+    laydate.render({
+        elem: '#order_time',
+        type: 'datetime',
+        format: 'yyyy-MM-dd HH:mm:ss',
+        trigger: 'click'
+    });
+
+    function formatToTwoDecimals(value) {
+        if (value === '' || value === null || value === undefined) {
+            return '';
         }
-    }, 'json');
-    return false; // 阻止表单跳转
-  });
+        var num = parseFloat(value);
+        if (isNaN(num)) {
+            return '';
+        }
+        return num.toFixed(2);
+    }
+
+    $('input[name="money"], input[name="profit"]').on('blur', function(){
+        $(this).val(formatToTwoDecimals($(this).val()));
+    });
+
+    function syncProductFields(id, name) {
+        $('#product_id').val(id || '');
+        $('#product_name').val(name || '');
+    }
+
+    function syncPrUserFields(id, name) {
+        $('#pr_user_id').val(id || '');
+        $('#pr_user').val(name || '');
+    }
+
+    function loadProductOptions() {
+        var $select = $('#product_select');
+        $.get("{:url('Products/productSearch')}", {page: 1, limit: 1000}, function(res){
+            if (res.code !== 0 || !res.data) {
+                layer.msg(res.msg || '产品列表加载失败', {icon: 2, time: 1500});
+                return;
+            }
+            $.each(res.data, function(_, item){
+                var productId = String(item.id || '');
+                var productName = String(item.product_name || '');
+                if (!productId || !productName) {
+                    return true;
+                }
+                var categoryName = String(item.category_name || '无');
+                var displayName = productName + ' (' + categoryName + ')';
+                var $option = $('<option></option>')
+                    .val(productId)
+                    .text(displayName)
+                    .attr('data-name', productName);
+                $select.append($option);
+            });
+            form.render('select');
+        }, 'json');
+    }
+
+    function loadPrUserOptions() {
+        var $select = $('#pr_user_select');
+        $.post("{:url('Auth/adminList')}", {}, function(res){
+            if (res.code !== 0 || !res.data) {
+                layer.msg(res.msg || '负责人列表加载失败', {icon: 2, time: 1500});
+                return;
+            }
+            $.each(res.data, function(_, item){
+                var adminId = String(item.admin_id || '');
+                var username = String(item.username || '');
+                if (!adminId || !username) {
+                    return true;
+                }
+                var $option = $('<option></option>')
+                    .val(adminId)
+                    .text(username)
+                    .attr('data-name', username);
+                $select.append($option);
+            });
+
+            if (defaultPrUserId !== '') {
+                $select.val(defaultPrUserId);
+                syncPrUserFields(defaultPrUserId, defaultPrUserName);
+            }
+
+            form.render('select');
+        }, 'json');
+    }
+
+    form.on('select(product_select)', function(data){
+        var $selected = $(data.elem).find('option:selected');
+        syncProductFields(data.value, $selected.attr('data-name') || '');
+    });
+
+    form.on('select(pr_user_select)', function(data){
+        var $selected = $(data.elem).find('option:selected');
+        syncPrUserFields(data.value, $selected.attr('data-name') || '');
+    });
+
+    var uploadInst = upload.render({
+        elem: '#voucherUploadBtn',
+        url: '{:url("UpFiles/upload")}',
+        accept: 'images',
+        before: function(obj){
+            obj.preview(function(index, file, result){
+                $('#voucherPreview').attr('src', result).show();
+            });
+        },
+        done: function(res){
+            if (res.code > 0) {
+                $('#voucher_image').val(res.url || '');
+                if (res.url) {
+                    $('#voucherPreview').attr('src', res.url).show();
+                }
+                $('#voucherUploadText').html('');
+                layer.msg('上传成功', {icon: 1, time: 1000});
+            } else {
+                layer.msg(res.msg || '上传失败', {icon: 2, time: 1500});
+            }
+        },
+        error: function(){
+            var demoText = $('#voucherUploadText');
+            demoText.html('<span style="color:#FF5722;">上传失败</span> <a class="layui-btn layui-btn-xs demo-reload">重试</a>');
+            demoText.find('.demo-reload').on('click', function(){
+                uploadInst.upload();
+            });
+        }
+    });
+
+    loadProductOptions();
+    loadPrUserOptions();
+    form.render('select');
+
+    form.verify({
+        required: function(value, elem){
+            var fieldName = $(elem).attr('name');
+            if (!value) {
+                if (fieldName === 'client_phone') {
+                    return '客户手机号不能为空';
+                }
+                if (fieldName === 'order_time') {
+                    return '成交时间不能为空';
+                }
+                if (fieldName === 'money') {
+                    return '成交金额不能为空';
+                }
+                if (fieldName === 'profit') {
+                    return '利润不能为空';
+                }
+                return '必填项不能为空';
+            }
+        }
+    });
+
+    form.on('submit(formSubmit)', function(data){
+        var postData = {
+            client_phone: data.field.client_phone || '',
+            order_time: data.field.order_time || '',
+            money: formatToTwoDecimals(data.field.money),
+            profit: formatToTwoDecimals(data.field.profit),
+            product_id: data.field.product_id || '',
+            product_name: data.field.product_name || '',
+            pr_user_id: data.field.pr_user_id || '',
+            pr_user: data.field.pr_user || '',
+            voucher_image: data.field.voucher_image || '',
+            remark: data.field.remark || ''
+        };
+
+        $.post("{:url('HistoryOrder/add')}", postData, function(res){
+            if(res.code === 0){
+                layer.msg('添加成功！', {icon: 1, time: 1000}, function(){
+                    parent.layui.table.reload('table-list');
+                    var index = parent.layer.getFrameIndex(window.name);
+                    parent.layer.close(index);
+                });
+            } else {
+                layer.msg(res.msg || '添加失败', {icon: 2, time: 1500});
+            }
+        }, 'json');
+        return false;
+    });
 });
 </script>
 </body>
