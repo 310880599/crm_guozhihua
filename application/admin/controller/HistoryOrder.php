@@ -1,15 +1,16 @@
 <?php
 namespace app\admin\controller;
 
-use think\Db;
-use think\facade\Request;
-use think\facade\Session;
-use app\admin\model\ReceiveAccount as ReceiveAccountModel;
 use app\admin\model\Admin;
-use think\facade\Env;
+use app\admin\model\HistoryOrder as HistoryOrderModel;
+use app\admin\service\HistoryOrderService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as SpreadsheetDate;
+use think\Db;
+use think\facade\Env;
+use think\facade\Request;
 
-class ReceiveAccount extends Common
+class HistoryOrder extends Common
 {
     public function initialize()
     {
@@ -25,181 +26,159 @@ class ReceiveAccount extends Common
     public function index()
     {
         if (request()->isPost()) {
-            return $this->accountSearch();
+            return $this->historyOrderSearch();
         }
         return $this->fetch();
     }
 
-    public function accountSearch()
+    private function historyOrderSearch()
     {
-        $account = input('account', '');
+        $clientPhone = input('client_phone', '');
+        $orderNo = input('order_no', '');
+        $productName = input('product_name', '');
+        $prUser = input('pr_user', '');
         $page = input('page/d', 1);
         $limit = input('limit/d', 10);
-        
-        $query = ReceiveAccountModel::order('id desc');
-        
-        // soft delete by is_deleted: 只显示正常状态的收款账户（is_deleted = 0）
-        $query->where('is_deleted', 0);
-        
-        // 如果account不为空，则模糊匹配
-        if (!empty($account)) {
-            $query->where('account', 'like', "%{$account}%");
+
+        $query = HistoryOrderModel::order('id desc')->where('is_deleted', 0);
+        if ($clientPhone !== '') {
+            $query->where('client_phone', 'like', "%{$clientPhone}%");
         }
-        
-        $list = $query->paginate(['list_rows'=>$limit,'page'=>$page])->toArray();
-        
+        if ($orderNo !== '') {
+            $query->where('order_no', 'like', "%{$orderNo}%");
+        }
+        if ($productName !== '') {
+            $query->where('product_name', 'like', "%{$productName}%");
+        }
+        if ($prUser !== '') {
+            $query->where('pr_user', 'like', "%{$prUser}%");
+        }
+
+        $list = $query->paginate(['list_rows' => $limit, 'page' => $page])->toArray();
         return json([
             'code' => 0,
             'msg' => '获取成功!',
             'data' => $list['data'],
             'count' => $list['total'],
-            'rel' => 1
+            'rel' => 1,
         ]);
     }
 
     public function add()
     {
         if (Request::isPost()) {
-            $data = Request::only(['account','receiver'], 'post');
-            
-            // 校验必填字段
-            if (empty($data['account'])) {
-                return json(['code'=>-200,'msg'=>'收款账户名称不能为空']);
-            }
-            
-            // 1. 检查是否存在 account 相同且 is_deleted = 0 的记录
-            $existsActive = ReceiveAccountModel::where('account', $data['account'])
-                ->where('is_deleted', 0)
-                ->find();
-            if ($existsActive) {
-                return json(['code'=>-200,'msg'=>'收款账户已存在']);
-            }
-            
-            // 2. 检查是否存在 account 相同且 is_deleted = 1 的记录（已删除的记录）
-            $existsDeleted = ReceiveAccountModel::where('account', $data['account'])
-                ->where('is_deleted', 1)
-                ->find();
-            
-            if ($existsDeleted) {
-                // 复活该记录
-                $existsDeleted->is_deleted = 0;
-                $existsDeleted->deleted_time = null;
-                $existsDeleted->deleted_by = null;
-                $existsDeleted->receiver = $data['receiver'] ?? '';
-                $existsDeleted->update_time = time();
-                $res = $existsDeleted->save();
-                return $res ? json(['code'=>0,'msg'=>'添加成功！'])
-                            : json(['code'=>-200,'msg'=>'添加失败！']);
-            }
-            
-            // 3. 既不存在未删除同名，也不存在已删除同名，正常插入新记录
+            $data = Request::only([
+                'client_phone',
+                'order_time',
+                'money',
+                'profit',
+                'product_id',
+                'product_name',
+                'pr_user_id',
+                'pr_user',
+                'voucher_image',
+                'remark',
+            ], 'post');
+
+            $admin = Admin::getMyInfo();
+            $service = new HistoryOrderService();
+            $data['order_no'] = $service->generateOrderNo();
+            $data['client_id'] = isset($data['client_id']) ? (int)$data['client_id'] : 0;
+            $data['create_user_id'] = (int)session('aid');
+            $data['create_user'] = (string)($admin['username'] ?? '');
             $data['is_deleted'] = 0;
             $data['deleted_time'] = null;
             $data['deleted_by'] = null;
-            $res = ReceiveAccountModel::create($data); // 模型已开启自动时间戳
-            return $res ? json(['code'=>0,'msg'=>'添加成功！'])
-                        : json(['code'=>-200,'msg'=>'添加失败！']);
+
+            $res = HistoryOrderModel::create($data);
+            return $res ? json(['code' => 0, 'msg' => '添加成功！']) : json(['code' => -200, 'msg' => '添加失败！']);
         }
+
         $currentAdmin = Admin::getMyInfo();
-        $this->assign('currentAdmin',$currentAdmin);
+        $this->assign('currentAdmin', $currentAdmin);
         return $this->fetch();
     }
 
     public function edit()
     {
         $id = input('id/d', 0);
-        if (empty($id)) {
+        if ($id <= 0) {
             return $this->error('参数错误');
         }
-        
-        // soft delete by is_deleted: 获取记录时排除已删除的数据
-        $entry = ReceiveAccountModel::where('id', $id)->where('is_deleted', 0)->find();
+
+        $entry = HistoryOrderModel::where('id', $id)->where('is_deleted', 0)->find();
         if (empty($entry)) {
             return $this->error('记录不存在或已删除');
         }
-        
+
         if (Request::isAjax()) {
-            $data = Request::only(['account', 'receiver'], 'post');
-            
-            // 如果修改了 account 名称，需要校验是否存在重复
-            if (isset($data['account']) && $data['account'] !== $entry->account) {
-                // 校验是否存在 account 相同且 is_deleted = 0 且 id ≠ 当前记录
-                $exists = ReceiveAccountModel::where('account', $data['account'])
-                    ->where('is_deleted', 0)
-                    ->where('id', '<>', $id)
-                    ->find();
-                if ($exists) {
-                    return json(['code' => -200, 'msg' => '收款账户名称已存在']);
-                }
-            }
-            
-            // 更新当前记录（仅更新当前记录，不做任何"复活其他记录"的操作）
-            $res = Db::name('crm_receive_account')
+            $data = Request::only([
+                'client_phone',
+                'order_time',
+                'money',
+                'profit',
+                'product_id',
+                'product_name',
+                'pr_user_id',
+                'pr_user',
+                'voucher_image',
+                'remark',
+            ], 'post');
+            unset($data['order_no']);
+
+            $res = Db::name('crm_client_history_order')
                 ->where('id', $id)
                 ->where('is_deleted', 0)
                 ->update($data);
-    
-            return $res ? json(['code' => 0, 'msg' => '修改成功！'])
-                        : json(['code' => -200, 'msg' => '修改失败！']);
+
+            return $res !== false ? json(['code' => 0, 'msg' => '修改成功！']) : json(['code' => -200, 'msg' => '修改失败！']);
         }
-        
-        $this->assign('entry',$entry);
+
+        $this->assign('entry', $entry);
         return $this->fetch();
     }
 
-
     public function del()
     {
-        $id = input('id/d',0);
-        if (empty($id)) {
-            return json(['code'=>-200,'msg'=>'参数错误']);
+        $id = input('id/d', 0);
+        if ($id <= 0) {
+            return json(['code' => -200, 'msg' => '参数错误']);
         }
-        
-        // soft delete by is_deleted: 软删除，只允许删除正常状态的记录
-        // deleted_time 使用 DATETIME 格式字符串（Y-m-d H:i:s），deleted_by 使用当前管理员 ID
-        $aff = Db::name('crm_receive_account')
+
+        $aff = Db::name('crm_client_history_order')
             ->where('id', $id)
             ->where('is_deleted', 0)
             ->update([
                 'is_deleted' => 1,
                 'deleted_time' => date('Y-m-d H:i:s'),
-                'deleted_by' => session('aid'),
+                'deleted_by' => (int)session('aid'),
             ]);
-        
-        if ($aff) {
-            return json(['code'=>0,'msg'=>'删除成功！']);
-        } else {
-            return json(['code'=>-200,'msg'=>'删除失败！']);
-        }
+
+        return $aff ? json(['code' => 0, 'msg' => '删除成功！']) : json(['code' => -200, 'msg' => '删除失败！']);
     }
-    
-    
-    // 批量删除
+
     public function batchDel()
     {
         if (!request()->isPost()) {
             return json(['code' => -200, 'msg' => '非法请求']);
         }
-        // ids 既可为数组也可为逗号串
-        $ids = input('post.ids/a', []); // /a 过滤为数组
+        $ids = input('post.ids/a', []);
         if (empty($ids)) {
             return json(['code' => -200, 'msg' => '未选择任何记录']);
         }
-    
-        // soft delete by is_deleted: 使用事务保证数据一致性
+
         Db::startTrans();
         try {
-            // soft delete by is_deleted: 批量软删除（只更新 is_deleted=0 的）
-            // deleted_time 使用 DATETIME 格式字符串（Y-m-d H:i:s），deleted_by 使用当前管理员 ID
-            $delCount = Db::name('crm_receive_account')
+            $delCount = Db::name('crm_client_history_order')
                 ->whereIn('id', $ids)
                 ->where('is_deleted', 0)
                 ->update([
                     'is_deleted' => 1,
                     'deleted_time' => date('Y-m-d H:i:s'),
-                    'deleted_by' => session('aid'),
+                    'deleted_by' => (int)session('aid'),
                 ]);
             Db::commit();
+
             if ($delCount > 0) {
                 return json(['code' => 0, 'msg' => '删除成功', 'data' => ['count' => $delCount]]);
             }
@@ -209,198 +188,257 @@ class ReceiveAccount extends Common
             return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
         }
     }
-    
-    // 导入页（弹窗）
+
     public function import()
     {
-        return $this->fetch();  // 渲染 view/inquiry_source/import.html
+        return $this->fetch();
     }
-    
-    
-    
-    // 执行导入
+
     public function importDo()
     {
         if (!request()->isPost()) {
-            return json(['code'=>-200,'msg'=>'非法请求']);
+            return json(['code' => -200, 'msg' => '非法请求']);
         }
-    
-        // 1) 接收上传文件
+
         $file = request()->file('file');
         if (!$file) {
-            return json(['code'=>-200,'msg'=>'请上传Excel文件']);
+            return json(['code' => -200, 'msg' => '请上传Excel文件']);
         }
-    
-        // 2) 保存到 runtime/upload/excel
+
         $saveDir = Env::get('root_path') . 'runtime' . DIRECTORY_SEPARATOR . 'upload' . DIRECTORY_SEPARATOR . 'excel';
         if (!is_dir($saveDir)) {
             @mkdir($saveDir, 0777, true);
         }
-        $info = $file->validate(['size'=> 10 * 1024 * 1024, 'ext'=>'xlsx,xls,csv'])->move($saveDir);
+        $info = $file->validate(['size' => 10 * 1024 * 1024, 'ext' => 'xlsx,xls,csv'])->move($saveDir);
         if (!$info) {
-            return json(['code'=>-200,'msg'=>$file->getError() ?: '文件保存失败']);
+            return json(['code' => -200, 'msg' => $file->getError() ?: '文件保存失败']);
         }
         $filePath = $info->getPathname();
-        $ext      = strtolower($info->getExtension());
-    
-        // 3) 解析
-        $rows = [];  // 每个元素：[ 'account'=>..., 'receiver'=>...]
+        $ext = strtolower($info->getExtension());
+
+        $rows = [];
         try {
             if ($ext === 'csv') {
-                // ---- 解析 CSV ----
                 $handle = fopen($filePath, 'r');
-                if (!$handle) throw new \Exception('CSV文件读取失败');
-                // 尝试去除 UTF-8 BOM
+                if (!$handle) {
+                    throw new \Exception('CSV文件读取失败');
+                }
+
                 $first = fgets($handle);
-                if (substr($first, 0, 3) === "\xEF\xBB\xBF") $first = substr($first, 3);
-                // 放回第一行
-                $buffer = $first . stream_get_contents($handle);
+                if (substr((string)$first, 0, 3) === "\xEF\xBB\xBF") {
+                    $first = substr((string)$first, 3);
+                }
+                $buffer = (string)$first . stream_get_contents($handle);
                 fclose($handle);
+
                 $tmp = tmpfile();
                 fwrite($tmp, $buffer);
                 fseek($tmp, 0);
-    
+
                 $lineNo = 0;
-                while (($data = fgetcsv($tmp)) !== false) {
+                while (($line = fgetcsv($tmp)) !== false) {
                     $lineNo++;
-                    if ($lineNo === 1 && (mb_strpos(implode('', $data), '收款') !== false)) {
-                        // 第一行是表头 -> 跳过
-                        continue;
+                    if ($lineNo === 1) {
+                        $headerText = implode('', $line);
+                        if (mb_strpos($headerText, '客户') !== false || mb_strpos($headerText, '订单') !== false) {
+                            continue;
+                        }
                     }
-                    // 兼容列数量不足
-                    $data = array_pad($data, 2, '');
+
+                    $line = array_pad($line, 8, '');
                     $rows[] = [
-                        'account'       => trim((string)$data[0]),
-                        'receiver'     => trim((string)$data[1]),
+                        'client_phone' => trim((string)$line[0]),
+                        'order_no' => trim((string)$line[1]),
+                        'order_time' => trim((string)$line[2]),
+                        'money' => trim((string)$line[3]),
+                        'profit' => trim((string)$line[4]),
+                        'product_name' => trim((string)$line[5]),
+                        'pr_user' => trim((string)$line[6]),
+                        'remark' => trim((string)$line[7]),
                     ];
                 }
                 fclose($tmp);
             } else {
-                // ---- 解析 Excel (xlsx/xls) ----
-                if (class_exists('\PhpOffice\PhpSpreadsheet\IOFactory')) {
-                    $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-                    $sheet       = $spreadsheet->getActiveSheet();
-                    $highestRow  = $sheet->getHighestRow();
-    
-                    // 判断首行是否表头（包含“询盘”字样即认为是表头）
-                    $hasHeader = false;
-                    $firstRow  = [
-                        (string)$sheet->getCell('A1')->getValue(),
-                        (string)$sheet->getCell('B1')->getValue(),
-                    ];
-                    if (implode('', $firstRow) && (mb_strpos(implode('', $firstRow), '收款') !== false)) {
-                        $hasHeader = true;
-                    }
-    
-                    $start = $hasHeader ? 2 : 1;
-                    for ($r = $start; $r <= $highestRow; $r++) {
-                        $account       = trim((string)$sheet->getCell("A{$r}")->getValue());
-                        $receiver     = trim((string)$sheet->getCell("B{$r}")->getValue());
-                        if ($account === '' && $receiver === '') {
-                            continue; // 跳过空行
-                        }
-                        $rows[] = compact('account','receiver');
-                    }
-                } else {
+                if (!class_exists('\PhpOffice\PhpSpreadsheet\IOFactory')) {
                     return json([
-                        'code'=>-200,
-                        'msg'=>'服务器未安装 PhpSpreadsheet，无法解析 .xlsx/.xls，请安装 phpoffice/phpspreadsheet 或改用 CSV 导入',
+                        'code' => -200,
+                        'msg' => '服务器未安装 PhpSpreadsheet，无法解析 .xlsx/.xls，请安装 phpoffice/phpspreadsheet 或改用 CSV 导入',
                     ]);
+                }
+
+                $spreadsheet = IOFactory::load($filePath);
+                $sheet = $spreadsheet->getActiveSheet();
+                $highestRow = $sheet->getHighestRow();
+
+                $firstRowText = implode('', [
+                    (string)$sheet->getCell('A1')->getFormattedValue(),
+                    (string)$sheet->getCell('B1')->getFormattedValue(),
+                ]);
+                $hasHeader = mb_strpos($firstRowText, '客户') !== false || mb_strpos($firstRowText, '订单') !== false;
+                $start = $hasHeader ? 2 : 1;
+
+                for ($r = $start; $r <= $highestRow; $r++) {
+                    $rawOrderTime = $sheet->getCell("C{$r}")->getValue();
+                    $orderTime = $this->normalizeImportOrderTime($rawOrderTime);
+
+                    $row = [
+                        'client_phone' => trim((string)$sheet->getCell("A{$r}")->getFormattedValue()),
+                        'order_no' => trim((string)$sheet->getCell("B{$r}")->getFormattedValue()),
+                        'order_time' => $orderTime,
+                        'money' => trim((string)$sheet->getCell("D{$r}")->getFormattedValue()),
+                        'profit' => trim((string)$sheet->getCell("E{$r}")->getFormattedValue()),
+                        'product_name' => trim((string)$sheet->getCell("F{$r}")->getFormattedValue()),
+                        'pr_user' => trim((string)$sheet->getCell("G{$r}")->getFormattedValue()),
+                        'remark' => trim((string)$sheet->getCell("H{$r}")->getFormattedValue()),
+                    ];
+
+                    if ($row['client_phone'] === ''
+                        && $row['order_no'] === ''
+                        && $row['order_time'] === ''
+                        && $row['money'] === ''
+                        && $row['profit'] === ''
+                        && $row['product_name'] === ''
+                        && $row['pr_user'] === ''
+                        && $row['remark'] === '') {
+                        continue;
+                    }
+                    $rows[] = $row;
                 }
             }
         } catch (\Throwable $e) {
-            return json(['code'=>-200,'msg'=>'解析失败：'.$e->getMessage()]);
+            return json(['code' => -200, 'msg' => '解析失败：' . $e->getMessage()]);
         }
-    
-        if (empty($rows)) {
-            return json(['code'=>-200,'msg'=>'没有可导入的数据']);
-        }
-    
-        // 4) 清洗 + 批量入库
-        $now  = time();
-        $data = [];
-        foreach ($rows as $r) {
-            $account       = $r['account']       ?? '';
-            $receiver     = $r['receiver']     ?? '';
-            // 必填校验：account至少要有
-            if ($account === '') continue;
 
-            // soft delete by is_deleted: 导入时明确设置软删除字段默认值
-            $data[] = [
-                'account'       => $account,
-                'receiver'     => $receiver,
-                'is_deleted'   => 0,
+        if (empty($rows)) {
+            return json(['code' => -200, 'msg' => '没有可导入的数据']);
+        }
+
+        $providedOrderNos = [];
+        foreach ($rows as $idx => $row) {
+            if ($row['order_no'] === '') {
+                continue;
+            }
+            if (isset($providedOrderNos[$row['order_no']])) {
+                return json(['code' => -200, 'msg' => '导入失败：第' . ($idx + 1) . '行订单编号重复']);
+            }
+            $providedOrderNos[$row['order_no']] = true;
+        }
+
+        if (!empty($providedOrderNos)) {
+            $exists = Db::name('crm_client_history_order')
+                ->whereIn('order_no', array_keys($providedOrderNos))
+                ->count();
+            if ((int)$exists > 0) {
+                return json(['code' => -200, 'msg' => '导入失败：存在重复订单编号']);
+            }
+        }
+
+        $admin = Admin::getMyInfo();
+        $now = time();
+        $historyOrderService = new HistoryOrderService();
+        $reservedOrderNos = $providedOrderNos;
+        $insertData = [];
+
+        foreach ($rows as $row) {
+            $orderNo = $row['order_no'];
+            if ($orderNo === '') {
+                $orderNo = $historyOrderService->generateOrderNo(array_keys($reservedOrderNos));
+            }
+            $reservedOrderNos[$orderNo] = true;
+
+            $insertData[] = [
+                'client_id' => 0,
+                'client_phone' => $row['client_phone'],
+                'order_no' => $orderNo,
+                'order_time' => $row['order_time'],
+                'money' => (float)$row['money'],
+                'profit' => (float)$row['profit'],
+                'product_id' => 0,
+                'product_name' => $row['product_name'],
+                'pr_user_id' => 0,
+                'pr_user' => $row['pr_user'],
+                'voucher_image' => '',
+                'remark' => $row['remark'],
+                'create_user_id' => (int)session('aid'),
+                'create_user' => (string)($admin['username'] ?? ''),
+                'create_time' => $now,
+                'update_time' => $now,
+                'is_deleted' => 0,
                 'deleted_time' => null,
-                'deleted_by'   => null,
-                'create_time'  => $now,
-                'update_time'  => $now,
+                'deleted_by' => null,
             ];
         }
-    
-        if (empty($data)) {
-            return json(['code'=>-200,'msg'=>'有效数据为空（source 为空已被跳过）']);
-        }
-    
+
+        Db::startTrans();
         try {
-            // 直接写表（更快），也可换成 ReceiveAccountModel::insertAll($data)
-            $inserted = Db::name('crm_receive_account')->insertAll($data);
-            return json(['code'=>0,'msg'=>"导入成功：{$inserted} 条"]);
+            $inserted = Db::name('crm_client_history_order')->insertAll($insertData);
+            Db::commit();
+            return json(['code' => 0, 'msg' => "导入成功：{$inserted} 条"]);
         } catch (\Throwable $e) {
-            return json(['code'=>-200,'msg'=>'写入失败：'.$e->getMessage()]);
+            Db::rollback();
+            return json(['code' => -200, 'msg' => '写入失败：' . $e->getMessage()]);
         }
     }
-    
-    
-    
-    
-    // 下载导入模板（CSV）
+
     public function tpl()
     {
-        // 文件名：收款账户导入模板_YYYYMMDD_HHMMSS.csv
-        $filename = '收款账户导入模板_' . date('Ymd_His') . '.csv';
-    
-        // 工具函数：按 CSV 规范输出一行（自动加双引号并转义内部引号）
-        $csvLine = function(array $cols) {
-            $safe = array_map(function($v){
-                $v = (string)$v;
-                $v = str_replace('"', '""', $v); // 转义内部的 "
-                return '"' . $v . '"';
+        $filename = '历史订单导入模板_' . date('Ymd_His') . '.csv';
+        $csvLine = function (array $cols) {
+            $safe = array_map(function ($val) {
+                $val = (string)$val;
+                $val = str_replace('"', '""', $val);
+                return '"' . $val . '"';
             }, $cols);
             return implode(',', $safe) . "\r\n";
         };
-    
-        // 表头（与导入逻辑字段一一对应）
-        $header = ['收款账户', '创建人'];
-    
-        // 示例数据（你也可以只保留一行或自定义）
+
+        $header = ['客户手机号', '订单编号', '成交时间', '成交金额', '利润', '产品名称', '负责人', '备注'];
         $examples = [
-            [ '百度推广', 'admin', ],
-            [ '抖音短视频', '张三', ],
-            [ '官网-表单',  '李四', ],
+            ['13800138000', 'H202607280001', '2026-07-28 10:00:00', '1999.00', '300.00', 'CRM系统A套餐', '张三', '首次合作'],
+            ['13900139000', '', '2026-07-28 11:00:00', '2999.00', '500.00', 'CRM系统B套餐', '李四', '续费客户'],
         ];
-    
-        // 清空缓冲区，避免输出污染
+
         if (function_exists('ob_get_level')) {
-            while (ob_get_level() > 0) { ob_end_clean(); }
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
         }
-    
-        // 下载头
+
         header('Content-Type: text/csv; charset=UTF-8');
-        header('Content-Disposition: attachment; filename="'.$filename.'"');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
         header('Pragma: no-cache');
         header('Expires: 0');
         header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
-    
-        // 输出 BOM（让 Excel 正确识别 UTF-8）
+
         echo "\xEF\xBB\xBF";
-    
-        // 输出表头
         echo $csvLine($header);
-    
-        // 输出示例数据
-        foreach ($examples as $row) {
-            echo $csvLine($row);
+        foreach ($examples as $example) {
+            echo $csvLine($example);
         }
         exit;
+    }
+
+    /**
+     * 兼容 Excel 序列化时间和普通时间文本
+     *
+     * @param mixed $rawOrderTime
+     * @return string
+     */
+    private function normalizeImportOrderTime($rawOrderTime): string
+    {
+        if ($rawOrderTime === null) {
+            return '';
+        }
+
+        if (is_numeric($rawOrderTime) && (float)$rawOrderTime > 0) {
+            try {
+                $dateTime = SpreadsheetDate::excelToDateTimeObject($rawOrderTime);
+                return $dateTime->format('Y-m-d H:i:s');
+            } catch (\Throwable $e) {
+                return trim((string)$rawOrderTime);
+            }
+        }
+
+        return trim((string)$rawOrderTime);
     }
 }

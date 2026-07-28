@@ -3,15 +3,35 @@ namespace app\admin\model;
 
 use think\Model;
 
-class ReceiveAccount extends Model
+class HistoryOrder extends Model
 {
-    // 指定对应的数据表名
-    protected $table = 'crm_receive_account';
-    protected $pk    = 'id';
-
-    // 用 int 时间戳写入/读取；字段名对应你的表
+    protected $table = 'crm_client_history_order';
+    protected $pk = 'id';
     protected $autoWriteTimestamp = 'int';
     protected $createTime = 'create_time';
     protected $updateTime = 'update_time';
-    protected $dateFormat = false;  // 不让 TP 在取出时自动格式化
+    protected $dateFormat = false;
+
+    protected $field = [
+        'id',
+        'client_id',
+        'client_phone',
+        'order_no',
+        'order_time',
+        'money',
+        'profit',
+        'product_id',
+        'product_name',
+        'pr_user_id',
+        'pr_user',
+        'voucher_image',
+        'remark',
+        'create_user_id',
+        'create_user',
+        'create_time',
+        'update_time',
+        'is_deleted',
+        'deleted_time',
+        'deleted_by',
+    ];
 }
