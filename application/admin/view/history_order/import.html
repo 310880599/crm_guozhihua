@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  {include file="common/head"/}
+</head>
+<body>
+<form class="layui-form" style="padding:18px 20px;">
+  <div class="layui-form-item">
+    <blockquote class="layui-elem-quote">
+      支持 <b>.xlsx / .xls / .csv</b> 文件。字段顺序：A=收款管理、B=创建人。<br>
+      第一行可写表头（含“收款”字样自动识别并跳过）。<br>
+      <span style="color:#FF5722;">account为空的行将被跳过。</span>
+    </blockquote>
+  </div>
+
+  <div class="layui-form-item">
+    <label class="layui-form-label">选择文件</label>
+    <div class="layui-input-block">
+      <input type="file" name="file" id="excel-file" accept=".xlsx,.xls,.csv" class="layui-input">
+    </div>
+  </div>
+
+  <div class="layui-form-item">
+    <div class="layui-input-block">
+      <button type="button" class="layui-btn" id="btn-upload">开始导入</button>
+      <button type="button" class="layui-btn layui-btn-normal" id="btn-tpl">下载模板</button>
+      <button type="button" class="layui-btn layui-btn-primary"
+              onclick="var i=parent.layer.getFrameIndex(window.name);parent.layer.close(i);">取消
+      </button>
+    </div>
+  </div>
+</form>
+
+{include file="common/foot"/}
+<script>
+layui.use(['jquery','layer'], function(){
+  var $ = layui.jquery, layer = layui.layer;
+
+  $('#btn-upload').on('click', function(){
+    var file = $('#excel-file')[0].files[0];
+    if(!file){ return layer.msg('请先选择文件'); }
+
+    var fd = new FormData();
+    fd.append('file', file);
+
+    var loadIdx = layer.load(2, {shade:0.2});
+    $.ajax({
+      url: "{:url('ReceiveAccount/importDo')}",
+      type: 'POST',
+      data: fd,
+      processData: false,
+      contentType: false,
+      success: function(res){
+        layer.close(loadIdx);
+        if(res.code === 0){
+          layer.msg(res.msg || '导入成功', {icon:1, time:1000}, function(){
+            parent.layui.table.reload('table-list', {page:{curr:1}});
+            var index = parent.layer.getFrameIndex(window.name);
+            parent.layer.close(index);
+          });
+        }else{
+          layer.msg(res.msg || '导入失败', {icon:2});
+        }
+      },
+      error: function(){
+        layer.close(loadIdx);
+        layer.msg('请求失败，请重试', {icon:2});
+      }
+    });
+  });
+});
+</script>
+<script>
+    $('#btn-tpl').on('click', function(){
+      window.location.href = "{:url('ReceiveAccount/tpl')}";
+    });
+</script>
+</body>
+</html>
