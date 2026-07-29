@@ -460,7 +460,7 @@ class HistoryOrder extends Common
     }
 
     /**
-     * 根据手机号查找 CRM 客户ID（lead_id）
+     * 根据手机号查找 CRM 客户ID（leads_id）
      *
      * @param string $clientPhone
      * @return int
@@ -475,13 +475,13 @@ class HistoryOrder extends Common
             ->where('contact_value', $clientPhone)
             ->where('is_delete', 0)
             ->order('id desc')
-            ->value('lead_id');
+            ->value('leads_id');
 
         return (int)$leadId;
     }
 
     /**
-     * 批量构建手机号到 CRM 客户ID（lead_id）的映射
+     * 批量构建手机号到 CRM 客户ID（leads_id）的映射
      *
      * @param array $phones
      * @return array<string, int>
@@ -494,7 +494,7 @@ class HistoryOrder extends Common
         }
 
         $contacts = Db::name('crm_contacts')
-            ->field('contact_value, lead_id')
+            ->field('contact_value, leads_id')
             ->whereIn('contact_value', $phones)
             ->where('is_delete', 0)
             ->order('id desc')
@@ -506,7 +506,7 @@ class HistoryOrder extends Common
             if ($contactValue === '' || isset($map[$contactValue])) {
                 continue;
             }
-            $map[$contactValue] = (int)($contact['lead_id'] ?? 0);
+            $map[$contactValue] = (int)($contact['leads_id'] ?? 0);
         }
 
         return $map;
