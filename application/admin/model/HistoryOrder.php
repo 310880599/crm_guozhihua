@@ -7,10 +7,10 @@ class HistoryOrder extends Model
 {
     protected $table = 'crm_client_history_order';
     protected $pk = 'id';
-    protected $autoWriteTimestamp = 'int';
+    protected $autoWriteTimestamp = true;
     protected $createTime = 'create_time';
     protected $updateTime = 'update_time';
-    protected $dateFormat = false;
+    protected $dateFormat = 'Y-m-d H:i:s';
 
     protected $field = [
         'id',

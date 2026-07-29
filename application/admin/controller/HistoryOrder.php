@@ -90,6 +90,9 @@ class HistoryOrder extends Common
             $data['deleted_time'] = null;
             $data['deleted_by'] = null;
 
+            $data['create_time'] = date('Y-m-d H:i:s');
+            $data['update_time'] = date('Y-m-d H:i:s');
+
             $res = HistoryOrderModel::create($data);
             return $res ? json(['code' => 0, 'msg' => '添加成功！']) : json(['code' => -200, 'msg' => '添加失败！']);
         }
@@ -344,7 +347,7 @@ class HistoryOrder extends Common
         }
 
         $admin = Admin::getMyInfo();
-        $now = time();
+        $now = date('Y-m-d H:i:s');
         $historyOrderService = new HistoryOrderService();
         $reservedOrderNos = $providedOrderNos;
         $insertData = [];
