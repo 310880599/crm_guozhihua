@@ -27,6 +27,12 @@ class Client extends Common
     private $tableColumnsCache = [];
 
     /**
+     * 客户详情“成交订单”合并展示时，单个数据源的最大拉取条数
+     * （用于与 crm_client_history_order 合并排序后再统一分页，避免遗漏数据）
+     */
+    private const MERGE_ORDER_FETCH_LIMIT = 100000;
+
+    /**
      * 订单编辑流程中的客户编辑放行能力：
      * - 超级管理员 aid=1
      * - admin 用户
@@ -3406,13 +3412,40 @@ class Client extends Common
         }
 
         $service = new ClientOrderService();
-        $result = $service->getHistoryApprovedOrders($clientId, $page, $limit, $excludeOrderId);
+
+        // 原有逻辑保持不变：crm_client_order 成交订单（此处取全量用于与历史订单合并后统一分页，
+        // 不修改 getHistoryApprovedOrders 方法本身，不影响其独立调用场景）
+        $normalResult = $service->getHistoryApprovedOrders($clientId, 1, self::MERGE_ORDER_FETCH_LIMIT, $excludeOrderId);
+        $normalRows = [];
+        foreach (($normalResult['data'] ?? []) as $row) {
+            $row['order_type'] = 'normal';
+            $normalRows[] = $row;
+        }
+
+        // 新增逻辑：crm_client_history_order 历史订单
+        $historyResult = $service->getHistoryClientHistoryOrders($clientId);
+        $historyRows = $historyResult['data'] ?? [];
+
+        // 合并两个数据来源，按成交时间倒序排列后再统一分页返回给前端
+        $mergedRows = array_merge($normalRows, $historyRows);
+        usort($mergedRows, function ($a, $b) {
+            $timeA = strtotime((string)($a['order_time'] ?? '')) ?: 0;
+            $timeB = strtotime((string)($b['order_time'] ?? '')) ?: 0;
+            if ($timeA === $timeB) {
+                return ((int)($b['id'] ?? 0)) <=> ((int)($a['id'] ?? 0));
+            }
+            return $timeB <=> $timeA;
+        });
+
+        $totalCount = count($mergedRows);
+        $offset = ($page - 1) * $limit;
+        $pagedRows = array_slice($mergedRows, max(0, $offset), $limit);
 
         return json([
             'code' => 0,
             'msg' => '',
-            'count' => (int)($result['count'] ?? 0),
-            'data' => $result['data'] ?? [],
+            'count' => $totalCount,
+            'data' => $pagedRows,
         ]);
     }
 
