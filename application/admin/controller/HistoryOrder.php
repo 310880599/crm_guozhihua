@@ -173,6 +173,41 @@ class HistoryOrder extends Common
         return $this->fetch();
     }
 
+    /**
+     * 历史订单详情（只读展示，不允许编辑）
+     */
+    public function detail()
+    {
+        $id = input('id/d', 0);
+        if ($id <= 0) {
+            return $this->error('参数错误');
+        }
+
+        $entry = HistoryOrderModel::where('id', $id)
+            ->where('is_deleted', 0)
+            ->field([
+                'id',
+                'order_no',
+                'client_phone',
+                'order_time',
+                'money',
+                'profit',
+                'product_name',
+                'pr_user',
+                'voucher_image',
+                'remark',
+                'create_user',
+                'create_time',
+            ])
+            ->find();
+        if (empty($entry)) {
+            return $this->error('记录不存在或已删除');
+        }
+
+        $this->assign('entry', $entry);
+        return $this->fetch();
+    }
+
     public function del()
     {
         $id = input('id/d', 0);

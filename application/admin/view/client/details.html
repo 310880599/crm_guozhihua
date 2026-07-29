@@ -586,6 +586,10 @@ layui.use(['form', 'layer', 'jquery', 'table'], function () {
             layer.msg('订单ID缺失', { icon: 2, time: 1500 });
             return;
         }
+        // history 订单（来自 crm_client_history_order）跳转专属只读详情页，避免落入 Order/details 查询不到数据
+        var detailUrl = data.order_type === 'history'
+            ? "{:url('HistoryOrder/detail')}?id=" + data.id
+            : "{:url('Order/details')}?id=" + data.id;
         layer.open({
             type: 2,
             title: '订单详情',
@@ -594,7 +598,7 @@ layui.use(['form', 'layer', 'jquery', 'table'], function () {
             anim: 2,
             shadeClose: false,
             maxmin: false,
-            content: ["{:url('Order/details')}?id=" + data.id]
+            content: [detailUrl]
         });
     });
 

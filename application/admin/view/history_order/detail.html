@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+    {include file="common/head"/}
+    <style>
+        .voucher-preview {
+            margin-top: 10px;
+            max-width: 240px;
+            max-height: 180px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            display: none;
+        }
+
+        /* 修复 layui.layer type:2 iframe 弹窗无法纵向滚动的问题：
+           让页面自身可以随内容自适应高度并出现滚动条，不使用固定高度 */
+        html,
+        body {
+            height: 100%;
+            overflow-y: auto !important;
+        }
+        body {
+            margin: 0;
+        }
+        .layui-form {
+            min-height: 100%;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+<form class="layui-form" style="padding:15px 20px 20px 20px;">
+    <div class="layui-form-item">
+        <label class="layui-form-label">客户手机号</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.client_phone|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">订单编号</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.order_no|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">成交时间</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.order_time|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">成交金额</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.money|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">利润</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.profit|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">产品</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.product_name|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">负责人</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.pr_user|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">订单证明截图</label>
+        <div class="layui-input-block">
+            <div class="layui-upload-list">
+                <img class="voucher-preview" id="voucherPreview" alt="订单证明截图预览">
+                <p id="voucherEmptyText" style="color:#999;display:none;">暂无凭证图片</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">备注</label>
+        <div class="layui-input-block">
+            <textarea class="layui-textarea layui-bg-gray" readonly>{$entry.remark|default=''}</textarea>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">创建人</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.create_user|default=''}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <label class="layui-form-label">创建时间</label>
+        <div class="layui-input-block">
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.create_time|date='Y-m-d H:i:s'}" readonly>
+        </div>
+    </div>
+
+    <div class="layui-form-item">
+        <div class="layui-input-block">
+            <button type="button"
+                class="layui-btn layui-btn-primary"
+                onclick="var i = parent.layer.getFrameIndex(window.name); parent.layer.close(i);">
+                关闭
+            </button>
+        </div>
+    </div>
+</form>
+
+{include file="common/foot"/}
+<script>
+layui.use(['form', 'jquery'], function(){
+    var form = layui.form,
+        $ = layui.jquery;
+
+    var currentVoucherImage = "{$entry.voucher_image|default=''}";
+    if (currentVoucherImage) {
+        $('#voucherPreview').attr('src', currentVoucherImage).show();
+        $('#voucherEmptyText').hide();
+    } else {
+        $('#voucherEmptyText').show();
+    }
+
+    form.render();
+});
+</script>
+</body>
+</html>
