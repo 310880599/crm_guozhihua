@@ -12,14 +12,29 @@ use think\facade\Request;
 
 class HistoryOrder extends Common
 {
+    /**
+     * 当前登录管理员信息
+     *
+     * @var array
+     */
+    protected $currentAdmin = [];
+
     public function initialize()
     {
         parent::initialize();
-        $currentAdmin = Admin::getMyInfo();
-        if ($currentAdmin['group_id'] != 1
-            && $currentAdmin['username'] != 'admin') {
-            $this->error('您无权限访问该模块');
-        }
+        $this->currentAdmin = Admin::getMyInfo();
+    }
+
+    /**
+     * 判断当前登录用户是否为超级管理员
+     * admin账号 或 group_id=1 均视为超级管理员，拥有全部历史订单权限
+     *
+     * @return bool
+     */
+    private function isSuperAdmin(): bool
+    {
+        $admin = $this->currentAdmin ?: Admin::getMyInfo();
+        return ($admin['username'] ?? '') === 'admin' || (int)($admin['group_id'] ?? 0) === 1;
     }
 
     public function index()
@@ -40,6 +55,9 @@ class HistoryOrder extends Common
         $limit = input('limit/d', 10);
 
         $query = HistoryOrderModel::order('id desc')->where('is_deleted', 0);
+        if (!$this->isSuperAdmin()) {
+            $query->where('create_user_id', (int)session('aid'));
+        }
         if ($clientPhone !== '') {
             $query->where('client_phone', 'like', "%{$clientPhone}%");
         }
@@ -114,6 +132,10 @@ class HistoryOrder extends Common
             return $this->error('记录不存在或已删除');
         }
 
+        if (!$this->isSuperAdmin() && (int)($entry['create_user_id'] ?? 0) !== (int)session('aid')) {
+            return $this->error('无权限修改该订单');
+        }
+
         if (Request::isAjax()) {
             $data = Request::only([
                 'client_phone',
@@ -158,6 +180,17 @@ class HistoryOrder extends Common
             return json(['code' => -200, 'msg' => '参数错误']);
         }
 
+        $entry = Db::name('crm_client_history_order')
+            ->where('id', $id)
+            ->where('is_deleted', 0)
+            ->find();
+        if (empty($entry)) {
+            return json(['code' => -200, 'msg' => '记录不存在或已删除']);
+        }
+        if (!$this->isSuperAdmin() && (int)($entry['create_user_id'] ?? 0) !== (int)session('aid')) {
+            return json(['code' => -200, 'msg' => '无权限删除该订单']);
+        }
+
         $aff = Db::name('crm_client_history_order')
             ->where('id', $id)
             ->where('is_deleted', 0)
@@ -180,16 +213,20 @@ class HistoryOrder extends Common
             return json(['code' => -200, 'msg' => '未选择任何记录']);
         }
 
+        $query = Db::name('crm_client_history_order')
+            ->whereIn('id', $ids)
+            ->where('is_deleted', 0);
+        if (!$this->isSuperAdmin()) {
+            $query->where('create_user_id', (int)session('aid'));
+        }
+
         Db::startTrans();
         try {
-            $delCount = Db::name('crm_client_history_order')
-                ->whereIn('id', $ids)
-                ->where('is_deleted', 0)
-                ->update([
-                    'is_deleted' => 1,
-                    'deleted_time' => date('Y-m-d H:i:s'),
-                    'deleted_by' => (int)session('aid'),
-                ]);
+            $delCount = $query->update([
+                'is_deleted' => 1,
+                'deleted_time' => date('Y-m-d H:i:s'),
+                'deleted_by' => (int)session('aid'),
+            ]);
             Db::commit();
 
             if ($delCount > 0) {
