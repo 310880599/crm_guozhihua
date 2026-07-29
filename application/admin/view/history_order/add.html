@@ -149,6 +149,17 @@ layui.use(['upload', 'form', 'jquery', 'layer', 'laydate'], function(){
         trigger: 'click'
     });
 
+    // 支持从「添加历史订单」入口链接自动带入客户手机号（例如从订单页返单提醒按钮打开）
+    (function prefillClientPhoneFromQuery(){
+        var match = window.location.search.match(/[?&]client_phone=([^&]*)/);
+        if (match && match[1]) {
+            var phone = decodeURIComponent(match[1]);
+            if (phone) {
+                $('input[name="client_phone"]').val(phone);
+            }
+        }
+    })();
+
     function formatToTwoDecimals(value) {
         if (value === '' || value === null || value === undefined) {
             return '';

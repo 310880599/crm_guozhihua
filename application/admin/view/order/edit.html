@@ -242,6 +242,60 @@
             clearReturnRuleHint();
         }
 
+        // ====== 返单客户缺少历史订单提醒 ======
+        function clearHistoryOrderMissingHint() {
+            $('#historyOrderMissingHint').remove();
+        }
+
+        function renderHistoryOrderMissingHint(phone) {
+            clearHistoryOrderMissingHint();
+            var safePhone = String(phone || '').replace(/"/g, '&quot;');
+            var html = '<div id="historyOrderMissingHint" style="color:#d9534f;font-weight:600;margin-top:6px;">'
+                + '当前客户属于返单客户，但系统没有历史成交记录，建议补录历史订单。'
+                + '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs" style="margin-left:8px;" onclick="openAddHistoryOrderLayer(\'' + safePhone + '\')">添加历史订单</button>'
+                + '</div>';
+            $('#checklabel').append(html);
+        }
+
+        function openAddHistoryOrderLayer(phone) {
+            var layerHost = (window.top && window.top.layui && window.top.layui.layer) ? window.top : window;
+            var layerApi = layerHost.layui.layer;
+            layerApi.open({
+                type: 2,
+                title: '添加历史订单',
+                area: ['640px', '640px'],
+                maxmin: true,
+                shadeClose: false,
+                content: "{:url('HistoryOrder/add')}" + "?client_phone=" + encodeURIComponent(phone || ''),
+                end: function () {
+                    checkHistoryOrderMissingByContact(phone);
+                }
+            });
+        }
+
+        function checkHistoryOrderMissingByContact(contact) {
+            var contactTrimmed = normalizeContactClient(contact);
+            if (!contactTrimmed || !isReturnSourceSelected()) {
+                clearHistoryOrderMissingHint();
+                return;
+            }
+            $.ajax({
+                type: "GET",
+                dataType: "json",
+                url: "{:url('Order/checkHistoryOrderMissing')}" + "?contact=" + encodeURIComponent(contactTrimmed),
+                success: function (res) {
+                    if (res && res.code == 1 && res.missing === true && isReturnSourceSelected()) {
+                        renderHistoryOrderMissingHint(contactTrimmed);
+                    } else {
+                        clearHistoryOrderMissingHint();
+                    }
+                },
+                error: function () {
+                    clearHistoryOrderMissingHint();
+                }
+            });
+        }
+
         function isReturnSourceSelected() {
             var sourceValue = ($('#source').val() || '').trim();
             var sourceText = ($('#source option:selected').text() || '').trim();
@@ -329,6 +383,7 @@
             var contactTrimmed = normalizeContactClient(contact);
             if (!contactTrimmed) {
                 resetReturnOrderRuleUI();
+                clearHistoryOrderMissingHint();
                 done(null);
                 return null;
             }
@@ -356,6 +411,7 @@
                     } else {
                         resetReturnOrderRuleUI();
                     }
+                    checkHistoryOrderMissingByContact(contactTrimmed);
                     done(latestRule);
                 }
             });
@@ -402,6 +458,7 @@
                 currentClientId = 0;
                 customerPhoneTitlesComplete = false;
                 resetReturnOrderRuleUI();
+                clearHistoryOrderMissingHint();
                 updateEditCustomerButtonState();
                 return;
             }
@@ -422,6 +479,7 @@
                         currentClientId = 0;
                         customerPhoneTitlesComplete = false;
                         resetReturnOrderRuleUI();
+                        clearHistoryOrderMissingHint();
                         updateEditCustomerButtonState();
                     }
                 },
@@ -429,6 +487,7 @@
                     currentClientId = 0;
                     customerPhoneTitlesComplete = false;
                     resetReturnOrderRuleUI();
+                    clearHistoryOrderMissingHint();
                     updateEditCustomerButtonState();
                 }
             });
@@ -540,6 +599,7 @@
                 customerPhoneTitlesComplete = false;
                 $('#checklabel').html('').css('color', '');
                 resetReturnOrderRuleUI();
+                clearHistoryOrderMissingHint();
                 updateEditCustomerButtonState();
                 layui.form.render('select');
                 return;
@@ -617,6 +677,7 @@
                         // 显示错误提示
                         layer.msg(result['msg']['msg'] || '该客户不属于您的客户或协同人客户，无法添加订单', { icon: 2, time: 3000 });
                         resetReturnOrderRuleUI();
+                        clearHistoryOrderMissingHint();
                     } else {
                         $('#checklabel').css('color', 'green');
                         customerValidated = true; // 客户验证成功
@@ -770,6 +831,7 @@
                     currentClientId = 0;
                     customerPhoneTitlesComplete = false;
                     resetReturnOrderRuleUI();
+                    clearHistoryOrderMissingHint();
                     updateEditCustomerButtonState();
                     alert("异常！");
                 }
@@ -1847,6 +1909,8 @@
             form.render('select');
             // 询盘来源切换时，更新凭证上传块的显示/隐藏
             updateVoucherUI();
+            // 询盘来源切换时，重新检测返单客户是否缺少历史订单
+            checkHistoryOrderMissingByContact($('#contact').val());
         });
         
         // 判断是否满足凭证豁免条件（仅利润<2000）

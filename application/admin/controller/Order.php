@@ -1748,6 +1748,54 @@ class Order extends Common
         ]);
     }
 
+    /**
+     * AJAX：检测“返单客户”是否缺少历史成交记录（新增/编辑订单页共用）
+     *
+     * 入参：
+     * - contact: 客户手机号
+     *
+     * 判断逻辑：
+     * 1. crm_client_order 中 contact=手机号 且 check_status=2（审核通过）是否存在
+     * 2. crm_client_history_order 中 client_phone=手机号 且 is_deleted=0 是否存在
+     * 只要任意一张表存在记录，即视为“有历史成交”，missing=false；
+     * 两张表都没有记录，则 missing=true，提示补录历史订单。
+     *
+     * 返回：
+     * {
+     *   code: 1,
+     *   missing: true|false
+     * }
+     */
+    public function checkHistoryOrderMissing()
+    {
+        $contact = OrderService::normalizeContact(Request::param('contact', ''));
+        if ($contact === '') {
+            return json(['code' => 1, 'missing' => false]);
+        }
+
+        $hasFormalOrder = Db::name('crm_client_order')
+            ->where('contact', $contact)
+            ->where('check_status', 2)
+            ->limit(1)
+            ->find();
+
+        if (!empty($hasFormalOrder)) {
+            return json(['code' => 1, 'missing' => false]);
+        }
+
+        $hasHistoryOrder = Db::name('crm_client_history_order')
+            ->where('client_phone', $contact)
+            ->where('is_deleted', 0)
+            ->limit(1)
+            ->find();
+
+        if (!empty($hasHistoryOrder)) {
+            return json(['code' => 1, 'missing' => false]);
+        }
+
+        return json(['code' => 1, 'missing' => true]);
+    }
+
     // 根据 pr_user 获取团队名称
     public function getTeamByPrUser()
     {
