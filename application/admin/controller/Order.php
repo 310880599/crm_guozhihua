@@ -8,6 +8,7 @@ use think\facade\Session;
 use think\Container;
 use app\admin\service\OrderImageService;
 use app\admin\service\OrderService;
+use app\admin\service\ClientOrderService;
 
 class Order extends Common
 {
@@ -906,6 +907,16 @@ class Order extends Common
                     return json([
                         'code' => 0,
                         'msg' => (string)($returnRuleCheck['message'] ?? '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。'),
+                    ]);
+                }
+
+                // 返单订单必须存在历史成交依据（后台强拦截，不允许绕过前端提醒直接提交）
+                $historyCheck = $this->checkReturnOrderHistoryRequired($data['contact'], $data['source'], 0);
+                if (empty($historyCheck['pass'])) {
+                    $this->redisUnLock();
+                    return json([
+                        'code' => 0,
+                        'msg' => (string)($historyCheck['msg'] ?? '当前订单来源为返单，但系统未找到历史成交记录，请先补录历史订单后再提交。'),
                     ]);
                 }
             }
@@ -1813,6 +1824,69 @@ class Order extends Common
         return json(['code' => 1, 'is_return' => true, 'missing' => true]);
     }
 
+    /**
+     * 校验"返单订单必须存在历史成交依据"（新增/编辑订单保存共用，后台强拦截）
+     *
+     * 触发条件（满足任意一个即视为"返单客户"，需要执行历史订单校验）：
+     * 条件1：客户（crm_leads）原始登记的询盘来源渠道为"返单"
+     * 条件2：当前订单表单选择的询盘来源为"返单"
+     *
+     * 不满足以上任何条件：直接放行（pass=true）。
+     *
+     * 满足条件后，复用 ClientOrderService 按客户联系方式（手机号/WhatsApp）查询：
+     * 1. crm_client_order：check_status=2（审核通过订单）
+     * 2. crm_client_history_order：历史成交订单
+     * 两张表都没有匹配记录时，视为"返单客户缺少历史依据"，禁止提交（pass=false）。
+     *
+     * @param string $contact 客户联系方式（原始值即可，内部会统一清洗）
+     * @param string $source 当前表单选择的询盘来源名称
+     * @param int $excludeOrderId 编辑场景需排除的当前订单ID，避免订单自己算作自己的历史依据
+     * @return array{pass:bool,msg:string}
+     */
+    private function checkReturnOrderHistoryRequired($contact, $source, $excludeOrderId = 0)
+    {
+        $contact = OrderService::normalizeContact($contact);
+        $source = trim((string)$source);
+        $excludeOrderId = (int)$excludeOrderId;
+
+        if ($contact === '') {
+            // 联系方式为空的场景由其他必填校验拦截，这里不重复处理
+            return ['pass' => true, 'msg' => ''];
+        }
+
+        $isReturnBySelection = ($source === '返单');
+        $isReturnByClient = OrderService::isClientOriginalSourceReturn($contact);
+
+        // 非返单场景：不触发历史订单强制校验
+        if (!$isReturnBySelection && !$isReturnByClient) {
+            return ['pass' => true, 'msg' => ''];
+        }
+
+        $missingHistoryMsg = '当前订单来源为返单，但系统未找到历史成交记录，请先补录历史订单后再提交。';
+
+        $leadsId = OrderService::getClientIdByContact($contact);
+        if ($leadsId <= 0) {
+            // 找不到客户档案，无法核实历史成交依据，按缺失处理
+            return ['pass' => false, 'msg' => $missingHistoryMsg];
+        }
+
+        $clientOrderService = new ClientOrderService();
+
+        // 1. crm_client_order：审核通过订单（编辑场景排除当前订单自身）
+        $approvedOrders = $clientOrderService->getHistoryApprovedOrders($leadsId, 1, 1, $excludeOrderId);
+        if ((int)($approvedOrders['count'] ?? 0) > 0) {
+            return ['pass' => true, 'msg' => ''];
+        }
+
+        // 2. crm_client_history_order：补录的历史成交订单
+        $historyOrders = $clientOrderService->getHistoryClientHistoryOrders($leadsId);
+        if ((int)($historyOrders['count'] ?? 0) > 0) {
+            return ['pass' => true, 'msg' => ''];
+        }
+
+        return ['pass' => false, 'msg' => $missingHistoryMsg];
+    }
+
     // 根据 pr_user 获取团队名称
     public function getTeamByPrUser()
     {
@@ -2008,6 +2082,15 @@ class Order extends Common
                 return json([
                     'code' => -200,
                     'msg' => (string)($returnRuleCheck['message'] ?? '该客户已有审核通过订单，本次订单必须选择返单来源和对应返单运营端口，请勿选择非返单来源。'),
+                ]);
+            }
+
+            // 返单订单必须存在历史成交依据（后台强拦截；排除当前订单自身，避免自己算作自己的历史依据）
+            $historyCheck = $this->checkReturnOrderHistoryRequired($data['contact'], $data['source'], $id);
+            if (empty($historyCheck['pass'])) {
+                return json([
+                    'code' => -200,
+                    'msg' => (string)($historyCheck['msg'] ?? '当前订单来源为返单，但系统未找到历史成交记录，请先补录历史订单后再提交。'),
                 ]);
             }
             // 最终入库前以后端规则统一修正 source / order_type
