@@ -320,11 +320,17 @@ layui.use(['upload', 'form', 'jquery', 'layer', 'laydate'], function(){
 
         $.post("{:url('HistoryOrder/add')}", postData, function(res){
             if(res.code === 0){
-                layer.msg('添加成功！', {icon: 1, time: 1000}, function(){
-                    parent.layui.table.reload('table-list');
+                layer.msg('历史订单补录成功', {
+                    icon: 1,
+                    time: 2000
+                });
+                setTimeout(function(){
+                    try {
+                        parent.layui.table.reload('table-list');
+                    } catch (e) {}
                     var index = parent.layer.getFrameIndex(window.name);
                     parent.layer.close(index);
-                });
+                }, 2000);
             } else {
                 layer.msg(res.msg || '添加失败', {icon: 2, time: 1500});
             }
