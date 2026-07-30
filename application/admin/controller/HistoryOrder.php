@@ -198,6 +198,7 @@ class HistoryOrder extends Common
                 'remark',
                 'create_user',
                 'create_time',
+                'update_time',
             ])
             ->find();
         if (empty($entry)) {

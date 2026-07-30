@@ -128,7 +128,7 @@
     <div class="layui-form-item">
         <label class="layui-form-label">创建时间</label>
         <div class="layui-input-block">
-            <input type="text" class="layui-input layui-bg-gray" value="{$entry.create_time|date='Y-m-d H:i:s'}" readonly>
+            <input type="text" class="layui-input layui-bg-gray" value="{$entry.create_time|default=''}" readonly>
         </div>
     </div>
 
