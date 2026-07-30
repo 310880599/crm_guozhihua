@@ -243,26 +243,28 @@
         }
 
         // ====== 返单客户缺少历史订单提醒 ======
+        // 触发条件（满足任意一个）：
+        // 1. 客户原始询盘来源为“返单”；2. 当前订单选择的询盘来源为“返单”
+        // 命中触发条件后，用手机号查 crm_client_order（成交）与 crm_client_history_order（历史补录），
+        // 两表都没有记录时，在“询盘来源”后显示【补录历史订单】按钮，并弹出提醒。
         function clearHistoryOrderMissingHint() {
-            $('#historyOrderMissingHint').remove();
+            $('#addHistoryOrderBtn').hide();
         }
 
-        function renderHistoryOrderMissingHint(phone) {
-            clearHistoryOrderMissingHint();
-            var safePhone = String(phone || '').replace(/"/g, '&quot;');
-            var html = '<div id="historyOrderMissingHint" style="color:#d9534f;font-weight:600;margin-top:6px;">'
-                + '当前客户属于返单客户，但系统没有历史成交记录，建议补录历史订单。'
-                + '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs" style="margin-left:8px;" onclick="openAddHistoryOrderLayer(\'' + safePhone + '\')">添加历史订单</button>'
-                + '</div>';
-            $('#checklabel').append(html);
+        function showHistoryOrderMissingHint() {
+            $('#addHistoryOrderBtn').show();
+            var layerHost = (window.top && window.top.layui && window.top.layui.layer) ? window.top : window;
+            var layerApi = layerHost.layui.layer;
+            layerApi.msg('当前客户属于返单客户，但系统没有找到历史成交记录。请先补录历史订单。', { icon: 0, time: 4000 });
         }
 
-        function openAddHistoryOrderLayer(phone) {
+        function openAddHistoryOrderLayer() {
+            var phone = normalizeContactClient($('#contact').val());
             var layerHost = (window.top && window.top.layui && window.top.layui.layer) ? window.top : window;
             var layerApi = layerHost.layui.layer;
             layerApi.open({
                 type: 2,
-                title: '添加历史订单',
+                title: '补录历史订单',
                 area: ['640px', '640px'],
                 maxmin: true,
                 shadeClose: false,
@@ -275,17 +277,18 @@
 
         function checkHistoryOrderMissingByContact(contact) {
             var contactTrimmed = normalizeContactClient(contact);
-            if (!contactTrimmed || !isReturnSourceSelected()) {
+            if (!contactTrimmed) {
                 clearHistoryOrderMissingHint();
                 return;
             }
+            var currentSource = ($('#source').val() || '').trim();
             $.ajax({
                 type: "GET",
                 dataType: "json",
-                url: "{:url('Order/checkHistoryOrderMissing')}" + "?contact=" + encodeURIComponent(contactTrimmed),
+                url: "{:url('Order/checkHistoryOrderMissing')}" + "?contact=" + encodeURIComponent(contactTrimmed) + "&source=" + encodeURIComponent(currentSource),
                 success: function (res) {
-                    if (res && res.code == 1 && res.missing === true && isReturnSourceSelected()) {
-                        renderHistoryOrderMissingHint(contactTrimmed);
+                    if (res && res.code == 1 && res.is_return === true && res.missing === true) {
+                        showHistoryOrderMissingHint();
                     } else {
                         clearHistoryOrderMissingHint();
                     }
@@ -968,12 +971,17 @@
             <div class="layui-form-item">
                 <label class="layui-form-label">询盘来源<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
-                    <select name="source" id="source" lay-filter="kh_status" lay-search="" lay-verify="required">
-                        <option value="">请选择询盘来源</option>
-                        {volist name='sourceList' id='vo'}
-                        <option value="{$vo|htmlentities}">{$vo|htmlentities}</option>
-                        {/volist}
-                    </select>
+                    <div style="display:flex; gap:8px;">
+                        <div style="flex:1;">
+                            <select name="source" id="source" lay-filter="kh_status" lay-search="" lay-verify="required">
+                                <option value="">请选择询盘来源</option>
+                                {volist name='sourceList' id='vo'}
+                                <option value="{$vo|htmlentities}">{$vo|htmlentities}</option>
+                                {/volist}
+                            </select>
+                        </div>
+                        <button type="button" id="addHistoryOrderBtn" class="layui-btn layui-btn-primary" style="display:none;" onclick="openAddHistoryOrderLayer()">补录历史订单</button>
+                    </div>
                 </div>
             </div>
             <!-- 运营端口：可搜索单选下拉（根据询盘来源动态更新） -->

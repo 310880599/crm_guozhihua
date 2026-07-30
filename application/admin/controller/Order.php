@@ -1753,8 +1753,15 @@ class Order extends Common
      *
      * 入参：
      * - contact: 客户手机号
+     * - source: 当前表单选中的“询盘来源”名称（可选，用于判断触发条件2）
      *
-     * 判断逻辑：
+     * 触发条件（满足任意一个即视为“返单客户”）：
+     * 条件1：客户（crm_leads）原始登记的询盘来源渠道为“返单”
+     * 条件2：当前订单表单选择的询盘来源为“返单”
+     *
+     * 不满足任何触发条件时，直接返回 is_return=false, missing=false，不提示补录。
+     *
+     * 满足触发条件后，使用手机号查询：
      * 1. crm_client_order 中 contact=手机号 且 check_status=2（审核通过）是否存在
      * 2. crm_client_history_order 中 client_phone=手机号 且 is_deleted=0 是否存在
      * 只要任意一张表存在记录，即视为“有历史成交”，missing=false；
@@ -1763,14 +1770,24 @@ class Order extends Common
      * 返回：
      * {
      *   code: 1,
-     *   missing: true|false
+     *   is_return: true|false, // 是否命中“返单客户”触发条件
+     *   missing: true|false    // 是否缺少历史订单（仅 is_return=true 时才有意义）
      * }
      */
     public function checkHistoryOrderMissing()
     {
         $contact = OrderService::normalizeContact(Request::param('contact', ''));
+        $currentSource = trim((string)Request::param('source', ''));
+
         if ($contact === '') {
-            return json(['code' => 1, 'missing' => false]);
+            return json(['code' => 1, 'is_return' => false, 'missing' => false]);
+        }
+
+        $isReturnBySelection = ($currentSource === '返单');
+        $isReturnByClient = OrderService::isClientOriginalSourceReturn($contact);
+
+        if (!$isReturnBySelection && !$isReturnByClient) {
+            return json(['code' => 1, 'is_return' => false, 'missing' => false]);
         }
 
         $hasFormalOrder = Db::name('crm_client_order')
@@ -1780,7 +1797,7 @@ class Order extends Common
             ->find();
 
         if (!empty($hasFormalOrder)) {
-            return json(['code' => 1, 'missing' => false]);
+            return json(['code' => 1, 'is_return' => true, 'missing' => false]);
         }
 
         $hasHistoryOrder = Db::name('crm_client_history_order')
@@ -1790,10 +1807,10 @@ class Order extends Common
             ->find();
 
         if (!empty($hasHistoryOrder)) {
-            return json(['code' => 1, 'missing' => false]);
+            return json(['code' => 1, 'is_return' => true, 'missing' => false]);
         }
 
-        return json(['code' => 1, 'missing' => true]);
+        return json(['code' => 1, 'is_return' => true, 'missing' => true]);
     }
 
     // 根据 pr_user 获取团队名称

@@ -630,6 +630,98 @@ class OrderService
     }
 
     /**
+     * 根据联系方式解析客户（crm_leads）当前登记的“询盘来源渠道”名称
+     *
+     * 解析优先级（与 Order::changeyewu 中的渠道解析逻辑保持一致）：
+     * 1. port_id 反查端口所属渠道（crm_inquiry_port.inquiry_id -> crm_inquiry.inquiry_name）
+     * 2. crm_leads.inquiry_id 直接关联的渠道
+     * 3. crm_leads.kh_status 兼容旧数据（数字ID或名称）
+     *
+     * @param string $contact
+     * @return string 未匹配到客户或渠道时返回空字符串
+     */
+    public static function resolveClientSourceNameByContact($contact)
+    {
+        $match = self::matchContactRecord($contact);
+        $leadsId = (int)($match['leads_id'] ?? 0);
+        if ($leadsId <= 0) {
+            return '';
+        }
+
+        $custinfo = Db::name('crm_leads')->where('id', $leadsId)->find();
+        if (empty($custinfo)) {
+            return '';
+        }
+
+        $sourceName = '';
+
+        if (!empty($custinfo['port_id'])) {
+            $portIds = array_filter(explode(',', $custinfo['port_id']));
+            if (!empty($portIds)) {
+                $firstPortId = trim((string)reset($portIds));
+                if ($firstPortId !== '') {
+                    $portInfo = Db::name('crm_inquiry_port')
+                        ->where('id', $firstPortId)
+                        ->field('inquiry_id')
+                        ->find();
+                    if (!empty($portInfo['inquiry_id'])) {
+                        $inquiryInfo = Db::name('crm_inquiry')
+                            ->where('id', $portInfo['inquiry_id'])
+                            ->field('inquiry_name')
+                            ->find();
+                        if (!empty($inquiryInfo['inquiry_name'])) {
+                            $sourceName = $inquiryInfo['inquiry_name'];
+                        }
+                    }
+                }
+            }
+        }
+
+        if ($sourceName === '' && !empty($custinfo['inquiry_id'])) {
+            $inquiryInfo = Db::name('crm_inquiry')
+                ->where('id', $custinfo['inquiry_id'])
+                ->field('inquiry_name')
+                ->find();
+            if (!empty($inquiryInfo['inquiry_name'])) {
+                $sourceName = $inquiryInfo['inquiry_name'];
+            }
+        }
+
+        if ($sourceName === '') {
+            $khStatusValue = $custinfo['kh_status'] ?? '';
+            if (!empty($khStatusValue)) {
+                if (is_numeric($khStatusValue)) {
+                    $inquiryInfo = Db::name('crm_inquiry')->where('id', $khStatusValue)->find();
+                    if ($inquiryInfo) {
+                        $sourceName = $inquiryInfo['inquiry_name'];
+                    } else {
+                        $statusInfo = Db::name('crm_client_status')->where('id', $khStatusValue)->find();
+                        if ($statusInfo) {
+                            $sourceName = $statusInfo['status_name'];
+                        }
+                    }
+                } else {
+                    $inquiryInfo = Db::name('crm_inquiry')->where('inquiry_name', $khStatusValue)->find();
+                    $sourceName = $inquiryInfo ? $inquiryInfo['inquiry_name'] : $khStatusValue;
+                }
+            }
+        }
+
+        return trim((string)$sourceName);
+    }
+
+    /**
+     * 判断客户（crm_leads）原始登记的询盘来源渠道是否为“返单”
+     *
+     * @param string $contact
+     * @return bool
+     */
+    public static function isClientOriginalSourceReturn($contact)
+    {
+        return self::resolveClientSourceNameByContact($contact) === '返单';
+    }
+
+    /**
      * 根据客户历史渠道信息推断返单端口名称
      *
      * @param array $leads
