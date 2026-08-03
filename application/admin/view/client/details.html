@@ -356,6 +356,22 @@
                     </div>
                 </div>
 
+                <!-- 创建日期（只读展示，来源 $result.at_time） -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">创建日期</label>
+                    <div class="client-form-item-body">
+                        <input type="text" class="layui-input" value="{$result.at_time|default=''|substr=0,16}" readonly>
+                    </div>
+                </div>
+
+                <!-- 最后更新（只读展示，来源 $result.ut_time） -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">最后更新</label>
+                    <div class="client-form-item-body">
+                        <input type="text" class="layui-input" value="{$result.ut_time|default=''|substr=0,16}" readonly>
+                    </div>
+                </div>
+
                 <!-- 产品名称 -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">产品名称<span style="color:red;">*</span></label>
