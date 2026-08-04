@@ -81,6 +81,23 @@ class HistoryOrder extends Common
         ]);
     }
 
+    /**
+     * 历史订单负责人下拉数据源
+     *
+     * 说明：与 Auth/adminList 不同，本接口专供“历史订单-新增/编辑”页面使用，
+     * 不做任何管理员权限节点校验，也不按团队/主管范围过滤，
+     * 保证普通员工也能正常获取负责人列表用于默认回填，避免负责人为空。
+     */
+    public function getResponsibleUsers()
+    {
+        $list = Admin::where('is_open', 1)
+            ->order('admin_id', 'asc')
+            ->field('admin_id, username')
+            ->select();
+
+        return json(['code' => 0, 'data' => $list]);
+    }
+
     public function add()
     {
         if (Request::isPost()) {
@@ -104,6 +121,15 @@ class HistoryOrder extends Common
             $data['client_id'] = $this->resolveClientIdByPhone($data['client_phone']);
             $data['create_user_id'] = (int)session('aid');
             $data['create_user'] = (string)($admin['username'] ?? '');
+
+            // 负责人兜底：前端异常导致负责人未提交时，自动使用当前登录用户，避免负责人为空
+            if (empty($data['pr_user_id'])) {
+                $data['pr_user_id'] = (int)session('aid');
+            }
+            if (empty($data['pr_user'])) {
+                $data['pr_user'] = (string)($admin['username'] ?? '');
+            }
+
             $data['is_deleted'] = 0;
             $data['deleted_time'] = null;
             $data['deleted_by'] = null;

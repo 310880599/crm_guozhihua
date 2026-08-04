@@ -90,7 +90,7 @@
     <div class="layui-form-item">
         <label class="layui-form-label">负责人</label>
         <div class="layui-input-block">
-            <select id="pr_user_select" lay-filter="pr_user_select" lay-search>
+            <select id="pr_user_select" name="pr_user_select" lay-filter="pr_user_select" lay-verify="required" lay-search>
                 <option value="">请选择负责人</option>
             </select>
             <input type="hidden" name="pr_user_id" id="pr_user_id" value="">
@@ -212,7 +212,7 @@ layui.use(['upload', 'form', 'jquery', 'layer', 'laydate'], function(){
 
     function loadPrUserOptions() {
         var $select = $('#pr_user_select');
-        $.post("{:url('Auth/adminList')}", {}, function(res){
+        $.post("{:url('HistoryOrder/getResponsibleUsers')}", {}, function(res){
             if (res.code !== 0 || !res.data) {
                 layer.msg(res.msg || '负责人列表加载失败', {icon: 2, time: 1500});
                 return;
@@ -299,6 +299,9 @@ layui.use(['upload', 'form', 'jquery', 'layer', 'laydate'], function(){
                 if (fieldName === 'profit') {
                     return '利润不能为空';
                 }
+                if (fieldName === 'pr_user_select') {
+                    return '请选择负责人';
+                }
                 return '必填项不能为空';
             }
         }
@@ -317,6 +320,11 @@ layui.use(['upload', 'form', 'jquery', 'layer', 'laydate'], function(){
             voucher_image: data.field.voucher_image || '',
             remark: data.field.remark || ''
         };
+
+        if (!postData.pr_user_id || !postData.pr_user) {
+            layer.msg('请选择负责人后再提交', {icon: 2, time: 1500});
+            return false;
+        }
 
         $.post("{:url('HistoryOrder/add')}", postData, function(res){
             if(res.code === 0){
