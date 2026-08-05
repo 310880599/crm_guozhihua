@@ -9,6 +9,7 @@ use app\admin\model\Admin;
 use app\admin\service\PersonOrderService;
 use app\admin\service\OrderImageService;
 use app\admin\service\BusinessPerformanceSplitService;
+use app\admin\service\OrderProductProfitAllocationService;
 
 class Operator extends Common
 {
@@ -2931,25 +2932,58 @@ private function exportToExcel($data)
         try {
             $teamExpr = $this->getOrderProductSummaryTeamExpr();
 
+            // 销量口径保持不变：仍然是 SUM(oi.qty) 按 product_name 聚合
             $productRows = $this->buildOrderProductSummaryProductSalesQuery($orgUsernames, $timebucket, $at_time, $month_keys)
                 ->select();
+            $salesQtyMap = [];
+            foreach ((array)$productRows as $row) {
+                $salesQtyMap[trim((string)($row['product_name'] ?? ''))] = (float)($row['sale_qty'] ?? 0);
+            }
 
-            $products = [];
+            // 利润口径改为：以 crm_client_order.profit 为唯一来源，按订单内销售金额占比分摊到产品
+            $profitRows = (new OrderProductProfitAllocationService())->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys, $orgUsernames);
+            $profitMap = [];
+            foreach ($profitRows as $row) {
+                $profitMap[$row['product_name']] = (float)$row['total_profit'];
+            }
+
+            // 以两侧出现过的 product_name 取并集，避免任何一侧漏项
+            $allProductNames = array_unique(array_merge(array_keys($salesQtyMap), array_keys($profitMap)));
+
+            $productList = [];
             $totalSalesQty = 0.0;
             $totalProfit = 0.0;
-            $rank = 1;
-            foreach ((array)$productRows as $row) {
-                $qty = (float)($row['sale_qty'] ?? 0);
-                $profit = (float)($row['total_profit'] ?? 0);
+            foreach ($allProductNames as $name) {
+                $qty = $salesQtyMap[$name] ?? 0.0;
+                $profit = $profitMap[$name] ?? 0.0;
                 $totalSalesQty += $qty;
                 $totalProfit += $profit;
+                $productList[] = [
+                    'product_name' => $name,
+                    'sale_qty' => $qty,
+                    'total_profit' => $profit,
+                ];
+            }
+            usort($productList, function ($a, $b) {
+                if ($a['total_profit'] !== $b['total_profit']) {
+                    return $b['total_profit'] <=> $a['total_profit'];
+                }
+                if ($a['sale_qty'] !== $b['sale_qty']) {
+                    return $b['sale_qty'] <=> $a['sale_qty'];
+                }
+                return $a['product_name'] <=> $b['product_name'];
+            });
+
+            $products = [];
+            $rank = 1;
+            foreach ($productList as $row) {
                 $products[] = [
                     'rank' => $rank++,
-                    'product_name' => trim((string)($row['product_name'] ?? '')),
-                    'sale_qty_raw' => $qty,
-                    'sale_qty' => $qty,
-                    'total_profit_raw' => $profit,
-                    'total_profit' => number_format($profit, 2, '.', ','),
+                    'product_name' => $row['product_name'],
+                    'sale_qty_raw' => $row['sale_qty'],
+                    'sale_qty' => $row['sale_qty'],
+                    'total_profit_raw' => $row['total_profit'],
+                    'total_profit' => number_format($row['total_profit'], 2, '.', ','),
                 ];
             }
 
@@ -3121,24 +3155,55 @@ private function exportToExcel($data)
             $this->applyOrderProductSummaryTeamFilter($query, $team_name);
             $query->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''");
 
+            // 销量口径保持不变：SUM(oi.qty) 按 product_name 聚合
             $rows = $query
-                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
+                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty")
                 ->group("oi.product_name")
-                ->order("total_profit desc, sale_qty desc, oi.product_name asc")
                 ->select();
+            $salesQtyMap = [];
+            foreach ((array)$rows as $row) {
+                $salesQtyMap[trim((string)($row['product_name'] ?? ''))] = (float)($row['sale_qty'] ?? 0);
+            }
+
+            // 利润口径改为：以 crm_client_order.profit 按订单销售金额占比分摊到产品（限定该团队）
+            $profitRows = (new OrderProductProfitAllocationService())->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys, $orgUsernames, $team_name);
+            $profitMap = [];
+            foreach ($profitRows as $row) {
+                $profitMap[$row['product_name']] = (float)$row['total_profit'];
+            }
+
+            $allProductNames = array_unique(array_merge(array_keys($salesQtyMap), array_keys($profitMap)));
+
+            $productList = [];
+            foreach ($allProductNames as $name) {
+                $productList[] = [
+                    'product_name' => $name,
+                    'sale_qty' => $salesQtyMap[$name] ?? 0.0,
+                    'total_profit' => $profitMap[$name] ?? 0.0,
+                ];
+            }
+            usort($productList, function ($a, $b) {
+                if ($a['total_profit'] !== $b['total_profit']) {
+                    return $b['total_profit'] <=> $a['total_profit'];
+                }
+                if ($a['sale_qty'] !== $b['sale_qty']) {
+                    return $b['sale_qty'] <=> $a['sale_qty'];
+                }
+                return $a['product_name'] <=> $b['product_name'];
+            });
 
             $data = [];
             $rank = 1;
             $totalSalesQty = 0.0;
             $totalProfit = 0.0;
-            foreach ((array)$rows as $row) {
-                $qty = (float)($row['sale_qty'] ?? 0);
-                $profit = (float)($row['total_profit'] ?? 0);
+            foreach ($productList as $row) {
+                $qty = $row['sale_qty'];
+                $profit = $row['total_profit'];
                 $totalSalesQty += $qty;
                 $totalProfit += $profit;
                 $data[] = [
                     'rank' => $rank++,
-                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'product_name' => $row['product_name'],
                     'sale_qty_raw' => $qty,
                     'sale_qty' => $qty,
                     'total_profit_raw' => $profit,
@@ -3221,24 +3286,55 @@ private function exportToExcel($data)
             $query = $this->buildOrderProductSummaryBaseQuery($orgUsernames, $timebucket, $at_time, $month_keys);
             $query->where('o.pr_user', '=', $username);
 
+            // 销量口径保持不变：SUM(oi.qty) 按 product_name 聚合
             $rows = $query
-                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
+                ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty")
                 ->group("oi.product_name")
-                ->order('total_profit desc, sale_qty desc, oi.product_name asc')
                 ->select();
+            $salesQtyMap = [];
+            foreach ((array)$rows as $row) {
+                $salesQtyMap[trim((string)($row['product_name'] ?? ''))] = (float)($row['sale_qty'] ?? 0);
+            }
+
+            // 利润口径改为：以 crm_client_order.profit 按订单销售金额占比分摊到产品（限定该业务员）
+            $profitRows = (new OrderProductProfitAllocationService())->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys, $orgUsernames, '', $username);
+            $profitMap = [];
+            foreach ($profitRows as $row) {
+                $profitMap[$row['product_name']] = (float)$row['total_profit'];
+            }
+
+            $allProductNames = array_unique(array_merge(array_keys($salesQtyMap), array_keys($profitMap)));
+
+            $productList = [];
+            foreach ($allProductNames as $name) {
+                $productList[] = [
+                    'product_name' => $name,
+                    'sale_qty' => $salesQtyMap[$name] ?? 0.0,
+                    'total_profit' => $profitMap[$name] ?? 0.0,
+                ];
+            }
+            usort($productList, function ($a, $b) {
+                if ($a['total_profit'] !== $b['total_profit']) {
+                    return $b['total_profit'] <=> $a['total_profit'];
+                }
+                if ($a['sale_qty'] !== $b['sale_qty']) {
+                    return $b['sale_qty'] <=> $a['sale_qty'];
+                }
+                return $a['product_name'] <=> $b['product_name'];
+            });
 
             $data = [];
             $rank = 1;
             $totalSalesQty = 0.0;
             $totalProfit = 0.0;
-            foreach ((array)$rows as $row) {
-                $qty = (float)($row['sale_qty'] ?? 0);
-                $profit = (float)($row['total_profit'] ?? 0);
+            foreach ($productList as $row) {
+                $qty = $row['sale_qty'];
+                $profit = $row['total_profit'];
                 $totalSalesQty += $qty;
                 $totalProfit += $profit;
                 $data[] = [
                     'rank' => $rank++,
-                    'product_name' => trim((string)($row['product_name'] ?? '')),
+                    'product_name' => $row['product_name'],
                     'sale_qty_raw' => $qty,
                     'sale_qty' => $qty,
                     'total_profit_raw' => $profit,
@@ -5720,72 +5816,158 @@ private function exportToExcel($data)
             $baseQuery->where('o.pr_user', '=', trim($username));
         }
 
-        $companyRowsRaw = (clone $baseQuery)
-            ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
+        // 利润口径改为：以 crm_client_order.profit 按订单销售金额占比分摊到产品，
+        // 一次性取出"订单+产品"粒度的分摊明细（已限定当前组织范围 orgUsernames），
+        // 下面各维度的利润统计均由此聚合而来，不再使用 SUM(oi.sub_profit)。
+        // 销量（sale_qty/order_count/member_count）口径保持不变，仍沿用原 SUM(qty) 查询。
+        $allocationRows = (new OrderProductProfitAllocationService())
+            ->getOrderProductProfitAllocationRows($timebucket, $at_time, $month_keys, $orgUsernames, $team_name, $username);
+
+        $profitByProduct = [];
+        $profitByTeam = [];
+        $profitByTeamUserProduct = [];
+        foreach ($allocationRows as $row) {
+            $productName = (string)$row['product_name'];
+            $teamName = $this->normalizeOrderProductTeamName((string)$row['team_name']);
+            $rowUsername = (string)$row['username'];
+            $profit = (float)$row['profit'];
+
+            $profitByProduct[$productName] = ($profitByProduct[$productName] ?? 0.0) + $profit;
+            $profitByTeam[$teamName] = ($profitByTeam[$teamName] ?? 0.0) + $profit;
+
+            $teamUserProductKey = $teamName . '||' . $rowUsername . '||' . $productName;
+            $profitByTeamUserProduct[$teamUserProductKey] = ($profitByTeamUserProduct[$teamUserProductKey] ?? 0.0) + $profit;
+        }
+
+        // 公司维度：销量沿用原查询（SUM(qty) 不变），利润取分摊结果
+        $companySalesRaw = (clone $baseQuery)
+            ->field("oi.product_name, SUM(IFNULL(oi.qty,0)) as sale_qty")
             ->group('oi.product_name')
-            ->order('total_profit desc, sale_qty desc, oi.product_name asc')
             ->select();
+        $companyList = [];
+        foreach ((array)$companySalesRaw as $row) {
+            $name = (string)($row['product_name'] ?? '');
+            $companyList[] = [
+                'product_name' => $name,
+                'sale_qty' => (float)($row['sale_qty'] ?? 0),
+                'total_profit' => $profitByProduct[$name] ?? 0.0,
+            ];
+        }
+        usort($companyList, function ($a, $b) {
+            if ($a['total_profit'] !== $b['total_profit']) {
+                return $b['total_profit'] <=> $a['total_profit'];
+            }
+            if ($a['sale_qty'] !== $b['sale_qty']) {
+                return $b['sale_qty'] <=> $a['sale_qty'];
+            }
+            return $a['product_name'] <=> $b['product_name'];
+        });
         $companyRows = [];
-        foreach ((array)$companyRowsRaw as $idx => $row) {
+        foreach ($companyList as $idx => $row) {
             $companyRows[] = [
                 $idx + 1,
-                (string)($row['product_name'] ?? ''),
-                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
-                (float)($row['sale_qty'] ?? 0),
+                $row['product_name'],
+                number_format($row['total_profit'], 2, '.', ''),
+                $row['sale_qty'],
             ];
         }
 
-        $teamRowsRaw = (clone $baseQuery)
+        // 团队维度：销量/成员数沿用原查询，利润取分摊结果按团队汇总
+        $teamSalesRaw = (clone $baseQuery)
             ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
-            ->field($teamExpr . " as team_name, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
+            ->field($teamExpr . " as team_name, SUM(IFNULL(oi.qty,0)) as sale_qty, COUNT(DISTINCT NULLIF(TRIM(o.pr_user), '')) as member_count")
             ->group($teamExpr)
-            ->order('total_profit desc, sale_qty desc, team_name asc')
             ->select();
+        $teamList = [];
+        foreach ((array)$teamSalesRaw as $row) {
+            $name = $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? ''));
+            $teamList[] = [
+                'team_name' => $name,
+                'sale_qty' => (float)($row['sale_qty'] ?? 0),
+                'member_count' => (int)($row['member_count'] ?? 0),
+                'total_profit' => $profitByTeam[$name] ?? 0.0,
+            ];
+        }
+        usort($teamList, function ($a, $b) {
+            if ($a['total_profit'] !== $b['total_profit']) {
+                return $b['total_profit'] <=> $a['total_profit'];
+            }
+            if ($a['sale_qty'] !== $b['sale_qty']) {
+                return $b['sale_qty'] <=> $a['sale_qty'];
+            }
+            return $a['team_name'] <=> $b['team_name'];
+        });
         $teamRows = [];
-        foreach ((array)$teamRowsRaw as $idx => $row) {
+        foreach ($teamList as $idx => $row) {
             $teamRows[] = [
                 $idx + 1,
-                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
-                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
-                (float)($row['sale_qty'] ?? 0),
-                (int)($row['member_count'] ?? 0),
+                $row['team_name'],
+                number_format($row['total_profit'], 2, '.', ''),
+                $row['sale_qty'],
+                $row['member_count'],
             ];
         }
 
-        $userRowsRaw = (clone $baseQuery)
+        // 团队+业务员+产品维度：销量/订单数沿用原查询，利润取分摊结果
+        $userSalesRaw = (clone $baseQuery)
             ->whereRaw("TRIM(IFNULL(o.pr_user, '')) <> ''")
-            ->field($teamExpr . " as team_name, TRIM(o.pr_user) as username, oi.product_name, COUNT(DISTINCT o.id) as order_count, SUM(IFNULL(oi.qty,0)) as sale_qty, SUM(IFNULL(oi.sub_profit,0)) as total_profit")
+            ->field($teamExpr . " as team_name, TRIM(o.pr_user) as username, oi.product_name, COUNT(DISTINCT o.id) as order_count, SUM(IFNULL(oi.qty,0)) as sale_qty")
             ->group($teamExpr . ",TRIM(o.pr_user),oi.product_name")
-            ->order('team_name asc, username asc, total_profit desc, sale_qty desc')
             ->select();
+        $userList = [];
+        foreach ((array)$userSalesRaw as $row) {
+            $teamName = $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? ''));
+            $rowUsername = (string)($row['username'] ?? '');
+            $productName = (string)($row['product_name'] ?? '');
+            $key = $teamName . '||' . $rowUsername . '||' . $productName;
+            $userList[] = [
+                'team_name' => $teamName,
+                'username' => $rowUsername,
+                'product_name' => $productName,
+                'order_count' => (int)($row['order_count'] ?? 0),
+                'sale_qty' => (float)($row['sale_qty'] ?? 0),
+                'total_profit' => $profitByTeamUserProduct[$key] ?? 0.0,
+            ];
+        }
+        usort($userList, function ($a, $b) {
+            if ($a['team_name'] !== $b['team_name']) {
+                return $a['team_name'] <=> $b['team_name'];
+            }
+            if ($a['username'] !== $b['username']) {
+                return $a['username'] <=> $b['username'];
+            }
+            if ($a['total_profit'] !== $b['total_profit']) {
+                return $b['total_profit'] <=> $a['total_profit'];
+            }
+            return $b['sale_qty'] <=> $a['sale_qty'];
+        });
         $userRows = [];
-        foreach ((array)$userRowsRaw as $row) {
+        foreach ($userList as $row) {
             $userRows[] = [
-                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
-                (string)($row['username'] ?? ''),
-                (string)($row['product_name'] ?? ''),
-                (int)($row['order_count'] ?? 0),
-                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
-                (float)($row['sale_qty'] ?? 0),
+                $row['team_name'],
+                $row['username'],
+                $row['product_name'],
+                $row['order_count'],
+                number_format($row['total_profit'], 2, '.', ''),
+                $row['sale_qty'],
             ];
         }
 
-        $rawRowsRaw = (clone $baseQuery)
-            ->field($teamExpr . " as team_name, o.id as order_id, o.order_no, o.order_time, TRIM(o.pr_user) as username, oi.product_name, IFNULL(oi.qty,0) as sale_qty, IFNULL(oi.sub_profit,0) as total_profit")
-            ->order('o.id desc')
-            ->limit(20000)
-            ->select();
+        // 明细维度：直接使用"订单+产品"分摊结果（product_name 为空已归类为"未分类产品"，不丢弃），按订单倒序取前 20000 行
+        usort($allocationRows, function ($a, $b) {
+            return $b['order_id'] <=> $a['order_id'];
+        });
         $rawRows = [];
-        foreach ((array)$rawRowsRaw as $row) {
+        foreach (array_slice($allocationRows, 0, 20000) as $row) {
             $rawRows[] = [
-                (int)($row['order_id'] ?? 0),
-                (string)($row['order_no'] ?? ''),
-                (string)($row['order_time'] ?? ''),
-                (string)($row['username'] ?? ''),
-                $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
-                (string)($row['product_name'] ?? ''),
-                (float)($row['sale_qty'] ?? 0),
-                number_format((float)($row['total_profit'] ?? 0), 2, '.', ''),
+                (int)$row['order_id'],
+                (string)$row['order_no'],
+                (string)$row['order_time'],
+                (string)$row['username'],
+                $this->normalizeOrderProductTeamName((string)$row['team_name']),
+                (string)$row['product_name'],
+                (float)$row['qty'],
+                number_format((float)$row['profit'], 2, '.', ''),
             ];
         }
 

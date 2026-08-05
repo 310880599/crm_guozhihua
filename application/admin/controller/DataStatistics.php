@@ -5,6 +5,7 @@ use think\Db;
 use think\facade\Request;
 use app\admin\model\Admin;
 use app\admin\service\BusinessPerformanceSplitService;
+use app\admin\service\OrderProductProfitAllocationService;
 
 class DataStatistics extends Common
 {
@@ -3484,188 +3485,13 @@ class DataStatistics extends Common
         return $query;
     }
 
-    // ===== [开始] 产品利润统计口径修正：以 crm_client_order.profit 按订单分摊到产品 =====
-    /**
-     * 产品利润分摊：基础查询（不过滤 product_name）
-     * 与 buildOrderProductSummaryBaseQuery 的审核状态/时间口径完全一致，
-     * 区别仅在于：这里不排除 product_name 为空的明细行，
-     * 因为计算"产品销售金额占比"的分母必须是订单内全部明细金额合计，
-     * 否则占比会偏大，导致分摊后的利润与订单利润不匹配。
-     */
-    private function buildOrderProductProfitAllocationBaseQuery(string $timebucket = '', string $at_time = '', string $month_keys = '')
-    {
-        $query = Db::table('crm_order_item')->alias('oi')
-            ->join('crm_client_order o', 'oi.order_id = o.id', 'INNER')
-            ->leftJoin('admin a', 'o.pr_user = a.username');
-
-        $query->where('o.check_status', '=', 2);
-        $this->applyOrderProductSummaryTimeFilter($query, $timebucket, $at_time, $month_keys);
-
-        return $query;
-    }
-
-    /**
-     * 产品利润分摊：按订单将 crm_client_order.profit 按明细销售金额占比分配到产品，
-     * 返回按"订单 + 产品"粒度展开的分摊明细（product_name 为空的行已剔除，不展示）。
-     *
-     * 分摊规则：
-     * 1. 订单内产品销售占比 = 明细 total_price / 订单内全部明细 total_price 合计（含空产品名行，保证分母完整）；
-     * 2. 产品分摊利润 = 订单 profit × 销售占比；
-     * 3. 仅对 product_name 非空的明细计算展示利润，最后一个（展示的）产品补齐四舍五入产生的尾差，
-     *    保证：当订单内所有明细都有 product_name 时，展示产品利润合计 = 订单 profit。
-     *
-     * @return array<int, array{order_id:int, order_no:string, order_time:string, username:string, team_name:string, product_name:string, qty:float, profit:float}>
-     */
-    private function fetchOrderProductProfitAllocationRows(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
-    {
-        $teamExpr = $this->getOrderProductSummaryTeamExpr();
-        $query = $this->buildOrderProductProfitAllocationBaseQuery($timebucket, $at_time, $month_keys);
-
-        if (trim($team_name) !== '') {
-            $this->applyOrderProductSummaryTeamFilter($query, trim($team_name));
-        }
-        if (trim($username) !== '') {
-            $query->where('o.pr_user', '=', trim($username));
-        }
-
-        $rows = $query
-            ->field(
-                "o.id as order_id, o.profit as order_profit, o.order_no, o.order_time, " .
-                "TRIM(o.pr_user) as username, " . $teamExpr . " as team_name, " .
-                "oi.product_name, IFNULL(oi.total_price,0) as total_price, IFNULL(oi.qty,0) as qty"
-            )
-            ->order('o.id asc, oi.line_no asc')
-            ->select();
-
-        // 按订单分组，组内保留全部明细（含 product_name 为空的行），用于计算占比分母
-        $orders = [];
-        foreach ((array)$rows as $row) {
-            $orderId = (int)($row['order_id'] ?? 0);
-            if (!isset($orders[$orderId])) {
-                $orders[$orderId] = [
-                    'profit' => (float)($row['order_profit'] ?? 0),
-                    'order_no' => (string)($row['order_no'] ?? ''),
-                    'order_time' => (string)($row['order_time'] ?? ''),
-                    'username' => (string)($row['username'] ?? ''),
-                    'team_name' => $this->normalizeOrderProductTeamName((string)($row['team_name'] ?? '')),
-                    'items' => [],
-                ];
-            }
-            $orders[$orderId]['items'][] = [
-                'product_name' => trim((string)($row['product_name'] ?? '')),
-                'total_price' => (float)($row['total_price'] ?? 0),
-                'qty' => (float)($row['qty'] ?? 0),
-            ];
-        }
-
-        $allocatedRows = [];
-        foreach ($orders as $orderId => $order) {
-            foreach ($this->allocateOrderProfitByItems($orderId, $order) as $allocatedRow) {
-                $allocatedRows[] = $allocatedRow;
-            }
-        }
-
-        return $allocatedRows;
-    }
-
-    /**
-     * 产品利润分摊：单个订单内按销售金额占比拆分 profit，返回展示产品的分摊结果。
-     * product_name 为空的行不返回（不展示），但其 total_price 仍计入占比分母。
-     */
-    private function allocateOrderProfitByItems(int $orderId, array $order): array
-    {
-        $profit = (float)($order['profit'] ?? 0);
-        $items = (array)($order['items'] ?? []);
-        if (empty($items)) {
-            return [];
-        }
-
-        // 占比分母：订单内全部明细金额/数量合计（含空产品名行）
-        $priceDenominator = 0.0;
-        $qtyDenominator = 0.0;
-        foreach ($items as $item) {
-            $priceDenominator += (float)$item['total_price'];
-            $qtyDenominator += (float)$item['qty'];
-        }
-
-        // 需要展示的明细：product_name 非空
-        $included = array_values(array_filter($items, function ($item) {
-            return $item['product_name'] !== '';
-        }));
-        if (empty($included)) {
-            return [];
-        }
-
-        $itemCount = count($items);
-        $ideal = [];
-        foreach ($included as $item) {
-            if ($priceDenominator > 0.0) {
-                $ratio = (float)$item['total_price'] / $priceDenominator;
-            } elseif ($qtyDenominator > 0.0) {
-                // 兜底：订单金额合计为 0（异常数据）时按数量占比分摊
-                $ratio = (float)$item['qty'] / $qtyDenominator;
-            } else {
-                // 兜底：金额、数量均为 0 时按明细条数平均分摊，避免利润无处分配
-                $ratio = 1.0 / $itemCount;
-            }
-            $ideal[] = $profit * $ratio;
-        }
-
-        $includedCount = count($included);
-        $idealSum = array_sum($ideal);
-        $runningRounded = 0.0;
-        $result = [];
-        foreach ($included as $idx => $item) {
-            if ($idx < $includedCount - 1) {
-                $allocatedProfit = round($ideal[$idx], 2);
-                $runningRounded += $allocatedProfit;
-            } else {
-                // 最后一个展示产品补齐尾差，保证展示产品利润合计 = 分摊到这些产品的理论利润合计
-                $allocatedProfit = round($idealSum - $runningRounded, 2);
-            }
-            $result[] = [
-                'order_id' => $orderId,
-                'order_no' => (string)($order['order_no'] ?? ''),
-                'order_time' => (string)($order['order_time'] ?? ''),
-                'username' => (string)($order['username'] ?? ''),
-                'team_name' => (string)($order['team_name'] ?? ''),
-                'product_name' => $item['product_name'],
-                'qty' => (float)$item['qty'],
-                'profit' => $allocatedProfit,
-            ];
-        }
-
-        return $result;
-    }
-
-    /**
-     * 产品利润分摊：按 product_name 聚合分摊结果（sale_qty、total_profit）。
-     * 用于替换原先直接 SUM(oi.sub_profit) 的产品利润统计，使产品利润口径与
-     * 团队业绩利润口径（crm_client_order.profit）保持一致。
-     *
-     * @return array<int, array{product_name:string, sale_qty:float, total_profit:float}>
-     */
-    private function getOrderProductProfitAllocation(string $timebucket = '', string $at_time = '', string $month_keys = '', string $team_name = '', string $username = ''): array
-    {
-        $rows = $this->fetchOrderProductProfitAllocationRows($timebucket, $at_time, $month_keys, $team_name, $username);
-
-        $aggregated = [];
-        foreach ($rows as $row) {
-            $name = (string)($row['product_name'] ?? '');
-            if ($name === '') {
-                // 双重保险：product_name 为空的数据不展示
-                continue;
-            }
-            if (!isset($aggregated[$name])) {
-                $aggregated[$name] = ['product_name' => $name, 'sale_qty' => 0.0, 'total_profit' => 0.0];
-            }
-            $aggregated[$name]['sale_qty'] += (float)$row['qty'];
-            $aggregated[$name]['total_profit'] += (float)$row['profit'];
-        }
-
-        return array_values($aggregated);
-    }
-    // ===== [结束] 产品利润统计口径修正 =====
+    // ===== [产品利润统计口径] =====
+    // 产品利润的计算/分摊逻辑已统一迁移到 OrderProductProfitAllocationService，
+    // 不在 Controller 内维护重复算法。唯一利润来源：crm_client_order.profit，
+    // 按订单内明细销售金额占比分摊到产品；product_name 为空统一归类为"未分类产品"，
+    // 保证产品利润合计恒等于订单 profit 合计。控制面板（本文件）与 Operator 运营页面
+    // 共用同一套 Service，仅 Operator 侧额外传入组织业务员范围 orgUsernames 收口。
+    // ===== [结束] =====
 
     /**
      * 第一屏：全公司产品销量排行 + 第二屏团队列表
@@ -3687,7 +3513,7 @@ class DataStatistics extends Common
             }
 
             // 利润口径改为：以 crm_client_order.profit 为唯一来源，按订单内销售金额占比分摊到产品
-            $profitRows = $this->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys);
+            $profitRows = (new OrderProductProfitAllocationService())->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys);
             $profitMap = [];
             foreach ($profitRows as $row) {
                 $profitMap[$row['product_name']] = (float)$row['total_profit'];
@@ -3882,7 +3708,7 @@ class DataStatistics extends Common
             }
 
             // 利润口径改为：以 crm_client_order.profit 按订单销售金额占比分摊到产品（限定该团队）
-            $profitRows = $this->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys, $team_name);
+            $profitRows = (new OrderProductProfitAllocationService())->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys, [], $team_name);
             $profitMap = [];
             foreach ($profitRows as $row) {
                 $profitMap[$row['product_name']] = (float)$row['total_profit'];
@@ -3995,7 +3821,7 @@ class DataStatistics extends Common
             }
 
             // 利润口径改为：以 crm_client_order.profit 按订单销售金额占比分摊到产品（限定该业务员）
-            $profitRows = $this->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys, '', $username);
+            $profitRows = (new OrderProductProfitAllocationService())->getOrderProductProfitAllocation($timebucket, $at_time, $month_keys, [], '', $username);
             $profitMap = [];
             foreach ($profitRows as $row) {
                 $profitMap[$row['product_name']] = (float)$row['total_profit'];
@@ -4663,7 +4489,8 @@ class DataStatistics extends Common
         // 利润口径改为：以 crm_client_order.profit 按订单销售金额占比分摊到产品，
         // 一次性取出"订单+产品"粒度的分摊明细，下面各维度的利润统计均由此聚合而来，
         // 不再使用 SUM(oi.sub_profit)。销量（sale_qty/order_count/member_count）口径保持不变。
-        $allocationRows = $this->fetchOrderProductProfitAllocationRows($timebucket, $at_time, $month_keys, $team_name, $username);
+        $allocationRows = (new OrderProductProfitAllocationService())
+            ->getOrderProductProfitAllocationRows($timebucket, $at_time, $month_keys, [], $team_name, $username);
 
         // 辅助：按 product_name 聚合分摊利润
         $profitByProduct = [];
