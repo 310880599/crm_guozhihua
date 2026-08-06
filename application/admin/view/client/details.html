@@ -559,14 +559,14 @@ layui.use(['form', 'layer', 'jquery', 'table'], function () {
             page: true,
             limit: 10,
             limits: [10, 20, 30, 50],
+            totalRow: true,
             text: {
                 none: '暂无历史成交订单'
             },
             cols: [[
-                { field: 'order_no', title: '订单编号', minWidth: 140 },
                 { field: 'order_time', title: '成交时间', minWidth: 160 },
-                { field: 'money', title: '成交金额', minWidth: 120, templet: function (d) { return d.money || d.money === 0 ? d.money : ''; } },
-                { field: 'profit', title: '利润', minWidth: 100, templet: function (d) { return d.profit || d.profit === 0 ? d.profit : ''; } },
+                { field: 'money', title: '成交金额', minWidth: 120, totalRow: true, templet: function (d) { return d.money || d.money === 0 ? d.money : ''; } },
+                { field: 'profit', title: '利润', minWidth: 100, totalRow: true, templet: function (d) { return d.profit || d.profit === 0 ? d.profit : ''; } },
                 { field: 'product_name', title: '产品名称', minWidth: 140, templet: function (d) { return d.product_name || ''; } },
                 { field: 'pr_user', title: '负责人', minWidth: 120, templet: function (d) { return d.pr_user || ''; } },
                 {
@@ -581,12 +581,19 @@ layui.use(['form', 'layer', 'jquery', 'table'], function () {
             done: function (res) {
                 // 仅做展示样式标记：history 订单（order_type=history，来自 crm_client_history_order）行加特殊 class
                 var data = res.data || [];
-                var $rows = $('#historyApprovedOrderTable').next('.layui-table-view').find('.layui-table-body tbody tr');
+                var $tableView = $('#historyApprovedOrderTable').next('.layui-table-view');
+                var $rows = $tableView.find('.layui-table-body tbody tr');
                 $.each(data, function (i, row) {
                     if (row && row.order_type === 'history') {
                         $rows.eq(i).addClass('history-order-row');
                     }
                 });
+
+                // layui 的 totalRow 默认只统计当前页数据，这里用后端返回的合计（正式订单+历史订单全量）覆盖合计行
+                var totalMoney = res.totalMoney || res.totalMoney === 0 ? res.totalMoney : '';
+                var totalProfit = res.totalProfit || res.totalProfit === 0 ? res.totalProfit : '';
+                $tableView.find('.layui-table-total tbody td[data-field="money"] .layui-table-cell').text(totalMoney);
+                $tableView.find('.layui-table-total tbody td[data-field="profit"] .layui-table-cell').text(totalProfit);
             }
         });
     }

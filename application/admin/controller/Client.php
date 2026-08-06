@@ -3438,6 +3438,17 @@ class Client extends Common
         });
 
         $totalCount = count($mergedRows);
+
+        // 合计统计：基于合并后的全部订单（正式订单 + 历史订单），而非当前分页数据
+        $totalMoney = 0;
+        $totalProfit = 0;
+        foreach ($mergedRows as $row) {
+            $totalMoney += (float)($row['money'] ?? 0);
+            $totalProfit += (float)($row['profit'] ?? 0);
+        }
+        $totalMoney = round($totalMoney, 2);
+        $totalProfit = round($totalProfit, 2);
+
         $offset = ($page - 1) * $limit;
         $pagedRows = array_slice($mergedRows, max(0, $offset), $limit);
 
@@ -3446,6 +3457,8 @@ class Client extends Common
             'msg' => '',
             'count' => $totalCount,
             'data' => $pagedRows,
+            'totalMoney' => $totalMoney,
+            'totalProfit' => $totalProfit,
         ]);
     }
 
