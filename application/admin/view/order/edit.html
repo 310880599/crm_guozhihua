@@ -244,16 +244,15 @@
             if (typeof updateVoucherUI === 'function') updateVoucherUI(true);
         }
 
-        // 命中返单强规则后，将询盘来源/运营端口改为真正不可编辑（禁止用户手动修改）
+        // 命中返单强规则后，仅锁定“询盘来源”（禁止用户手动修改）；
+        // “运营端口”只自动推荐默认值，不锁定，用户仍可手动选择其他返单运营端口。
         function lockSourceFields() {
             $('#source').prop('disabled', true);
-            $('#source_port').prop('disabled', true);
             layui.form.render('select');
         }
 
         function unlockSourceFields() {
             $('#source').prop('disabled', false);
-            $('#source_port').prop('disabled', false);
             layui.form.render('select');
         }
 
