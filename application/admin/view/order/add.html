@@ -229,6 +229,21 @@
         function resetReturnOrderRuleUI() {
             returnOrderRule = null;
             clearReturnRuleHint();
+            unlockSourceFields();
+            if (typeof updateVoucherUI === 'function') updateVoucherUI(true);
+        }
+
+        // 命中返单强规则后，将询盘来源/运营端口改为真正不可编辑（禁止用户手动修改）
+        function lockSourceFields() {
+            $('#source').prop('disabled', true);
+            $('#source_port').prop('disabled', true);
+            layui.form.render('select');
+        }
+
+        function unlockSourceFields() {
+            $('#source').prop('disabled', false);
+            $('#source_port').prop('disabled', false);
+            layui.form.render('select');
         }
 
         // ====== 返单客户缺少历史订单提醒 ======
@@ -340,7 +355,8 @@
             setTimeout(function () {
                 if (typeof window.setSourcePortByAnyValue === 'function') {
                     window.setSourcePortByAnyValue(lockSource, anyValue, preferId, function () {
-                        layui.form.render('select');
+                        lockSourceFields();
+                        if (typeof updateVoucherUI === 'function') updateVoucherUI(true);
                         callback();
                     });
                     return;
@@ -356,7 +372,8 @@
                         }
                     });
                 }
-                layui.form.render('select');
+                lockSourceFields();
+                if (typeof updateVoucherUI === 'function') updateVoucherUI(true);
                 callback();
             }, 160);
         }
@@ -402,6 +419,7 @@
                     } else {
                         resetReturnOrderRuleUI();
                     }
+                    if (typeof updateVoucherUI === 'function') updateVoucherUI(true);
                     checkHistoryOrderMissingByContact(contactTrimmed);
                     done(latestRule);
                 }
@@ -2088,26 +2106,37 @@
             var profit = parseFloat($('#profit').val()) || 0;
             return profit < 2000;
         }
+
+        // 询盘来源凭证是否豁免：利润豁免，或命中返单强规则（老客户返单不再要求询盘来源凭证）
+        function isInquiryVoucherExempt() {
+            return isVoucherExempt() || !!(returnOrderRule && returnOrderRule.must_return);
+        }
         
         // 根据豁免条件更新凭证上传块的显示/隐藏和必填状态
         function updateVoucherUI(forceRender) {
             var exempt = isVoucherExempt();
-            var stateKey = exempt ? 'exempt' : 'required';
+            var inquiryExempt = isInquiryVoucherExempt();
+            var stateKey = (exempt ? '1' : '0') + (inquiryExempt ? '1' : '0');
             if (!forceRender && window.__voucherUiState === stateKey) {
                 return;
             }
             window.__voucherUiState = stateKey;
 
             $('#wechat_receipt_item').toggle(!exempt);
-            $('#inquiry_assign_item').toggle(!exempt);
+            $('#inquiry_assign_item').toggle(!inquiryExempt);
 
             if (exempt) {
-                // 利润 < 2000：凭证非必填
+                // 利润 < 2000：微信沟通凭证非必填
                 $('#wechat_receipt_image').removeAttr('lay-verify');
+            } else {
+                // 利润 >= 2000（含=2000）：微信沟通凭证必填
+                $('#wechat_receipt_image').attr('lay-verify', 'required');
+            }
+
+            if (inquiryExempt) {
+                // 返单老客户或利润豁免：询盘来源凭证非必填
                 $('#inquiry_assign_image').removeAttr('lay-verify');
             } else {
-                // 利润 >= 2000（含=2000）：凭证必填
-                $('#wechat_receipt_image').attr('lay-verify', 'required');
                 $('#inquiry_assign_image').attr('lay-verify', 'required');
             }
 
@@ -3098,10 +3127,11 @@
                 return [text];
             }
 
-            // 仅按利润判断凭证是否可豁免（利润 < 2000 才豁免，=2000 必填）
+            // 微信沟通凭证按利润判断是否豁免（利润 < 2000 才豁免，=2000 必填）
             var exempt = isVoucherExempt();
-            
-            // 只有在非豁免情况下才校验两个图片
+            // 询盘来源凭证：利润豁免，或命中返单强规则（老客户返单不再要求询盘来源凭证）时豁免
+            var inquiryExempt = isInquiryVoucherExempt();
+
             if (!exempt) {
                 // 微信沟通凭证校验（多图，至少1张）
                 var wechatReceiptImage = $('#wechat_receipt_image').val();
@@ -3114,7 +3144,9 @@
                     layer.msg('微信沟通凭证不能超过 ' + MAX_WECHAT_RECEIPT_IMAGES + ' 张', { icon: 2, time: 2000 });
                     return false;
                 }
-                
+            }
+
+            if (!inquiryExempt) {
                 // 询盘来源凭证校验（多图，至少1张）
                 var inquiryAssignImage = $('#inquiry_assign_image').val();
                 var inquiryAssignArray = parseVoucherUrls(inquiryAssignImage);

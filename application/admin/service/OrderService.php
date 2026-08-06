@@ -1115,9 +1115,10 @@ class OrderService
      *
      * @param array $params 请求参数（新提交数据）
      * @param array $existing 旧数据（编辑时传入，建议包含 wechat_receipt_image / inquiry_assign_image）
+     * @param bool $mustReturn 是否为必须返单的老客户订单（返单时询盘来源凭证不再强制要求）
      * @return array ['ok' => bool, 'message' => string]
      */
-    public static function validateVoucherRequirement(array $params, array $existing = [])
+    public static function validateVoucherRequirement(array $params, array $existing = [], $mustReturn = false)
     {
         $calc = self::recalculateOrderProfit($params);
         $profit = isset($calc['profit']) ? $calc['profit'] : 0.0;
@@ -1132,6 +1133,15 @@ class OrderService
             $params,
             $existing
         );
+
+        // 返单老客户：不再要求询盘来源凭证，只校验微信沟通及付款凭证
+        if ($mustReturn) {
+            if (count($wechatImages) < 1) {
+                return ['ok' => false, 'message' => '利润达到2000元及以上，必须上传微信沟通及付款凭证'];
+            }
+            return ['ok' => true, 'message' => ''];
+        }
+
         $inquiryImages = self::resolveFinalVoucherImages(
             'inquiry_assign_image',
             'clear_inquiry_assign_image',

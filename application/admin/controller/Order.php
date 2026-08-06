@@ -1011,7 +1011,8 @@ class Order extends Common
                 $voucherValidationParams = $profitCalcParams;
                 $voucherValidationParams['wechat_receipt_image'] = $wechatReceiptRaw;
                 $voucherValidationParams['inquiry_assign_image'] = $inquiryAssignRaw;
-                $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, []);
+                $mustReturn = !empty($returnRuleCheck['rule']['must_return']);
+                $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, [], $mustReturn);
                 if (empty($voucherValidation['ok'])) {
                     $this->redisUnLock();
                     return json(['code' => 0, 'msg' => $voucherValidation['message']]);
@@ -2181,7 +2182,8 @@ class Order extends Common
                     : '';
             }
 
-            $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, $originalOrder);
+            $mustReturn = !empty($returnRuleCheck['rule']['must_return']);
+            $voucherValidation = OrderService::validateVoucherRequirement($voucherValidationParams, $originalOrder, $mustReturn);
             if (empty($voucherValidation['ok'])) {
                 return json(['code' => -200, 'msg' => $voucherValidation['message']]);
             }
