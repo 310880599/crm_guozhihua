@@ -1278,6 +1278,47 @@
     .quick-follow-status-saving { color: #1e9fff; }
     .quick-follow-status-saved { color: #16b777; }
     .quick-follow-status-failed { color: #ff5722; cursor: pointer; text-decoration: underline; }
+    .quick-follow-row-mark-btn {
+        display: inline-block;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        user-select: none;
+    }
+    .quick-follow-row-mark-btn:hover {
+        opacity: 0.7;
+    }
+    .quick-follow-row-mark-picker {
+        position: fixed;
+        z-index: 2000000001;
+        display: flex;
+        background: #fff;
+        border: 1px solid #e2e2e2;
+        border-radius: 4px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+        padding: 8px;
+        gap: 8px;
+    }
+    .quick-follow-row-mark-color {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        color: #666;
+        box-sizing: border-box;
+    }
+    .quick-follow-row-mark-color:hover {
+        border-color: #999;
+        transform: scale(1.08);
+    }
+    .quick-follow-row-mark-clear {
+        background: #fff;
+    }
     .batch-follow-history-hover {
         display: inline-block;
         max-width: 100%;
@@ -2759,6 +2800,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowDraftMap = {};
     var quickFollowStatusMap = {};
     var quickFollowSavingMap = {};
+    var quickFollowRowMarkMap = {}; // 行颜色标记运行时缓存：leads_id -> bg_color
+    var QUICK_FOLLOW_ROW_MARK_COLORS = [
+        { name: '红色', value: '#FFC7CE' },
+        { name: '黄色', value: '#FFEB9C' },
+        { name: '绿色', value: '#C6EFCE' },
+        { name: '蓝色', value: '#BDD7EE' }
+    ];
     var quickFollowBypassPageGuardOnce = false;
     var quickFollowForceClose = false;
     var QUICK_FOLLOW_DRAFT_PREFIX = 'quick_follow_draft_';
@@ -3786,6 +3834,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         quickFollowDraftMap = {};
         quickFollowStatusMap = {};
         quickFollowSavingMap = {};
+        quickFollowRowMarkMap = {};
         followHistoryCache = {};
         followHistoryRequestMap = {};
         quickFollowBypassPageGuardOnce = false;
@@ -3867,6 +3916,139 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 });
                 $input.trigger('click');
             });
+        });
+
+        bindQuickFollowRowMarkClick();
+    }
+
+    // 行颜色标记：点击油漆桶弹出颜色选择，不使用整行点击事件，避免影响 textarea/日期/保存按钮
+    function bindQuickFollowRowMarkClick() {
+        $('#quick-follow-dialog')
+            .off('click.qfRowMark', '.quick-follow-row-mark-btn')
+            .on('click.qfRowMark', '.quick-follow-row-mark-btn', function (e) {
+                e.stopPropagation();
+                var $btn = $(this);
+                var leadsId = String($btn.data('leads-id') || '');
+                if (!leadsId) return;
+                openQuickFollowRowMarkPicker($btn, leadsId);
+            });
+    }
+
+    function closeQuickFollowRowMarkPicker() {
+        $('#quick-follow-row-mark-picker').remove();
+        $(document).off('click.qfRowMarkOutside');
+    }
+
+    function openQuickFollowRowMarkPicker($btn, leadsId) {
+        closeQuickFollowRowMarkPicker();
+
+        var html = ['<div id="quick-follow-row-mark-picker" class="quick-follow-row-mark-picker">'];
+        QUICK_FOLLOW_ROW_MARK_COLORS.forEach(function (c) {
+            html.push(
+                '<span class="quick-follow-row-mark-color" data-color="' + c.value + '" style="background-color:' + c.value + ';" title="' + c.name + '"></span>'
+            );
+        });
+        html.push('<span class="quick-follow-row-mark-color quick-follow-row-mark-clear" data-color="" title="清除颜色">✕</span>');
+        html.push('</div>');
+        $('body').append(html.join(''));
+
+        var $picker = $('#quick-follow-row-mark-picker');
+        var rect = $btn.get(0).getBoundingClientRect();
+        var margin = 8;
+        var viewportW = window.innerWidth || document.documentElement.clientWidth;
+        var viewportH = window.innerHeight || document.documentElement.clientHeight;
+        var pickerW = $picker.outerWidth();
+        var pickerH = $picker.outerHeight();
+
+        var left = rect.left;
+        var top = rect.bottom + 4;
+        if (left + pickerW > viewportW - margin) {
+            left = Math.max(margin, viewportW - pickerW - margin);
+        }
+        if (top + pickerH > viewportH - margin) {
+            top = rect.top - pickerH - 4;
+        }
+        $picker.css({ left: left + 'px', top: top + 'px' });
+
+        $picker.on('click', '.quick-follow-row-mark-color', function () {
+            var color = $.trim($(this).attr('data-color') || '');
+            closeQuickFollowRowMarkPicker();
+            saveQuickFollowRowMark(leadsId, color);
+        });
+
+        setTimeout(function () {
+            $(document).one('click.qfRowMarkOutside', function (e) {
+                if ($(e.target).closest('#quick-follow-row-mark-picker, .quick-follow-row-mark-btn').length) {
+                    return;
+                }
+                closeQuickFollowRowMarkPicker();
+            });
+        }, 0);
+    }
+
+    function saveQuickFollowRowMark(leadsId, bgColor) {
+        var key = String(leadsId || '');
+        if (!key) return;
+
+        $.ajax({
+            url: "{:url('Client/saveClientRowMark')}",
+            type: 'post',
+            dataType: 'json',
+            data: {
+                leads_id: key,
+                bg_color: bgColor,
+                mark_type: 1
+            },
+            success: function (res) {
+                if (res && parseInt(res.code, 10) === 0) {
+                    quickFollowRowMarkMap[key] = bgColor;
+                    applyQuickFollowRowColor(key, bgColor);
+                    layer.msg(bgColor ? '颜色已设置' : '颜色已清除', { icon: 1, time: 800 });
+                } else {
+                    layer.msg((res && res.msg) || '保存失败', { icon: 2, time: 1500 });
+                }
+            },
+            error: function () {
+                layer.msg('网络错误，保存失败', { icon: 2, time: 1500 });
+            }
+        });
+    }
+
+    // 给对应行的每个 td 及其内部的 .layui-table-cell 设置背景色
+    // layui 内置样式对 td/.layui-table-cell 使用了 !important 的白色背景，
+    // 因此这里必须用 setProperty(..., 'important') 才能覆盖，普通的 .css()/style.backgroundColor 会被样式表压制
+    function applyQuickFollowRowColor(leadsId, bgColor) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        var $btn = $('#quick-follow-dialog .quick-follow-row-mark-btn[data-leads-id="' + key + '"]');
+        if (!$btn.length) return;
+        var $tds = $btn.closest('tr').find('> td');
+        $tds.each(function () {
+            var td = this;
+            var cell = td.querySelector('.layui-table-cell');
+            if (bgColor) {
+                td.style.setProperty('background-color', bgColor, 'important');
+                if (cell) {
+                    cell.style.setProperty('background-color', bgColor, 'important');
+                }
+            } else {
+                td.style.removeProperty('background-color');
+                if (cell) {
+                    cell.style.removeProperty('background-color');
+                }
+            }
+        });
+    }
+
+    // 刷新/翻页后根据接口返回的 bg_color 恢复行颜色
+    function applyQuickFollowRowMarkColors(rows) {
+        if (!rows || !rows.length) return;
+        rows.forEach(function (row) {
+            var leadsId = String((row && row.id) || '');
+            if (!leadsId) return;
+            var bgColor = normalizeQuickFollowText((row && row.bg_color) || '');
+            quickFollowRowMarkMap[leadsId] = bgColor;
+            applyQuickFollowRowColor(leadsId, bgColor);
         });
     }
 
@@ -4358,6 +4540,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     function buildQuickFollowBaseCols() {
         return [
+            {
+                field: 'row_mark',
+                title: '标记',
+                width: 60,
+                align: 'center',
+                templet: function (d) {
+                    var leadsId = quickFollowEscapeHtml(d.id);
+                    return '<span class="quick-follow-row-mark-btn" data-leads-id="' + leadsId + '" title="设置行颜色">🎨</span>';
+                }
+            },
             { field: 'kh_name', title: '客户名称', minWidth: 180 },
             { field: 'main_phone', title: '主电话', width: 130 },
             { field: 'aux_phone', title: '辅助电话', width: 130 },
@@ -4539,11 +4731,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 limitName: 'limit'
             },
             cols: quickFollowCols,
-            done: function () {
+            done: function (res) {
                 bindQuickFollowResizeSave();
                 bindQuickFollowRowWidgets();
                 bindQuickFollowHistoryHover();
                 bindQuickFollowHideConfigSave();
+                applyQuickFollowRowMarkColors(res && res.data ? res.data : []);
                 setTimeout(function () {
                     table.resize(quickFollowTableId);
                     if (typeof syncQuickFollowFixedRowHeights === 'function') {

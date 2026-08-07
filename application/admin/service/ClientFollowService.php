@@ -340,8 +340,11 @@ class ClientFollowService
 
     /**
      * 批量快速跟进列表行组装（字段口径与“我的客户”保持一致）
+     *
+     * @param array $rows
+     * @param array $markMap 行颜色标记：[leads_id => bg_color]，无标记则该行 bg_color 返回空字符串
      */
-    public function buildQuickFollowListRows(array $rows)
+    public function buildQuickFollowListRows(array $rows, array $markMap = [])
     {
         if (empty($rows)) {
             return [];
@@ -435,6 +438,7 @@ class ClientFollowService
                 'last_up_time' => $this->formatLastUpTimeForDisplay($row['last_up_time'] ?? ''),
                 'next_up_time' => $this->formatNextUpTimeForDisplay($row['next_up_time'] ?? ''),
                 'pr_user' => (string)($row['pr_user'] ?? ''),
+                'bg_color' => isset($markMap[$id]) ? (string)$markMap[$id] : '',
             ];
         }
 

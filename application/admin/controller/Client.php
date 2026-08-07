@@ -14,6 +14,7 @@ use app\admin\service\CheckOrderService;
 use app\admin\service\ClientDetailService;
 use app\admin\service\ClientFollowService;
 use app\admin\service\ClientOrderService;
+use app\admin\service\ClientRowMarkService;
 use app\admin\service\ClientStatusService;
 use app\admin\service\OrderService;
 use app\admin\service\PositionTitleService;
@@ -4918,14 +4919,41 @@ class Client extends Common
             return json(['code' => 0, 'msg' => '获取成功', 'data' => [], 'count' => 0]);
         }
 
+        // 行颜色标记：仅查询当前登录员工自己的标记，颜色互不影响
+        $adminId = (int)Session::get('aid');
+        $leadsIds = array_column((array)$list['data'], 'id');
+        $markMap = (new ClientRowMarkService())->getMarksMap($leadsIds, $adminId, 1);
+
         $service = new ClientFollowService();
-        $rows = $service->buildQuickFollowListRows((array)$list['data']);
+        $rows = $service->buildQuickFollowListRows((array)$list['data'], $markMap);
 
         return json([
             'code' => 0,
             'msg' => '获取成功',
             'data' => $rows,
             'count' => (int)($list['total'] ?? 0),
+        ]);
+    }
+
+    /**
+     * 批量快速添加跟进：保存行颜色标记（仅属于当前登录员工）
+     */
+    public function saveClientRowMark()
+    {
+        $leadsId = (int)Request::param('leads_id', 0);
+        $bgColor = trim((string)Request::param('bg_color', ''));
+        $markType = (int)Request::param('mark_type', 1);
+
+        $adminId = (int)Session::get('aid');
+        if ($adminId <= 0) {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录']);
+        }
+
+        $result = (new ClientRowMarkService())->saveMark($leadsId, $adminId, $bgColor, $markType);
+
+        return json([
+            'code' => (int)($result['code'] ?? 1),
+            'msg' => (string)($result['msg'] ?? '保存失败'),
         ]);
     }
 
