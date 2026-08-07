@@ -770,6 +770,24 @@ class Client extends Model
         $query = $this->buildClientSearchAllBaseQuery($baseKeyword, $isSuperAdmin);
         $query->where($mapIsSuccess);
 
+        // 检查客户扩展筛选：产品名称
+        // 说明：crm_leads.product_name 实际保存的是 crm_products.id，而非中文产品名称，
+        // 因此需要先按中文名称模糊匹配 crm_products 得到产品ID列表，再用ID反查 crm_leads。
+        $productNameKeyword = isset($keyword['product_name']) ? trim((string)$keyword['product_name']) : '';
+        if ($productNameKeyword !== '') {
+            $productIds = Db::table('crm_products')
+                ->where('product_name', 'like', '%' . $productNameKeyword . '%')
+                ->where('is_deleted', 0)
+                ->column('id');
+
+            if (empty($productIds)) {
+                // 未匹配到任何产品：必须返回空结果，避免 whereIn 空数组导致条件失效（等同于不过滤）
+                $query->where('l.id', -1);
+            } else {
+                $query->whereIn('l.product_name', $productIds);
+            }
+        }
+
         // 检查客户扩展筛选：运营人员
         if (!empty($keyword['oper_user'])) {
             $query->where('l.oper_user', 'like', '%' . trim((string)$keyword['oper_user']) . '%');

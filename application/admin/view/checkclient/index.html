@@ -1008,6 +1008,13 @@
                     </div>
 
                     <div class="layui-inline">
+                        <label class="layui-form-label">产品名称：</label>
+                        <div class="layui-input-inline">
+                            <input type="text" id="product_name" name="product_name" placeholder="请输入产品名称" class="layui-input">
+                        </div>
+                    </div>
+
+                    <div class="layui-inline">
                         <label class="layui-form-label">运营端口：</label>
                         <div class="layui-input-inline">
                             <select name="port_id" id="port_id" lay-search>
@@ -2623,6 +2630,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#kh_name').val('');
         $('#pr_user').val('');
         $('#oper_user_input').val('');
+        $('#product_name').val('');
         $('#port_id').empty().append('<option value="">请先选择所属渠道</option>');
         $('#dateRange').val('');
         $('#at_time').val('').show();
