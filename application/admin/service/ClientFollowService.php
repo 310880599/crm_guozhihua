@@ -343,8 +343,9 @@ class ClientFollowService
      *
      * @param array $rows
      * @param array $markMap 行颜色标记：[leads_id => bg_color]，无标记则该行 bg_color 返回空字符串
+     * @param array $remarkMap 行标记备注：[leads_id => remark]，无备注则该行 remark 返回空字符串（V2 新增，不影响原有 markMap 用法）
      */
-    public function buildQuickFollowListRows(array $rows, array $markMap = [])
+    public function buildQuickFollowListRows(array $rows, array $markMap = [], array $remarkMap = [])
     {
         if (empty($rows)) {
             return [];
@@ -439,6 +440,7 @@ class ClientFollowService
                 'next_up_time' => $this->formatNextUpTimeForDisplay($row['next_up_time'] ?? ''),
                 'pr_user' => (string)($row['pr_user'] ?? ''),
                 'bg_color' => isset($markMap[$id]) ? (string)$markMap[$id] : '',
+                'remark' => isset($remarkMap[$id]) ? (string)$remarkMap[$id] : '',
             ];
         }
 

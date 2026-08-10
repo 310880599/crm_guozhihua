@@ -4907,6 +4907,9 @@ class Client extends Common
         $keyword['kh_rank'] = isset($keyword['kh_rank']) ? trim((string)$keyword['kh_rank']) : '';
         $keyword['inquiry_id'] = isset($keyword['inquiry_id']) ? trim((string)$keyword['inquiry_id']) : '';
         $keyword['port_id'] = isset($keyword['port_id']) ? trim((string)$keyword['port_id']) : '';
+        // V2：颜色筛选，仅在拿到当前页数据+颜色标记后做内存过滤，不参与数据库查询，不影响原查询逻辑
+        $colorFilter = isset($keyword['color_filter']) ? trim((string)$keyword['color_filter']) : '';
+        unset($keyword['color_filter']);
         $keyword = $this->normalizeFollowFilterKeyword($keyword);
 
         $username = trim((string)Session::get('username'));
@@ -4922,10 +4925,22 @@ class Client extends Common
         // 行颜色标记：仅查询当前登录员工自己的标记，颜色互不影响
         $adminId = (int)Session::get('aid');
         $leadsIds = array_column((array)$list['data'], 'id');
-        $markMap = (new ClientRowMarkService())->getMarksMap($leadsIds, $adminId, 1);
+        $rowMarkService = new ClientRowMarkService();
+        $markDetailMap = $rowMarkService->getMarksMapDetail($leadsIds, $adminId, 1);
+        $markMap = [];
+        $remarkMap = [];
+        foreach ($markDetailMap as $lid => $detail) {
+            $markMap[$lid] = (string)($detail['bg_color'] ?? '');
+            $remarkMap[$lid] = (string)($detail['remark'] ?? '');
+        }
 
         $service = new ClientFollowService();
-        $rows = $service->buildQuickFollowListRows((array)$list['data'], $markMap);
+        $rows = $service->buildQuickFollowListRows((array)$list['data'], $markMap, $remarkMap);
+
+        // V2：颜色筛选（根据 admin_id + bg_color 在当前页数据上过滤，不改变数据库分页查询）
+        if ($colorFilter !== '') {
+            $rows = $rowMarkService->filterRowsByColor($rows, $colorFilter);
+        }
 
         return json([
             'code' => 0,
@@ -4943,17 +4958,42 @@ class Client extends Common
         $leadsId = (int)Request::param('leads_id', 0);
         $bgColor = trim((string)Request::param('bg_color', ''));
         $markType = (int)Request::param('mark_type', 1);
+        $remark = trim((string)Request::param('remark', ''));
 
         $adminId = (int)Session::get('aid');
         if ($adminId <= 0) {
             return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录']);
         }
 
-        $result = (new ClientRowMarkService())->saveMark($leadsId, $adminId, $bgColor, $markType);
+        $result = (new ClientRowMarkService())->saveMark($leadsId, $adminId, $bgColor, $markType, $remark);
 
         return json([
             'code' => (int)($result['code'] ?? 1),
             'msg' => (string)($result['msg'] ?? '保存失败'),
+        ]);
+    }
+
+    /**
+     * 批量快速添加跟进：批量保存行颜色标记（仅属于当前登录员工，admin_id 不信任前端）
+     */
+    public function batchSaveClientRowMark()
+    {
+        $leadsIds = Request::param('leads_ids/a', []);
+        $bgColor = trim((string)Request::param('bg_color', ''));
+        $remark = trim((string)Request::param('remark', ''));
+        $markType = (int)Request::param('mark_type', 1);
+
+        $adminId = (int)Session::get('aid');
+        if ($adminId <= 0) {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录']);
+        }
+
+        $result = (new ClientRowMarkService())->batchSaveMark($leadsIds, $adminId, $bgColor, $remark, $markType);
+
+        return json([
+            'code' => (int)($result['code'] ?? 1),
+            'msg' => (string)($result['msg'] ?? '保存失败'),
+            'data' => $result['data'] ?? [],
         ]);
     }
 

@@ -1280,6 +1280,7 @@
     .quick-follow-status-failed { color: #ff5722; cursor: pointer; text-decoration: underline; }
     .quick-follow-row-mark-btn {
         display: inline-block;
+        position: relative;
         cursor: pointer;
         font-size: 16px;
         line-height: 1;
@@ -1288,15 +1289,33 @@
     .quick-follow-row-mark-btn:hover {
         opacity: 0.7;
     }
+    /* 备注小提示标识：油漆桶右上角小红点，鼠标悬停另有 title 展示完整备注 */
+    .quick-follow-row-mark-dot {
+        position: absolute;
+        top: -2px;
+        right: -4px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #FF5722;
+        border: 1px solid #fff;
+        pointer-events: none;
+    }
     .quick-follow-row-mark-picker {
         position: fixed;
         z-index: 2000000001;
         display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        width: 210px;
         background: #fff;
         border: 1px solid #e2e2e2;
         border-radius: 4px;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
         padding: 8px;
+    }
+    .quick-follow-row-mark-colors {
+        display: flex;
         gap: 8px;
     }
     .quick-follow-row-mark-color {
@@ -1316,8 +1335,46 @@
         border-color: #999;
         transform: scale(1.08);
     }
+    .quick-follow-row-mark-color.quick-follow-row-mark-selected {
+        border-color: #1E9FFF;
+        box-shadow: 0 0 0 2px rgba(30, 159, 255, 0.35);
+    }
     .quick-follow-row-mark-clear {
         background: #fff;
+    }
+    .quick-follow-row-mark-remark-input {
+        margin-top: 8px;
+        width: 100%;
+        height: 52px;
+        resize: none;
+        font-size: 12px;
+        padding: 4px 6px;
+        border: 1px solid #e6e6e6;
+        border-radius: 3px;
+        box-sizing: border-box;
+    }
+    .quick-follow-row-mark-actions {
+        margin-top: 8px;
+        display: flex;
+        gap: 6px;
+        justify-content: flex-end;
+    }
+    .quick-follow-batch-mark-dialog {
+        padding: 14px 16px;
+    }
+    .quick-follow-batch-mark-tip {
+        margin-bottom: 10px;
+        font-size: 13px;
+        color: #666;
+    }
+    .quick-follow-batch-mark-colors {
+        margin-bottom: 12px;
+    }
+    .quick-follow-batch-mark-remark {
+        width: 100%;
+        height: 90px;
+        box-sizing: border-box;
+        resize: none;
     }
     .batch-follow-history-hover {
         display: inline-block;
@@ -1953,6 +2010,19 @@
                     </div>
                 </div>
                 <div class="layui-inline">
+                    <label class="layui-form-label">颜色筛选</label>
+                    <div class="layui-input-inline">
+                        <select id="quick-follow-color-filter" lay-search>
+                            <option value="">全部颜色</option>
+                            <option value="red">红色</option>
+                            <option value="yellow">黄色</option>
+                            <option value="green">绿色</option>
+                            <option value="blue">蓝色</option>
+                            <option value="none">无颜色</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="layui-inline">
                     <button type="button" class="layui-btn" id="quick-follow-search-btn">
                         <i class="layui-icon layui-icon-search"></i>查询
                     </button>
@@ -2004,6 +2074,9 @@
 </script>
 <script type="text/html" id="quickFollowTableToolbar">
     <div class="layui-btn-container">
+        <button type="button" class="layui-btn layui-btn-normal layui-btn-sm" lay-event="quickFollowBatchMark">
+            <i class="layui-icon layui-icon-theme"></i>批量标记颜色
+        </button>
         <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" lay-event="quickFollowColumnSort">
             <i class="layui-icon layui-icon-cols"></i>字段排序
         </button>
@@ -2801,6 +2874,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowStatusMap = {};
     var quickFollowSavingMap = {};
     var quickFollowRowMarkMap = {}; // 行颜色标记运行时缓存：leads_id -> bg_color
+    var quickFollowRowMarkRemarkMap = {}; // 行标记备注运行时缓存：leads_id -> remark（V2新增）
     var QUICK_FOLLOW_ROW_MARK_COLORS = [
         { name: '红色', value: '#FFC7CE' },
         { name: '黄色', value: '#FFEB9C' },
@@ -3835,6 +3909,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         quickFollowStatusMap = {};
         quickFollowSavingMap = {};
         quickFollowRowMarkMap = {};
+        quickFollowRowMarkRemarkMap = {};
         followHistoryCache = {};
         followHistoryRequestMap = {};
         quickFollowBypassPageGuardOnce = false;
@@ -3942,17 +4017,30 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     function openQuickFollowRowMarkPicker($btn, leadsId) {
         closeQuickFollowRowMarkPicker();
 
+        var currentColor = normalizeQuickFollowText(quickFollowRowMarkMap[leadsId] || '');
+        var currentRemark = normalizeQuickFollowText(quickFollowRowMarkRemarkMap[leadsId] || '');
+
         var html = ['<div id="quick-follow-row-mark-picker" class="quick-follow-row-mark-picker">'];
+        html.push('<div class="quick-follow-row-mark-colors">');
         QUICK_FOLLOW_ROW_MARK_COLORS.forEach(function (c) {
+            var selectedCls = (c.value === currentColor) ? ' quick-follow-row-mark-selected' : '';
             html.push(
-                '<span class="quick-follow-row-mark-color" data-color="' + c.value + '" style="background-color:' + c.value + ';" title="' + c.name + '"></span>'
+                '<span class="quick-follow-row-mark-color' + selectedCls + '" data-color="' + c.value + '" style="background-color:' + c.value + ';" title="' + c.name + '"></span>'
             );
         });
-        html.push('<span class="quick-follow-row-mark-color quick-follow-row-mark-clear" data-color="" title="清除颜色">✕</span>');
+        var clearSelectedCls = (currentColor === '') ? ' quick-follow-row-mark-selected' : '';
+        html.push('<span class="quick-follow-row-mark-color quick-follow-row-mark-clear' + clearSelectedCls + '" data-color="" title="清除颜色">✕</span>');
+        html.push('</div>');
+        html.push('<textarea class="quick-follow-row-mark-remark-input" placeholder="客户备注（可选）">' + quickFollowEscapeHtml(currentRemark) + '</textarea>');
+        html.push('<div class="quick-follow-row-mark-actions">');
+        html.push('<button type="button" class="layui-btn layui-btn-xs layui-btn-primary quick-follow-row-mark-cancel-btn">取消</button>');
+        html.push('<button type="button" class="layui-btn layui-btn-xs quick-follow-row-mark-save-btn">保存</button>');
+        html.push('</div>');
         html.push('</div>');
         $('body').append(html.join(''));
 
         var $picker = $('#quick-follow-row-mark-picker');
+        var selectedColor = currentColor;
         var rect = $btn.get(0).getBoundingClientRect();
         var margin = 8;
         var viewportW = window.innerWidth || document.documentElement.clientWidth;
@@ -3971,9 +4059,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $picker.css({ left: left + 'px', top: top + 'px' });
 
         $picker.on('click', '.quick-follow-row-mark-color', function () {
-            var color = $.trim($(this).attr('data-color') || '');
+            $picker.find('.quick-follow-row-mark-color').removeClass('quick-follow-row-mark-selected');
+            $(this).addClass('quick-follow-row-mark-selected');
+            selectedColor = $.trim($(this).attr('data-color') || '');
+        });
+
+        $picker.on('click', '.quick-follow-row-mark-save-btn', function () {
+            var remarkVal = $.trim($picker.find('.quick-follow-row-mark-remark-input').val() || '');
             closeQuickFollowRowMarkPicker();
-            saveQuickFollowRowMark(leadsId, color);
+            saveQuickFollowRowMark(leadsId, selectedColor, remarkVal);
+        });
+
+        $picker.on('click', '.quick-follow-row-mark-cancel-btn', function () {
+            closeQuickFollowRowMarkPicker();
         });
 
         setTimeout(function () {
@@ -3986,9 +4084,25 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         }, 0);
     }
 
-    function saveQuickFollowRowMark(leadsId, bgColor) {
+    // 更新油漆桶按钮上的备注提示（title + 小红点标识），不新增表格列，不改变字段排序
+    function updateQuickFollowRowMarkRemark(leadsId, remark) {
         var key = String(leadsId || '');
         if (!key) return;
+        remark = normalizeQuickFollowText(remark || '');
+        var $btn = $('#quick-follow-dialog .quick-follow-row-mark-btn[data-leads-id="' + key + '"]');
+        if (!$btn.length) return;
+        $btn.attr('data-remark', remark);
+        $btn.attr('title', remark ? ('设置行颜色（备注：' + remark + '）') : '设置行颜色');
+        $btn.find('.quick-follow-row-mark-dot').remove();
+        if (remark) {
+            $btn.append('<span class="quick-follow-row-mark-dot"></span>');
+        }
+    }
+
+    function saveQuickFollowRowMark(leadsId, bgColor, remark) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        remark = normalizeQuickFollowText(remark || '');
 
         $.ajax({
             url: "{:url('Client/saveClientRowMark')}",
@@ -3997,12 +4111,15 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             data: {
                 leads_id: key,
                 bg_color: bgColor,
+                remark: remark,
                 mark_type: 1
             },
             success: function (res) {
                 if (res && parseInt(res.code, 10) === 0) {
                     quickFollowRowMarkMap[key] = bgColor;
+                    quickFollowRowMarkRemarkMap[key] = remark;
                     applyQuickFollowRowColor(key, bgColor);
+                    updateQuickFollowRowMarkRemark(key, remark);
                     layer.msg(bgColor ? '颜色已设置' : '颜色已清除', { icon: 1, time: 800 });
                 } else {
                     layer.msg((res && res.msg) || '保存失败', { icon: 2, time: 1500 });
@@ -4010,6 +4127,83 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             },
             error: function () {
                 layer.msg('网络错误，保存失败', { icon: 2, time: 1500 });
+            }
+        });
+    }
+
+    // 批量标记颜色：弹窗选择颜色 + 备注，确定后统一提交给 batchSaveClientRowMark
+    function openQuickFollowBatchMarkDialog(leadsIds) {
+        if (!leadsIds || !leadsIds.length) {
+            layer.msg('请先选择客户', { icon: 0, time: 1200 });
+            return;
+        }
+
+        var selectedColor = '';
+        var html = ['<div class="quick-follow-batch-mark-dialog">'];
+        html.push('<div class="quick-follow-batch-mark-tip">已选择 <b>' + leadsIds.length + '</b> 个客户，请选择要设置的颜色：</div>');
+        html.push('<div class="quick-follow-row-mark-colors quick-follow-batch-mark-colors">');
+        QUICK_FOLLOW_ROW_MARK_COLORS.forEach(function (c) {
+            html.push('<span class="quick-follow-row-mark-color" data-color="' + c.value + '" style="background-color:' + c.value + ';" title="' + c.name + '"></span>');
+        });
+        html.push('<span class="quick-follow-row-mark-color quick-follow-row-mark-clear" data-color="" title="清除颜色">✕</span>');
+        html.push('</div>');
+        html.push('<textarea class="quick-follow-batch-mark-remark" placeholder="客户备注（可选，将应用到所有选中客户）"></textarea>');
+        html.push('</div>');
+
+        layer.open({
+            type: 1,
+            title: '批量标记颜色',
+            area: ['380px', '300px'],
+            shadeClose: true,
+            content: html.join(''),
+            btn: ['确定', '取消'],
+            success: function (layero) {
+                layero.find('.quick-follow-row-mark-color').on('click', function () {
+                    layero.find('.quick-follow-row-mark-color').removeClass('quick-follow-row-mark-selected');
+                    $(this).addClass('quick-follow-row-mark-selected');
+                    selectedColor = $.trim($(this).attr('data-color') || '');
+                });
+            },
+            yes: function (index, layero) {
+                var remark = $.trim(layero.find('.quick-follow-batch-mark-remark').val() || '');
+                batchSaveQuickFollowRowMark(leadsIds, selectedColor, remark, function () {
+                    layer.close(index);
+                });
+            }
+        });
+    }
+
+    function batchSaveQuickFollowRowMark(leadsIds, bgColor, remark, onDone) {
+        var loading = layer.load(1, { shade: [0.1, '#fff'] });
+        $.ajax({
+            url: "{:url('Client/batchSaveClientRowMark')}",
+            type: 'post',
+            dataType: 'json',
+            data: {
+                leads_ids: leadsIds,
+                bg_color: bgColor,
+                remark: remark,
+                mark_type: 1
+            },
+            success: function (res) {
+                layer.close(loading);
+                if (res && parseInt(res.code, 10) === 0) {
+                    leadsIds.forEach(function (id) {
+                        var key = String(id);
+                        quickFollowRowMarkMap[key] = bgColor;
+                        quickFollowRowMarkRemarkMap[key] = remark;
+                        applyQuickFollowRowColor(key, bgColor);
+                        updateQuickFollowRowMarkRemark(key, remark);
+                    });
+                    layer.msg(res.msg || '批量设置成功', { icon: 1, time: 1000 });
+                    if (typeof onDone === 'function') onDone();
+                } else {
+                    layer.msg((res && res.msg) || '批量设置失败', { icon: 2, time: 1500 });
+                }
+            },
+            error: function () {
+                layer.close(loading);
+                layer.msg('网络错误，批量设置失败', { icon: 2, time: 1500 });
             }
         });
     }
@@ -4040,14 +4234,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     }
 
-    // 刷新/翻页后根据接口返回的 bg_color 恢复行颜色
+    // 刷新/翻页后根据接口返回的 bg_color/remark 恢复行颜色与备注提示
     function applyQuickFollowRowMarkColors(rows) {
         if (!rows || !rows.length) return;
         rows.forEach(function (row) {
             var leadsId = String((row && row.id) || '');
             if (!leadsId) return;
             var bgColor = normalizeQuickFollowText((row && row.bg_color) || '');
+            var remark = normalizeQuickFollowText((row && row.remark) || '');
             quickFollowRowMarkMap[leadsId] = bgColor;
+            quickFollowRowMarkRemarkMap[leadsId] = remark;
             applyQuickFollowRowColor(leadsId, bgColor);
         });
     }
@@ -4058,7 +4254,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             phone: $.trim($('#quick-follow-phone').val() || ''),
             product_name: $.trim($('#quick-follow-product-name').val() || ''),
             inquiry_id: $.trim($('#quick-follow-inquiry-id').val() || ''),
-            kh_rank: $.trim($('#quick-follow-kh-rank').val() || '')
+            kh_rank: $.trim($('#quick-follow-kh-rank').val() || ''),
+            color_filter: $.trim($('#quick-follow-color-filter').val() || '')
         };
     }
 
@@ -4540,6 +4737,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     function buildQuickFollowBaseCols() {
         return [
+            { type: 'checkbox', width: 40 },
             {
                 field: 'row_mark',
                 title: '标记',
@@ -4547,7 +4745,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 align: 'center',
                 templet: function (d) {
                     var leadsId = quickFollowEscapeHtml(d.id);
-                    return '<span class="quick-follow-row-mark-btn" data-leads-id="' + leadsId + '" title="设置行颜色">🎨</span>';
+                    var remark = normalizeQuickFollowText(d.remark || '');
+                    var titleText = remark ? ('设置行颜色（备注：' + remark + '）') : '设置行颜色';
+                    var dotHtml = remark ? '<span class="quick-follow-row-mark-dot"></span>' : '';
+                    return '<span class="quick-follow-row-mark-btn" data-leads-id="' + leadsId + '" data-remark="' + quickFollowEscapeHtml(remark) + '" title="' + quickFollowEscapeHtml(titleText) + '">🎨' + dotHtml + '</span>';
                 }
             },
             { field: 'kh_name', title: '客户名称', minWidth: 180 },
@@ -4834,6 +5035,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#quick-follow-product-name').val('');
         $('#quick-follow-inquiry-id').val('');
         $('#quick-follow-kh-rank').val('');
+        $('#quick-follow-color-filter').val('');
         form.render('select');
 
         quickFollowLayerIndex = layer.open({
@@ -4907,6 +5109,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             $('#quick-follow-product-name').val('');
             $('#quick-follow-inquiry-id').val('');
             $('#quick-follow-kh-rank').val('');
+            $('#quick-follow-color-filter').val('');
             form.render('select');
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
@@ -5720,6 +5923,15 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     table.on('toolbar(quick-follow-table)', function (obj) {
         if (obj.event === 'quickFollowColumnSort') {
             openQuickFollowColumnSortDialog();
+        } else if (obj.event === 'quickFollowBatchMark') {
+            var checkStatus = table.checkStatus(quickFollowTableId);
+            var checkedData = (checkStatus && checkStatus.data) ? checkStatus.data : [];
+            if (!checkedData.length) {
+                layer.msg('请先选择客户', { icon: 0, time: 1200 });
+                return;
+            }
+            var leadsIds = checkedData.map(function (it) { return it.id; });
+            openQuickFollowBatchMarkDialog(leadsIds);
         }
     });
 
