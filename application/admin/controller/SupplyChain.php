@@ -2,7 +2,6 @@
 
 namespace app\admin\controller;
 
-use app\admin\model\Admin;
 use app\admin\service\SupplyChainService;
 use think\facade\Request;
 
@@ -13,21 +12,16 @@ use think\facade\Request;
  *   Controller 只负责参数接收、调用 Service、返回 JSON；
  *   不写复杂业务与 SQL（统计口径统一在 app\admin\service\SupplyChainService 中实现）。
  *
- * 权限：本模块按独立模块设计（与 DataStatistics / ReceiveAccount / ClientRank 等一致），
- * 在 initialize() 中做模块级 group_id 白名单校验，菜单节点权限仍由 Common::initialize() 处理。
- * 当前先按最小范围（仅 admin 超管）开放，后续如需放开给其他角色，
- * 参考 DataStatistics::initialize() 增加对应 group_id 即可。
+ * 权限：
+ * 本模块不设置独立 group_id / username 白名单。
+ * 统一交由 Common::initialize() 和 CRM 现有 auth_rule/auth_group 权限体系控制。
+ * 用户能否看到/访问"供应链管理 → 供应链分析"，由后台现有权限管理配置决定。
  */
 class SupplyChain extends Common
 {
     public function initialize()
     {
         parent::initialize();
-        $currentAdmin = Admin::getMyInfo();
-        if ($currentAdmin['group_id'] != 1
-            && $currentAdmin['username'] != 'admin') {
-            $this->error('您无权限访问该模块');
-        }
     }
 
     // =========================================================
