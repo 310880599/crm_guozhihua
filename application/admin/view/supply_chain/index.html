@@ -1,0 +1,993 @@
+{include file="common/head"/}
+<style>
+    html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+
+    #scWorkbench {
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: #f6f8fb;
+        z-index: 1000;
+    }
+
+    /* ---- 顶部：标题 + 模式切换 ---- */
+    .sc-header-top {
+        flex-shrink: 0;
+        padding: 12px 20px;
+        background: linear-gradient(90deg, #4285f4, #5b9dff);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .sc-header-top .sc-title { font-size: 17px; font-weight: 600; }
+    .sc-mode-tabs { display: flex; gap: 6px; }
+    .sc-mode-btn {
+        border: 1px solid rgba(255,255,255,0.6);
+        background: transparent;
+        color: #fff;
+        padding: 5px 16px;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: all .2s;
+    }
+    .sc-mode-btn:hover { background: rgba(255,255,255,0.15); }
+    .sc-mode-btn.active { background: #fff; color: #3367d6; font-weight: 600; border-color: #fff; }
+
+    /* ---- 筛选区 ---- */
+    .sc-filter-bar {
+        flex-shrink: 0;
+        padding: 10px 20px 6px;
+        background: #fff;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+    }
+    .sc-filter-bar label { margin: 0; white-space: nowrap; color: #555; font-size: 13px; }
+    .sc-filter-bar .form-select, .sc-filter-bar .form-control { font-size: 13px; }
+    #scTimeFilter { width: auto; min-width: 90px; }
+    #scCustomTimeRange { display: none; gap: 8px; align-items: center; }
+    #scCustomTimeRange input { width: 148px; }
+    #scKeywordInput { width: 180px; }
+    #scSortField { width: auto; min-width: 110px; }
+    #scSortOrder { width: auto; min-width: 90px; }
+    .sc-month-shortcut-wrap { width: 100%; }
+    .month-quick-select { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .month-quick-select-label { margin: 0; white-space: nowrap; font-weight: 600; font-size: 13px; color: #555; }
+    .month-quick-select-buttons { display: flex; flex-wrap: nowrap; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; align-items: center; }
+    .month-quick-select-btn {
+        margin: 0; padding: 2px 8px; min-width: auto; border-radius: 4px; font-size: 12px;
+        line-height: 1.6; flex: 0 0 auto; border: 1px solid #dcdfe6; background: #fff; color: #606266; cursor: pointer;
+    }
+    .month-quick-select-btn.active { background: #4285f4; color: #fff; border-color: #4285f4; }
+
+    /* ---- 汇总卡片 ---- */
+    .sc-summary-cards {
+        flex-shrink: 0;
+        padding: 10px 20px;
+        background: #fafbfc;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .sc-summary-card {
+        flex: 1 1 140px;
+        min-width: 130px;
+        background: #fff;
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        padding: 8px 14px;
+    }
+    .sc-summary-card .sc-summary-label { font-size: 12px; color: #888; margin-bottom: 2px; }
+    .sc-summary-card .sc-summary-value { font-size: 18px; font-weight: 700; color: #333; }
+    .sc-summary-card.sc-summary-profit .sc-summary-value { color: #e6862f; }
+
+    /* ---- 三联屏 ---- */
+    .sc-split-wrap { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+    .sc-col { display: flex; flex-direction: column; overflow: hidden; background: #fff; border-right: 1px solid #e9ecef; min-height: 0; }
+    .sc-col:last-child { border-right: none; }
+    .sc-col-left { width: 36%; }
+    .sc-col-mid { width: 34%; }
+    .sc-col-right { width: 30%; }
+    .sc-col-header {
+        flex-shrink: 0;
+        padding: 10px 16px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .sc-col-header .sc-col-title { font-weight: 600; color: #333; font-size: 14px; }
+    .sc-col-header .sc-col-subtitle { font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+    .sc-col-body { flex: 1; overflow-y: auto; min-height: 0; }
+    .sc-col-summary { flex-shrink: 0; padding: 8px 16px; border-top: 1px solid #e9ecef; background: #fafafa; font-size: 13px; color: #333; }
+    .sc-col-pager { flex-shrink: 0; padding: 6px 16px; border-top: 1px solid #e9ecef; background: #fff; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13px; }
+    .sc-col-pager button { border: 1px solid #dcdfe6; background: #fff; color: #555; border-radius: 4px; padding: 2px 10px; cursor: pointer; }
+    .sc-col-pager button:disabled { color: #ccc; cursor: not-allowed; }
+
+    /* ---- 表格 ---- */
+    .sc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sc-table th, .sc-table td { padding: 8px 10px; border-bottom: 1px solid #eef0f2; }
+    .sc-table thead th { background: #f8f9fa; font-weight: 600; color: #444; position: sticky; top: 0; z-index: 1; }
+    .sc-table td.sc-num, .sc-table th.sc-num { text-align: right; }
+    .sc-table tbody tr.sc-row { cursor: pointer; }
+    .sc-table tbody tr.sc-row:hover { background: #f5f8ff; }
+    .sc-table tbody tr.sc-row.is-active { background: #e8f0fe; box-shadow: inset 3px 0 0 #4285f4; }
+    .sc-table tbody tr.sc-row-unclassified { color: #999; }
+
+    /* ---- 空态/加载态 ---- */
+    .sc-empty, .sc-loading, .sc-error { text-align: center; padding: 50px 20px; color: #999; }
+    .sc-empty i, .sc-loading i, .sc-error i { font-size: 40px; margin-bottom: 12px; display: block; }
+    .sc-error { color: #e05252; }
+    .sc-loading { color: #4285f4; }
+
+    /* ---- 右栏详情 ---- */
+    .sc-detail-block { padding: 14px 18px; }
+    .sc-detail-title { font-size: 15px; font-weight: 700; color: #333; margin-bottom: 10px; }
+    .sc-detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #eef0f2; font-size: 13px; }
+    .sc-detail-row .sc-detail-label { color: #888; }
+    .sc-detail-row .sc-detail-value { color: #333; font-weight: 600; }
+    .sc-detail-row .sc-detail-value.sc-detail-profit { color: #e6862f; }
+    .sc-detail-sub-title { margin: 16px 0 8px; font-size: 13px; font-weight: 700; color: #555; }
+    .sc-top-list { list-style: none; margin: 0; padding: 0; }
+    .sc-top-list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed #eef0f2; font-size: 13px; }
+    .sc-top-list li .sc-top-rank {
+        width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 50%;
+        background: #eef2f7; color: #666; font-size: 12px; flex-shrink: 0;
+    }
+    .sc-top-list li:nth-child(1) .sc-top-rank { background: #ffe6b3; color: #a8641a; }
+    .sc-top-list li:nth-child(2) .sc-top-rank { background: #e6eef7; color: #4c6a8a; }
+    .sc-top-list li:nth-child(3) .sc-top-rank { background: #f5e3d3; color: #99632e; }
+    .sc-top-list li .sc-top-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #333; }
+    .sc-top-list li .sc-top-qty { color: #4285f4; font-weight: 600; flex-shrink: 0; }
+</style>
+
+<div id="scWorkbench">
+    <div class="sc-header-top">
+        <span class="sc-title"><i class="bi bi-diagram-3"></i> 供应链分析</span>
+        <div class="sc-mode-tabs">
+            <button type="button" class="sc-mode-btn active" data-mode="product">产品排行</button>
+            <button type="button" class="sc-mode-btn" data-mode="supplier">供应商排行</button>
+        </div>
+    </div>
+
+    <div class="sc-filter-bar">
+        <label>时间筛选：</label>
+        <select id="scTimeFilter" class="form-select form-select-sm">
+            <option value="today">今天</option>
+            <option value="yesterday">昨天</option>
+            <option value="week">本周</option>
+            <option value="month" selected>本月</option>
+            <option value="last_month">上月</option>
+            <option value="year">今年</option>
+            <option value="custom">自定义</option>
+        </select>
+        <div id="scCustomTimeRange">
+            <input type="date" id="scStartDate" class="form-control form-control-sm">
+            <span>至</span>
+            <input type="date" id="scEndDate" class="form-control form-control-sm">
+        </div>
+
+        <label>关键字：</label>
+        <input type="text" id="scKeywordInput" class="form-control form-control-sm" placeholder="请输入产品名称">
+
+        <label>排序：</label>
+        <select id="scSortField" class="form-select form-select-sm"></select>
+        <select id="scSortOrder" class="form-select form-select-sm">
+            <option value="desc" selected>降序</option>
+            <option value="asc">升序</option>
+        </select>
+
+        <button type="button" class="btn btn-primary btn-sm" id="scQueryBtn"><i class="bi bi-search"></i> 查询</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="scResetBtn"><i class="bi bi-arrow-counterclockwise"></i> 重置</button>
+
+        <div class="sc-month-shortcut-wrap" id="scMonthShortcutWrap"></div>
+    </div>
+
+    <div class="sc-summary-cards" id="scSummaryCards"></div>
+
+    <div class="sc-split-wrap">
+        <div class="sc-col sc-col-left">
+            <div class="sc-col-header">
+                <span class="sc-col-title" id="scLeftTitle">产品排行</span>
+            </div>
+            <div class="sc-col-body" id="scLeftBody"></div>
+            <div class="sc-col-pager" id="scLeftPager" style="display:none;">
+                <button type="button" id="scLeftPrevBtn">上一页</button>
+                <span id="scLeftPageInfo">第 1 / 1 页</span>
+                <button type="button" id="scLeftNextBtn">下一页</button>
+            </div>
+        </div>
+
+        <div class="sc-col sc-col-mid">
+            <div class="sc-col-header">
+                <span class="sc-col-title" id="scMidTitle">供应商排行</span>
+                <span class="sc-col-subtitle" id="scMidSubtitle"></span>
+            </div>
+            <div class="sc-col-body" id="scMidBody"></div>
+            <div class="sc-col-summary" id="scMidSummary"></div>
+        </div>
+
+        <div class="sc-col sc-col-right">
+            <div class="sc-col-header">
+                <span class="sc-col-title" id="scRightTitle">详情摘要</span>
+            </div>
+            <div class="sc-col-body" id="scRightBody"></div>
+        </div>
+    </div>
+</div>
+
+<template id="scMonthQuickSelectTemplate">
+    <div class="month-quick-select">
+        <label class="month-quick-select-label">月份快捷：</label>
+        <div class="month-quick-select-buttons">
+            <button type="button" class="month-quick-select-btn" data-month="1">1</button>
+            <button type="button" class="month-quick-select-btn" data-month="2">2</button>
+            <button type="button" class="month-quick-select-btn" data-month="3">3</button>
+            <button type="button" class="month-quick-select-btn" data-month="4">4</button>
+            <button type="button" class="month-quick-select-btn" data-month="5">5</button>
+            <button type="button" class="month-quick-select-btn" data-month="6">6</button>
+            <button type="button" class="month-quick-select-btn" data-month="7">7</button>
+            <button type="button" class="month-quick-select-btn" data-month="8">8</button>
+            <button type="button" class="month-quick-select-btn" data-month="9">9</button>
+            <button type="button" class="month-quick-select-btn" data-month="10">10</button>
+            <button type="button" class="month-quick-select-btn" data-month="11">11</button>
+            <button type="button" class="month-quick-select-btn" data-month="12">12</button>
+        </div>
+    </div>
+</template>
+
+<script>
+(function () {
+    'use strict';
+
+    // =========================================================
+    // 常量 / 接口地址
+    // =========================================================
+    var API = {
+        productRank: '{:url("SupplyChain/getProductRankData")}',
+        supplierRank: '{:url("SupplyChain/getSupplierRankData")}',
+        productSupplierDetail: '{:url("SupplyChain/getProductSupplierDetailData")}',
+        supplierProducts: '{:url("SupplyChain/getSupplierProducts")}'
+    };
+
+    var SORT_FIELDS = {
+        product: [
+            {value: 'qty', label: '销量'},
+            {value: 'total_price', label: '销售额'},
+            {value: 'purchase_price', label: '采购成本'},
+            {value: 'profit', label: '利润'}
+        ],
+        supplier: [
+            {value: 'qty', label: '销量'},
+            {value: 'product_count', label: '产品种类'},
+            {value: 'total_price', label: '销售额'},
+            {value: 'purchase_price', label: '采购成本'},
+            {value: 'profit', label: '利润'}
+        ]
+    };
+
+    var LEFT_LIMIT = 50;
+
+    // =========================================================
+    // state
+    // =========================================================
+    var state = {
+        mode: 'product',              // 'product' | 'supplier'
+        timebucket: 'month',
+        at_time: '',
+        month_keys: '',
+        keyword: '',
+        sortField: 'qty',
+        sortOrder: 'desc',
+        page: 1,
+        leftTotal: 0,
+        leftList: [],
+        selectedId: '',               // 当前选中的 product_id / supplier_id（未分类时为特殊标记）
+        selectedIsUnclassified: false,
+        selectedRow: null,            // 当前选中的左栏原始行
+        midList: [],
+        midSummary: {},
+        requestSeq: {left: 0, mid: 0}  // 防止旧请求覆盖新请求的渲染结果
+    };
+
+    var monthQuickState = {selectedMonths: []};
+
+    // =========================================================
+    // 工具函数
+    // =========================================================
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function toNumber(val) {
+        if (typeof val === 'number') return isFinite(val) ? val : 0;
+        if (val === null || val === undefined || val === '') return 0;
+        var n = parseFloat(String(val).replace(/,/g, ''));
+        return isNaN(n) ? 0 : n;
+    }
+
+    function formatMoney(val) {
+        var n = toNumber(val);
+        var neg = n < 0;
+        n = Math.abs(n);
+        var parts = n.toFixed(2).split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return (neg ? '-' : '') + parts.join('.');
+    }
+
+    function formatQty(val) {
+        var n = toNumber(val);
+        if (Math.abs(n - Math.round(n)) < 0.0000001) {
+            return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+        return String(parseFloat(n.toFixed(4)));
+    }
+
+    function buildAjaxErrorMessage(xhr, status, fallbackMsg) {
+        if (status === 'timeout') return '请求超时（30秒），请稍后重试';
+        var jsonMsg = xhr && xhr.responseJSON && xhr.responseJSON.msg ? String(xhr.responseJSON.msg).trim() : '';
+        if (jsonMsg) return jsonMsg;
+        return fallbackMsg || '数据加载失败，请稍后重试';
+    }
+
+    function isProductMode() { return state.mode === 'product'; }
+
+    function renderLoading($container, text) {
+        $container.html('<div class="sc-loading"><i class="bi bi-hourglass-split"></i>' + escapeHtml(text || '加载中...') + '</div>');
+    }
+
+    function renderEmpty($container, text) {
+        $container.html('<div class="sc-empty"><i class="bi bi-inbox"></i>' + escapeHtml(text || '暂无数据') + '</div>');
+    }
+
+    function renderErrorState($container, text) {
+        $container.html('<div class="sc-error"><i class="bi bi-exclamation-triangle"></i>' + escapeHtml(text || '数据加载失败，请稍后重试') + '</div>');
+    }
+
+    // =========================================================
+    // 月份快捷选择（复用项目已有交互习惯）
+    // =========================================================
+    function renderMonthQuickSelect() {
+        var $wrap = $('#scMonthShortcutWrap');
+        if ($wrap.find('.month-quick-select').length) return;
+        var tpl = $('#scMonthQuickSelectTemplate').html() || '';
+        if (tpl) $wrap.html(tpl);
+    }
+
+    function syncMonthQuickSelectUI() {
+        var selectedMap = {};
+        $.each(monthQuickState.selectedMonths, function (_, m) { selectedMap[m] = true; });
+        $('#scMonthShortcutWrap .month-quick-select-btn').each(function () {
+            var m = parseInt($(this).attr('data-month'), 10);
+            $(this).toggleClass('active', !!selectedMap[m]);
+        });
+    }
+
+    function clearMonthQuickSelect() {
+        monthQuickState.selectedMonths = [];
+        syncMonthQuickSelectUI();
+    }
+
+    function getMonthKeysFromQuickSelect() {
+        if (!monthQuickState.selectedMonths.length) return '';
+        var year = new Date().getFullYear();
+        return monthQuickState.selectedMonths.slice().sort(function (a, b) { return a - b; }).map(function (m) {
+            return year + '-' + (m < 10 ? '0' + m : String(m));
+        }).join(',');
+    }
+
+    function bindMonthQuickSelectEvents() {
+        $(document).on('click', '#scMonthShortcutWrap .month-quick-select-btn', function () {
+            var month = parseInt($(this).attr('data-month'), 10);
+            if (isNaN(month) || month < 1 || month > 12) return;
+            var idx = monthQuickState.selectedMonths.indexOf(month);
+            if (idx > -1) { monthQuickState.selectedMonths.splice(idx, 1); } else { monthQuickState.selectedMonths.push(month); }
+            syncMonthQuickSelectUI();
+            if (monthQuickState.selectedMonths.length) {
+                $('#scStartDate').val('');
+                $('#scEndDate').val('');
+                $('#scCustomTimeRange').css('display', 'none');
+                if (($('#scTimeFilter').val() || '') === 'custom') { $('#scTimeFilter').val('month'); }
+            }
+        });
+    }
+
+    // =========================================================
+    // 筛选参数函数
+    // =========================================================
+    function readTimeParamsFromUI() {
+        var monthKeys = getMonthKeysFromQuickSelect();
+        if (monthKeys) return {timebucket: '', at_time: '', month_keys: monthKeys};
+
+        var timeFilter = ($('#scTimeFilter').val() || 'month').trim();
+        if (timeFilter === 'custom') {
+            var start = ($('#scStartDate').val() || '').trim();
+            var end = ($('#scEndDate').val() || '').trim();
+            if (start && end) return {timebucket: '', at_time: start + ',' + end, month_keys: ''};
+            layer.msg('请选择开始日期和结束日期', {icon: 2});
+            return null;
+        }
+        return {timebucket: timeFilter || 'month', at_time: '', month_keys: ''};
+    }
+
+    function buildTimeParams() {
+        return {timebucket: state.timebucket || '', at_time: state.at_time || '', month_keys: state.month_keys || ''};
+    }
+
+    function buildLeftQueryParams() {
+        return $.extend({}, buildTimeParams(), {
+            keyword: state.keyword || '',
+            sort_field: state.sortField || 'qty',
+            sort_order: state.sortOrder || 'desc',
+            page: state.page || 1,
+            limit: LEFT_LIMIT
+        });
+    }
+
+    function buildDrillDownParams(idField, idValue) {
+        var params = $.extend({}, buildTimeParams(), {
+            sort_field: 'qty',
+            sort_order: 'desc',
+            page: 1,
+            limit: 0
+        });
+        params[idField] = idValue;
+        return params;
+    }
+
+    // =========================================================
+    // 顶部筛选 UI 联动
+    // =========================================================
+    function renderSortFieldOptions() {
+        var fields = SORT_FIELDS[state.mode] || SORT_FIELDS.product;
+        var validValues = $.map(fields, function (f) { return f.value; });
+        if ($.inArray(state.sortField, validValues) === -1) { state.sortField = 'qty'; }
+
+        var html = '';
+        $.each(fields, function (i, f) {
+            html += '<option value="' + f.value + '"' + (f.value === state.sortField ? ' selected' : '') + '>' + f.label + '</option>';
+        });
+        $('#scSortField').html(html);
+    }
+
+    function updateKeywordPlaceholder() {
+        $('#scKeywordInput').attr('placeholder', isProductMode() ? '请输入产品名称' : '请输入供应商名称');
+    }
+
+    // =========================================================
+    // API 请求函数
+    // =========================================================
+    function loadLeftRank() {
+        var seq = ++state.requestSeq.left;
+        renderLoading($('#scLeftBody'), isProductMode() ? '正在加载产品排行...' : '正在加载供应商排行...');
+        $('#scLeftPager').css('display', 'none');
+
+        var url = isProductMode() ? API.productRank : API.supplierRank;
+        return $.ajax({
+            url: url,
+            type: 'POST',
+            dataType: 'json',
+            timeout: 30000,
+            data: buildLeftQueryParams()
+        }).then(function (res) {
+            if (seq !== state.requestSeq.left) return null; // 已被更新的请求覆盖，丢弃
+            if (res && res.code === 0) {
+                state.leftList = res.data || [];
+                state.leftTotal = res.count || 0;
+                renderLeftPane();
+                renderSummaryCards(res.summary || {});
+                return res;
+            }
+            var msg = (res && res.msg) || '获取供应链统计数据失败';
+            state.leftList = [];
+            state.leftTotal = 0;
+            renderErrorState($('#scLeftBody'), msg);
+            renderSummaryCards({});
+            layer.msg(msg, {icon: 2});
+            return null;
+        }, function (xhr, status) {
+            if (seq !== state.requestSeq.left) return null;
+            var msg = buildAjaxErrorMessage(xhr, status, '获取供应链统计数据失败');
+            state.leftList = [];
+            state.leftTotal = 0;
+            renderErrorState($('#scLeftBody'), msg);
+            renderSummaryCards({});
+            layer.msg(msg, {icon: 2, time: 4000});
+            return null;
+        });
+    }
+
+    function loadMidDrillDown() {
+        if (!state.selectedId) return $.Deferred().resolve(null).promise();
+
+        var seq = ++state.requestSeq.mid;
+        renderLoading($('#scMidBody'), isProductMode() ? '正在加载供应商数据...' : '正在加载产品数据...');
+        $('#scMidSummary').html('');
+
+        var url, idField;
+        if (isProductMode()) { url = API.productSupplierDetail; idField = 'product_id'; }
+        else { url = API.supplierProducts; idField = 'supplier_id'; }
+
+        return $.ajax({
+            url: url,
+            type: 'POST',
+            dataType: 'json',
+            timeout: 30000,
+            data: buildDrillDownParams(idField, state.selectedId)
+        }).then(function (res) {
+            if (seq !== state.requestSeq.mid) return null;
+            if (res && res.code === 0) {
+                state.midList = res.data || [];
+                state.midSummary = res.summary || {};
+                renderMidPane();
+                renderRightPane();
+                return res;
+            }
+            var msg = (res && res.msg) || '获取供应链统计数据失败';
+            state.midList = [];
+            state.midSummary = {};
+            renderErrorState($('#scMidBody'), msg);
+            renderRightPane();
+            layer.msg(msg, {icon: 2});
+            return null;
+        }, function (xhr, status) {
+            if (seq !== state.requestSeq.mid) return null;
+            var msg = buildAjaxErrorMessage(xhr, status, '获取供应链统计数据失败');
+            state.midList = [];
+            state.midSummary = {};
+            renderErrorState($('#scMidBody'), msg);
+            renderRightPane();
+            layer.msg(msg, {icon: 2, time: 4000});
+            return null;
+        });
+    }
+
+    // =========================================================
+    // 汇总卡片渲染
+    // =========================================================
+    function renderSummaryCards(summary) {
+        summary = summary || {};
+        var cards = [];
+        if (isProductMode()) {
+            cards.push({label: '产品数', value: summary.product_count || 0, isMoney: false});
+        } else {
+            cards.push({label: '供应商数', value: summary.supplier_count || 0, isMoney: false});
+            cards.push({label: '产品数', value: summary.product_count || 0, isMoney: false});
+        }
+        cards.push({label: '销售数量', value: summary.qty || 0, isMoney: false});
+        cards.push({label: '销售金额', value: summary.total_price || 0, isMoney: true});
+        cards.push({label: '采购成本', value: summary.purchase_price || 0, isMoney: true});
+        cards.push({label: '利润', value: summary.profit || 0, isMoney: true, isProfit: true});
+
+        var html = '';
+        $.each(cards, function (i, c) {
+            var displayVal = c.isMoney ? ('￥' + formatMoney(c.value)) : formatQty(c.value);
+            html += '<div class="sc-summary-card' + (c.isProfit ? ' sc-summary-profit' : '') + '">'
+                + '<div class="sc-summary-label">' + escapeHtml(c.label) + '</div>'
+                + '<div class="sc-summary-value">' + displayVal + '</div>'
+                + '</div>';
+        });
+        $('#scSummaryCards').html(html);
+    }
+
+    // =========================================================
+    // 左栏渲染（产品排行 / 供应商排行）
+    // =========================================================
+    function renderLeftPane() {
+        $('#scLeftTitle').text(isProductMode() ? '产品排行' : '供应商排行');
+
+        if (!state.leftList.length) {
+            renderEmpty($('#scLeftBody'), isProductMode() ? '当前筛选条件下暂无产品数据' : '当前筛选条件下暂无供应商数据');
+            $('#scLeftPager').css('display', 'none');
+            return;
+        }
+
+        var offset = (state.page - 1) * LEFT_LIMIT;
+        var html = '<table class="sc-table"><thead><tr>';
+        if (isProductMode()) {
+            html += '<th style="width:52px;">排名</th><th>产品名称</th><th class="sc-num">销量</th><th class="sc-num">销售额</th><th class="sc-num">利润</th>';
+        } else {
+            html += '<th style="width:52px;">排名</th><th>供应商名称</th><th class="sc-num">产品数</th><th class="sc-num">销量</th><th class="sc-num">销售额</th><th class="sc-num">利润</th>';
+        }
+        html += '</tr></thead><tbody>';
+
+        $.each(state.leftList, function (i, item) {
+            var id = isProductMode() ? String(item.product_id || '') : String(item.supplier_id || '');
+            var name = isProductMode() ? (item.product_name || '') : (item.supplier_name || '');
+            var isUnclassified = id === '';
+            var rank = offset + i + 1;
+            var isActive = !isUnclassified && state.selectedId === id && !state.selectedIsUnclassified;
+            var activeSelfUnclassified = isUnclassified && state.selectedIsUnclassified;
+
+            html += '<tr class="sc-row' + (isUnclassified ? ' sc-row-unclassified' : '') + ((isActive || activeSelfUnclassified) ? ' is-active' : '') + '" data-id="' + escapeHtml(id) + '" data-index="' + i + '">';
+            html += '<td>' + rank + '</td>';
+            html += '<td>' + escapeHtml(name) + '</td>';
+            if (!isProductMode()) { html += '<td class="sc-num">' + formatQty(item.product_count || 0) + '</td>'; }
+            html += '<td class="sc-num">' + formatQty(item.qty || 0) + '</td>';
+            html += '<td class="sc-num">' + formatMoney(item.total_price || 0) + '</td>';
+            html += '<td class="sc-num">' + formatMoney(item.profit || 0) + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        $('#scLeftBody').html(html);
+
+        renderLeftPager();
+    }
+
+    function renderLeftPager() {
+        var totalPages = Math.max(1, Math.ceil((state.leftTotal || 0) / LEFT_LIMIT));
+        if (totalPages <= 1) {
+            $('#scLeftPager').css('display', 'none');
+            return;
+        }
+        $('#scLeftPager').css('display', 'flex');
+        $('#scLeftPageInfo').text('第 ' + state.page + ' / ' + totalPages + ' 页');
+        $('#scLeftPrevBtn').prop('disabled', state.page <= 1);
+        $('#scLeftNextBtn').prop('disabled', state.page >= totalPages);
+    }
+
+    // =========================================================
+    // 中栏渲染（下钻结果）
+    // =========================================================
+    function renderMidUnclassifiedNotice() {
+        $('#scMidTitle').text(isProductMode() ? '供应商排行' : '产品排行');
+        $('#scMidSubtitle').text('');
+        $('#scMidBody').html('<div class="sc-empty"><i class="bi bi-slash-circle"></i>' + (isProductMode() ? '未分类产品不支持下钻查看' : '未分类供应商不支持下钻查看') + '</div>');
+        $('#scMidSummary').html('');
+    }
+
+    function renderMidIdlePane() {
+        $('#scMidTitle').text(isProductMode() ? '供应商排行' : '产品排行');
+        $('#scMidSubtitle').text('');
+        renderEmpty($('#scMidBody'), isProductMode() ? '请选择左侧产品' : '请选择左侧供应商');
+        $('#scMidSummary').html('');
+    }
+
+    function renderMidNoDrillableNotice() {
+        $('#scMidTitle').text(isProductMode() ? '供应商排行' : '产品排行');
+        $('#scMidSubtitle').text('');
+        renderEmpty($('#scMidBody'), isProductMode() ? '当前筛选条件下暂无可下钻的产品' : '当前筛选条件下暂无可下钻的供应商');
+        $('#scMidSummary').html('');
+    }
+
+    function renderMidPane() {
+        var selectedName = state.selectedRow ? (isProductMode() ? state.selectedRow.product_name : state.selectedRow.supplier_name) : '';
+        $('#scMidTitle').text(isProductMode() ? '供应商排行' : '产品排行');
+        $('#scMidSubtitle').text((isProductMode() ? '当前产品：' : '当前供应商：') + (selectedName || ''));
+
+        if (!state.midList.length) {
+            renderEmpty($('#scMidBody'), isProductMode() ? '当前产品暂无供应商统计数据' : '当前供应商暂无产品统计数据');
+            $('#scMidSummary').html('');
+            return;
+        }
+
+        var html = '<table class="sc-table"><thead><tr>';
+        if (isProductMode()) {
+            html += '<th style="width:52px;">排名</th><th>供应商名称</th><th class="sc-num">销量</th><th class="sc-num">销售额</th><th class="sc-num">采购成本</th><th class="sc-num">利润</th>';
+        } else {
+            html += '<th style="width:52px;">排名</th><th>产品名称</th><th class="sc-num">销量</th><th class="sc-num">销售额</th><th class="sc-num">采购成本</th><th class="sc-num">利润</th>';
+        }
+        html += '</tr></thead><tbody>';
+
+        $.each(state.midList, function (i, item) {
+            var name = isProductMode() ? (item.supplier_name || '') : (item.product_name || '');
+            html += '<tr>';
+            html += '<td>' + (i + 1) + '</td>';
+            html += '<td>' + escapeHtml(name) + '</td>';
+            html += '<td class="sc-num">' + formatQty(item.qty || 0) + '</td>';
+            html += '<td class="sc-num">' + formatMoney(item.total_price || 0) + '</td>';
+            html += '<td class="sc-num">' + formatMoney(item.purchase_price || 0) + '</td>';
+            html += '<td class="sc-num">' + formatMoney(item.profit || 0) + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        $('#scMidBody').html(html);
+
+        var summary = state.midSummary || {};
+        var countLabel = isProductMode() ? '供应商数' : '产品数';
+        var countValue = isProductMode() ? (summary.supplier_count || 0) : (summary.product_count || 0);
+        $('#scMidSummary').html(
+            countLabel + ' ' + formatQty(countValue)
+            + ' ｜ 销量 ' + formatQty(summary.qty || 0)
+            + ' ｜ 销售额 ' + formatMoney(summary.total_price || 0)
+            + ' ｜ 利润 ' + formatMoney(summary.profit || 0)
+        );
+    }
+
+    // =========================================================
+    // 右栏渲染（详情摘要，完全基于左栏行 + 中栏 summary，不发新请求）
+    // =========================================================
+    function getCurrentTimeRangeLabel() {
+        if (state.month_keys) return state.month_keys.split(',').join(' / ');
+        if (state.at_time) return state.at_time;
+        var map = {today: '今天', yesterday: '昨天', week: '本周', month: '本月', last_month: '上月', year: '今年'};
+        return map[state.timebucket] || '本月';
+    }
+
+    function renderRightIdlePane() {
+        $('#scRightTitle').text('详情摘要');
+        renderEmpty($('#scRightBody'), isProductMode() ? '请选择一个产品查看详情' : '请选择一个供应商查看详情');
+    }
+
+    function renderRightPaneUnclassifiedOnly() {
+        var row = state.selectedRow || {};
+        $('#scRightTitle').text(isProductMode() ? '当前产品' : '当前供应商');
+        var name = isProductMode() ? (row.product_name || '未分类产品') : (row.supplier_name || '未分类供应商');
+        var idLabel = isProductMode() ? '产品ID' : '供应商ID';
+
+        var html = '<div class="sc-detail-block">';
+        html += '<div class="sc-detail-title">' + escapeHtml(name) + '</div>';
+        html += buildDetailRow(idLabel, '（未分类，无 ID）');
+        html += buildDetailRow('当前时间范围', getCurrentTimeRangeLabel());
+        html += buildDetailRow('销售数量', formatQty(row.qty || 0));
+        html += buildDetailRow('销售金额', '￥' + formatMoney(row.total_price || 0));
+        html += buildDetailRow('采购成本', '￥' + formatMoney(row.purchase_price || 0));
+        html += buildDetailRow('利润', '￥' + formatMoney(row.profit || 0), true);
+        html += '<div class="sc-detail-sub-title">' + (isProductMode() ? '未分类产品不支持下钻查看主要供应商' : '未分类供应商不支持下钻查看主要产品') + '</div>';
+        html += '</div>';
+        $('#scRightBody').html(html);
+    }
+
+    function buildDetailRow(label, value, isProfit) {
+        return '<div class="sc-detail-row"><span class="sc-detail-label">' + escapeHtml(label) + '</span>'
+            + '<span class="sc-detail-value' + (isProfit ? ' sc-detail-profit' : '') + '">' + value + '</span></div>';
+    }
+
+    function renderRightPane() {
+        if (!state.selectedId && !state.selectedIsUnclassified) { renderRightIdlePane(); return; }
+        if (state.selectedIsUnclassified) { renderRightPaneUnclassifiedOnly(); return; }
+
+        var row = state.selectedRow || {};
+        var summary = state.midSummary || {};
+        var name = isProductMode() ? (row.product_name || '') : (row.supplier_name || '');
+        var id = isProductMode() ? (row.product_id || '') : (row.supplier_id || '');
+        var idLabel = isProductMode() ? '产品ID' : '供应商ID';
+        var countLabel = isProductMode() ? '供应商数量' : '产品种类';
+        var countValue = isProductMode() ? (summary.supplier_count || 0) : (summary.product_count || 0);
+
+        $('#scRightTitle').text(isProductMode() ? '当前产品' : '当前供应商');
+
+        var html = '<div class="sc-detail-block">';
+        html += '<div class="sc-detail-title">' + escapeHtml(name) + '</div>';
+        html += buildDetailRow(idLabel, escapeHtml(id));
+        html += buildDetailRow('当前时间范围', getCurrentTimeRangeLabel());
+        html += buildDetailRow('销售数量', formatQty(summary.qty || 0));
+        html += buildDetailRow('销售金额', '￥' + formatMoney(summary.total_price || 0));
+        html += buildDetailRow('采购成本', '￥' + formatMoney(summary.purchase_price || 0));
+        html += buildDetailRow('利润', '￥' + formatMoney(summary.profit || 0), true);
+        html += buildDetailRow(countLabel, formatQty(countValue));
+
+        html += '<div class="sc-detail-sub-title">' + (isProductMode() ? '主要供应商' : '主要产品') + '</div>';
+        if (state.midList.length) {
+            html += '<ul class="sc-top-list">';
+            $.each(state.midList.slice(0, 3), function (i, item) {
+                var itemName = isProductMode() ? (item.supplier_name || '') : (item.product_name || '');
+                html += '<li><span class="sc-top-rank">' + (i + 1) + '</span>'
+                    + '<span class="sc-top-name">' + escapeHtml(itemName) + '</span>'
+                    + '<span class="sc-top-qty">' + formatQty(item.qty || 0) + '</span></li>';
+            });
+            html += '</ul>';
+        } else {
+            html += '<div class="sc-empty" style="padding:20px 0;"><i class="bi bi-inbox" style="font-size:28px;margin-bottom:6px;"></i>' + (isProductMode() ? '当前产品暂无供应商统计数据' : '当前供应商暂无产品统计数据') + '</div>';
+        }
+        html += '</div>';
+        $('#scRightBody').html(html);
+    }
+
+    // =========================================================
+    // 选中 / 下钻 行为
+    // =========================================================
+    function selectLeftRow(id, rowData) {
+        var isUnclassified = id === '';
+        state.selectedId = id;
+        state.selectedIsUnclassified = isUnclassified;
+        state.selectedRow = rowData;
+        state.midList = [];
+        state.midSummary = {};
+
+        highlightSelectedLeftRow();
+
+        if (isUnclassified) {
+            renderMidUnclassifiedNotice();
+            renderRightPane();
+            return;
+        }
+        loadMidDrillDown();
+    }
+
+    function highlightSelectedLeftRow() {
+        $('#scLeftBody tr.sc-row').removeClass('is-active');
+        if (!state.selectedId && !state.selectedIsUnclassified) return;
+        $('#scLeftBody tr.sc-row').each(function () {
+            var $tr = $(this);
+            if ($tr.attr('data-id') === state.selectedId) { $tr.addClass('is-active'); }
+        });
+    }
+
+    function clearSelection() {
+        // 立即使此前所有中栏 Ajax 请求失效，防止旧请求在模式切换/查询/重置/翻页后覆盖新状态
+        state.requestSeq.mid++;
+
+        state.selectedId = '';
+        state.selectedIsUnclassified = false;
+        state.selectedRow = null;
+        state.midList = [];
+        state.midSummary = {};
+        renderMidIdlePane();
+        renderRightIdlePane();
+    }
+
+    function autoSelectFirstValidRow() {
+        clearSelection();
+        if (!state.leftList.length) { return; }
+
+        var found = null;
+        for (var i = 0; i < state.leftList.length; i++) {
+            var item = state.leftList[i];
+            var id = isProductMode() ? String(item.product_id || '') : String(item.supplier_id || '');
+            if (id !== '') { found = {id: id, row: item}; break; }
+        }
+
+        if (!found) {
+            renderMidNoDrillableNotice();
+            renderRightIdlePane();
+            return;
+        }
+        selectLeftRow(found.id, found.row);
+    }
+
+    // =========================================================
+    // 模式切换
+    // =========================================================
+    function switchMode(mode) {
+        if (mode !== 'product' && mode !== 'supplier') return;
+        if (state.mode === mode) return;
+        state.mode = mode;
+
+        $('.sc-mode-btn').removeClass('active');
+        $('.sc-mode-btn[data-mode="' + mode + '"]').addClass('active');
+
+        state.keyword = '';
+        $('#scKeywordInput').val('');
+        updateKeywordPlaceholder();
+
+        state.sortField = 'qty';
+        state.sortOrder = 'desc';
+        $('#scSortOrder').val('desc');
+        renderSortFieldOptions();
+
+        state.page = 1;
+        clearSelection();
+
+        loadLeftRank().then(function (res) {
+            if (res) { autoSelectFirstValidRow(); }
+        });
+    }
+
+    // =========================================================
+    // 查询 / 重置
+    // =========================================================
+    function applyQuery() {
+        var timeParams = readTimeParamsFromUI();
+        if (!timeParams) return;
+
+        state.timebucket = timeParams.timebucket;
+        state.at_time = timeParams.at_time;
+        state.month_keys = timeParams.month_keys;
+        state.keyword = ($('#scKeywordInput').val() || '').trim();
+        state.sortField = ($('#scSortField').val() || 'qty').trim();
+        state.sortOrder = ($('#scSortOrder').val() || 'desc').trim();
+        state.page = 1;
+
+        loadLeftRank().then(function (res) {
+            if (res) { autoSelectFirstValidRow(); }
+        });
+    }
+
+    function resetFilters() {
+        $('#scTimeFilter').val('month');
+        $('#scStartDate').val('');
+        $('#scEndDate').val('');
+        $('#scCustomTimeRange').css('display', 'none');
+        clearMonthQuickSelect();
+        $('#scKeywordInput').val('');
+        $('#scSortOrder').val('desc');
+
+        state.timebucket = 'month';
+        state.at_time = '';
+        state.month_keys = '';
+        state.keyword = '';
+        state.sortField = 'qty';
+        state.sortOrder = 'desc';
+        state.page = 1;
+
+        renderSortFieldOptions();
+
+        loadLeftRank().then(function (res) {
+            if (res) { autoSelectFirstValidRow(); }
+        });
+    }
+
+    // =========================================================
+    // 事件绑定
+    // =========================================================
+    function bindEvents() {
+        $('.sc-mode-btn').on('click', function () {
+            switchMode($(this).attr('data-mode'));
+        });
+
+        $('#scTimeFilter').on('change', function () {
+            var val = ($(this).val() || '').trim();
+            clearMonthQuickSelect();
+            $('#scCustomTimeRange').css('display', val === 'custom' ? 'flex' : 'none');
+        });
+        $('#scStartDate, #scEndDate').on('change', function () { clearMonthQuickSelect(); });
+
+        $('#scQueryBtn').on('click', applyQuery);
+        $('#scResetBtn').on('click', resetFilters);
+        $('#scKeywordInput').on('keydown', function (e) { if (e.key === 'Enter') applyQuery(); });
+
+        $('#scLeftBody').on('click', 'tr.sc-row', function () {
+            var id = $(this).attr('data-id') || '';
+            var index = parseInt($(this).attr('data-index'), 10);
+            var rowData = state.leftList[index];
+            if (!rowData) return;
+            selectLeftRow(id, rowData);
+        });
+
+        $('#scLeftPrevBtn').on('click', function () {
+            if (state.page <= 1) return;
+            state.page -= 1;
+            clearSelection();
+            loadLeftRank().then(function (res) {
+                if (res) { autoSelectFirstValidRow(); }
+            });
+        });
+        $('#scLeftNextBtn').on('click', function () {
+            var totalPages = Math.max(1, Math.ceil((state.leftTotal || 0) / LEFT_LIMIT));
+            if (state.page >= totalPages) return;
+            state.page += 1;
+            clearSelection();
+            loadLeftRank().then(function (res) {
+                if (res) { autoSelectFirstValidRow(); }
+            });
+        });
+
+        bindMonthQuickSelectEvents();
+    }
+
+    // =========================================================
+    // 初始化
+    // =========================================================
+    function init() {
+        renderMonthQuickSelect();
+        renderSortFieldOptions();
+        updateKeywordPlaceholder();
+        renderMidIdlePane();
+        renderRightIdlePane();
+        bindEvents();
+
+        loadLeftRank().then(function (res) {
+            if (res) { autoSelectFirstValidRow(); }
+        });
+    }
+
+    $(document).ready(init);
+}());
+</script>
+{include file="common/foot"/}
