@@ -14,6 +14,7 @@ use app\admin\service\CheckOrderService;
 use app\admin\service\ClientDetailService;
 use app\admin\service\ClientFollowService;
 use app\admin\service\ClientOrderService;
+use app\admin\service\ClientOwnerHistoryService;
 use app\admin\service\ClientRowMarkService;
 use app\admin\service\ClientStatusService;
 use app\admin\service\OrderService;
@@ -118,7 +119,7 @@ class Client extends Common
     static function addOperLog($leads_id, $type, $description)
     {
         $description = is_string($description) ? $description : json_encode($description, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        Db::table('crm_operation_log')->insert([
+        $logId = Db::table('crm_operation_log')->insertGetId([
             'user_id' => Session::get('aid'),
             'leads_id' => $leads_id,
             'oper_type' => $type,
@@ -126,6 +127,7 @@ class Client extends Common
             'oper_user' => Session::get('username'),
             'created_at' => date("Y-m-d H:i:s")
         ]);
+        return $logId;
     }
 
     //客户联系方式格式化
@@ -2723,7 +2725,7 @@ class Client extends Common
                 }
 
                 // c) 操作日志
-                $this->addOperLog(
+                $logId = $this->addOperLog(
                     $id,
                     '新增客户',
                     [
@@ -2732,6 +2734,30 @@ class Client extends Common
                         '客户级别' => $khRankName,
                         '协同人'  => $jpIds
                     ]
+                );
+                if ((int)$logId <= 0) {
+                    throw new \Exception('新增客户操作日志写入失败');
+                }
+
+                // d) 负责人生命周期：为新客户创建第一条负责人任职阶段（source_type=create）
+                //    owner/时间必须完全来自本次落库的 $data 快照，不重新查询、不重新猜测
+                $owner = [
+                    'user_id'   => (int)($data['pr_user_id'] ?? 0),
+                    'user_name' => trim((string)($data['pr_user'] ?? '')),
+                ];
+                $operatorInfo = [
+                    'admin_id' => (int)Session::get('aid'),
+                    'username' => trim((string)Session::get('username')),
+                ];
+                $ownerHistoryService = new ClientOwnerHistoryService();
+                $ownerHistoryService->createInitialOwnerStage(
+                    $id,
+                    $owner,
+                    $operatorInfo,
+                    (int)$logId,
+                    $data['at_time'],
+                    'create',
+                    '新增客户创建负责人初始阶段'
                 );
 
                 Db::commit();
@@ -5351,19 +5377,45 @@ class Client extends Common
                 return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
             }
 
+            $ownerHistoryService = new ClientOwnerHistoryService();
+            $operatorInfo = [
+                'admin_id' => (int)Session::get('aid'),
+                'username' => (string)Session::get('username'),
+            ];
+
             Db::startTrans();
             try {
                 $successCount = 0;
                 $failCount = 0;
+                $skipCount = 0;
                 foreach ($idsArr as $value) {
-                    $old = Db::name('crm_leads')->where('id', $value)->field('id,kh_name,pr_user,pr_user_id')->find();
+                    $old = Db::name('crm_leads')->where('id', $value)->field('id,kh_name,pr_user,pr_user_id')->lock(true)->find();
                     if (!$old) {
                         $failCount++;
                         continue;
                     }
+
+                    $oldOwner = [
+                        'user_id' => isset($old['pr_user_id']) ? (int)$old['pr_user_id'] : 0,
+                        'user_name' => isset($old['pr_user']) ? (string)$old['pr_user'] : '',
+                    ];
+                    $newOwner = [
+                        'user_id' => (int)$newPrUserId,
+                        'user_name' => $username,
+                    ];
+
+                    // 同负责人转给自己：整个客户跳过，不修改 crm_leads / operation_log / owner_history
+                    if ($ownerHistoryService->isSameOwner($oldOwner, $newOwner)) {
+                        $skipCount++;
+                        continue;
+                    }
+
+                    // 同一个客户的本次转移统一使用同一个变更时间
+                    $changeTime = date('Y-m-d H:i:s');
+
                     $updateData = [
-                        'pr_user_bef' => isset($old['pr_user']) ? $old['pr_user'] : '',
-                        'pr_user_bef_id' => isset($old['pr_user_id']) ? (int)$old['pr_user_id'] : 0,
+                        'pr_user_bef' => $oldOwner['user_name'],
+                        'pr_user_bef_id' => $oldOwner['user_id'],
                         'pr_user' => $username,
                         'pr_user_id' => (int)$newPrUserId
                     ];
@@ -5374,22 +5426,51 @@ class Client extends Common
                     }
                     $successCount++;
                     $khName = isset($old['kh_name']) ? $old['kh_name'] : ('ID:' . $value);
-                    $oldPrUser = isset($old['pr_user']) ? $old['pr_user'] : '';
-                    $this->addOperLog(
+                    $oldPrUser = $oldOwner['user_name'];
+                    $logId = $this->addOperLog(
                         $value,
                         '转移负责人',
                         "客户[{$khName}] 从 [{$oldPrUser}] 转移给 [{$username}]"
                     );
+
+                    // 负责人历史：校验当前阶段一致 -> 关闭旧阶段 -> 新增新阶段。
+                    // 该调用一旦抛异常，说明历史未初始化或数据不一致，必须让整批事务回滚，
+                    // 因此不在此处 catch，直接向外层传播。
+                    $ownerHistoryService->changeOwner(
+                        (int)$value,
+                        $oldOwner,
+                        $newOwner,
+                        'manual_transfer',
+                        $operatorInfo,
+                        (int)$logId,
+                        $changeTime,
+                        ''
+                    );
                 }
 
                 Db::commit();
-                if ($successCount === 0) {
+                // 不变量：idsArr 非空，且每个客户恰好计入 success/fail/skip 三者之一
+                if ($successCount === 0 && $skipCount === 0) {
+                    // 全部失败：未找到有效客户或更新异常（保持原有兼容文案）
                     return json(['code' => 500, 'msg' => '转移失败，未找到有效客户或更新异常', 'data' => []]);
                 }
-                if ($failCount > 0) {
-                    return json(['code' => 0, 'msg' => "成功转移 {$successCount} 个客户，失败 {$failCount} 个客户", 'data' => []]);
+                if ($successCount === 0 && $failCount === 0) {
+                    // 全部跳过：均已经是该负责人
+                    return json(['code' => 0, 'msg' => "所选 {$skipCount} 个客户已经是该负责人，无需转移", 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
                 }
-                return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
+                if ($failCount === 0 && $skipCount === 0) {
+                    // 全部成功（保持原有兼容文案）
+                    return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
+                }
+                // 部分成功 + 跳过/失败混合
+                $msgParts = ["成功转移 {$successCount} 个客户"];
+                if ($skipCount > 0) {
+                    $msgParts[] = "跳过 {$skipCount} 个（已是该负责人）";
+                }
+                if ($failCount > 0) {
+                    $msgParts[] = "失败 {$failCount} 个";
+                }
+                return json(['code' => 0, 'msg' => implode('，', $msgParts), 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
             } catch (\Exception $e) {
                 Db::rollback();
                 Log::error('[Client.alterPrUser] transfer exception', [
@@ -5433,12 +5514,32 @@ class Client extends Common
     //客户转移，变更负责人(个人)
     public function alterPrUserPri()
     {
-        //1，获取提交的线索ID 【1,2,3,4,】
-        $ids = Request::param('ids');
+        // ids 严格清洗：兼容字符串/数组，支持英文逗号/中文逗号/空格分隔，仅保留正整数，去重并保持顺序
+        $idsRawInput = Request::param('ids', '');
+        if (is_array($idsRawInput)) {
+            $idsRawInput = implode(',', $idsRawInput);
+        }
+        $idsParam = trim((string)$idsRawInput);
+        $idParts = preg_split('/[,\s，]+/', $idsParam, -1, PREG_SPLIT_NO_EMPTY);
+        $idsArr = [];
+        $seenIds = [];
+        foreach ($idParts as $part) {
+            $id = (int)$part;
+            if ($id > 0 && !isset($seenIds[$id])) {
+                $seenIds[$id] = 1;
+                $idsArr[] = $id;
+            }
+        }
+        $ids = implode(',', $idsArr);
         $this->assign('ids', $ids);
+
         //客户信息
-        $clientList = Db::name('crm_leads')->where('id', 'in', $ids)->field('id,kh_name')->select();
-        $clientName = implode(',', array_column($clientList, 'kh_name'));
+        $clientList = [];
+        $clientName = '';
+        if (!empty($idsArr)) {
+            $clientList = Db::name('crm_leads')->where('id', 'in', $idsArr)->field('id,kh_name')->select();
+            $clientName = implode(',', array_column($clientList, 'kh_name'));
+        }
         $this->assign('client_name', $clientName);
 
         //查询所有管理员（去除admin）
@@ -5446,45 +5547,132 @@ class Client extends Common
         $this->assign('adminResult', $adminResult);
 
         if (Request::isAjax()) {
-            $username = Request::param('username');
+            if (empty($idsArr)) {
+                return json(['code' => 500, 'msg' => '参数错误或未选择客户', 'data' => []]);
+            }
+
+            $username = trim((string)Request::param('username'));
+            if ($username === '') {
+                return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
+            }
+
             // 查询新负责人的 admin_id
             $newPrUserId = Db::name('admin')->where('username', $username)->value('admin_id');
             if (empty($newPrUserId)) {
                 return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
             }
-            
-            $idsArr = explode(",", $ids);
-            $count = 0;
-            foreach ($idsArr as $key => $value) {
-                // 一次性读出旧负责人信息
-                $old = Db::name('crm_leads')->where('id', $value)->field('pr_user,pr_user_id')->find();
-                
-                // 组装更新数据
-                $data = [];
-                $data['id'] = $value;
-                $data['pr_user_bef'] = $old['pr_user'] ?? '';
-                $data['pr_user_bef_id'] = $old['pr_user_id'] ?? 0;
-                $data['pr_user'] = $username;
-                $data['pr_user_id'] = (int)$newPrUserId;
-                
-                $insertAll = Db::name('crm_leads')->update($data);
-                if ($insertAll) {
-                    $count++;
-                }
-                // 添加日志记录
-                $this->addOperLog(
-                    $value,
-                    '转移负责人',
-                    "从 [{$data['pr_user_bef']}] 转移给 [{$username}]"
-                );
-            }
 
-            if ($count > 0) {
-                $msg = ['code' => 0, 'msg' => '转移' . $count . '个客户成功！', 'data' => []];
-                return json($msg);
-            } else {
-                $msg = ['code' => 500, 'msg' => '转移失败！', 'data' => []];
-                return json($msg);
+            $ownerHistoryService = new ClientOwnerHistoryService();
+            $operatorInfo = [
+                'admin_id' => (int)Session::get('aid'),
+                'username' => trim((string)Session::get('username')),
+            ];
+
+            Db::startTrans();
+            try {
+                $successCount = 0;
+                $failCount = 0;
+                $skipCount = 0;
+                foreach ($idsArr as $value) {
+                    // 加行锁读取旧负责人，避免并发转移导致的快照不一致
+                    $old = Db::name('crm_leads')->where('id', $value)->lock(true)->field('id,kh_name,pr_user,pr_user_id')->find();
+                    if (!$old) {
+                        $failCount++;
+                        continue;
+                    }
+
+                    $oldOwner = [
+                        'user_id' => (int)($old['pr_user_id'] ?? 0),
+                        'user_name' => trim((string)($old['pr_user'] ?? '')),
+                    ];
+                    $newOwner = [
+                        'user_id' => (int)$newPrUserId,
+                        'user_name' => $username,
+                    ];
+
+                    // 同负责人转给自己：整个客户跳过，不修改 crm_leads / operation_log / owner_history
+                    if ($ownerHistoryService->isSameOwner($oldOwner, $newOwner)) {
+                        $skipCount++;
+                        continue;
+                    }
+
+                    // 同一个客户的本次转移统一使用同一个变更时间
+                    $changeTime = date('Y-m-d H:i:s');
+
+                    $updateData = [
+                        'pr_user_bef' => $oldOwner['user_name'],
+                        'pr_user_bef_id' => $oldOwner['user_id'],
+                        'pr_user' => $username,
+                        'pr_user_id' => (int)$newPrUserId,
+                    ];
+                    $res = Db::name('crm_leads')->where('id', $value)->update($updateData);
+                    if ($res === false) {
+                        $failCount++;
+                        continue;
+                    }
+
+                    $khName = isset($old['kh_name']) ? $old['kh_name'] : ('ID:' . $value);
+                    $oldPrUser = $oldOwner['user_name'];
+                    $logId = $this->addOperLog(
+                        $value,
+                        '转移负责人',
+                        "客户[{$khName}] 从 [{$oldPrUser}] 转移给 [{$username}]"
+                    );
+                    if ((int)$logId <= 0) {
+                        throw new \RuntimeException('负责人转移操作日志写入失败');
+                    }
+
+                    // 负责人历史：校验当前阶段一致 -> 关闭旧阶段 -> 新增新阶段。
+                    // 该调用一旦抛异常，说明历史未初始化或数据不一致，必须让整批事务回滚，
+                    // 因此不在此处 catch，直接向外层传播。
+                    $ownerHistoryService->changeOwner(
+                        (int)$value,
+                        $oldOwner,
+                        $newOwner,
+                        'manual_transfer',
+                        $operatorInfo,
+                        (int)$logId,
+                        $changeTime,
+                        ''
+                    );
+
+                    $successCount++;
+                }
+
+                Db::commit();
+                // 不变量：idsArr 非空，且每个客户恰好计入 success/fail/skip 三者之一
+                if ($successCount === 0 && $skipCount === 0) {
+                    // 全部失败：未找到有效客户或更新异常（保持原有兼容文案）
+                    return json(['code' => 500, 'msg' => '转移失败，未找到有效客户或更新异常', 'data' => []]);
+                }
+                if ($successCount === 0 && $failCount === 0) {
+                    // 全部跳过：均已经是该负责人
+                    return json(['code' => 0, 'msg' => "所选 {$skipCount} 个客户已经是该负责人，无需转移", 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
+                }
+                if ($failCount === 0 && $skipCount === 0) {
+                    // 全部成功（保持原有兼容文案）
+                    return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
+                }
+                // 部分成功 + 跳过/失败混合
+                $msgParts = ["成功转移 {$successCount} 个客户"];
+                if ($skipCount > 0) {
+                    $msgParts[] = "跳过 {$skipCount} 个（已是该负责人）";
+                }
+                if ($failCount > 0) {
+                    $msgParts[] = "失败 {$failCount} 个";
+                }
+                return json(['code' => 0, 'msg' => implode('，', $msgParts), 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
+            } catch (\Exception $e) {
+                Db::rollback();
+                Log::error('[Client.alterPrUserPri] 负责人转移失败', [
+                    'ids' => $idsArr,
+                    'new_owner_id' => (int)$newPrUserId,
+                    'new_owner_name' => $username,
+                    'operator_id' => $operatorInfo['admin_id'],
+                    'operator_name' => $operatorInfo['username'],
+                    'error' => $e->getMessage(),
+                ]);
+                return json(['code' => 500, 'msg' => '转移失败！', 'data' => []]);
             }
         }
 
