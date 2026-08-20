@@ -5,6 +5,7 @@ namespace app\admin\service;
 use think\Db;
 use think\facade\Session;
 use think\facade\Log;
+use app\admin\service\ClientOwnerHistoryService;
 use app\admin\service\LiberumConfigService;
 
 class LiberumFirstTimeoutService
@@ -299,13 +300,17 @@ class LiberumFirstTimeoutService
         $id = (int)$id;
         $assignUser = trim((string)$assignUser);
         $operatorInfo = is_array($operatorInfo) ? $operatorInfo : [];
-        $operatorName = trim((string)($operatorInfo['username'] ?? Session::get('username')));
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? ''));
 
         if ($id <= 0) {
             return ['code' => -200, 'msg' => '参数错误：客户ID无效', 'data' => []];
         }
         if ($assignUser === '') {
             return ['code' => -200, 'msg' => '请选择分配业务员', 'data' => []];
+        }
+        if ($operatorId <= 0 || $operatorName === '') {
+            return ['code' => -200, 'msg' => '登录状态异常，无法执行首次超时重新分配', 'data' => []];
         }
 
         $assignAdminInfo = $this->findAdminByUsername($assignUser);
@@ -336,8 +341,19 @@ class LiberumFirstTimeoutService
             $this->applyFirstTimeoutRuleFilters($query, $firstFollowDays, $ruleEffectiveDate);
             $query->whereRaw($this->buildNoFollowExistsSql('l.id'));
 
+            $leadFields = ['l.id', 'l.kh_name', 'l.pr_user', 'l.status', 'l.issuccess'];
+            if ($this->tableHasColumn('crm_leads', 'pr_user_id')) {
+                $leadFields[] = 'l.pr_user_id';
+            }
+            if ($this->tableHasColumn('crm_leads', 'pr_user_bef')) {
+                $leadFields[] = 'l.pr_user_bef';
+            }
+            if ($this->tableHasColumn('crm_leads', 'pr_user_bef_id')) {
+                $leadFields[] = 'l.pr_user_bef_id';
+            }
+
             $lead = $query
-                ->field('l.id,l.pr_user,l.status,l.issuccess')
+                ->field(implode(',', $leadFields))
                 ->lock(true)
                 ->find();
             if (!is_array($lead) || empty($lead)) {
@@ -345,13 +361,37 @@ class LiberumFirstTimeoutService
                 return ['code' => -200, 'msg' => '客户已被处理或无权限操作', 'data' => []];
             }
 
+            // 负责人生命周期要求：oldOwner 必须是本次更新前、crm_leads 当前负责人的真实快照，
+            // 不允许根据 pr_user_bef 猜测，也不允许更新后再反查。
+            $oldOwner = [
+                'user_id' => (int)($lead['pr_user_id'] ?? 0),
+                'user_name' => trim((string)($lead['pr_user'] ?? '')),
+            ];
+            $newOwner = [
+                'user_id' => (int)($assignAdminInfo['admin_id'] ?? 0),
+                'user_name' => trim((string)$assignUser),
+            ];
+            if ($newOwner['user_id'] <= 0 || $newOwner['user_name'] === '') {
+                Db::rollback();
+                return ['code' => -200, 'msg' => '请选择有效业务员', 'data' => []];
+            }
+
             $now = date('Y-m-d H:i:s');
             $updateData = [
-                'pr_user' => $assignUser,
+                'pr_user' => $newOwner['user_name'],
                 'to_kh_time' => $now,
                 'ut_time' => $now,
                 'status' => 1,
             ];
+            if ($this->tableHasColumn('crm_leads', 'pr_user_id')) {
+                $updateData['pr_user_id'] = $newOwner['user_id'];
+            }
+            if ($this->tableHasColumn('crm_leads', 'pr_user_bef')) {
+                $updateData['pr_user_bef'] = $oldOwner['user_name'];
+            }
+            if ($this->tableHasColumn('crm_leads', 'pr_user_bef_id')) {
+                $updateData['pr_user_bef_id'] = $oldOwner['user_id'];
+            }
             if ($this->tableHasColumn('crm_leads', 'joint_person')) {
                 $updateData['joint_person'] = '';
             }
@@ -369,11 +409,37 @@ class LiberumFirstTimeoutService
                 return ['code' => -200, 'msg' => '客户已被处理或无权限操作', 'data' => []];
             }
 
+            // 首次超时重新分配的数据库审计日志（crm_operation_log），非文件日志
+            $khName = trim((string)($lead['kh_name'] ?? ''));
+            $oldOwnerDisplay = $oldOwner['user_name'] !== '' ? $oldOwner['user_name'] : '无';
+            $description = '客户[' . $khName . '] 首次跟进超时，从 [' . $oldOwnerDisplay . '] 重新分配给 [' . $newOwner['user_name'] . ']';
+            $logId = $this->addFirstTimeoutOperLog((int)$id, $description, $operatorId, $operatorName, $now);
+            if ((int)$logId <= 0) {
+                throw new \RuntimeException('首次超时重新分配操作日志写入失败');
+            }
+
+            // 负责人生命周期：即使 oldOwner 与 newOwner 相同，也必须切换新的任职阶段（重新计时），
+            // 因此本方法禁止调用 isSameOwner() 进行跳过。changeOwner() 内部任何异常均向外传播触发整体回滚。
+            $ownerHistoryService = new ClientOwnerHistoryService();
+            $ownerHistoryService->changeOwner(
+                (int)$id,
+                $oldOwner,
+                $newOwner,
+                'first_timeout_reassign',
+                [
+                    'admin_id' => $operatorId,
+                    'username' => $operatorName,
+                ],
+                (int)$logId,
+                $now,
+                '首次超时重新分配'
+            );
+
             try {
                 Log::record(
                     '首次超时重新分配：客户ID=' . $id
-                    . '，原负责人=' . (string)($lead['pr_user'] ?? '')
-                    . '，新负责人=' . $assignUser
+                    . '，原负责人=' . $oldOwner['user_name']
+                    . '，新负责人=' . $newOwner['user_name']
                     . '，操作人=' . $operatorName,
                     'info'
                 );
@@ -1232,6 +1298,31 @@ class LiberumFirstTimeoutService
             'inquiry_id' => trim((string)($row['inquiry_id'] ?? '')),
             'port_id' => trim((string)($row['port_id'] ?? '')),
         ];
+    }
+
+    /**
+     * 写入首次超时重新分配的数据库审计日志（crm_operation_log）
+     *
+     * 字段结构与 Client::addOperLog() / Liberum::addLiberumOperLog() 保持一致。
+     *
+     * @param int $leadsId
+     * @param string|array $description
+     * @param int $operatorId
+     * @param string $operatorName
+     * @param string|null $createdAt 不传时使用当前时间，调用方应统一传入本次变更时间 $now
+     * @return int crm_operation_log.id
+     */
+    private function addFirstTimeoutOperLog($leadsId, $description, $operatorId, $operatorName, $createdAt = null)
+    {
+        $description = is_string($description) ? $description : json_encode($description, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return (int)Db::table('crm_operation_log')->insertGetId([
+            'user_id' => (int)$operatorId,
+            'leads_id' => (int)$leadsId,
+            'oper_type' => '首次超时重新分配',
+            'description' => $description,
+            'oper_user' => (string)$operatorName,
+            'created_at' => $createdAt !== null ? $createdAt : date('Y-m-d H:i:s'),
+        ]);
     }
 
     /**
