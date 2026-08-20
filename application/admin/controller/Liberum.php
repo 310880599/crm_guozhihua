@@ -7,6 +7,7 @@ use think\facade\Session;
 use think\facade\Env;
 use app\admin\behavior\ContactMap; 
 use app\admin\model\LiberumType as LiberumTypeModel;
+use app\admin\service\ClientOwnerHistoryService;
 use app\admin\service\LiberumAutoCandidateService;
 use app\admin\service\LiberumConfigService;
 use app\admin\service\LiberumFirstTimeoutService;
@@ -1108,6 +1109,11 @@ class Liberum extends Common{
             return ['code' => -200, 'msg' => '参数错误', 'data' => []];
         }
 
+        // 新领取人身份必须严格有效，禁止写入 pr_user_id=0 / owner_user_id=0 的负责人历史
+        if ((int)$adminId <= 0 || trim((string)$curname) === '') {
+            return ['code' => -200, 'msg' => '登录状态异常，无法领取客户', 'data' => []];
+        }
+
         Db::startTrans();
         try {
             $ghClient = Db::table('crm_leads')
@@ -1120,6 +1126,16 @@ class Liberum extends Common{
                 Db::rollback();
                 return ['code' => -200, 'msg' => '该客户已被其他人领取或已不在公海', 'data' => []];
             }
+
+            // 领取前旧负责人快照（供负责人生命周期使用），必须在 crm_leads 更新前基于行锁读取结果构造
+            $oldOwner = [
+                'user_id' => (int)($ghClient['pr_user_id'] ?? 0),
+                'user_name' => trim((string)($ghClient['pr_user'] ?? '')),
+            ];
+            $newOwner = [
+                'user_id' => (int)$adminId,
+                'user_name' => trim((string)$curname),
+            ];
 
             // 保留原有系统限制：月领取次数限制 + 持有客户数量限制
             $curget = Db::table('admin')->where(['username' => $curname])->field('curgetnum')->find();
@@ -1196,6 +1212,12 @@ class Liberum extends Common{
                 'ut_time' => $now,
                 'ispublic' => 2
             ];
+            if ($this->tableHasColumn('crm_leads', 'pr_user_bef_id')) {
+                $updateData['pr_user_bef_id'] = $oldOwner['user_id'];
+            }
+            if ($this->tableHasColumn('crm_leads', 'pr_user_id')) {
+                $updateData['pr_user_id'] = $newOwner['user_id'];
+            }
             $result = Db::table('crm_leads')
                 ->where('id', $leadId)
                 ->where('status', 2)
@@ -1231,6 +1253,33 @@ class Liberum extends Common{
                 $logData['gh_type'] = $beforeGhTypeName !== '' ? $beforeGhTypeName : '';
             }
             Db::table('crm_liberum_pick_log')->insert($logData);
+
+            // 公海领取操作审计日志，作为负责人生命周期 source_log_id 的溯源依据
+            $khName = isset($ghClient['kh_name']) ? (string)$ghClient['kh_name'] : '';
+            $oldOwnerText = $oldOwner['user_name'] !== '' ? $oldOwner['user_name'] : '无';
+            $operDescription = "客户[{$khName}] 从公海被 [{$newOwner['user_name']}] 领取，领取前负责人 [{$oldOwnerText}]";
+            $logId = $this->addLiberumOperLog($leadId, '公海领取', $operDescription, $now);
+            if ((int)$logId <= 0) {
+                throw new \RuntimeException('公海领取操作日志写入失败');
+            }
+
+            // 负责人生命周期接入：即便新旧负责人为同一人（重新从公海领取），也必须新增新的任职阶段，
+            // 因此本处禁止调用 isSameOwner() 做跳过判断。
+            $ownerHistoryService = new ClientOwnerHistoryService();
+            $operatorInfo = [
+                'admin_id' => (int)$adminId,
+                'username' => trim((string)$curname),
+            ];
+            $ownerHistoryService->changeOwner(
+                (int)$leadId,
+                $oldOwner,
+                $newOwner,
+                'liberum_pick',
+                $operatorInfo,
+                (int)$logId,
+                $now,
+                '公海领取'
+            );
 
             Db::commit();
             return ['code' => 0, 'msg' => '提取客户成功！', 'data' => []];
@@ -1445,6 +1494,29 @@ class Liberum extends Common{
         header('Pragma: public');
         $writer->save('php://output');
         exit;
+    }
+
+    /**
+     * 写入 crm_operation_log 操作审计日志（字段结构与 Client::addOperLog() 保持一致）。
+     * 供公海领取（robClient）记录审计日志，作为负责人生命周期 source_log_id 的来源。
+     *
+     * @param int $leadsId
+     * @param string $operType
+     * @param string $description
+     * @param string|null $createdAt 复用调用方统一时间，未传入时才使用当前时间
+     * @return int insertGetId 返回的日志ID
+     */
+    private function addLiberumOperLog($leadsId, $operType, $description, $createdAt = null)
+    {
+        $description = is_string($description) ? $description : json_encode($description, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        return Db::table('crm_operation_log')->insertGetId([
+            'user_id' => Session::get('aid'),
+            'leads_id' => $leadsId,
+            'oper_type' => $operType,
+            'description' => $description,
+            'oper_user' => Session::get('username'),
+            'created_at' => $createdAt !== null ? $createdAt : date('Y-m-d H:i:s'),
+        ]);
     }
 
     /**
