@@ -447,6 +447,8 @@ class LiberumPickLogService extends BaseAdminService
         $hasLogActiveLeadsId = $this->hasColumn('crm_liberum_pick_log', 'active_leads_id');
         $hasLeadsToGhTime = $this->hasColumn('crm_leads', 'to_gh_time');
         $hasLeadsPrUserId = $this->hasColumn('crm_leads', 'pr_user_id');
+        $hasLeadsPrUserBef = $this->hasColumn('crm_leads', 'pr_user_bef');
+        $hasLeadsPrUserBefId = $this->hasColumn('crm_leads', 'pr_user_bef_id');
         $hasLeadsPrGhType = $this->hasColumn('crm_leads', 'pr_gh_type');
         $hasInLogLeadsId = $this->hasColumn('crm_liberum_in_log', 'leads_id');
         $hasInLogKhName = $this->hasColumn('crm_liberum_in_log', 'kh_name');
@@ -592,14 +594,21 @@ class LiberumPickLogService extends BaseAdminService
                 }
 
                 $leadKhName = isset($lead['kh_name']) ? (string)$lead['kh_name'] : '';
+                // 公海期间保留最后负责人：退回公海不清空 pr_user / pr_user_id，
+                // 负责人变更仅由 ClientOwnerHistoryService::changeOwner() 触发的接手动作（如 robClient）处理。
                 $leadUpdate = [
                     'status' => 2,
-                    'pr_user_bef' => $currentPrUser,
-                    'pr_user' => '',
                     'ut_time' => $nowDateTime,
                 ];
-                if ($hasLeadsPrUserId) {
-                    $leadUpdate['pr_user_id'] = 0;
+                // pr_user_bef 仅在当前为空时用当前负责人回填，不覆盖已有的历史前负责人快照（对齐 Client::toMoveGh() 语义）。
+                if ($hasLeadsPrUserBef && trim((string)($lead['pr_user_bef'] ?? '')) === '') {
+                    $leadUpdate['pr_user_bef'] = $currentPrUser;
+                }
+                if ($hasLeadsPrUserBefId && $hasLeadsPrUserId
+                    && (int)($lead['pr_user_bef_id'] ?? 0) <= 0
+                    && (int)($lead['pr_user_id'] ?? 0) > 0
+                ) {
+                    $leadUpdate['pr_user_bef_id'] = (int)$lead['pr_user_id'];
                 }
                 if ($hasLeadsPrGhType) {
                     $leadUpdate['pr_gh_type'] = $restoredGhTypeId;
