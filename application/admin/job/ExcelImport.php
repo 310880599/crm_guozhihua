@@ -3,6 +3,7 @@
 namespace app\admin\job;
 
 use app\admin\controller\Client;
+use app\admin\service\ClientOwnerHistoryService;
 use think\Db;
 use think\queue\Job;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -289,10 +290,11 @@ class ExcelImport
                             }
                         }
                     }
-                    // 处理负责人：支持用户名（若为空则默认为当前登录人）
-                    $oper_user = $pr_user;
+                    // 处理负责人：Excel「负责人」作为客户真实负责人；空则回退导入操作人
+                    $ownerName = $pr_user;
+                    $ownerId   = (int)($data['user_id'] ?? 0);
                     if (!empty($rowAssoc['负责人'])) {
-                        $resp = $rowAssoc['负责人'];
+                        $resp = trim((string)$rowAssoc['负责人']);
                         $admin = Db::name('admin')->where('username', $resp)->find();
                         if (!$admin) {
                             $fail_count++;
@@ -304,7 +306,8 @@ class ExcelImport
                             Client::addOperLog(null, '数据导入', $logData);
                             continue;
                         }
-                        $oper_user = $admin['username'];
+                        $ownerName = $admin['username'];
+                        $ownerId   = (int)$admin['id'];
                     }
 
                     // **新增代码**：产品名称匹配产品ID
@@ -325,6 +328,7 @@ class ExcelImport
                     }
 
                     // 构建客户主表数据数组（注意：product_name存储为产品ID）
+                    // oper_user = 运营人员（与负责人无关）；Excel 模板无「运营人员」列，最小风险置空，不再写 Excel 负责人
                     $leadsData = [
                         'kh_name'      => $rowAssoc['客户名称'] ?? '',
                         'kh_contact'   => $rowAssoc['联系人'] ?? '',
@@ -332,13 +336,16 @@ class ExcelImport
                         'kh_rank'      => $rowAssoc['客户等级'] ?? '',
                         'xs_area'      => $rowAssoc['地区'] ?? ($rowAssoc['国家'] ?? ''),
                         'product_name' => $productId,  // 使用匹配到的产品ID
-                        'oper_user'    => $oper_user,
+                        'oper_user'    => '',
                         'inquiry_id'   => $inquiry_id,
                         'port_id'      => $port_id_str,
                         'joint_person' => $joint_person_str,
                         'remark'       => $rowAssoc['其他信息'] ?? ($rowAssoc['客户备注'] ?? ''),
-                        'pr_user'      => $pr_user,
-                        'pr_user_bef'  => $pr_user,
+                        'pr_user'      => $ownerName,
+                        // pr_user_id：负责人生命周期初始化（createInitialOwnerStage）强制要求 owner.user_id > 0
+                        'pr_user_id'   => $ownerId,
+                        'pr_user_bef'  => $ownerName,
+                        'pr_user_bef_id' => $ownerId,
                         'at_user'      => $pr_user,
                         'at_time'      => $current_time,
                         'ut_time'      => $current_time,
@@ -366,6 +373,27 @@ class ExcelImport
                     if (!$leadsId) {
                         throw new \Exception('客户主表数据插入失败');
                     }
+
+                    // 负责人生命周期初始化：必须使用最终写入 crm_leads 的负责人信息（pr_user/pr_user_id）。
+                    // 失败将抛出异常，交由外层 catch 触发本行事务 rollback，
+                    // 避免出现 crm_leads 存在但 crm_client_owner_history 不存在的情况。
+                    $ownerHistoryService = new ClientOwnerHistoryService();
+                    $ownerHistoryService->createInitialOwnerStage(
+                        $leadsId,
+                        [
+                            'user_id'   => (int)$leadsData['pr_user_id'],
+                            'user_name' => trim((string)$leadsData['pr_user']),
+                        ],
+                        [
+                            'admin_id' => (int)Session::get('aid'),
+                            'username' => trim((string)Session::get('username')),
+                        ],
+                        0,
+                        $current_time,
+                        'excel_import',
+                        'Excel导入初始化负责人生命周期'
+                    );
+
                     // 构建联系人数据列表
                     $contactsData = [];
                     // 主电话（可能有多个）

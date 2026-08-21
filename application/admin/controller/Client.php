@@ -8,6 +8,8 @@ use think\facade\Session;
 use think\facade\Env;
 use think\facade\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use think\facade\Cache;
 use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
@@ -1746,11 +1748,15 @@ class Client extends Common
         $headers = array_shift($data); // 表头
         $current_time = date("Y-m-d H:i:s");
         $pr_user = Session::get('username');
+        // pr_user_id：负责人生命周期初始化（createInitialOwnerStage）强制要求 owner.user_id > 0，
+        // 与 Client::add() 保持一致，直接取当前登录人的 admin_id
+        $pr_user_id = (int)Session::get('aid');
 
         Db::startTrans();
         try {
             $insertedCount = 0;
             $contactsData = [];
+            $ownerHistoryService = new ClientOwnerHistoryService();
 
             foreach ($data as $row) {
                 $rowAssoc = [];
@@ -1767,6 +1773,7 @@ class Client extends Common
                     'remark'       => $rowAssoc['客户备注'] ?? '',
                     'kh_status'    => $rowAssoc['客户来源'] ?? '',
                     'pr_user'      => $pr_user,
+                    'pr_user_id'   => $pr_user_id,
                     'ut_time'      => $current_time,
                     'at_time'      => $current_time,
                     'at_user'      => $pr_user,
@@ -1776,6 +1783,28 @@ class Client extends Common
                 ];
 
                 $leadsId = Db::name('crm_leads')->insertGetId($leadsRow);
+                if (!$leadsId) {
+                    throw new \Exception('客户主表数据插入失败');
+                }
+
+                // 负责人生命周期初始化：必须使用最终写入 crm_leads 的负责人信息（pr_user/pr_user_id）。
+                // 失败将抛出异常，交由外层 catch 触发整批事务 rollback，避免出现
+                // crm_leads 存在但 crm_client_owner_history 不存在的情况。
+                $ownerHistoryService->createInitialOwnerStage(
+                    $leadsId,
+                    [
+                        'user_id'   => $pr_user_id,
+                        'user_name' => trim((string)$pr_user),
+                    ],
+                    [
+                        'admin_id' => $pr_user_id,
+                        'username' => trim((string)$pr_user),
+                    ],
+                    0,
+                    $current_time,
+                    'excel_import',
+                    'Excel导入初始化负责人生命周期'
+                );
 
                 // 构建联系人数据
                 $contacts = [
@@ -6085,46 +6114,53 @@ class Client extends Common
     }
 
 
-    // 下载导入模板（CSV格式）
+    // 下载导入模板（XLSX格式）
     public function tpl()
     {
         // 文件名包含当前日期时间
-        $filename = '客户导入模板_' . date('Ymd_His') . '.csv';
-        // 工具函数：输出CSV一行，确保字段中包含的引号正确转义
-        $csvLine = function(array $cols) {
-            $safe = array_map(function($v) {
-                $v = str_replace('"', '""', (string)$v);
-                return '"' . $v . '"';
-            }, $cols);
-            return implode(',', $safe) . "\r\n";
-        };
+        $filename = '客户导入模板_' . date('Ymd_His') . '.xlsx';
 
         // 表头字段（客户名称、电话、辅助电话...原来修改时间）
         $header = ['客户名称', '电话', '辅助电话', '产品名称', '所属渠道', '运营端口', '协同人', '负责人', '其他信息', '原来创建时间', '原来修改时间'];
-        // 示例数据（可根据需要调整或留空）
+        // 示例数据：负责人填系统用户名(username)；空则导入时默认使用当前导入账号
         $examples = [
-            ['示例客户A', '13800138000', '13900139000', '产品X', '渠道一', '端口A', '5,7', 'wangwu', '备注信息', '2020-01-01 10:00:00', '2020-06-01 08:00:00'],
-            ['示例客户B', '13700137000', '', '产品Y', '渠道二', '', '', '当前登录人', '', '2021-05-05 09:30:00', '']
+            ['测试导入客户A', '13800138001', '13900139001', '除雪设备', '竞价', '竞价卡1-13837103643', '311', 'admin', 'Excel导入指定负责人测试', '2026-08-21 10:00:00', '2026-08-21 10:00:00'],
+            ['测试导入客户B', '13800138002', '', '除雪设备', '竞价', '竞价卡1-13837103643', '311', '', 'Excel导入默认负责人测试', '2026-08-21 10:00:00', ''],
         ];
 
-        // 清除输出缓冲，设置CSV文件下载头
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $col = 1;
+        foreach ($header as $title) {
+            $sheet->setCellValueByColumnAndRow($col, 1, (string)$title);
+            $col++;
+        }
+
+        $rowNum = 2;
+        foreach ($examples as $row) {
+            $col = 1;
+            foreach ($row as $value) {
+                $sheet->setCellValueByColumnAndRow($col, $rowNum, (string)$value);
+                $col++;
+            }
+            $rowNum++;
+        }
+
+        // 清除输出缓冲，设置XLSX文件下载头
         if (function_exists('ob_get_level')) {
             while (ob_get_level() > 0) {
                 ob_end_clean();
             }
         }
-        header('Content-Type: text/csv; charset=UTF-8');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        $encodedFilename = rawurlencode($filename);
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header("Content-Disposition: attachment; filename=\"{$filename}\"; filename*=UTF-8''{$encodedFilename}");
         header('Pragma: no-cache');
         header('Expires: 0');
-        // 输出UTF-8 BOM，避免中文乱码
-        echo "\xEF\xBB\xBF";
-        // 输出表头
-        echo $csvLine($header);
-        // 输出示例行
-        foreach ($examples as $row) {
-            echo $csvLine($row);
-        }
+
+        $writer = new Xlsx($spreadsheet);
+        $writer->save('php://output');
         exit;
     }
 
