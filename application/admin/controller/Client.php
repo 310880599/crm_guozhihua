@@ -5125,6 +5125,46 @@ class Client extends Common
     }
 
     /**
+     * 只读：客户负责人生命周期历史（全部客户列表入口）
+     * 权限与全部客户列表可见范围一致，不写入负责人历史。
+     */
+    public function getOwnerHistory()
+    {
+        $id = (int)Request::param('id');
+        if ($id <= 0) {
+            return json(['code' => 1, 'msg' => '客户ID无效']);
+        }
+
+        $client = model('Client')->buildClientSearchAllBaseQuery([])
+            ->where('l.id', $id)
+            ->field('l.id,l.kh_name,l.pr_user,l.pr_user_id')
+            ->find();
+        if (!$client) {
+            return json(['code' => 1, 'msg' => '客户不存在或无权查看']);
+        }
+
+        $result = (new ClientOwnerHistoryService())->getHistoryByLeadsId($id);
+
+        return json([
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => [
+                'client' => [
+                    'id' => (int)($client['id'] ?? 0),
+                    'kh_name' => (string)($client['kh_name'] ?? ''),
+                    'current_owner' => (string)($client['pr_user'] ?? ''),
+                    'current_owner_id' => (int)($client['pr_user_id'] ?? 0),
+                ],
+                'history' => $result['history'] ?? [],
+                'anomaly' => [
+                    'open_stage_count' => (int)($result['open_stage_count'] ?? 0),
+                    'message' => (string)($result['anomaly_message'] ?? ''),
+                ],
+            ],
+        ]);
+    }
+
+    /**
      * 删除跟进记录（逻辑删除）
      */
     public function deleteFollowComment()

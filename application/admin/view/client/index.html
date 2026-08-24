@@ -617,6 +617,7 @@
     <a class="layui-btn layui-btn-primary layui-btn-xs" lay-event="alter"><i class="layui-icon">&#xe60e;</i>转移</a>
     <a class="layui-btn layui-btn-primary layui-btn-xs" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>申请成交</a>
     <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs" lay-event="ownerHistory">负责人历史</a>
     {{# if(d.aid == 1) { }}
     <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
     {{# } }}
@@ -951,7 +952,7 @@
                         return v;
                         }
                     },
-                    { width: 420, align: 'center', toolbar: '#action' }
+                    { width: 520, align: 'center', toolbar: '#action' }
             ]];
 
             function restoreColWidth(colArr, callback) {
@@ -1568,6 +1569,110 @@
                     }
                 });
             });
+            function escapeOwnerHistoryHtml(str) {
+                return String(str == null ? '' : str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+
+            function buildOwnerHistoryHtml(payload) {
+                var client = (payload && payload.client) || {};
+                var history = (payload && payload.history) || [];
+                var anomaly = (payload && payload.anomaly) || {};
+                var html = '<div style="padding:16px 20px 8px;max-height:70vh;overflow:auto;">';
+
+                if (anomaly.message) {
+                    html += '<div style="margin-bottom:12px;padding:8px 12px;background:#fff7e6;border:1px solid #ffd591;color:#d46b08;border-radius:4px;font-size:13px;">'
+                        + '负责人生命周期数据存在异常：' + escapeOwnerHistoryHtml(anomaly.message)
+                        + '</div>';
+                }
+
+                var currentOwner = String(client.current_owner || '').trim();
+                var currentStages = [];
+                for (var i = 0; i < history.length; i++) {
+                    if (history[i] && history[i].is_current) {
+                        currentStages.push(history[i]);
+                    }
+                }
+                if (currentStages.length === 1 && currentOwner !== '') {
+                    var stageOwner = String(currentStages[0].owner_user_name || '').trim();
+                    if (stageOwner !== '' && stageOwner !== currentOwner) {
+                        html += '<div style="margin-bottom:12px;padding:8px 12px;background:#fff1f0;border:1px solid #ffa39e;color:#cf1322;border-radius:4px;font-size:13px;">'
+                            + '当前负责人信息与生命周期记录不一致'
+                            + '</div>';
+                    }
+                }
+
+                if (!history.length) {
+                    html += '<div style="padding:24px 0;text-align:center;color:#999;">暂无负责人生命周期记录</div>';
+                    html += '</div>';
+                    return html;
+                }
+
+                for (var j = 0; j < history.length; j++) {
+                    var item = history[j] || {};
+                    var isCurrent = !!item.is_current;
+                    var endText = isCurrent ? '当前' : escapeOwnerHistoryHtml(item.end_time || '');
+                    var boxStyle = isCurrent
+                        ? 'border:1px solid #91d5ff;background:#e6f7ff;'
+                        : 'border:1px solid #e8e8e8;background:#fafafa;';
+                    html += '<div style="' + boxStyle + 'border-radius:4px;padding:12px 14px;">';
+                    html += '<div style="font-weight:600;font-size:15px;margin-bottom:6px;">' + escapeOwnerHistoryHtml(item.owner_user_name || '') + '</div>';
+                    html += '<div style="color:#555;font-size:13px;line-height:1.6;">'
+                        + escapeOwnerHistoryHtml(item.start_time || '')
+                        + ' 至 ' + endText
+                        + '</div>';
+                    html += '<div style="color:#555;font-size:13px;margin-top:4px;">来源：' + escapeOwnerHistoryHtml(item.source_type_text || '') + '</div>';
+                    if (String(item.operator_name || '').trim() !== '') {
+                        html += '<div style="color:#888;font-size:12px;margin-top:4px;">操作人：' + escapeOwnerHistoryHtml(item.operator_name) + '</div>';
+                    }
+                    if (String(item.remark || '').trim() !== '') {
+                        html += '<div style="color:#888;font-size:12px;margin-top:4px;">备注：' + escapeOwnerHistoryHtml(item.remark) + '</div>';
+                    }
+                    html += '</div>';
+                    if (j < history.length - 1) {
+                        html += '<div style="text-align:center;color:#bbb;padding:6px 0;font-size:16px;">↓</div>';
+                    }
+                }
+
+                html += '</div>';
+                return html;
+            }
+
+            function openOwnerHistoryDialog(row) {
+                var loading = layer.load(1, { shade: [0.1, '#fff'] });
+                $.ajax({
+                    url: "{:url('Client/getOwnerHistory')}",
+                    type: 'GET',
+                    dataType: 'json',
+                    data: { id: row.id },
+                    success: function (res) {
+                        layer.close(loading);
+                        if (!res || res.code !== 0) {
+                            layer.msg((res && res.msg) || '获取负责人历史失败');
+                            return;
+                        }
+                        var payload = res.data || {};
+                        var khName = (payload.client && payload.client.kh_name) ? payload.client.kh_name : (row.kh_name || '');
+                        layer.open({
+                            type: 1,
+                            title: '负责人生命周期 - ' + escapeOwnerHistoryHtml(khName),
+                            area: ['520px', 'auto'],
+                            maxHeight: 720,
+                            shadeClose: true,
+                            content: buildOwnerHistoryHtml(payload)
+                        });
+                    },
+                    error: function () {
+                        layer.close(loading);
+                        layer.msg('获取负责人历史失败');
+                    }
+                });
+            }
+
             table.on('tool(table-list)', function (obj) {
                 var data = obj.data;
                 if (obj.event === 'del') {
@@ -1599,6 +1704,8 @@
                     openApplySuccessClientDialog(data.id, function () {
                         reloadKeepColWidth();
                     });
+                } else if (obj.event === 'ownerHistory') {
+                    openOwnerHistoryDialog(data);
                 }
             });
 

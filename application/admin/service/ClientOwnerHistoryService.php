@@ -22,6 +22,123 @@ class ClientOwnerHistoryService
     const TABLE = 'crm_client_owner_history';
 
     /**
+     * 按客户ID只读查询全部负责人任职阶段（按时间正序）
+     *
+     * 本方法及其调用链只执行 SELECT，不写入 crm_client_owner_history。
+     * 不调用 getCurrentStage()：该方法属于写路径，0条/多条当前阶段会抛异常。
+     *
+     * @param int $leadsId 客户ID（crm_leads.id）
+     * @return array{history: array, open_stage_count: int, anomaly_message: string}
+     */
+    public function getHistoryByLeadsId(int $leadsId): array
+    {
+        $leadsId = (int)$leadsId;
+        if ($leadsId <= 0) {
+            return [
+                'history' => [],
+                'open_stage_count' => 0,
+                'anomaly_message' => '',
+            ];
+        }
+
+        $rows = Db::table(self::TABLE)
+            ->where('leads_id', $leadsId)
+            ->order('start_time', 'asc')
+            ->order('id', 'asc')
+            ->select();
+
+        if (is_object($rows) && method_exists($rows, 'toArray')) {
+            $rows = $rows->toArray();
+        } elseif (!is_array($rows)) {
+            $rows = [];
+        }
+
+        $history = [];
+        $openStageCount = 0;
+        foreach ($rows as $row) {
+            $endTime = $row['end_time'] ?? null;
+            $isCurrent = $this->isOpenEndTime($endTime);
+            if ($isCurrent) {
+                $openStageCount++;
+            }
+
+            $sourceType = (string)($row['source_type'] ?? '');
+            $history[] = [
+                'id' => (int)($row['id'] ?? 0),
+                'leads_id' => (int)($row['leads_id'] ?? 0),
+                'owner_user_id' => (int)($row['owner_user_id'] ?? 0),
+                'owner_user_name' => (string)($row['owner_user_name'] ?? ''),
+                'start_time' => (string)($row['start_time'] ?? ''),
+                'end_time' => $isCurrent ? '' : (string)$endTime,
+                'source_type' => $sourceType,
+                'source_type_text' => $this->mapSourceTypeText($sourceType),
+                'operator_id' => (int)($row['operator_id'] ?? 0),
+                'operator_name' => (string)($row['operator_name'] ?? ''),
+                'source_log_id' => (int)($row['source_log_id'] ?? 0),
+                'remark' => (string)($row['remark'] ?? ''),
+                'created_at' => (string)($row['created_at'] ?? ''),
+                'is_current' => $isCurrent,
+            ];
+        }
+
+        $anomalyMessage = '';
+        if (!empty($history)) {
+            if ($openStageCount === 0) {
+                $anomalyMessage = '未找到当前负责人阶段';
+            } elseif ($openStageCount > 1) {
+                $anomalyMessage = '存在多个未结束的负责人阶段';
+            }
+        }
+
+        return [
+            'history' => $history,
+            'open_stage_count' => $openStageCount,
+            'anomaly_message' => $anomalyMessage,
+        ];
+    }
+
+    /**
+     * 展示用 source_type 中文映射（不修改库中的英文值）
+     *
+     * @param string $sourceType
+     * @return string
+     */
+    private function mapSourceTypeText($sourceType)
+    {
+        $sourceType = trim((string)$sourceType);
+        if ($sourceType === '') {
+            return '未知来源';
+        }
+
+        $map = [
+            'create' => '新增客户',
+            'excel_import' => 'Excel导入',
+            'manual_transfer' => '手工转移',
+            'liberum_pick' => '公海领取',
+            'first_timeout_reassign' => '首次超时重新分配',
+            'baseline_init' => '系统初始化',
+            'history_init' => '系统初始化',
+        ];
+
+        return $map[$sourceType] ?? $sourceType;
+    }
+
+    /**
+     * 未结束阶段：end_time 为 NULL 或空字符串
+     *
+     * @param mixed $endTime
+     * @return bool
+     */
+    private function isOpenEndTime($endTime)
+    {
+        if ($endTime === null) {
+            return true;
+        }
+
+        return trim((string)$endTime) === '';
+    }
+
+    /**
      * 判断新旧负责人是否为同一人（优先按 user_id 判断）
      *
      * @param array $oldOwner ['user_id' => int, 'user_name' => string]
