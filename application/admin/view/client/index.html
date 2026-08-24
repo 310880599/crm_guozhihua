@@ -580,6 +580,17 @@
                             </div>
                         </div>
                         <div class="layui-inline">
+                            <label class="layui-form-label">历史负责人：</label>
+                            <div class="layui-input-inline">
+                                <select name="history_owner_id" id="history_owner_id" lay-search="">
+                                    <option value="">请选择历史负责人</option>
+                                    {volist name="adminResult" id="vo"}
+                                    <option value="{$vo.admin_id}">{$vo.username}</option>
+                                    {/volist}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="layui-inline">
                             <label class="layui-form-label">日期查询：</label>
                             <div class="layui-input-inline">
                                 <select name="timebucket" id="dateRange" lay-filter="dateRange">

@@ -1000,6 +1000,7 @@ class Client extends Model
             'kh_name' => '',
             'xs_source' => '',
             'pr_user' => '',
+            'history_owner_id' => '',
             'inquiry_id' => '',
             'port_id' => '',
         ], $keyword);
@@ -1058,6 +1059,14 @@ class Client extends Model
                     $subQuery->whereIn('l.pr_user', $usernames);
                 }
             });
+        }
+
+        $historyOwnerId = (int)$keyword['history_owner_id'];
+        if ($historyOwnerId > 0) {
+            $query->whereRaw(
+                'EXISTS (SELECT 1 FROM crm_client_owner_history h WHERE h.leads_id = l.id AND h.owner_user_id = :history_owner_id)',
+                ['history_owner_id' => $historyOwnerId]
+            );
         }
 
         return $query;
