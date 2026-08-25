@@ -5830,6 +5830,229 @@ class Client extends Common
         return $this->fetch('personclient/alter_pr_user');
     }
 
+    /**
+     * 检查客户页：批量/单个转移负责人
+     * 转移字段、日志、生命周期对齐 alterPrUser；可见范围对齐 getCheckClientSearchList。
+     */
+    public function alterPrUserCheck()
+    {
+        $idsRawInput = Request::param('ids', '');
+        if (is_array($idsRawInput)) {
+            $idsRawInput = implode(',', $idsRawInput);
+        }
+        $idsParam = trim((string)$idsRawInput);
+        $idParts = preg_split('/[,\s，]+/', $idsParam, -1, PREG_SPLIT_NO_EMPTY);
+        $idsArr = [];
+        $seenIds = [];
+        foreach ($idParts as $part) {
+            $id = (int)$part;
+            if ($id > 0 && !isset($seenIds[$id])) {
+                $seenIds[$id] = 1;
+                $idsArr[] = $id;
+            }
+        }
+        $ids = implode(',', $idsArr);
+
+        Log::info('[Client.alterPrUserCheck] ids', [
+            'ids_raw' => $idsParam,
+            'ids_clean' => $idsArr,
+            'is_ajax' => Request::isAjax() ? 1 : 0
+        ]);
+
+        $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
+        $this->assign('adminResult', $adminResult);
+        $this->assign('transfer_submit_url', url('Client/alterPrUserCheck'));
+
+        $batchLimit = 500;
+        $scopeDeniedMsg = '所选客户中存在不存在或无权操作的客户，请刷新列表后重新选择';
+        $batchLimitMsg = '批量转移最多支持500个客户';
+        $scopeError = '';
+        $scopedRows = [];
+
+        $visibleUsers = $this->getCheckClientVisibleUsernames();
+        $currentAdmin = [
+            'admin_id' => (int)Session::get('aid'),
+            'group_id' => (int)Session::get('group_id'),
+            'username' => (string)Session::get('username'),
+            'is_super_admin' => $this->isCheckClientSuperAdmin() ? 1 : 0,
+        ];
+
+        if (!empty($idsArr)) {
+            if (count($idsArr) > $batchLimit) {
+                $scopeError = $batchLimitMsg;
+            } else {
+                $list = model('client')->getCheckClientSearchList(
+                    1,
+                    count($idsArr),
+                    ['__id_in' => $idsArr],
+                    $visibleUsers,
+                    $currentAdmin
+                );
+                $scopedRows = (!empty($list) && !empty($list['data'])) ? $list['data'] : [];
+                $allowedMap = [];
+                foreach ((array)$scopedRows as $row) {
+                    $allowedMap[(int)$row['id']] = true;
+                }
+                foreach ($idsArr as $requestId) {
+                    if (!isset($allowedMap[$requestId])) {
+                        $scopeError = $scopeDeniedMsg;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (Request::isAjax()) {
+            $username = trim((string)Request::param('username'));
+
+            if (empty($idsArr)) {
+                return json(['code' => 500, 'msg' => '参数错误或未选择客户', 'data' => []]);
+            }
+            if ($scopeError !== '') {
+                return json(['code' => 500, 'msg' => $scopeError, 'data' => []]);
+            }
+            if ($username === '') {
+                return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
+            }
+
+            $newPrUserId = Db::name('admin')->where('username', $username)->value('admin_id');
+            if (empty($newPrUserId)) {
+                return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
+            }
+
+            $ownerHistoryService = new ClientOwnerHistoryService();
+            $operatorInfo = [
+                'admin_id' => (int)Session::get('aid'),
+                'username' => (string)Session::get('username'),
+            ];
+
+            Db::startTrans();
+            try {
+                $successCount = 0;
+                $failCount = 0;
+                $skipCount = 0;
+                foreach ($idsArr as $value) {
+                    $old = Db::name('crm_leads')
+                        ->where('id', $value)
+                        ->where('status', 1)
+                        ->field('id,kh_name,pr_user,pr_user_id')
+                        ->lock(true)
+                        ->find();
+                    if (!$old) {
+                        throw new \RuntimeException('客户状态已变化，请刷新列表后重新选择');
+                    }
+
+                    $oldOwner = [
+                        'user_id' => isset($old['pr_user_id']) ? (int)$old['pr_user_id'] : 0,
+                        'user_name' => isset($old['pr_user']) ? (string)$old['pr_user'] : '',
+                    ];
+                    $newOwner = [
+                        'user_id' => (int)$newPrUserId,
+                        'user_name' => $username,
+                    ];
+
+                    if ($ownerHistoryService->isSameOwner($oldOwner, $newOwner)) {
+                        $skipCount++;
+                        continue;
+                    }
+
+                    $changeTime = date('Y-m-d H:i:s');
+
+                    $updateData = [
+                        'pr_user_bef' => $oldOwner['user_name'],
+                        'pr_user_bef_id' => $oldOwner['user_id'],
+                        'pr_user' => $username,
+                        'pr_user_id' => (int)$newPrUserId
+                    ];
+                    $res = Db::name('crm_leads')->where('id', $value)->where('status', 1)->update($updateData);
+                    if ($res === false || (int)$res <= 0) {
+                        throw new \RuntimeException('负责人转移更新失败');
+                    }
+
+                    $khName = isset($old['kh_name']) ? $old['kh_name'] : ('ID:' . $value);
+                    $oldPrUser = $oldOwner['user_name'];
+                    $logId = $this->addOperLog(
+                        $value,
+                        '转移负责人',
+                        "客户[{$khName}] 从 [{$oldPrUser}] 转移给 [{$username}]"
+                    );
+                    if ((int)$logId <= 0) {
+                        throw new \RuntimeException('负责人转移操作日志写入失败');
+                    }
+
+                    $ownerHistoryService->changeOwner(
+                        (int)$value,
+                        $oldOwner,
+                        $newOwner,
+                        'manual_transfer',
+                        $operatorInfo,
+                        (int)$logId,
+                        $changeTime,
+                        ''
+                    );
+                    $successCount++;
+                }
+
+                Db::commit();
+                if ($successCount === 0 && $skipCount === 0) {
+                    return json(['code' => 500, 'msg' => '转移失败，未找到有效客户或更新异常', 'data' => []]);
+                }
+                if ($successCount === 0 && $failCount === 0) {
+                    return json(['code' => 0, 'msg' => "所选 {$skipCount} 个客户已经是该负责人，无需转移", 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
+                }
+                if ($failCount === 0 && $skipCount === 0) {
+                    return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
+                }
+                $msgParts = ["成功转移 {$successCount} 个客户"];
+                if ($skipCount > 0) {
+                    $msgParts[] = "跳过 {$skipCount} 个（已是该负责人）";
+                }
+                return json(['code' => 0, 'msg' => implode('，', $msgParts), 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
+            } catch (\Exception $e) {
+                Db::rollback();
+                Log::error('[Client.alterPrUserCheck] transfer exception', [
+                    'ids_clean' => $idsArr,
+                    'username' => $username,
+                    'error' => $e->getMessage()
+                ]);
+                return json(['code' => 500, 'msg' => '转移失败！', 'data' => []]);
+            }
+        }
+
+        if ($scopeError !== '') {
+            $this->assign('ids', '');
+            $this->assign('client_name', $scopeError);
+            $this->assign('client_list', []);
+            return $this->fetch('client/alter_pr_user');
+        }
+
+        $this->assign('ids', $ids);
+        $clientName = '';
+        $clientList = [];
+        if (!empty($idsArr) && !empty($scopedRows)) {
+            $clientList = $scopedRows;
+            $orderMap = array_flip($idsArr);
+            usort($clientList, function ($a, $b) use ($orderMap) {
+                $pa = isset($orderMap[(int)$a['id']]) ? $orderMap[(int)$a['id']] : 9999;
+                $pb = isset($orderMap[(int)$b['id']]) ? $orderMap[(int)$b['id']] : 9999;
+                return $pa - $pb;
+            });
+            $clientCount = count($clientList);
+            if ($clientCount > 1) {
+                $clientName = '已选择' . $clientCount . '个客户';
+            } elseif ($clientCount === 1) {
+                $singleName = trim((string)$clientList[0]['kh_name']);
+                $clientName = $singleName === '' ? '未命名' : $singleName;
+            }
+        }
+        if ($clientName === '') {
+            $clientName = '未找到客户';
+        }
+        $this->assign('client_name', $clientName);
+        $this->assign('client_list', $clientList);
+        return $this->fetch('client/alter_pr_user');
+    }
+
     //客户行业
     public function hangyeList()
     {

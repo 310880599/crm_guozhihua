@@ -763,12 +763,27 @@ class Client extends Model
 
         // “检查客户”使用业务员精确筛选；先从基础 keyword 移除，避免被客户列表基础查询中的 like 影响
         $selectedPrUser = isset($keyword['pr_user']) ? trim((string)$keyword['pr_user']) : '';
+        $idIn = [];
+        if (!empty($keyword['__id_in']) && is_array($keyword['__id_in'])) {
+            $seenIdIn = [];
+            foreach ($keyword['__id_in'] as $idInItem) {
+                $idInVal = (int)$idInItem;
+                if ($idInVal > 0 && !isset($seenIdIn[$idInVal])) {
+                    $seenIdIn[$idInVal] = 1;
+                    $idIn[] = $idInVal;
+                }
+            }
+        }
         $baseKeyword = (array)$keyword;
         $baseKeyword['pr_user'] = '';
+        unset($baseKeyword['__id_in']);
 
         // 基础口径对齐“客户列表”查询链路
         $query = $this->buildClientSearchAllBaseQuery($baseKeyword, $isSuperAdmin);
         $query->where($mapIsSuccess);
+        if (!empty($idIn)) {
+            $query->whereIn('l.id', $idIn);
+        }
 
         // 检查客户扩展筛选：产品名称
         // 说明：crm_leads.product_name 实际保存的是 crm_products.id，而非中文产品名称，
@@ -859,15 +874,31 @@ class Client extends Model
             return null;
         }
 
-        $rows = (clone $query)
+        $rowQuery = (clone $query)
             ->field('l.*')
-            ->order('l.at_time desc')
-            ->page($page, $limit)
-            ->select();
+            ->order('l.at_time desc');
+        if (!empty($idIn)) {
+            $rows = $rowQuery->select();
+        } else {
+            $rows = $rowQuery->page($page, $limit)->select();
+        }
         if (is_object($rows) && method_exists($rows, 'toArray')) {
             $rows = $rows->toArray();
         } elseif (!is_array($rows)) {
             $rows = [];
+        }
+        if (!empty($idIn)) {
+            $deduped = [];
+            $seenRowId = [];
+            foreach ($rows as $row) {
+                $rowId = isset($row['id']) ? (int)$row['id'] : 0;
+                if ($rowId > 0 && !isset($seenRowId[$rowId])) {
+                    $seenRowId[$rowId] = 1;
+                    $deduped[] = $row;
+                }
+            }
+            $rows = $deduped;
+            $total = count($rows);
         }
 
         // 兼容检查客户页面展示字段：主/辅电话
