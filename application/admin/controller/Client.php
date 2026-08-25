@@ -5633,24 +5633,45 @@ class Client extends Common
             }
         }
         $ids = implode(',', $idsArr);
-        $this->assign('ids', $ids);
-
-        //客户信息
-        $clientList = [];
-        $clientName = '';
-        if (!empty($idsArr)) {
-            $clientList = Db::name('crm_leads')->where('id', 'in', $idsArr)->field('id,kh_name')->select();
-            $clientName = implode(',', array_column($clientList, 'kh_name'));
-        }
-        $this->assign('client_name', $clientName);
 
         //查询所有管理员（去除admin）
         $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
         $this->assign('adminResult', $adminResult);
 
+        $batchLimit = 500;
+        $scopeDeniedMsg = '所选客户中存在无权操作或状态异常的客户，请刷新列表后重新选择';
+        $batchLimitMsg = '批量转移最多支持500个客户';
+        $currentUsername = trim((string)Session::get('username'));
+        $scopeError = '';
+        if (!empty($idsArr)) {
+            if (count($idsArr) > $batchLimit) {
+                $scopeError = $batchLimitMsg;
+            } else {
+                $allowedIds = Db::name('crm_leads')
+                    ->where('id', 'in', $idsArr)
+                    ->where('pr_user', $currentUsername)
+                    ->where('status', 1)
+                    ->where('issuccess', -1)
+                    ->column('id');
+                $allowedMap = [];
+                foreach ((array)$allowedIds as $allowedId) {
+                    $allowedMap[(int)$allowedId] = true;
+                }
+                foreach ($idsArr as $requestId) {
+                    if (!isset($allowedMap[$requestId])) {
+                        $scopeError = $scopeDeniedMsg;
+                        break;
+                    }
+                }
+            }
+        }
+
         if (Request::isAjax()) {
             if (empty($idsArr)) {
                 return json(['code' => 500, 'msg' => '参数错误或未选择客户', 'data' => []]);
+            }
+            if ($scopeError !== '') {
+                return json(['code' => 500, 'msg' => $scopeError, 'data' => []]);
             }
 
             $username = trim((string)Request::param('username'));
@@ -5667,7 +5688,7 @@ class Client extends Common
             $ownerHistoryService = new ClientOwnerHistoryService();
             $operatorInfo = [
                 'admin_id' => (int)Session::get('aid'),
-                'username' => trim((string)Session::get('username')),
+                'username' => $currentUsername,
             ];
 
             Db::startTrans();
@@ -5677,10 +5698,16 @@ class Client extends Common
                 $skipCount = 0;
                 foreach ($idsArr as $value) {
                     // 加行锁读取旧负责人，避免并发转移导致的快照不一致
-                    $old = Db::name('crm_leads')->where('id', $value)->lock(true)->field('id,kh_name,pr_user,pr_user_id')->find();
+                    $old = Db::name('crm_leads')
+                        ->where('id', $value)
+                        ->where('pr_user', $currentUsername)
+                        ->where('status', 1)
+                        ->where('issuccess', -1)
+                        ->lock(true)
+                        ->field('id,kh_name,pr_user,pr_user_id')
+                        ->find();
                     if (!$old) {
-                        $failCount++;
-                        continue;
+                        throw new \RuntimeException('客户状态已变化，请刷新列表后重新选择');
                     }
 
                     $oldOwner = [
@@ -5707,10 +5734,14 @@ class Client extends Common
                         'pr_user' => $username,
                         'pr_user_id' => (int)$newPrUserId,
                     ];
-                    $res = Db::name('crm_leads')->where('id', $value)->update($updateData);
-                    if ($res === false) {
-                        $failCount++;
-                        continue;
+                    $res = Db::name('crm_leads')
+                        ->where('id', $value)
+                        ->where('pr_user', $currentUsername)
+                        ->where('status', 1)
+                        ->where('issuccess', -1)
+                        ->update($updateData);
+                    if ($res === false || (int)$res <= 0) {
+                        throw new \RuntimeException('负责人转移更新失败');
                     }
 
                     $khName = isset($old['kh_name']) ? $old['kh_name'] : ('ID:' . $value);
@@ -5755,13 +5786,10 @@ class Client extends Common
                     // 全部成功（保持原有兼容文案）
                     return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
                 }
-                // 部分成功 + 跳过/失败混合
+                // 部分成功 + 跳过混合
                 $msgParts = ["成功转移 {$successCount} 个客户"];
                 if ($skipCount > 0) {
                     $msgParts[] = "跳过 {$skipCount} 个（已是该负责人）";
-                }
-                if ($failCount > 0) {
-                    $msgParts[] = "失败 {$failCount} 个";
                 }
                 return json(['code' => 0, 'msg' => implode('，', $msgParts), 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
             } catch (\Exception $e) {
@@ -5777,6 +5805,27 @@ class Client extends Common
                 return json(['code' => 500, 'msg' => '转移失败！', 'data' => []]);
             }
         }
+
+        // GET：未通过权限/数量校验时不展示客户名称，也不把 ids 交给弹窗提交
+        if ($scopeError !== '') {
+            $this->assign('ids', '');
+            $this->assign('client_name', $scopeError);
+            return $this->fetch('personclient/alter_pr_user');
+        }
+
+        $this->assign('ids', $ids);
+        $clientName = '';
+        if (!empty($idsArr)) {
+            $clientList = Db::name('crm_leads')
+                ->where('id', 'in', $idsArr)
+                ->where('pr_user', $currentUsername)
+                ->where('status', 1)
+                ->where('issuccess', -1)
+                ->field('id,kh_name')
+                ->select();
+            $clientName = implode(',', array_column((array)$clientList, 'kh_name'));
+        }
+        $this->assign('client_name', $clientName);
 
         return $this->fetch('personclient/alter_pr_user');
     }
