@@ -5419,23 +5419,42 @@ class Client extends Common
             'is_ajax' => Request::isAjax() ? 1 : 0
         ]);
 
-        $debugKhNameMap = [];
-        if (!empty($idsArr)) {
-            $debugKhNameMap = Db::name('crm_leads')->where('id', 'in', $idsArr)->column('kh_name', 'id');
-        }
-        Log::info('[Client.alterPrUser] kh_name_by_id', [
-            'kh_name_map' => $debugKhNameMap
-        ]);
-
         // 查询所有管理员（去除admin）
         $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
         $this->assign('adminResult', $adminResult);
+
+        $batchLimit = 500;
+        $scopeDeniedMsg = '所选客户中存在不存在或无权操作的客户，请刷新列表后重新选择';
+        $batchLimitMsg = '一次最多转移500个客户，请分批操作';
+        $scopeError = '';
+        if (!empty($idsArr)) {
+            if (count($idsArr) > $batchLimit) {
+                $scopeError = $batchLimitMsg;
+            } else {
+                $allowedIds = model('Client')->buildClientSearchAllBaseQuery([])
+                    ->where('l.id', 'in', $idsArr)
+                    ->column('l.id');
+                $allowedMap = [];
+                foreach ((array)$allowedIds as $allowedId) {
+                    $allowedMap[(int)$allowedId] = true;
+                }
+                foreach ($idsArr as $requestId) {
+                    if (!isset($allowedMap[$requestId])) {
+                        $scopeError = $scopeDeniedMsg;
+                        break;
+                    }
+                }
+            }
+        }
 
         if (Request::isAjax()) {
             $username = trim((string)Request::param('username'));
 
             if (empty($idsArr)) {
                 return json(['code' => 500, 'msg' => '参数错误或未选择客户', 'data' => []]);
+            }
+            if ($scopeError !== '') {
+                return json(['code' => 500, 'msg' => $scopeError, 'data' => []]);
             }
             if ($username === '') {
                 return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
@@ -5458,10 +5477,14 @@ class Client extends Common
                 $failCount = 0;
                 $skipCount = 0;
                 foreach ($idsArr as $value) {
-                    $old = Db::name('crm_leads')->where('id', $value)->field('id,kh_name,pr_user,pr_user_id')->lock(true)->find();
+                    $old = Db::name('crm_leads')
+                        ->where('id', $value)
+                        ->where('status', 1)
+                        ->field('id,kh_name,pr_user,pr_user_id')
+                        ->lock(true)
+                        ->find();
                     if (!$old) {
-                        $failCount++;
-                        continue;
+                        throw new \RuntimeException('客户状态已变化，请刷新列表后重新选择');
                     }
 
                     $oldOwner = [
@@ -5488,12 +5511,11 @@ class Client extends Common
                         'pr_user' => $username,
                         'pr_user_id' => (int)$newPrUserId
                     ];
-                    $res = Db::name('crm_leads')->where('id', $value)->update($updateData);
-                    if ($res === false) {
-                        $failCount++;
-                        continue;
+                    $res = Db::name('crm_leads')->where('id', $value)->where('status', 1)->update($updateData);
+                    if ($res === false || (int)$res <= 0) {
+                        throw new \RuntimeException('负责人转移更新失败');
                     }
-                    $successCount++;
+
                     $khName = isset($old['kh_name']) ? $old['kh_name'] : ('ID:' . $value);
                     $oldPrUser = $oldOwner['user_name'];
                     $logId = $this->addOperLog(
@@ -5501,6 +5523,9 @@ class Client extends Common
                         '转移负责人',
                         "客户[{$khName}] 从 [{$oldPrUser}] 转移给 [{$username}]"
                     );
+                    if ((int)$logId <= 0) {
+                        throw new \RuntimeException('负责人转移操作日志写入失败');
+                    }
 
                     // 负责人历史：校验当前阶段一致 -> 关闭旧阶段 -> 新增新阶段。
                     // 该调用一旦抛异常，说明历史未初始化或数据不一致，必须让整批事务回滚，
@@ -5515,12 +5540,11 @@ class Client extends Common
                         $changeTime,
                         ''
                     );
+                    $successCount++;
                 }
 
                 Db::commit();
-                // 不变量：idsArr 非空，且每个客户恰好计入 success/fail/skip 三者之一
                 if ($successCount === 0 && $skipCount === 0) {
-                    // 全部失败：未找到有效客户或更新异常（保持原有兼容文案）
                     return json(['code' => 500, 'msg' => '转移失败，未找到有效客户或更新异常', 'data' => []]);
                 }
                 if ($successCount === 0 && $failCount === 0) {
@@ -5531,13 +5555,9 @@ class Client extends Common
                     // 全部成功（保持原有兼容文案）
                     return json(['code' => 0, 'msg' => '转移' . $successCount . '个客户成功！', 'data' => []]);
                 }
-                // 部分成功 + 跳过/失败混合
                 $msgParts = ["成功转移 {$successCount} 个客户"];
                 if ($skipCount > 0) {
                     $msgParts[] = "跳过 {$skipCount} 个（已是该负责人）";
-                }
-                if ($failCount > 0) {
-                    $msgParts[] = "失败 {$failCount} 个";
                 }
                 return json(['code' => 0, 'msg' => implode('，', $msgParts), 'data' => ['success_count' => $successCount, 'skip_count' => $skipCount, 'fail_count' => $failCount]]);
             } catch (\Exception $e) {
@@ -5551,12 +5571,25 @@ class Client extends Common
             }
         }
 
-        // GET 打开弹窗页面：根据清洗后的 ids 查询客户名称并展示
+        // GET：未通过范围/数量校验时不展示客户名称，也不把 ids 交给弹窗提交
+        if ($scopeError !== '') {
+            $this->assign('ids', '');
+            $this->assign('client_name', $scopeError);
+            $this->assign('client_list', []);
+            return $this->fetch('client/alter_pr_user');
+        }
+
         $this->assign('ids', $ids);
         $clientName = '';
         $clientList = [];
         if (!empty($idsArr)) {
-            $clientList = Db::name('crm_leads')->where('id', 'in', $idsArr)->field('id,kh_name')->select();
+            $clientList = model('Client')->buildClientSearchAllBaseQuery([])
+                ->where('l.id', 'in', $idsArr)
+                ->field('l.id,l.kh_name')
+                ->select();
+            if (is_object($clientList) && method_exists($clientList, 'toArray')) {
+                $clientList = $clientList->toArray();
+            }
             $orderMap = array_flip($idsArr);
             usort($clientList, function ($a, $b) use ($orderMap) {
                 $pa = isset($orderMap[(int)$a['id']]) ? $orderMap[(int)$a['id']] : 9999;
