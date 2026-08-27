@@ -2080,6 +2080,9 @@
         <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" lay-event="quickFollowColumnSort">
             <i class="layui-icon layui-icon-cols"></i>字段排序
         </button>
+        <button type="button" class="layui-btn layui-btn-sm" lay-event="quickFollowBatchSave" id="quickFollowBatchSaveBtn">
+            <i class="layui-icon layui-icon-ok"></i>一键保存跟进
+        </button>
     </div>
 </script>
 
@@ -2873,6 +2876,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var quickFollowDraftMap = {};
     var quickFollowStatusMap = {};
     var quickFollowSavingMap = {};
+    var quickFollowBatchSaving = false;
     var quickFollowRowMarkMap = {}; // 行颜色标记运行时缓存：leads_id -> bg_color
     var quickFollowRowMarkRemarkMap = {}; // 行标记备注运行时缓存：leads_id -> remark（V2新增）
     var QUICK_FOLLOW_ROW_MARK_COLORS = [
@@ -3908,6 +3912,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         quickFollowDraftMap = {};
         quickFollowStatusMap = {};
         quickFollowSavingMap = {};
+        quickFollowBatchSaving = false;
         quickFollowRowMarkMap = {};
         quickFollowRowMarkRemarkMap = {};
         followHistoryCache = {};
@@ -4260,6 +4265,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     function hasQuickFollowPendingChange() {
+        if (quickFollowBatchSaving) {
+            return true;
+        }
         var statusKeys = Object.keys(quickFollowStatusMap);
         for (var i = 0; i < statusKeys.length; i++) {
             var st = quickFollowStatusMap[statusKeys[i]] || {};
@@ -4948,27 +4956,200 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         });
     }
 
-    function submitQuickFollowRow(leadsId) {
+    function syncQuickFollowDraftFromDom(leadsId) {
         var key = String(leadsId || '');
         if (!key) return;
+        var draft = getQuickFollowDraft(key);
+        var $textarea = $('#quick-follow-dialog .quick-follow-content-input[data-leads-id="' + key + '"]');
+        var $nextInput = $('#quick-follow-dialog .quick-follow-next-input[data-leads-id="' + key + '"]');
+        if ($textarea.length) {
+            draft.content = $textarea.val();
+        }
+        if ($nextInput.length) {
+            draft.next_up_time = normalizeQuickFollowText($nextInput.val() || '');
+        }
+        saveQuickFollowDraftToStorage(key, draft);
+    }
+
+    function collectQuickFollowBatchQueue() {
+        var queue = [];
+        var skipped = 0;
+        var invalid = 0;
+        $('#quick-follow-dialog .quick-follow-content-input').each(function () {
+            var leadsId = String($(this).data('leads-id') || '');
+            if (!leadsId) return;
+            syncQuickFollowDraftFromDom(leadsId);
+            var draft = getQuickFollowDraft(leadsId);
+            var content = normalizeQuickFollowText(draft.content || '');
+            if (!content) {
+                skipped++;
+                return;
+            }
+            if (content.length < 2) {
+                invalid++;
+                setQuickFollowStatus(leadsId, 'draft');
+                return;
+            }
+            queue.push(leadsId);
+        });
+        return { queue: queue, skipped: skipped, invalid: invalid };
+    }
+
+    function getQuickFollowBatchSaveButton() {
+        return $('[lay-event="quickFollowBatchSave"]');
+    }
+
+    function setQuickFollowBatchSaveButtonState(saving, current, total) {
+        var $btn = getQuickFollowBatchSaveButton();
+        if (!$btn.length) return;
+        if (saving) {
+            $btn.addClass('layui-btn-disabled').prop('disabled', true).attr('disabled', 'disabled');
+            $btn.html('<i class="layui-icon layui-icon-loading layui-anim layui-anim-rotate layui-anim-loop"></i> 正在保存 ' + current + ' / ' + total);
+        } else {
+            $btn.removeClass('layui-btn-disabled').prop('disabled', false).removeAttr('disabled');
+            $btn.html('<i class="layui-icon layui-icon-ok"></i>一键保存跟进');
+        }
+    }
+
+    function setQuickFollowRowSaveButtonsDisabled(disabled) {
+        var $btns = $('#quick-follow-dialog .quick-follow-save-btn');
+        if (disabled) {
+            $btns.addClass('layui-btn-disabled').prop('disabled', true).attr('disabled', 'disabled');
+        } else {
+            $btns.removeClass('layui-btn-disabled').prop('disabled', false).removeAttr('disabled');
+        }
+    }
+
+    function buildQuickFollowBatchSummaryMsg(successCount, failCount, skipped) {
+        var parts = ['成功' + successCount + '条'];
+        if (failCount > 0) {
+            parts.push('失败' + failCount + '条');
+        }
+        if (skipped > 0) {
+            parts.push('跳过' + skipped + '条');
+        }
+        return '批量保存完成：' + parts.join('，');
+    }
+
+    function finishQuickFollowBatchSave(successCount, failCount, skipped) {
+        try {
+            quickFollowBatchSaving = false;
+            setQuickFollowBatchSaveButtonState(false);
+            setQuickFollowRowSaveButtonsDisabled(false);
+            var msg = buildQuickFollowBatchSummaryMsg(successCount, failCount, skipped);
+            layer.msg(msg, { icon: failCount > 0 ? 0 : 1, time: 2500 });
+        } catch (e) {
+            quickFollowBatchSaving = false;
+            setQuickFollowBatchSaveButtonState(false);
+            setQuickFollowRowSaveButtonsDisabled(false);
+        }
+    }
+
+    function runQuickFollowBatchQueue(queue, index, total, successCount, failCount, skipped) {
+        if (index >= queue.length) {
+            finishQuickFollowBatchSave(successCount, failCount, skipped);
+            return;
+        }
+        setQuickFollowBatchSaveButtonState(true, index, total);
+        submitQuickFollowRow(queue[index], { silent: true }).always(function (result) {
+            try {
+                if (result && result.success) {
+                    successCount++;
+                } else {
+                    failCount++;
+                }
+                setQuickFollowBatchSaveButtonState(true, index + 1, total);
+                runQuickFollowBatchQueue(queue, index + 1, total, successCount, failCount, skipped);
+            } catch (e) {
+                quickFollowBatchSaving = false;
+                setQuickFollowBatchSaveButtonState(false);
+                setQuickFollowRowSaveButtonsDisabled(false);
+                layer.msg('批量保存异常中断，请重试', { icon: 2, time: 1500 });
+            }
+        });
+    }
+
+    function startQuickFollowBatchSave() {
+        if (quickFollowBatchSaving) {
+            return;
+        }
+        var collected = collectQuickFollowBatchQueue();
+        var queue = collected.queue || [];
+        var skipped = collected.skipped || 0;
+        var invalid = collected.invalid || 0;
+
+        if (!queue.length) {
+            if (invalid > 0) {
+                layer.msg(buildQuickFollowBatchSummaryMsg(0, invalid, skipped), { icon: 0, time: 2500 });
+            } else {
+                layer.msg('当前页没有需要保存的跟进内容', { icon: 0, time: 1500 });
+            }
+            return;
+        }
+
+        quickFollowBatchSaving = true;
+        var total = queue.length;
+        var successCount = 0;
+        var failCount = invalid;
+        setQuickFollowBatchSaveButtonState(true, 0, total);
+        setQuickFollowRowSaveButtonsDisabled(true);
+
+        try {
+            runQuickFollowBatchQueue(queue, 0, total, successCount, failCount, skipped);
+        } catch (e) {
+            quickFollowBatchSaving = false;
+            setQuickFollowBatchSaveButtonState(false);
+            setQuickFollowRowSaveButtonsDisabled(false);
+            layer.msg('批量保存启动失败，请重试', { icon: 2, time: 1500 });
+        }
+    }
+
+    function submitQuickFollowRow(leadsId, options) {
+        options = options || {};
+        var silent = !!options.silent;
+        var dfd = $.Deferred();
+
+        function resolveResult(result) {
+            if (typeof options.done === 'function') {
+                try {
+                    options.done(result);
+                } catch (e) {}
+            }
+            dfd.resolve(result);
+        }
+
+        var key = String(leadsId || '');
+        if (!key) {
+            resolveResult({ success: false, msg: '无效客户' });
+            return dfd.promise();
+        }
         var draft = getQuickFollowDraft(key);
         draft.content = normalizeQuickFollowText(draft.content || '');
         draft.next_up_time = normalizeQuickFollowText(draft.next_up_time || '');
 
         if (quickFollowSavingMap[key]) {
-            layer.msg('正在保存中，请稍候', { icon: 0, time: 1000 });
-            return;
+            if (!silent) {
+                layer.msg('正在保存中，请稍候', { icon: 0, time: 1000 });
+            }
+            resolveResult({ success: false, msg: '正在保存中', reason: 'busy' });
+            return dfd.promise();
         }
 
         if (!draft.content) {
             setQuickFollowStatus(key, 'empty');
-            layer.msg('请输入本次跟进内容', { icon: 0, time: 1200 });
-            return;
+            if (!silent) {
+                layer.msg('请输入本次跟进内容', { icon: 0, time: 1200 });
+            }
+            resolveResult({ success: false, msg: '请输入本次跟进内容', reason: 'empty' });
+            return dfd.promise();
         }
         if (draft.content.length < 2) {
             setQuickFollowStatus(key, 'draft');
-            layer.msg('内容太短', { icon: 0, time: 1200 });
-            return;
+            if (!silent) {
+                layer.msg('内容太短', { icon: 0, time: 1200 });
+            }
+            resolveResult({ success: false, msg: '内容太短', reason: 'invalid' });
+            return dfd.promise();
         }
 
         quickFollowSavingMap[key] = true;
@@ -5000,20 +5181,32 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         $nextInput.val('');
                     }
                     setQuickFollowStatus(key, 'saved', { time: buildNowClockText() });
-                    layer.msg('跟进记录已保存', { icon: 1, time: 1000 });
+                    if (!silent) {
+                        layer.msg('跟进记录已保存', { icon: 1, time: 1000 });
+                    }
+                    resolveResult({ success: true, res: res });
                 } else {
-                    setQuickFollowStatus(key, 'failed', { msg: (res && res.msg) || '保存失败' });
-                    layer.msg((res && res.msg) || '保存失败', { icon: 2, time: 1500 });
+                    var failMsg = (res && res.msg) || '保存失败';
+                    setQuickFollowStatus(key, 'failed', { msg: failMsg });
+                    if (!silent) {
+                        layer.msg(failMsg, { icon: 2, time: 1500 });
+                    }
+                    resolveResult({ success: false, msg: failMsg, reason: 'biz' });
                 }
             },
             error: function () {
                 setQuickFollowStatus(key, 'failed', { msg: '网络错误' });
-                layer.msg('网络错误，保存失败', { icon: 2, time: 1500 });
+                if (!silent) {
+                    layer.msg('网络错误，保存失败', { icon: 2, time: 1500 });
+                }
+                resolveResult({ success: false, msg: '网络错误', reason: 'network' });
             },
             complete: function () {
                 quickFollowSavingMap[key] = false;
             }
         });
+
+        return dfd.promise();
     }
 
     function openQuickFollowDialog() {
@@ -5046,6 +5239,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             shade: 0.18,
             maxmin: true,
             cancel: function (index) {
+                if (quickFollowBatchSaving) {
+                    layer.msg('批量保存进行中，请等待保存完成后再操作', {
+                        icon: 0,
+                        time: 1500
+                    });
+                    return false;
+                }
                 if (quickFollowForceClose || !hasQuickFollowPendingChange()) {
                     return true;
                 }
@@ -5091,6 +5291,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     $(document).on('click', '#quick-follow-search-btn', function () {
+        if (quickFollowBatchSaving) {
+            layer.msg('批量保存进行中，请等待保存完成后再操作', {
+                icon: 0,
+                time: 1500
+            });
+            return;
+        }
         confirmQuickFollowPendingAction(function () {
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
@@ -5103,6 +5310,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     });
 
     $(document).on('click', '#quick-follow-reset-btn', function () {
+        if (quickFollowBatchSaving) {
+            layer.msg('批量保存进行中，请等待保存完成后再操作', {
+                icon: 0,
+                time: 1500
+            });
+            return;
+        }
         confirmQuickFollowPendingAction(function () {
             $('#quick-follow-kh-name').val('');
             $('#quick-follow-phone').val('');
@@ -5161,18 +5375,35 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     });
 
     $(document).on('click', '.quick-follow-save-btn', function () {
+        if (quickFollowBatchSaving) {
+            layer.msg('批量保存进行中，请稍候', { icon: 0, time: 1000 });
+            return;
+        }
         var leadsId = String($(this).data('leads-id') || '');
         if (!leadsId) return;
         submitQuickFollowRow(leadsId);
     });
 
     $(document).on('click', '.quick-follow-retry', function () {
+        if (quickFollowBatchSaving) {
+            layer.msg('批量保存进行中，请稍候', { icon: 0, time: 1000 });
+            return;
+        }
         var leadsId = String($(this).data('leads-id') || '');
         if (!leadsId) return;
         submitQuickFollowRow(leadsId);
     });
 
     $(document).on('click', '#quick-follow-dialog .layui-table-page .layui-laypage a, #quick-follow-dialog .layui-table-page .layui-laypage button', function (e) {
+        if (quickFollowBatchSaving) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            layer.msg('批量保存进行中，请等待保存完成后再操作', {
+                icon: 0,
+                time: 1500
+            });
+            return false;
+        }
         if (quickFollowBypassPageGuardOnce) {
             quickFollowBypassPageGuardOnce = false;
             return true;
@@ -5932,6 +6163,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             }
             var leadsIds = checkedData.map(function (it) { return it.id; });
             openQuickFollowBatchMarkDialog(leadsIds);
+        } else if (obj.event === 'quickFollowBatchSave') {
+            startQuickFollowBatchSave();
         }
     });
 
