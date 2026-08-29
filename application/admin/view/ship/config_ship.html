@@ -1,0 +1,397 @@
+{include file="common/head"/}
+<style>
+    body { background: #f5f7fa !important; }
+    .ship-config-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #f5f7fa;
+        overflow: auto;
+    }
+    .config-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 18px 20px 8px 20px;
+        max-width: 960px;
+        margin-bottom: 16px;
+    }
+    .config-card-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: #333;
+        margin: 0 0 14px 0;
+        padding-left: 8px;
+        border-left: 3px solid #1E9FFF;
+        line-height: 1.2;
+    }
+    .config-form .layui-form-label {
+        width: 180px;
+    }
+    .config-form .layui-input-inline {
+        width: 280px;
+    }
+    .config-unit {
+        color: #999;
+        line-height: 38px;
+        margin-left: 10px;
+        display: inline-block;
+    }
+    .config-help {
+        color: #666;
+        margin-top: 6px;
+        margin-left: 180px;
+        line-height: 1.6;
+        max-width: 620px;
+        font-size: 12px;
+    }
+    .config-warn {
+        color: #FF5722;
+        margin-top: 6px;
+        margin-left: 180px;
+        line-height: 1.6;
+        max-width: 620px;
+        font-size: 12px;
+    }
+    .preview-box {
+        background: #f8fbff;
+        border: 1px solid #e6eef8;
+        border-radius: 6px;
+        padding: 14px 16px;
+        color: #444;
+        line-height: 1.8;
+        font-size: 13px;
+    }
+    .preview-block + .preview-block {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px dashed #d9e6f5;
+    }
+    .preview-title {
+        font-weight: 600;
+        color: #1E9FFF;
+        margin-bottom: 4px;
+    }
+    .preview-cc {
+        margin-top: 4px;
+        color: #666;
+    }
+    @media screen and (max-width: 768px) {
+        .config-card {
+            max-width: 100%;
+            padding: 14px 12px 6px 12px;
+        }
+        .config-form .layui-form-label {
+            width: 120px;
+        }
+        .config-form .layui-input-inline {
+            width: calc(100% - 150px);
+            min-width: 180px;
+        }
+        .config-help,
+        .config-warn {
+            margin-left: 120px;
+            max-width: calc(100% - 130px);
+        }
+    }
+</style>
+
+<div class="ship-config-container">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>发货管理配置</legend>
+    </fieldset>
+
+    <form class="layui-form config-form" lay-filter="ship-config-form">
+        <div class="config-card">
+            <h3 class="config-card-title">审批规则配置</h3>
+            <div class="layui-form-item">
+                <label class="layui-form-label">产品总监审批金额线</label>
+                <div class="layui-input-inline">
+                    <input type="number"
+                           name="approval_threshold"
+                           id="approval_threshold"
+                           min="0"
+                           step="any"
+                           autocomplete="off"
+                           class="layui-input"
+                           value="{$config.approval_threshold|default='10000'}"
+                           lay-verify="required|number">
+                </div>
+                <span class="config-unit">元</span>
+                <div class="config-help">原订单总金额达到该金额及以上时，需产品总监审批（等于阈值也走大额流程）。</div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">审批金额判断依据</label>
+                <div class="layui-input-inline">
+                    <input type="text"
+                           class="layui-input"
+                           value="原订单总金额"
+                           readonly
+                           disabled>
+                    <input type="hidden" name="amount_basis" value="order_total">
+                </div>
+                <div class="config-help">当前业务固定按原订单总金额判断，不可修改。</div>
+            </div>
+        </div>
+
+        <div class="config-card">
+            <h3 class="config-card-title">审批人员配置</h3>
+            <div class="layui-form-item">
+                <label class="layui-form-label">产品总监</label>
+                <div class="layui-input-inline">
+                    <select name="product_director_id" id="product_director_id" lay-search lay-filter="product_director_id">
+                        <option value="">请选择产品总监</option>
+                        {volist name="adminOptions" id="admin"}
+                        <option value="{$admin.admin_id}"
+                                data-username="{$admin.username}"
+                                data-open="{$admin.is_open}"
+                                {if condition="isset($config.product_director_id) && (int)$config.product_director_id === (int)$admin.admin_id"}selected{/if}>
+                            {$admin.label}
+                        </option>
+                        {/volist}
+                    </select>
+                </div>
+                {if condition="$directorDisabledTip"}
+                <div class="config-warn">{$directorDisabledTip}</div>
+                {/if}
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">财务抄送人</label>
+                <div class="layui-input-inline">
+                    <select name="finance_cc_user_id" id="finance_cc_user_id" lay-search lay-filter="finance_cc_user_id">
+                        <option value="">请选择财务抄送人</option>
+                        {volist name="adminOptions" id="admin"}
+                        <option value="{$admin.admin_id}"
+                                data-username="{$admin.username}"
+                                data-open="{$admin.is_open}"
+                                {if condition="isset($config.finance_cc_user_id) && (int)$config.finance_cc_user_id === (int)$admin.admin_id"}selected{/if}>
+                            {$admin.label}
+                        </option>
+                        {/volist}
+                    </select>
+                </div>
+                {if condition="$financeDisabledTip"}
+                <div class="config-warn">{$financeDisabledTip}</div>
+                {/if}
+            </div>
+        </div>
+
+        <div class="config-card">
+            <h3 class="config-card-title">抄送规则</h3>
+            <div class="layui-form-item">
+                <label class="layui-form-label">抄送超级管理员</label>
+                <div class="layui-input-inline" style="padding-top: 5px;">
+                    <input type="checkbox"
+                           name="cc_super_admin"
+                           id="cc_super_admin"
+                           lay-skin="switch"
+                           lay-text="开启|关闭"
+                           lay-filter="cc_super_admin"
+                           value="1"
+                           {if condition="isset($config.cc_super_admin) && (int)$config.cc_super_admin===1"}checked{/if}>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">抄送销售所属主管</label>
+                <div class="layui-input-inline" style="padding-top: 5px;">
+                    <input type="checkbox"
+                           name="cc_team_leader"
+                           id="cc_team_leader"
+                           lay-skin="switch"
+                           lay-text="开启|关闭"
+                           lay-filter="cc_team_leader"
+                           value="1"
+                           {if condition="isset($config.cc_team_leader) && (int)$config.cc_team_leader===1"}checked{/if}>
+                </div>
+            </div>
+        </div>
+
+        <div class="config-card">
+            <h3 class="config-card-title">当前审批流程预览</h3>
+            <div class="preview-box" id="ship-flow-preview">
+                <div class="preview-block" id="preview-small"></div>
+                <div class="preview-block" id="preview-large"></div>
+            </div>
+            <div class="config-help" style="margin-left: 0; margin-top: 10px;">
+                预览仅根据当前页面配置实时展示，不会写入数据库。
+            </div>
+        </div>
+
+        <div class="config-card" style="padding-bottom: 18px;">
+            <div class="layui-form-item" style="margin-bottom: 0;">
+                <div class="layui-input-block" style="margin-left: 180px;">
+                    <button type="submit" class="layui-btn" lay-submit lay-filter="ship-config-submit">保存配置</button>
+                    <button type="button" class="layui-btn layui-btn-primary" id="ship-config-reset">重置</button>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+{include file="common/foot"/}
+<script>
+    layui.use(['form'], function () {
+        var form = layui.form, $ = layui.jquery;
+        var saveUrl = "{:url('Ship/configShip')}";
+        var initialConfig = {
+            approval_threshold: "{$config.approval_threshold|default='10000'}",
+            amount_basis: "order_total",
+            product_director_id: "{$config.product_director_id|default=''}",
+            finance_cc_user_id: "{$config.finance_cc_user_id|default=''}",
+            cc_super_admin: "{$config.cc_super_admin|default='1'}",
+            cc_team_leader: "{$config.cc_team_leader|default='1'}"
+        };
+
+        function getSelectedUsername(selectId) {
+            var $opt = $('#' + selectId).find('option:selected');
+            if (!$opt.length || !$opt.val()) {
+                return '';
+            }
+            var name = $.trim($opt.attr('data-username') || '');
+            if (!name) {
+                name = $.trim($opt.text() || '');
+                name = name.replace(/（禁用）$/, '');
+            }
+            return name;
+        }
+
+        function renderPreview() {
+            var threshold = $.trim($('#approval_threshold').val() || '');
+            if (threshold === '' || isNaN(threshold) || Number(threshold) < 0) {
+                threshold = '-';
+            }
+            var directorName = getSelectedUsername('product_director_id') || '（未选择产品总监）';
+            var financeName = getSelectedUsername('finance_cc_user_id') || '（未选择财务）';
+            var ccSuper = $('#cc_super_admin').prop('checked');
+            var ccLeader = $('#cc_team_leader').prop('checked');
+
+            function buildCcList(includeDirector) {
+                var list = [];
+                if (includeDirector) {
+                    list.push(directorName);
+                }
+                if (ccSuper) {
+                    list.push('超级管理员');
+                }
+                if (ccLeader) {
+                    list.push('销售所属主管');
+                }
+                list.push(financeName);
+                return list.join('、');
+            }
+
+            var smallHtml = ''
+                + '<div class="preview-title">订单金额 &lt; ' + threshold + ' 元</div>'
+                + '<div>产品经理审批</div>'
+                + '<div>→ 审批完成</div>'
+                + '<div class="preview-cc">→ 抄送：' + buildCcList(true) + '</div>';
+
+            var largeHtml = ''
+                + '<div class="preview-title">订单金额 &gt;= ' + threshold + ' 元</div>'
+                + '<div>产品经理审批</div>'
+                + '<div>→ ' + directorName + '审批</div>'
+                + '<div>→ 审批完成</div>'
+                + '<div class="preview-cc">→ 抄送：' + buildCcList(false) + '</div>';
+
+            $('#preview-small').html(smallHtml);
+            $('#preview-large').html(largeHtml);
+        }
+
+        function applyConfig(config) {
+            config = config || {};
+            var ccSuper = String(config.cc_super_admin === undefined ? 1 : config.cc_super_admin) === '1' ? '1' : '0';
+            var ccLeader = String(config.cc_team_leader === undefined ? 1 : config.cc_team_leader) === '1' ? '1' : '0';
+
+            form.val('ship-config-form', {
+                approval_threshold: String(config.approval_threshold || ''),
+                amount_basis: 'order_total',
+                product_director_id: String(config.product_director_id || ''),
+                finance_cc_user_id: String(config.finance_cc_user_id || ''),
+                cc_super_admin: ccSuper,
+                cc_team_leader: ccLeader
+            });
+
+            $('#cc_super_admin').prop('checked', ccSuper === '1');
+            $('#cc_team_leader').prop('checked', ccLeader === '1');
+            form.render('select');
+            form.render('checkbox');
+            renderPreview();
+        }
+
+        $('#ship-config-reset').on('click', function () {
+            applyConfig(initialConfig);
+        });
+
+        $('#approval_threshold').on('input change', function () {
+            renderPreview();
+        });
+
+        form.on('select(product_director_id)', function () {
+            renderPreview();
+        });
+        form.on('select(finance_cc_user_id)', function () {
+            renderPreview();
+        });
+        form.on('switch(cc_super_admin)', function () {
+            renderPreview();
+        });
+        form.on('switch(cc_team_leader)', function () {
+            renderPreview();
+        });
+
+        form.on('submit(ship-config-submit)', function (data) {
+            var submitData = $.extend({}, data.field || {});
+            submitData.amount_basis = 'order_total';
+            // checkbox 未勾选时可能不在 field 中，显式补 0/1
+            submitData.cc_super_admin = $('#cc_super_admin').prop('checked') ? '1' : '0';
+            submitData.cc_team_leader = $('#cc_team_leader').prop('checked') ? '1' : '0';
+
+            var threshold = $.trim(String(submitData.approval_threshold || ''));
+            if (threshold === '' || isNaN(threshold) || Number(threshold) < 0) {
+                layer.msg('产品总监审批金额线必须是大于等于0的数字');
+                return false;
+            }
+            if (!submitData.product_director_id) {
+                layer.msg('请选择产品总监');
+                return false;
+            }
+            if (!submitData.finance_cc_user_id) {
+                layer.msg('请选择财务抄送人');
+                return false;
+            }
+
+            var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+            $.ajax({
+                url: saveUrl,
+                type: 'post',
+                dataType: 'json',
+                data: submitData,
+                success: function (res) {
+                    layer.close(loadIdx);
+                    if (res && parseInt(res.code, 10) === 0) {
+                        layer.msg(res.msg || '配置保存成功');
+                        var saved = (res.data && typeof res.data === 'object') ? res.data : {};
+                        initialConfig = $.extend({}, submitData, saved, { amount_basis: 'order_total' });
+                        applyConfig(initialConfig);
+                        return;
+                    }
+                    layer.msg((res && res.msg) ? res.msg : '保存失败');
+                },
+                error: function () {
+                    layer.close(loadIdx);
+                    layer.msg('请求失败，请稍后重试');
+                }
+            });
+            return false;
+        });
+
+        applyConfig(initialConfig);
+    });
+</script>
+</body>
+</html>
