@@ -1,0 +1,573 @@
+{include file="common/head"/}
+<style>
+    body { background: #f5f7fa !important; }
+    .ship-create-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #f5f7fa;
+        overflow: auto;
+    }
+    .create-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 18px 20px 8px 20px;
+        margin-bottom: 16px;
+    }
+    .create-card-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: #333;
+        margin: 0 0 14px 0;
+        padding-left: 8px;
+        border-left: 3px solid #1E9FFF;
+        line-height: 1.2;
+    }
+    .create-form .layui-form-label {
+        width: 130px;
+    }
+    .create-form .layui-input-block {
+        margin-left: 160px;
+    }
+    .create-form .layui-input-inline {
+        width: 280px;
+    }
+    .readonly-text {
+        line-height: 38px;
+        color: #333;
+    }
+    .unit-text {
+        color: #999;
+        line-height: 38px;
+        margin-left: 8px;
+        display: inline-block;
+    }
+    .empty-tip {
+        color: #999;
+        padding: 20px 0;
+        text-align: center;
+    }
+    .toolbar-row {
+        margin-bottom: 12px;
+    }
+    #product-table-wrap .layui-input {
+        height: 32px;
+        line-height: 32px;
+    }
+    .order-select-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+    .order-select-bar .readonly-text {
+        line-height: 32px;
+    }
+</style>
+
+<div class="ship-create-container">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>新建发货申请</legend>
+    </fieldset>
+
+    <form class="layui-form create-form" lay-filter="ship-create-form" id="ship-create-form">
+        <input type="hidden" name="order_id" id="order_id" value="">
+        <input type="hidden" name="apply_id" id="apply_id" value="">
+
+        <!-- 区域一：关联订单 -->
+        <div class="create-card">
+            <h3 class="create-card-title">关联订单</h3>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">发货申请编号</label>
+                <div class="layui-input-block">
+                    <div class="readonly-text" id="apply_no_display">保存草稿后生成</div>
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">关联订单</label>
+                <div class="layui-input-block order-select-bar">
+                    <button type="button" class="layui-btn layui-btn-normal" id="btn-select-order">
+                        <i class="layui-icon layui-icon-search"></i> 选择订单
+                    </button>
+                    <span class="readonly-text" id="selected-order-tip">请先选择审核通过的订单</span>
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">订单编号</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" id="display_order_no" readonly placeholder="-">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">客户名称</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" id="display_cname" readonly placeholder="-">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">业务员</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" id="display_pr_user" readonly placeholder="-">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">所属团队</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" id="display_team_name" readonly placeholder="-">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">成交时间</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" id="display_order_time" readonly placeholder="-">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">原订单金额</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" id="display_money" readonly placeholder="-">
+                </div>
+                <span class="unit-text">元</span>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">已收款金额</label>
+                <div class="layui-input-inline">
+                    <input type="text" class="layui-input" id="display_amount_received" readonly placeholder="-">
+                </div>
+                <span class="unit-text">（仅展示）</span>
+            </div>
+        </div>
+
+        <!-- 区域二：订单产品 -->
+        <div class="create-card">
+            <h3 class="create-card-title">订单产品</h3>
+            <div id="product-table-wrap">
+                <div class="empty-tip" id="product-empty-tip">选择订单后显示产品明细</div>
+                <table class="layui-hide" id="product-table" lay-filter="product-table"></table>
+            </div>
+        </div>
+
+        <!-- 区域三：发货信息 -->
+        <div class="create-card">
+            <h3 class="create-card-title">发货信息</h3>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">预计发货日期</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="shipping_date" id="shipping_date" autocomplete="off"
+                           placeholder="请选择日期" class="layui-input">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">收货人</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="receiver_name" id="receiver_name" autocomplete="off"
+                           placeholder="请输入收货人" class="layui-input">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">收货联系电话</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="receiver_phone" id="receiver_phone" autocomplete="off"
+                           placeholder="请输入联系电话" class="layui-input">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">收货地址</label>
+                <div class="layui-input-block" style="max-width: 620px;">
+                    <textarea name="receiver_address" id="receiver_address" placeholder="请输入收货地址"
+                              class="layui-textarea"></textarea>
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">发货方式</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="shipping_method" id="shipping_method" autocomplete="off"
+                           placeholder="如：物流、快递、自提等" class="layui-input">
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">发货备注</label>
+                <div class="layui-input-block" style="max-width: 620px;">
+                    <textarea name="shipping_remark" id="shipping_remark" placeholder="请输入发货备注"
+                              class="layui-textarea"></textarea>
+                </div>
+            </div>
+        </div>
+
+        <div class="create-card" style="padding-bottom: 18px;">
+            <div class="layui-form-item" style="margin-bottom: 0;">
+                <div class="layui-input-block">
+                    <button type="button" class="layui-btn" lay-submit lay-filter="ship-save-draft">保存草稿</button>
+                    <button type="button" class="layui-btn layui-btn-primary" id="btn-back">返回</button>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- 选择订单弹层模板 -->
+<script type="text/html" id="order-select-tpl">
+    <div style="padding: 15px;">
+        <div class="layui-form toolbar-row" lay-filter="order-search-form">
+            <div class="layui-inline">
+                <input type="text" id="order-search-keyword" placeholder="订单编号 / 客户名称 / 业务员"
+                       autocomplete="off" class="layui-input" style="width: 280px;">
+            </div>
+            <div class="layui-inline">
+                <button type="button" class="layui-btn layui-btn-sm" id="order-search-btn">搜索</button>
+            </div>
+        </div>
+        <table id="order-select-table" lay-filter="order-select-table"></table>
+    </div>
+</script>
+
+<script type="text/html" id="productApplyQtyTpl">
+    <input type="number" min="0" step="1" class="layui-input apply-qty-input"
+           data-order-item-id="{{ d.order_item_id }}"
+           data-remaining="{{ d.remaining_qty }}"
+           value="{{ d.apply_qty !== undefined ? d.apply_qty : 0 }}">
+</script>
+
+<script type="text/html" id="productRemarkTpl">
+    <input type="text" class="layui-input item-remark-input"
+           data-order-item-id="{{ d.order_item_id }}"
+           value="{{ d.remark !== undefined ? d.remark : '' }}"
+           placeholder="行备注">
+</script>
+
+<script type="text/html" id="orderSelectBarTpl">
+    <a class="layui-btn layui-btn-xs layui-btn-normal" lay-event="select">选择</a>
+</script>
+
+{include file="common/foot"/}
+<script>
+layui.use(['form', 'layer', 'table', 'laydate'], function () {
+    var form = layui.form;
+    var layer = layui.layer;
+    var table = layui.table;
+    var laydate = layui.laydate;
+    var $ = layui.$;
+
+    var apiUrl = '{:url("Ship/createShip")}';
+    var productItems = [];
+    var productTableRendered = false;
+
+    laydate.render({
+        elem: '#shipping_date',
+        type: 'date',
+        trigger: 'click'
+    });
+
+    function escapeHtml(str) {
+        return String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function fillOrderDisplay(order) {
+        order = order || {};
+        $('#display_order_no').val(order.order_no || '');
+        $('#display_cname').val(order.cname || '');
+        $('#display_pr_user').val(order.pr_user || '');
+        $('#display_team_name').val(order.team_name || '');
+        $('#display_order_time').val(order.order_time || '');
+        $('#display_money').val(order.money !== undefined ? order.money : '');
+        $('#display_amount_received').val(order.amount_received || '');
+        if ($('#receiver_phone').val() === '' && order.default_receiver_phone) {
+            $('#receiver_phone').val(order.default_receiver_phone);
+        }
+        if ($('#receiver_address').val() === '' && order.default_receiver_address) {
+            $('#receiver_address').val(order.default_receiver_address);
+        }
+        $('#selected-order-tip').text('已选择订单：' + (order.order_no || ''));
+    }
+
+    function renderProductTable(items) {
+        productItems = items || [];
+        if (!productItems.length) {
+            $('#product-empty-tip').show();
+            $('#product-table').addClass('layui-hide');
+            if (productTableRendered) {
+                table.reload('product-table', { data: [] });
+            }
+            return;
+        }
+
+        $('#product-empty-tip').hide();
+        $('#product-table').removeClass('layui-hide');
+
+        var cols = [[
+            { field: 'product_name', title: '产品名称', minWidth: 140 },
+            { field: 'product_manager_name', title: '产品经理', width: 110 },
+            { field: 'spec_model', title: '规格型号', minWidth: 120 },
+            { field: 'unit', title: '单位', width: 70 },
+            { field: 'order_qty', title: '订单数量', width: 90 },
+            { field: 'applied_qty', title: '已有效申请数量', width: 130 },
+            { field: 'remaining_qty', title: '剩余可申请数量', width: 130 },
+            { field: 'apply_qty', title: '本次申请发货数量', width: 150, templet: '#productApplyQtyTpl' },
+            { field: 'remark', title: '行备注', minWidth: 140, templet: '#productRemarkTpl' }
+        ]];
+
+        if (!productTableRendered) {
+            table.render({
+                elem: '#product-table',
+                id: 'product-table',
+                data: productItems,
+                cols: cols,
+                page: false,
+                limit: 9999,
+                text: { none: '暂无产品明细' }
+            });
+            productTableRendered = true;
+        } else {
+            table.reload('product-table', { data: productItems });
+        }
+    }
+
+    function loadOrderDetail(orderId, callback) {
+        if (!orderId) {
+            return;
+        }
+        var loadIndex = layer.load(2);
+        $.post(apiUrl, { op: 'get_order_detail', order_id: orderId }, function (res) {
+            layer.close(loadIndex);
+            if (!res || res.code !== 0) {
+                layer.msg((res && res.msg) ? res.msg : '加载订单详情失败', { icon: 2 });
+                return;
+            }
+            var data = res.data || {};
+            $('#order_id').val(orderId);
+            fillOrderDisplay(data.order || {});
+            renderProductTable(data.items || []);
+            if (data.warnings && data.warnings.length) {
+                layer.msg(data.warnings.join('；'), { icon: 0, time: 4000 });
+            }
+            if (typeof callback === 'function') {
+                callback(data);
+            }
+        }, 'json').fail(function () {
+            layer.close(loadIndex);
+            layer.msg('网络异常，请稍后重试', { icon: 2 });
+        });
+    }
+
+    function openOrderSelectLayer() {
+        var contentHtml = $('#order-select-tpl').html();
+        var layerIndex = layer.open({
+            type: 1,
+            title: '选择订单',
+            area: ['900px', '560px'],
+            content: contentHtml,
+            success: function () {
+                table.render({
+                    elem: '#order-select-table',
+                    id: 'order-select-table',
+                    url: apiUrl,
+                    method: 'post',
+                    where: { op: 'search_orders' },
+                    page: true,
+                    limit: 10,
+                    limits: [10, 20, 50],
+                    parseData: function (res) {
+                        return {
+                            code: res.code === 0 ? 0 : 1,
+                            msg: res.msg || '',
+                            count: res.count || 0,
+                            data: res.data || []
+                        };
+                    },
+                    cols: [[
+                        { field: 'order_no', title: '订单编号', minWidth: 140 },
+                        { field: 'cname', title: '客户名称', minWidth: 120 },
+                        { field: 'pr_user', title: '业务员', width: 100 },
+                        { field: 'team_name', title: '团队', width: 100 },
+                        { field: 'money', title: '订单金额', width: 110 },
+                        { field: 'order_time', title: '成交时间', width: 160 },
+                        { title: '操作', width: 80, align: 'center', toolbar: '#orderSelectBarTpl' }
+                    ]]
+                });
+
+                $('#order-search-btn').on('click', function () {
+                    table.reload('order-select-table', {
+                        where: {
+                            op: 'search_orders',
+                            keyword: $.trim($('#order-search-keyword').val())
+                        },
+                        page: { curr: 1 }
+                    });
+                });
+
+                $('#order-search-keyword').on('keydown', function (e) {
+                    if (e.keyCode === 13) {
+                        $('#order-search-btn').click();
+                    }
+                });
+
+                table.on('tool(order-select-table)', function (obj) {
+                    if (obj.event === 'select') {
+                        var row = obj.data || {};
+                        layer.close(layerIndex);
+                        loadOrderDetail(row.id);
+                    }
+                });
+            }
+        });
+    }
+
+    function collectItemsFromTable() {
+        var items = [];
+        $('#product-table-wrap .apply-qty-input').each(function () {
+            var $input = $(this);
+            var orderItemId = parseInt($input.attr('data-order-item-id'), 10) || 0;
+            var applyQty = parseInt($input.val(), 10);
+            if (isNaN(applyQty)) {
+                applyQty = 0;
+            }
+            var remark = '';
+            var $remark = $('#product-table-wrap .item-remark-input[data-order-item-id="' + orderItemId + '"]');
+            if ($remark.length) {
+                remark = $.trim($remark.val());
+            }
+            items.push({
+                order_item_id: orderItemId,
+                apply_qty: applyQty,
+                remark: remark
+            });
+        });
+        return items;
+    }
+
+    function validateItemsBeforeSave(items) {
+        var hasPositive = false;
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            if (item.apply_qty < 0) {
+                return '本次申请发货数量不能为负数';
+            }
+            if (item.apply_qty > 0) {
+                hasPositive = true;
+                var $input = $('#product-table-wrap .apply-qty-input[data-order-item-id="' + item.order_item_id + '"]');
+                var remaining = parseInt($input.attr('data-remaining'), 10) || 0;
+                if (item.apply_qty > remaining) {
+                    return '存在产品本次申请数量超过剩余可申请数量';
+                }
+            }
+        }
+        if (!hasPositive) {
+            return '至少需要选择一个产品并填写本次发货数量';
+        }
+        return '';
+    }
+
+    $('#btn-select-order').on('click', function () {
+        openOrderSelectLayer();
+    });
+
+    $('#btn-back').on('click', function () {
+        if (window.history.length > 1) {
+            window.history.back();
+        } else {
+            window.location.href = '{:url("index/index")}';
+        }
+    });
+
+    form.on('submit(ship-save-draft)', function () {
+        var orderId = parseInt($('#order_id').val(), 10) || 0;
+        if (!orderId) {
+            layer.msg('请先选择有效订单', { icon: 2 });
+            return false;
+        }
+
+        var items = collectItemsFromTable();
+        var validateMsg = validateItemsBeforeSave(items);
+        if (validateMsg) {
+            layer.msg(validateMsg, { icon: 2 });
+            return false;
+        }
+
+        var postData = {
+            op: 'save_draft',
+            order_id: orderId,
+            apply_id: parseInt($('#apply_id').val(), 10) || 0,
+            shipping_date: $.trim($('#shipping_date').val()),
+            receiver_name: $.trim($('#receiver_name').val()),
+            receiver_phone: $.trim($('#receiver_phone').val()),
+            receiver_address: $.trim($('#receiver_address').val()),
+            shipping_method: $.trim($('#shipping_method').val()),
+            shipping_remark: $.trim($('#shipping_remark').val()),
+            items: JSON.stringify(items)
+        };
+
+        var loadIndex = layer.load(2);
+        $.post(apiUrl, postData, function (res) {
+            layer.close(loadIndex);
+            if (!res || res.code !== 0) {
+                layer.msg((res && res.msg) ? res.msg : '草稿保存失败，请稍后重试。', { icon: 2 });
+                return;
+            }
+            var data = res.data || {};
+            if (data.apply_id) {
+                $('#apply_id').val(data.apply_id);
+            }
+            if (data.apply_no) {
+                $('#apply_no_display').text(data.apply_no);
+            }
+            layer.msg(res.msg || '草稿保存成功', { icon: 1 });
+        }, 'json').fail(function () {
+            layer.close(loadIndex);
+            layer.msg('网络异常，请稍后重试', { icon: 2 });
+        });
+
+        return false;
+    });
+
+    // 草稿编辑初始化
+    var draftDataJson = '{$draftDataJson|raw}';
+    if (draftDataJson) {
+        try {
+            var draftData = JSON.parse(draftDataJson);
+            if (draftData && draftData.order_id) {
+                $('#apply_id').val(draftData.apply_id || '');
+                if (draftData.apply_no) {
+                    $('#apply_no_display').text(draftData.apply_no);
+                }
+                $('#order_id').val(draftData.order_id);
+                fillOrderDisplay(draftData.order || {});
+                renderProductTable(draftData.items || []);
+                $('#shipping_date').val(draftData.shipping_date || '');
+                $('#receiver_name').val(draftData.receiver_name || '');
+                $('#receiver_phone').val(draftData.receiver_phone || '');
+                $('#receiver_address').val(draftData.receiver_address || '');
+                $('#shipping_method').val(draftData.shipping_method || '');
+                $('#shipping_remark').val(draftData.shipping_remark || '');
+                $('#selected-order-tip').text('已选择订单：' + ((draftData.order && draftData.order.order_no) || ''));
+            }
+        } catch (e) {
+            // ignore parse error
+        }
+    } else if (parseInt('{$draftId|default=0}', 10) > 0) {
+        layer.msg('草稿不存在或无权编辑', { icon: 2 });
+    }
+});
+</script>
