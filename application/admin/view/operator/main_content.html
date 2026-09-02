@@ -478,12 +478,18 @@
      * col-profit / col-profit-rate：th/td/tfoot 统一右对齐；表头内 performance-th-sort 用 flex 将标题与排序图标整体贴右，与下方数字对齐。
      */
     #performanceTable thead th.col-profit,
-    #performanceTable thead th.col-profit-rate {
+    #performanceTable thead th.col-profit-rate,
+    #performanceTable thead th.col-inquiry-count,
+    #performanceTable thead th.col-order-count,
+    #performanceTable thead th.col-conversion-rate {
         text-align: right !important;
         vertical-align: middle;
     }
     #performanceTable thead th.col-profit .performance-th-sort,
-    #performanceTable thead th.col-profit-rate .performance-th-sort {
+    #performanceTable thead th.col-profit-rate .performance-th-sort,
+    #performanceTable thead th.col-inquiry-count .performance-th-sort,
+    #performanceTable thead th.col-order-count .performance-th-sort,
+    #performanceTable thead th.col-conversion-rate .performance-th-sort {
         display: flex;
         align-items: center;
         justify-content: flex-end;
@@ -493,9 +499,16 @@
     }
     #performanceTable tbody td.col-profit,
     #performanceTable tbody td.col-profit-rate,
+    #performanceTable tbody td.col-inquiry-count,
+    #performanceTable tbody td.col-order-count,
+    #performanceTable tbody td.col-conversion-rate,
     #performanceTable tfoot td.col-profit,
-    #performanceTable tfoot td.col-profit-rate {
+    #performanceTable tfoot td.col-profit-rate,
+    #performanceTable tfoot td.col-inquiry-count,
+    #performanceTable tfoot td.col-order-count,
+    #performanceTable tfoot td.col-conversion-rate {
         text-align: right !important;
+        font-variant-numeric: tabular-nums;
     }
 
     /* 业务人员业绩表弹窗头部（Windows 风格关闭按钮） */
@@ -914,6 +927,15 @@
                             <th data-sort="team_name" style="cursor: pointer; user-select: none;">
                                 所属团队 <i class="bi bi-arrow-down-up sort-icon"></i>
                             </th>
+                            <th class="col-inquiry-count" data-sort="inquiry_count" style="cursor: pointer; user-select: none;" title="统计期间内归属于该业务员的非返单询盘；客户后续进入公海，仍保留历史询盘统计。">
+                                <span class="performance-th-sort">有效询盘量<i class="bi bi-arrow-down-up sort-icon"></i></span>
+                            </th>
+                            <th class="col-order-count" data-sort="order_count" style="cursor: pointer; user-select: none;">
+                                <span class="performance-th-sort">订单量<i class="bi bi-arrow-down-up sort-icon"></i></span>
+                            </th>
+                            <th class="col-conversion-rate" data-sort="conversion_rate" style="cursor: pointer; user-select: none;">
+                                <span class="performance-th-sort">成交率<i class="bi bi-arrow-down-up sort-icon"></i></span>
+                            </th>
                             <th class="col-profit" data-sort="profit" style="cursor: pointer; user-select: none;">
                                 <span class="performance-th-sort">利润<i class="bi bi-arrow-down-up sort-icon"></i></span>
                             </th>
@@ -924,7 +946,7 @@
                     </thead>
                     <tbody id="performanceTableBody">
                         <tr>
-                            <td colspan="5" class="text-center text-muted">加载中...</td>
+                            <td colspan="8" class="text-center text-muted">加载中...</td>
                         </tr>
                     </tbody>
                     <tfoot id="performanceTableFoot" class="performance-table-summary-footer"></tfoot>
@@ -5731,34 +5753,65 @@
     function computePerformanceSummaryFromRows(rows) {
         var tp = 0;
         var tm = 0;
+        var ti = 0;
+        var to = 0;
+        var tnr = 0;
         $.each(rows || [], function(_, item) {
             tp += parsePerformanceNumber(typeof item.profit_raw !== 'undefined' ? item.profit_raw : item.profit);
             tm += parsePerformanceNumber(typeof item.total_money_raw !== 'undefined' ? item.total_money_raw : item.total_money);
+            ti += parseInt(item.inquiry_count || 0, 10) || 0;
+            to += parseInt(item.order_count || 0, 10) || 0;
+            tnr += parseInt(item.non_repeat_order_count || 0, 10) || 0;
         });
         tp = Math.round(tp * 100) / 100;
         tm = Math.round(tm * 100) / 100;
         var pr = tm > 0 ? Math.round((tp / tm) * 100 * 100) / 100 : 0;
+        var cr = ti > 0 ? Math.round((tnr / ti) * 100 * 100) / 100 : 0;
         return {
             total_profit: formatPerformanceAmount2(tp),
             total_money: formatPerformanceAmount2(tm),
-            profit_rate: pr.toFixed(2)
+            profit_rate: pr.toFixed(2),
+            total_inquiry_count: ti,
+            total_order_count: to,
+            total_non_repeat_order_count: tnr,
+            conversion_rate: cr.toFixed(2)
         };
     }
 
     function normalizePerformanceSummary(summary) {
-        if (summary && typeof summary === 'object'
-            && summary.total_profit != null && summary.total_money != null && summary.profit_rate != null) {
-            return {
-                total_profit: String(summary.total_profit),
-                total_money: String(summary.total_money),
-                profit_rate: String(summary.profit_rate)
-            };
-        }
-        return {
+        var base = {
             total_profit: '0.00',
             total_money: '0.00',
-            profit_rate: '0.00'
+            profit_rate: '0.00',
+            total_inquiry_count: 0,
+            total_order_count: 0,
+            total_non_repeat_order_count: 0,
+            conversion_rate: '0.00'
         };
+        if (summary && typeof summary === 'object') {
+            if (summary.total_profit != null) {
+                base.total_profit = String(summary.total_profit);
+            }
+            if (summary.total_money != null) {
+                base.total_money = String(summary.total_money);
+            }
+            if (summary.profit_rate != null) {
+                base.profit_rate = String(summary.profit_rate);
+            }
+            if (summary.total_inquiry_count != null) {
+                base.total_inquiry_count = parseInt(summary.total_inquiry_count, 10) || 0;
+            }
+            if (summary.total_order_count != null) {
+                base.total_order_count = parseInt(summary.total_order_count, 10) || 0;
+            }
+            if (summary.total_non_repeat_order_count != null) {
+                base.total_non_repeat_order_count = parseInt(summary.total_non_repeat_order_count, 10) || 0;
+            }
+            if (summary.conversion_rate != null) {
+                base.conversion_rate = String(summary.conversion_rate);
+            }
+        }
+        return base;
     }
 
     function applyPerformanceResponseSummary(res) {
@@ -5777,6 +5830,9 @@
             '<td><strong>合计</strong></td>' +
             '<td><span class="text-muted" style="font-weight: normal; font-size: 12px;">当前结果汇总</span></td>' +
             '<td>-</td>' +
+            '<td class="col-inquiry-count"><strong>' + s.total_inquiry_count + '</strong></td>' +
+            '<td class="col-order-count"><strong>' + s.total_order_count + '</strong></td>' +
+            '<td class="col-conversion-rate"><strong>' + s.conversion_rate + '%</strong></td>' +
             '<td class="col-profit"><strong>' + s.total_profit + '</strong></td>' +
             '<td class="col-profit-rate"><strong>' + s.profit_rate + '%</strong><br>' +
             '<span class="text-muted" style="font-weight: normal; font-size: 12px;">金额合计 ' + s.total_money + '</span></td>' +
@@ -5797,17 +5853,25 @@
                 if (teamLabel === null || teamLabel === undefined || String(teamLabel).trim() === '') {
                     teamLabel = '未分组';
                 }
+                var inquiryCount = parseInt(item.inquiry_count || 0, 10) || 0;
+                var orderCount = parseInt(item.order_count || 0, 10) || 0;
+                var conversionRate = (typeof item.conversion_rate !== 'undefined' && item.conversion_rate !== null && item.conversion_rate !== '')
+                    ? String(item.conversion_rate)
+                    : (Number(item.conversion_rate_raw || 0).toFixed(2));
                 var row = '<tr>' +
                     '<td>' + (typeof item.rank !== 'undefined' ? item.rank : '-') + '</td>' +
                     '<td>' + (item.username || '') + '</td>' +
                     '<td>' + teamLabel + '</td>' +
+                    '<td class="col-inquiry-count">' + inquiryCount + '</td>' +
+                    '<td class="col-order-count">' + orderCount + '</td>' +
+                    '<td class="col-conversion-rate">' + conversionRate + '%</td>' +
                     '<td class="col-profit">' + (item.profit || '0.00') + '</td>' +
                     '<td class="col-profit-rate">' + (item.profit_rate || '0.00') + '%</td>' +
                     '</tr>';
                 tbody.append(row);
             });
         } else {
-            tbody.append('<tr><td colspan="5" class="text-center text-muted">暂无数据</td></tr>');
+            tbody.append('<tr><td colspan="8" class="text-center text-muted">暂无数据</td></tr>');
         }
 
         renderPerformanceSummaryFoot(effSummary);
@@ -5877,6 +5941,18 @@
                     case 'team_name':
                         aVal = (a.team_name || '').toLowerCase();
                         bVal = (b.team_name || '').toLowerCase();
+                        break;
+                    case 'inquiry_count':
+                        aVal = parseInt(a.inquiry_count || 0, 10) || 0;
+                        bVal = parseInt(b.inquiry_count || 0, 10) || 0;
+                        break;
+                    case 'order_count':
+                        aVal = parseInt(a.order_count || 0, 10) || 0;
+                        bVal = parseInt(b.order_count || 0, 10) || 0;
+                        break;
+                    case 'conversion_rate':
+                        aVal = toNumber(typeof a.conversion_rate_raw !== 'undefined' ? a.conversion_rate_raw : a.conversion_rate);
+                        bVal = toNumber(typeof b.conversion_rate_raw !== 'undefined' ? b.conversion_rate_raw : b.conversion_rate);
                         break;
                     case 'profit':
                         aVal = toNumber(typeof a.profit_raw !== 'undefined' ? a.profit_raw : a.profit);

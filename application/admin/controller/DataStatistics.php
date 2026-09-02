@@ -79,6 +79,10 @@ class DataStatistics extends Common
             'total_profit' => number_format(0, 2),
             'total_money'  => number_format(0, 2),
             'profit_rate'  => number_format(0, 2),
+            'total_inquiry_count' => 0,
+            'total_order_count' => 0,
+            'total_non_repeat_order_count' => 0,
+            'conversion_rate' => number_format(0, 2),
         ];
 
         try {
@@ -111,11 +115,14 @@ class DataStatistics extends Common
         $ordersQuery = Db::table('crm_client_order');
         $this->applyPerformanceWhereToQuery($ordersQuery, $where);
         $orders = $ordersQuery
-            ->field('id,order_time,pr_user,pr_user_id,joint_person,owner_profit_rate,collaborator_profit_rate,money,profit,team_name')
+            ->field('id,order_time,pr_user,pr_user_id,joint_person,owner_profit_rate,collaborator_profit_rate,money,profit,team_name,source,order_type')
             ->order('order_time desc,id desc')
             ->select();
         $aggregate = $service->aggregateOrderPerformance((array)$orders, $adminMapById);
         $agg_map = $aggregate['agg_map'];
+
+        $nonRepeatMap = $this->buildPerformanceNonRepeatOrderCountByUserMap((array)$orders);
+        $inquiryMap = $this->buildPerformanceInquiryCountByUserMap($timebucket, $at_time, $month_keys, $filter_username);
 
         $sum_profit_all = round((float)($aggregate['total_profit'] ?? 0), 2);
         $sum_money_all = round((float)($aggregate['total_money'] ?? 0), 2);
@@ -152,6 +159,12 @@ class DataStatistics extends Common
             }
         }
 
+        $this->mergePerformanceInquiryMetricsIntoAggMap($agg_map, $inquiryMap, $nonRepeatMap);
+
+        $sum_inquiry_visible = 0;
+        $sum_order_visible = 0;
+        $sum_non_repeat_visible = 0;
+
         $result = [];
         foreach ($agg_map as $bucket => $row) {
             $displayUsername = trim((string)($row['username'] ?? ''));
@@ -159,6 +172,17 @@ class DataStatistics extends Common
             if ($displayUsername !== '' && isset($hiddenUsernameMap[$displayUsername])) {
                 continue;
             }
+
+            $inquiry_count = (int)($row['inquiry_count'] ?? 0);
+            $order_count = (int)($row['order_count'] ?? 0);
+            $non_repeat_order_count = (int)($row['non_repeat_order_count'] ?? 0);
+            $conversion_rate_raw = $inquiry_count > 0
+                ? round(($non_repeat_order_count / $inquiry_count) * 100, 2)
+                : 0;
+
+            $sum_inquiry_visible += $inquiry_count;
+            $sum_order_visible += $order_count;
+            $sum_non_repeat_visible += $non_repeat_order_count;
 
             $total_profit = (float)($row['total_profit'] ?? 0);
             $total_money = (float)($row['total_money'] ?? 0);
@@ -189,7 +213,11 @@ class DataStatistics extends Common
             $result[] = [
                 'username' => (string)($row['username'] ?? $bucket),
                 'team_name' => $team_display,
-                'order_count' => (int)($row['order_count'] ?? 0),
+                'inquiry_count' => $inquiry_count,
+                'order_count' => $order_count,
+                'non_repeat_order_count' => $non_repeat_order_count,
+                'conversion_rate_raw' => $conversion_rate_raw,
+                'conversion_rate' => number_format($conversion_rate_raw, 2),
                 'profit_raw' => $total_profit,
                 'profit' => number_format($total_profit, 2),
                 'total_money_raw' => $total_money,
@@ -198,6 +226,10 @@ class DataStatistics extends Common
                 'profit_rate' => $profit_rate_display,
             ];
         }
+
+        $sum_conversion_visible = $sum_inquiry_visible > 0
+            ? round(($sum_non_repeat_visible / $sum_inquiry_visible) * 100, 2)
+            : 0;
 
         usort($result, function ($a, $b) {
             return ((float)$b['profit_raw']) <=> ((float)$a['profit_raw']);
@@ -217,6 +249,10 @@ class DataStatistics extends Common
                 'total_profit' => number_format($sum_profit_all, 2),
                 'total_money' => number_format($sum_money_all, 2),
                 'profit_rate' => number_format($sum_rate_all, 2),
+                'total_inquiry_count' => $sum_inquiry_visible,
+                'total_order_count' => $sum_order_visible,
+                'total_non_repeat_order_count' => $sum_non_repeat_visible,
+                'conversion_rate' => number_format($sum_conversion_visible, 2),
             ],
         ]);
         } catch (\Throwable $e) {
@@ -357,12 +393,12 @@ class DataStatistics extends Common
             $spreadsheet = $this->buildMultiSheetSpreadsheet([
                 [
                     'title' => '业务员业绩汇总',
-                    'headers' => ['排名', '业务员', '团队', '订单数', '利润', '总金额', '利润率(%)'],
+                    'headers' => ['排名', '业务员', '团队', '有效询盘量', '订单量', '成交率(%)', '利润', '总金额', '利润率(%)'],
                     'rows' => $exportData['summary_rows'],
                 ],
                 [
                     'title' => '业务员明细数据',
-                    'headers' => ['业务员', '团队', '订单数', '利润', '总金额', '利润率(%)'],
+                    'headers' => ['业务员', '团队', '有效询盘量', '订单量', '成交率(%)', '利润', '总金额', '利润率(%)'],
                     'rows' => $exportData['detail_rows'],
                 ],
                 [
@@ -2003,6 +2039,77 @@ class DataStatistics extends Common
     }
 
     /**
+     * 业务人员业绩表：判断订单是否为返单（成交率分子排除）。
+     */
+    private function isPerformanceRepeatOrder(array $order): bool
+    {
+        $orderType = (int)($order['order_type'] ?? 0);
+        $source = trim((string)($order['source'] ?? ''));
+        return $orderType === 2 || $source === '返单';
+    }
+
+    /**
+     * 业务人员业绩表：基于已查询订单，按负责人统计非返单订单量（内存聚合，不增加 SQL）。
+     */
+    private function buildPerformanceNonRepeatOrderCountByUserMap(array $orders): array
+    {
+        $map = [];
+        foreach ($orders as $order) {
+            if (!is_array($order) || $this->isPerformanceRepeatOrder($order)) {
+                continue;
+            }
+            $prUser = trim((string)($order['pr_user'] ?? ''));
+            if ($prUser === '') {
+                continue;
+            }
+            if (!isset($map[$prUser])) {
+                $map[$prUser] = 0;
+            }
+            $map[$prUser]++;
+        }
+        return $map;
+    }
+
+    /**
+     * 业务人员业绩表：批量统计业务员询盘量（复用业务询盘汇总三连屏口径）。
+     */
+    private function buildPerformanceInquiryCountByUserMap(string $timebucket = '', string $at_time = '', string $month_keys = '', string $filter_username = ''): array
+    {
+        $query = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
+        $query->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''");
+        if ($filter_username !== '') {
+            $query->where('l.pr_user', '=', $filter_username);
+        }
+
+        $rows = $query
+            ->field("TRIM(l.pr_user) as username, COUNT(DISTINCT l.id) as inquiry_count")
+            ->group("TRIM(l.pr_user)")
+            ->select();
+
+        $map = [];
+        foreach ((array)$rows as $row) {
+            $username = trim((string)($row['username'] ?? ''));
+            if ($username !== '') {
+                $map[$username] = (int)($row['inquiry_count'] ?? 0);
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * 业务人员业绩表：将询盘量/非返单订单量合并到合法业务员集合（禁止从 inquiryMap 扩容人员）。
+     */
+    private function mergePerformanceInquiryMetricsIntoAggMap(array &$agg_map, array $inquiryMap, array $nonRepeatMap): void
+    {
+        foreach ($agg_map as $bucket => &$row) {
+            $username = trim((string)($row['username'] ?? $bucket));
+            $row['inquiry_count'] = (int)($inquiryMap[$username] ?? 0);
+            $row['non_repeat_order_count'] = (int)($nonRepeatMap[$username] ?? 0);
+        }
+        unset($row);
+    }
+
+    /**
      * 需要从「团队询盘汇总」排除的团队名称（第一屏/联动查询均生效）。
      */
     private function getExcludedInquiryTeamNames(): array
@@ -3258,13 +3365,16 @@ class DataStatistics extends Common
         $ordersQuery = Db::table('crm_client_order');
         $this->applyPerformanceWhereToQuery($ordersQuery, $where);
         $orders = $ordersQuery
-            ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,check_status,joint_person,owner_profit_rate,collaborator_profit_rate')
+            ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,check_status,joint_person,owner_profit_rate,collaborator_profit_rate,source,order_type')
             ->order('order_time desc,id desc')
             ->limit(20000)
             ->select();
 
         $aggregate = $service->aggregateOrderPerformance((array)$orders, $adminMapById);
         $aggMap = $aggregate['agg_map'];
+
+        $nonRepeatMap = $this->buildPerformanceNonRepeatOrderCountByUserMap((array)$orders);
+        $inquiryMap = $this->buildPerformanceInquiryCountByUserMap($timebucket, $at_time, $month_keys, $username);
 
         $businessUsersQuery = Db::table('admin')
             ->where('group_id', 'in', [$this->ywgid, $this->ywzgid, $this->pdgid, 14])
@@ -3296,6 +3406,8 @@ class DataStatistics extends Common
             ];
         }
 
+        $this->mergePerformanceInquiryMetricsIntoAggMap($aggMap, $inquiryMap, $nonRepeatMap);
+
         $rows = [];
         foreach ($aggMap as $bucket => $row) {
             $displayUsername = trim((string)($row['username'] ?? ''));
@@ -3305,6 +3417,12 @@ class DataStatistics extends Common
             $totalProfit = (float)($row['total_profit'] ?? 0);
             $totalMoney = (float)($row['total_money'] ?? 0);
             $rate = $totalMoney > 0 ? round(($totalProfit / $totalMoney) * 100, 2) : 0.0;
+            $inquiryCount = (int)($row['inquiry_count'] ?? 0);
+            $orderCount = (int)($row['order_count'] ?? 0);
+            $nonRepeatOrderCount = (int)($row['non_repeat_order_count'] ?? 0);
+            $conversionRate = $inquiryCount > 0
+                ? round(($nonRepeatOrderCount / $inquiryCount) * 100, 2)
+                : 0.0;
 
             $teamName = trim((string)($row['snap_team_name'] ?? ''));
             if ($teamName === '' && $displayUsername !== '' && isset($adminMapByUsername[$displayUsername])) {
@@ -3317,7 +3435,10 @@ class DataStatistics extends Common
             $rows[] = [
                 'username' => $displayUsername !== '' ? $displayUsername : (string)$bucket,
                 'team_name' => $teamName,
-                'order_count' => (int)($row['order_count'] ?? 0),
+                'inquiry_count' => $inquiryCount,
+                'order_count' => $orderCount,
+                'non_repeat_order_count' => $nonRepeatOrderCount,
+                'conversion_rate' => $conversionRate,
                 'total_profit' => $totalProfit,
                 'total_money' => $totalMoney,
                 'profit_rate' => $rate,
@@ -3334,7 +3455,9 @@ class DataStatistics extends Common
                 $idx + 1,
                 (string)$r['username'],
                 (string)$r['team_name'],
+                (int)$r['inquiry_count'],
                 (int)$r['order_count'],
+                number_format((float)$r['conversion_rate'], 2, '.', ''),
                 number_format((float)$r['total_profit'], 2, '.', ''),
                 number_format((float)$r['total_money'], 2, '.', ''),
                 number_format((float)$r['profit_rate'], 2, '.', ''),
@@ -3342,7 +3465,9 @@ class DataStatistics extends Common
             $detailRows[] = [
                 (string)$r['username'],
                 (string)$r['team_name'],
+                (int)$r['inquiry_count'],
                 (int)$r['order_count'],
+                number_format((float)$r['conversion_rate'], 2, '.', ''),
                 number_format((float)$r['total_profit'], 2, '.', ''),
                 number_format((float)$r['total_money'], 2, '.', ''),
                 number_format((float)$r['profit_rate'], 2, '.', ''),

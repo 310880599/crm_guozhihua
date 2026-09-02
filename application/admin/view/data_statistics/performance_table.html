@@ -15,16 +15,15 @@
     #perf-table thead th { background:#f8f9fa; padding:10px 12px; text-align:left; font-weight:600; color:#495057; border-bottom:2px solid #dee2e6; white-space:nowrap; }
     #perf-table tbody td { padding:10px 12px; border-bottom:1px solid #f0f0f0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     #perf-table tbody tr:hover { background:#f8f9fa; }
-    /* 提升优先级，确保 text-right 在 th/td 上均能覆盖默认 text-align */
     #perf-table thead th.text-right,
     #perf-table tbody td.text-right { text-align:right; }
     #perf-table thead th.text-center,
     #perf-table tbody td.text-center { text-align:center; }
-    /* 4 个数字列：右对齐 + 等宽数字字体，宽度由 colgroup 百分比统一控制 */
-    #perf-table .col-order-count { text-align:right; font-variant-numeric:tabular-nums; }
-    #perf-table .col-profit      { text-align:right; font-variant-numeric:tabular-nums; }
-    #perf-table .col-money       { text-align:right; font-variant-numeric:tabular-nums; }
-    #perf-table .col-rate        { text-align:right; font-variant-numeric:tabular-nums; }
+    #perf-table .col-inquiry-count,
+    #perf-table .col-order-count,
+    #perf-table .col-conversion-rate,
+    #perf-table .col-profit,
+    #perf-table .col-rate { text-align:right; font-variant-numeric:tabular-nums; }
     .profit-pos { color:#28a745; }
     #perf-status { padding:30px; text-align:center; color:#6c757d; display:none; }
     .custom-range-row { display:none; align-items:center; gap:6px; }
@@ -56,6 +55,18 @@
 
     <div id="perf-summary">
         <div class="perf-summary-card">
+            <div class="label">总有效询盘量</div>
+            <div class="value" id="sum-inquiry">—</div>
+        </div>
+        <div class="perf-summary-card">
+            <div class="label">总订单量</div>
+            <div class="value" id="sum-order">—</div>
+        </div>
+        <div class="perf-summary-card">
+            <div class="label">整体成交率</div>
+            <div class="value" id="sum-conversion">—</div>
+        </div>
+        <div class="perf-summary-card">
             <div class="label">总利润</div>
             <div class="value profit-pos" id="sum-profit">—</div>
         </div>
@@ -73,27 +84,29 @@
         <div id="perf-status">加载中...</div>
         <table id="perf-table">
             <colgroup>
-                <col style="width:8%;" />
-                <col style="width:16%;" />
-                <col style="width:16%;" />
-                <col class="col-order-count" style="width:12%;" />
-                <col class="col-profit"      style="width:16%;" />
-                <col class="col-money"       style="width:16%;" />
-                <col class="col-rate"        style="width:16%;" />
+                <col style="width:7%;" />
+                <col style="width:14%;" />
+                <col style="width:14%;" />
+                <col class="col-inquiry-count" style="width:10%;" />
+                <col class="col-order-count" style="width:10%;" />
+                <col class="col-conversion-rate" style="width:11%;" />
+                <col class="col-profit" style="width:14%;" />
+                <col class="col-rate" style="width:12%;" />
             </colgroup>
             <thead>
                 <tr>
                     <th class="text-center">排名</th>
                     <th>业务员</th>
                     <th>团队</th>
-                    <th class="col-order-count">订单数</th>
+                    <th class="col-inquiry-count" title="统计期间内归属于该业务员的非返单询盘；客户后续进入公海，仍保留历史询盘统计。">有效询盘量</th>
+                    <th class="col-order-count">订单量</th>
+                    <th class="col-conversion-rate">成交率(%)</th>
                     <th class="col-profit">利润</th>
-                    <th class="col-money">总金额</th>
                     <th class="col-rate">利润率(%)</th>
                 </tr>
             </thead>
             <tbody id="perf-tbody">
-                <tr><td colspan="7" style="text-align:center;color:#6c757d;padding:30px;">请点击【查询】加载数据</td></tr>
+                <tr><td colspan="8" style="text-align:center;color:#6c757d;padding:30px;">请点击【查询】加载数据</td></tr>
             </tbody>
         </table>
     </div>
@@ -124,7 +137,10 @@ function loadData() {
     }
 
     var tbody = document.getElementById('perf-tbody');
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#6c757d;">加载中...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#6c757d;">加载中...</td></tr>';
+    document.getElementById('sum-inquiry').textContent = '—';
+    document.getElementById('sum-order').textContent = '—';
+    document.getElementById('sum-conversion').textContent = '—';
     document.getElementById('sum-profit').textContent = '—';
     document.getElementById('sum-money').textContent  = '—';
     document.getElementById('sum-rate').textContent   = '—';
@@ -139,31 +155,34 @@ function loadData() {
     xhr.onreadystatechange = function() {
         if (xhr.readyState !== 4) return;
         if (xhr.status !== 200) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc3545;">请求失败（HTTP ' + xhr.status + '）</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:#dc3545;">请求失败（HTTP ' + xhr.status + '）</td></tr>';
             return;
         }
         try {
             var res = JSON.parse(xhr.responseText);
             if (res.code !== 0) {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc3545;">' + (res.msg || '获取失败') + '</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:#dc3545;">' + (res.msg || '获取失败') + '</td></tr>';
                 return;
             }
             renderTable(res.data || [], res.summary || {});
         } catch(e) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#dc3545;">响应解析失败</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:#dc3545;">响应解析失败</td></tr>';
         }
     };
     xhr.send(params);
 }
 
 function renderTable(rows, summary) {
+    document.getElementById('sum-inquiry').textContent = summary.total_inquiry_count !== undefined ? summary.total_inquiry_count : '—';
+    document.getElementById('sum-order').textContent = summary.total_order_count !== undefined ? summary.total_order_count : '—';
+    document.getElementById('sum-conversion').textContent = summary.conversion_rate !== undefined ? (summary.conversion_rate + '%') : '—';
     document.getElementById('sum-profit').textContent = summary.total_profit !== undefined ? summary.total_profit : '—';
     document.getElementById('sum-money').textContent  = summary.total_money  !== undefined ? summary.total_money  : '—';
     document.getElementById('sum-rate').textContent   = summary.profit_rate  !== undefined ? (summary.profit_rate + '%') : '—';
 
     var tbody = document.getElementById('perf-tbody');
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#6c757d;">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#6c757d;">暂无数据</td></tr>';
         return;
     }
 
@@ -172,13 +191,17 @@ function renderTable(rows, summary) {
         var r = rows[i];
         var rateText = (r.profit_rate === undefined || r.profit_rate === null || r.profit_rate === '') ? '0.00' : r.profit_rate;
         var rateDisplay = (rateText === '--') ? '--' : (esc(rateText) + '%');
+        var conversionText = (r.conversion_rate === undefined || r.conversion_rate === null || r.conversion_rate === '')
+            ? '0.00'
+            : String(r.conversion_rate);
         html += '<tr>'
             + '<td class="text-center">' + (r.rank || (i+1)) + '</td>'
             + '<td>' + esc(r.username) + '</td>'
             + '<td>' + esc(r.team_name) + '</td>'
+            + '<td class="col-inquiry-count">' + (r.inquiry_count || 0) + '</td>'
             + '<td class="col-order-count">' + (r.order_count || 0) + '</td>'
+            + '<td class="col-conversion-rate">' + esc(conversionText) + '%</td>'
             + '<td class="col-profit profit-pos">' + esc(r.profit) + '</td>'
-            + '<td class="col-money">' + esc(r.total_money) + '</td>'
             + '<td class="col-rate">' + rateDisplay + '</td>'
             + '</tr>';
     }
@@ -190,7 +213,6 @@ function esc(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// 自动加载本月数据
 loadData();
 </script>
 {include file="common/foot"/}
