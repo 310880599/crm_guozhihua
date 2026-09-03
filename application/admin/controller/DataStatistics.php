@@ -393,12 +393,12 @@ class DataStatistics extends Common
             $spreadsheet = $this->buildMultiSheetSpreadsheet([
                 [
                     'title' => '业务员业绩汇总',
-                    'headers' => ['排名', '业务员', '团队', '有效询盘量', '订单量', '成交率(%)', '利润', '总金额', '利润率(%)'],
+                    'headers' => ['排名', '业务员', '团队', '询盘量', '订单量', '成交率(%)', '利润', '总金额', '利润率(%)'],
                     'rows' => $exportData['summary_rows'],
                 ],
                 [
                     'title' => '业务员明细数据',
-                    'headers' => ['业务员', '团队', '有效询盘量', '订单量', '成交率(%)', '利润', '总金额', '利润率(%)'],
+                    'headers' => ['业务员', '团队', '询盘量', '订单量', '成交率(%)', '利润', '总金额', '利润率(%)'],
                     'rows' => $exportData['detail_rows'],
                 ],
                 [
@@ -2071,19 +2071,61 @@ class DataStatistics extends Common
     }
 
     /**
-     * 业务人员业绩表：批量统计业务员询盘量（复用业务询盘汇总三连屏口径）。
+     * 业务人员业绩表询盘量：对齐订单列表 totalInquiries 的时间条件（at_time OR to_kh_time）。
+     * month_keys 复用现有月份快捷；普通 timebucket/custom 复用订单列表 buildTimeWhere。
+     */
+    private function applyOrderListInquiryTimeWhere($query, string $timebucket = '', string $at_time = '', string $month_keys = '')
+    {
+        $monthRanges = $this->parseMonthKeysToRanges($month_keys);
+        if (!empty($monthRanges)) {
+            $query->where(function ($orQuery) use ($timebucket, $at_time, $month_keys) {
+                $orQuery->where(function ($atQuery) use ($timebucket, $at_time, $month_keys) {
+                    $this->applyMonthShortcutTimeFilterSafe($atQuery, 'at_time', $timebucket, $at_time, $month_keys);
+                });
+                $orQuery->whereOr(function ($khQuery) use ($timebucket, $at_time, $month_keys) {
+                    $this->applyMonthShortcutTimeFilterSafe($khQuery, 'to_kh_time', $timebucket, $at_time, $month_keys);
+                });
+            });
+            return $query;
+        }
+
+        $dateRange = $this->parseCustomDateRange($at_time);
+        if (!empty($dateRange)) {
+            $timeCondition = $dateRange[0] . ' - ' . $dateRange[1];
+        } else {
+            $timeCondition = trim($timebucket);
+            if ($timeCondition === '' || strtolower($timeCondition) === 'custom') {
+                $timeCondition = 'month';
+            }
+        }
+
+        $timeWhereAt = $this->buildTimeWhere($timeCondition, 'at_time');
+        $timeWhereKh = $this->buildTimeWhere($timeCondition, 'to_kh_time');
+        $query->where(function ($orQuery) use ($timeWhereAt, $timeWhereKh) {
+            $orQuery->where(...$timeWhereAt);
+            $orQuery->whereOr(...$timeWhereKh);
+        });
+
+        return $query;
+    }
+
+    /**
+     * 业务人员业绩表：批量统计业务员询盘量（对齐订单列表 totalInquiries 基础口径）。
+     * status=1 + pr_user 非空 + at_time OR to_kh_time + 包含返单 + COUNT(*)，不 JOIN contacts。
      */
     private function buildPerformanceInquiryCountByUserMap(string $timebucket = '', string $at_time = '', string $month_keys = '', string $filter_username = ''): array
     {
-        $query = $this->buildInquirySummaryClientBaseQuery($timebucket, $at_time, true, $month_keys);
-        $query->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''");
+        $query = Db::table('crm_leads');
+        $query->where('status', 1);
+        $query->whereRaw("TRIM(IFNULL(pr_user, '')) <> ''");
+        $this->applyOrderListInquiryTimeWhere($query, $timebucket, $at_time, $month_keys);
         if ($filter_username !== '') {
-            $query->where('l.pr_user', '=', $filter_username);
+            $query->where('pr_user', '=', $filter_username);
         }
 
         $rows = $query
-            ->field("TRIM(l.pr_user) as username, COUNT(DISTINCT l.id) as inquiry_count")
-            ->group("TRIM(l.pr_user)")
+            ->field("TRIM(pr_user) as username, COUNT(*) as inquiry_count")
+            ->group("TRIM(pr_user)")
             ->select();
 
         $map = [];
