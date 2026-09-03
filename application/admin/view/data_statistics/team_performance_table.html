@@ -175,16 +175,19 @@
                         <tr>
                             <th style="width:60px;text-align:center;">排名</th>
                             <th>团队名称</th>
+                            <th style="text-align:right;">询盘量</th>
+                            <th style="text-align:right;">订单量</th>
+                            <th style="text-align:right;">成单率</th>
                             <th style="text-align:right;">总利润</th>
                             <th style="text-align:right;">利润率</th>
                         </tr>
                     </thead>
                     <tbody id="teamPerformanceTableBody">
-                        <tr><td colspan="4" style="text-align:center;padding:30px;color:#6c757d;">加载中...</td></tr>
+                        <tr><td colspan="7" style="text-align:center;padding:30px;color:#6c757d;">加载中...</td></tr>
                     </tbody>
                 </table>
             </div>
-            <div id="teamPaneSummary" class="pane-summary">合计：总利润 0.00 ｜ 总金额 0.00 ｜ 利润率 0.00%</div>
+            <div id="teamPaneSummary" class="pane-summary">合计：询盘量 0 ｜ 订单量 0 ｜ 成单率 0.00% ｜ 总利润 0.00 ｜ 总金额 0.00 ｜ 利润率 0.00%</div>
         </div>
 
         <!-- 中列：成员业绩排名 -->
@@ -341,7 +344,10 @@
     function updateTeamPaneSummary(summary) {
         var s = summary || {};
         $('#teamPaneSummary').html(
-            '合计：总利润 ' + (s.total_profit || '0.00') +
+            '合计：询盘量 ' + ((s.total_inquiry_count != null) ? s.total_inquiry_count : 0) +
+            ' ｜ 订单量 ' + ((s.total_order_count != null) ? s.total_order_count : 0) +
+            ' ｜ 成单率 ' + (s.conversion_rate || '0.00') + '%' +
+            ' ｜ 总利润 ' + (s.total_profit || '0.00') +
             ' ｜ 总金额 ' + (s.total_money || '0.00') +
             ' ｜ 利润率 ' + (s.profit_rate || '0.00') + '%'
         );
@@ -382,7 +388,7 @@
         var $tbody = $('#teamPerformanceTableBody');
         $tbody.empty();
         if (!data || !data.length) {
-            $tbody.append('<tr><td colspan="4" style="text-align:center;padding:30px;color:#6c757d;">暂无数据</td></tr>');
+            $tbody.append('<tr><td colspan="7" style="text-align:center;padding:30px;color:#6c757d;">暂无数据</td></tr>');
             return;
         }
         $.each(data, function (idx, item) {
@@ -390,6 +396,9 @@
             var row = '<tr class="team-row" data-team="' + esc(teamName) + '">' +
                 '<td style="text-align:center;">' + (item.rank || (idx + 1)) + '</td>' +
                 '<td><strong style="color:#4f7cff;">' + esc(teamName) + '</strong></td>' +
+                '<td style="text-align:right;">' + esc(item.inquiry_count != null ? item.inquiry_count : 0) + '</td>' +
+                '<td style="text-align:right;">' + esc(item.order_count != null ? item.order_count : 0) + '</td>' +
+                '<td style="text-align:right;">' + esc(item.conversion_rate || '0.00') + '%</td>' +
                 '<td style="text-align:right;color:#28a745;">' + esc(item.profit || '0.00') + '</td>' +
                 '<td style="text-align:right;">' + esc(item.profit_rate || '0.00') + '%</td>' +
                 '</tr>';

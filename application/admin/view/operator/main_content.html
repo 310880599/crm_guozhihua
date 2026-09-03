@@ -983,7 +983,7 @@
                 <!-- 团队列表内容将在这里渲染 -->
             </div>
             <div id="teamPaneSummary" style="padding:10px 20px;border-top:1px solid #e9ecef;background:#fafafa;flex-shrink:0;color:#333;font-weight:600;">
-                合计：总利润 0.00 ｜ 总金额 0.00 ｜ 利润率 0.00%
+                合计：询盘量 0 ｜ 订单量 0 ｜ 成单率 0.00% ｜ 总利润 0.00 ｜ 总金额 0.00 ｜ 利润率 0.00%
             </div>
         </div>
         
@@ -5209,10 +5209,20 @@
 
     function updateTeamPaneSummary(summary) {
         var s = summary || {};
+        var total_inquiry = (s.total_inquiry_count != null) ? s.total_inquiry_count : 0;
+        var total_order = (s.total_order_count != null) ? s.total_order_count : 0;
+        var conversion_rate = s.conversion_rate || '0.00';
         var total_profit = s.total_profit || '0.00';
         var total_money  = s.total_money  || '0.00';
         var profit_rate  = s.profit_rate  || '0.00';
-        $('#teamPaneSummary').html('合计：总利润 ' + total_profit + ' ｜ 总金额 ' + total_money + ' ｜ 利润率 ' + profit_rate + '%');
+        $('#teamPaneSummary').html(
+            '合计：询盘量 ' + total_inquiry +
+            ' ｜ 订单量 ' + total_order +
+            ' ｜ 成单率 ' + conversion_rate + '%' +
+            ' ｜ 总利润 ' + total_profit +
+            ' ｜ 总金额 ' + total_money +
+            ' ｜ 利润率 ' + profit_rate + '%'
+        );
     }
 
     function updateMemberPaneSummary(summary) {
@@ -5243,13 +5253,16 @@
                 var row = '<tr class="team-row" data-team="' + (teamName.replace(/"/g, '&quot;')) + '">' +
                     '<td>' + (item.rank || (idx + 1)) + '</td>' +
                     '<td><strong style="color:#4f7cff;">' + teamName + '</strong></td>' +
+                    '<td style="text-align:right;">' + (item.inquiry_count != null ? item.inquiry_count : 0) + '</td>' +
+                    '<td style="text-align:right;">' + (item.order_count != null ? item.order_count : 0) + '</td>' +
+                    '<td style="text-align:right;">' + (item.conversion_rate || '0.00') + '%</td>' +
                     '<td style="text-align:right; color:#28a745;">' + (item.profit || '0.00') + '</td>' +
                     '<td style="text-align:right;">' + (item.profit_rate || '0.00') + '%</td>' +
                     '</tr>';
                 $tbody.append(row);
             });
         } else {
-            $tbody.append('<tr><td colspan="4" class="text-center text-muted">暂无数据</td></tr>');
+            $tbody.append('<tr><td colspan="7" class="text-center text-muted">暂无数据</td></tr>');
         }
         
         // 如果在分栏布局中，重新绑定点击事件

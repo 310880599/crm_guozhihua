@@ -433,103 +433,23 @@ class DataStatistics extends Common
         $timebucket = Request::param('timebucket', '');
         $at_time    = Request::param('at_time', '');
         $month_keys = trim((string)Request::param('month_keys', ''));
-        $emptySummary = ['total_profit' => '0.00', 'total_money' => '0.00', 'profit_rate' => '0.00'];
+        $emptySummary = [
+            'total_profit' => '0.00',
+            'total_money' => '0.00',
+            'profit_rate' => '0.00',
+            'total_inquiry_count' => 0,
+            'total_order_count' => 0,
+            'total_non_repeat_order_count' => 0,
+            'conversion_rate' => '0.00',
+        ];
 
         try {
-            $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
-            $service = new BusinessPerformanceSplitService();
-
-            $adminRows = Db::table('admin')->field('admin_id,username,team_name')->select();
-            $adminMapById = [];
-            foreach ((array)$adminRows as $adminRow) {
-                $adminId = (int)($adminRow['admin_id'] ?? 0);
-                if ($adminId > 0) {
-                    $adminMapById[$adminId] = $adminRow;
-                }
-            }
-
-            $query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
-            $orders = $query
-                ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,joint_person,owner_profit_rate,collaborator_profit_rate')
-                ->order('order_time desc,id desc')
-                ->limit(20000)
-                ->select();
-
-            $teamAgg = [];
-            $sum_profit = 0.0;
-            $sum_money = 0.0;
-            foreach ((array)$orders as $order) {
-                $splitRows = $service->splitOrderProfit((array)$order, $adminMapById);
-                foreach ($splitRows as $splitRow) {
-                    $username = trim((string)($splitRow['username'] ?? ''));
-                    if ($username !== '' && in_array($username, $excludedUsers, true)) {
-                        continue;
-                    }
-
-                    $splitAdminId = (int)($splitRow['admin_id'] ?? 0);
-                    $teamName = '';
-                    if ($splitAdminId > 0 && isset($adminMapById[$splitAdminId])) {
-                        $teamName = trim((string)($adminMapById[$splitAdminId]['team_name'] ?? ''));
-                    }
-                    if ($teamName === '') {
-                        $teamName = trim((string)($splitRow['team_name'] ?? ''));
-                    }
-                    if ($teamName === '') {
-                        $teamName = '未分组';
-                    }
-                    if (!isset($teamAgg[$teamName])) {
-                        $teamAgg[$teamName] = [
-                            'team_name' => $teamName,
-                            'profit_raw' => 0.0,
-                            'total_money_raw' => 0.0,
-                        ];
-                    }
-                    $splitProfit = round((float)($splitRow['profit'] ?? 0), 2);
-                    $splitMoney = round((float)($splitRow['money'] ?? 0), 2);
-                    $teamAgg[$teamName]['profit_raw'] = round($teamAgg[$teamName]['profit_raw'] + $splitProfit, 2);
-                    $teamAgg[$teamName]['total_money_raw'] = round($teamAgg[$teamName]['total_money_raw'] + $splitMoney, 2);
-
-                    $sum_profit = round($sum_profit + $splitProfit, 2);
-                    $sum_money = round($sum_money + $splitMoney, 2);
-                }
-            }
-
-            $result = [];
-            foreach ($teamAgg as $agg) {
-                $profit = (float)$agg['profit_raw'];
-                $money = (float)$agg['total_money_raw'];
-                $rate = $money > 0 ? round(($profit / $money) * 100, 2) : 0.0;
-                $result[] = [
-                    'team_name' => (string)$agg['team_name'],
-                    'profit_raw' => $profit,
-                    'profit' => number_format($profit, 2),
-                    'total_money_raw' => $money,
-                    'total_money' => number_format($money, 2),
-                    'profit_rate_raw' => $rate,
-                    'profit_rate' => number_format($rate, 2),
-                ];
-            }
-
-            usort($result, function ($a, $b) {
-                return ((float)$b['profit_raw']) <=> ((float)$a['profit_raw']);
-            });
-
-            $rank = 1;
-            foreach ($result as &$item) {
-                $item['rank'] = $rank++;
-            }
-            unset($item);
-
-            $sum_rate = $sum_money > 0 ? round(($sum_profit / $sum_money) * 100, 2) : 0;
+            $collected = $this->collectTeamPerformanceData($timebucket, $at_time, $month_keys);
             return json([
                 'code' => 0,
                 'msg' => '获取成功',
-                'data' => $result,
-                'summary' => [
-                    'total_profit' => number_format($sum_profit, 2),
-                    'total_money'  => number_format($sum_money, 2),
-                    'profit_rate'  => number_format($sum_rate, 2),
-                ]
+                'data' => $collected['rows'],
+                'summary' => $collected['summary'],
             ]);
         } catch (\Throwable $e) {
             \think\facade\Log::error('[Performance] getTeamPerformanceData failed: ' . $e->getMessage());
@@ -880,7 +800,7 @@ class DataStatistics extends Common
             $spreadsheet = $this->buildMultiSheetSpreadsheet([
                 [
                     'title'   => '团队业绩汇总',
-                    'headers' => ['排名', '团队名称', '订单数', '总利润', '总金额', '利润率(%)'],
+                    'headers' => ['排名', '团队名称', '询盘量', '订单量', '成单率(%)', '总利润', '总金额', '利润率(%)'],
                     'rows'    => $exportData['team_rows'],
                 ],
                 [
@@ -1281,8 +1201,32 @@ class DataStatistics extends Common
         $teamExpr     = "IFNULL(NULLIF(TRIM(team_name), ''), '未分组')";
         $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
 
+        // 团队汇总 Sheet：与页面 getTeamPerformanceData 共用同一套组装逻辑（含询盘/订单量/成单率/分摊利润）
+        $collected = $this->collectTeamPerformanceData($timebucket, $at_time, $month_keys);
+        $teamRows = [];
+        foreach ((array)($collected['rows'] ?? []) as $row) {
+            $rowTeam = trim((string)($row['team_name'] ?? ''));
+            $rowTeam = $rowTeam === '' ? '未分组' : $rowTeam;
+            if ($teamName !== '') {
+                $normTeam = $teamName === '未分组' ? '未分组' : $teamName;
+                if ($rowTeam !== $normTeam) {
+                    continue;
+                }
+            }
+            $teamRows[] = [
+                (int)($row['rank'] ?? 0),
+                $rowTeam,
+                (int)($row['inquiry_count'] ?? 0),
+                (int)($row['order_count'] ?? 0),
+                (string)($row['conversion_rate'] ?? '0.00'),
+                number_format((float)($row['profit_raw'] ?? 0), 2, '.', ''),
+                number_format((float)($row['total_money_raw'] ?? 0), 2, '.', ''),
+                number_format((float)($row['profit_rate_raw'] ?? 0), 2, '.', ''),
+            ];
+        }
+
         $baseQuery = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
-        // 导出四个 Sheet 统一排除指定业务员，与页面展示口径保持一致
+        // 其余 Sheet 仍按订单快照排除指定业务员；团队汇总已与页面口径对齐
         $this->applyTeamPerformanceExcludedUsers($baseQuery, $excludedUsers);
 
         if ($teamName !== '') {
@@ -1291,26 +1235,6 @@ class DataStatistics extends Common
         }
         if ($username !== '') {
             $baseQuery->where('pr_user', '=', $username);
-        }
-
-        $teamRowsRaw = (clone $baseQuery)
-            ->field($teamExpr . " as team_name, COUNT(id) as order_count, SUM(profit) as total_profit, SUM(money) as total_money")
-            ->group($teamExpr)
-            ->order('total_profit desc, team_name asc')
-            ->select();
-        $teamRows = [];
-        foreach ((array)$teamRowsRaw as $idx => $row) {
-            $profit = (float)($row['total_profit'] ?? 0);
-            $money  = (float)($row['total_money'] ?? 0);
-            $rate   = $money > 0 ? round(($profit / $money) * 100, 2) : 0.0;
-            $teamRows[] = [
-                $idx + 1,
-                (string)($row['team_name'] ?? '未分组'),
-                (int)($row['order_count'] ?? 0),
-                number_format($profit, 2, '.', ''),
-                number_format($money, 2, '.', ''),
-                number_format($rate, 2, '.', ''),
-            ];
         }
 
         $memberRowsRaw = (clone $baseQuery)
@@ -2036,6 +1960,271 @@ class DataStatistics extends Common
 
         $query = Db::table([$finalIdQuerySql => 'l']);
         return $query;
+    }
+
+    /**
+     * 团队业绩排行榜：统一组装 rows + summary（页面接口与 Excel 团队汇总 Sheet 共用）。
+     * 利润继续 splitOrderProfit 跨团队分摊；订单量/非返单订单量仅按负责人团队计数。
+     *
+     * @return array{rows: array, summary: array}
+     */
+    private function collectTeamPerformanceData(string $timebucket = '', string $at_time = '', string $month_keys = ''): array
+    {
+        $emptySummary = [
+            'total_profit' => '0.00',
+            'total_money' => '0.00',
+            'profit_rate' => '0.00',
+            'total_inquiry_count' => 0,
+            'total_order_count' => 0,
+            'total_non_repeat_order_count' => 0,
+            'conversion_rate' => '0.00',
+        ];
+
+        $excludedUsers = $this->getExcludedTeamPerformanceUsernames();
+        $service = new BusinessPerformanceSplitService();
+
+        $adminRows = Db::table('admin')->field('admin_id,username,team_name')->select();
+        $adminMapById = [];
+        $adminMapByUsername = [];
+        foreach ((array)$adminRows as $adminRow) {
+            $adminId = (int)($adminRow['admin_id'] ?? 0);
+            $adminName = trim((string)($adminRow['username'] ?? ''));
+            if ($adminId > 0) {
+                $adminMapById[$adminId] = $adminRow;
+            }
+            if ($adminName !== '') {
+                $adminMapByUsername[$adminName] = $adminRow;
+            }
+        }
+
+        $query = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys);
+        $orders = $query
+            ->field('id,order_no,order_time,cname,pr_user,pr_user_id,team_name,money,profit,joint_person,owner_profit_rate,collaborator_profit_rate,source,order_type')
+            ->order('order_time desc,id desc')
+            ->limit(20000)
+            ->select();
+
+        $teamAgg = [];
+
+        // 1) 利润：保持原协同分摊（可跨团队）
+        foreach ((array)$orders as $order) {
+            $splitRows = $service->splitOrderProfit((array)$order, $adminMapById);
+            foreach ($splitRows as $splitRow) {
+                $username = trim((string)($splitRow['username'] ?? ''));
+                if ($username !== '' && in_array($username, $excludedUsers, true)) {
+                    continue;
+                }
+
+                $splitAdminId = (int)($splitRow['admin_id'] ?? 0);
+                $teamName = '';
+                if ($splitAdminId > 0 && isset($adminMapById[$splitAdminId])) {
+                    $teamName = trim((string)($adminMapById[$splitAdminId]['team_name'] ?? ''));
+                }
+                if ($teamName === '') {
+                    $teamName = trim((string)($splitRow['team_name'] ?? ''));
+                }
+                if ($teamName === '') {
+                    $teamName = '未分组';
+                }
+
+                $this->ensureTeamPerformanceAggBucket($teamAgg, $teamName);
+                $splitProfit = round((float)($splitRow['profit'] ?? 0), 2);
+                $splitMoney = round((float)($splitRow['money'] ?? 0), 2);
+                $teamAgg[$teamName]['profit_raw'] = round($teamAgg[$teamName]['profit_raw'] + $splitProfit, 2);
+                $teamAgg[$teamName]['total_money_raw'] = round($teamAgg[$teamName]['total_money_raw'] + $splitMoney, 2);
+            }
+        }
+
+        // 2) 订单量 / 非返单订单量：仅负责人团队，一单一团队，协同不加量
+        foreach ((array)$orders as $order) {
+            if (!is_array($order)) {
+                continue;
+            }
+            $prUser = trim((string)($order['pr_user'] ?? ''));
+            if ($prUser !== '' && in_array($prUser, $excludedUsers, true)) {
+                continue;
+            }
+
+            $ownerTeam = $this->resolveTeamPerformanceOwnerTeamName($order, $adminMapById, $adminMapByUsername);
+            $this->ensureTeamPerformanceAggBucket($teamAgg, $ownerTeam);
+            $teamAgg[$ownerTeam]['order_count']++;
+            if (!$this->isPerformanceRepeatOrder($order)) {
+                $teamAgg[$ownerTeam]['non_repeat_order_count']++;
+            }
+        }
+
+        // 3) 询盘量：status=1 + pr_user→admin.team_name + at_time OR to_kh_time + 含返单
+        $inquiryMap = $this->buildTeamPerformanceInquiryCountMap($timebucket, $at_time, $month_keys, $excludedUsers);
+        foreach ($inquiryMap as $teamName => $inquiryCount) {
+            $teamName = trim((string)$teamName);
+            if ($teamName === '') {
+                $teamName = '未分组';
+            }
+            $this->ensureTeamPerformanceAggBucket($teamAgg, $teamName);
+            $teamAgg[$teamName]['inquiry_count'] = (int)$inquiryCount;
+        }
+
+        $result = [];
+        $sum_profit = 0.0;
+        $sum_money = 0.0;
+        $sum_inquiry = 0;
+        $sum_order = 0;
+        $sum_non_repeat = 0;
+
+        foreach ($teamAgg as $agg) {
+            $inquiryCount = (int)($agg['inquiry_count'] ?? 0);
+            $orderCount = (int)($agg['order_count'] ?? 0);
+            $nonRepeatOrderCount = (int)($agg['non_repeat_order_count'] ?? 0);
+            $profit = (float)($agg['profit_raw'] ?? 0);
+            $money = (float)($agg['total_money_raw'] ?? 0);
+
+            // 禁止展示纯零团队（询盘0 + 订单0 + 利润0）
+            if ($inquiryCount === 0 && $orderCount === 0 && abs($profit) < 0.00001) {
+                continue;
+            }
+
+            $conversionRate = $inquiryCount > 0
+                ? round(($nonRepeatOrderCount / $inquiryCount) * 100, 2)
+                : 0.0;
+            $rate = $money > 0 ? round(($profit / $money) * 100, 2) : 0.0;
+
+            $sum_profit = round($sum_profit + $profit, 2);
+            $sum_money = round($sum_money + $money, 2);
+            $sum_inquiry += $inquiryCount;
+            $sum_order += $orderCount;
+            $sum_non_repeat += $nonRepeatOrderCount;
+
+            $result[] = [
+                'team_name' => (string)$agg['team_name'],
+                'inquiry_count' => $inquiryCount,
+                'order_count' => $orderCount,
+                'non_repeat_order_count' => $nonRepeatOrderCount,
+                'conversion_rate_raw' => $conversionRate,
+                'conversion_rate' => number_format($conversionRate, 2),
+                'profit_raw' => $profit,
+                'profit' => number_format($profit, 2),
+                'total_money_raw' => $money,
+                'total_money' => number_format($money, 2),
+                'profit_rate_raw' => $rate,
+                'profit_rate' => number_format($rate, 2),
+            ];
+        }
+
+        usort($result, function ($a, $b) {
+            return ((float)$b['profit_raw']) <=> ((float)$a['profit_raw']);
+        });
+
+        $rank = 1;
+        foreach ($result as &$item) {
+            $item['rank'] = $rank++;
+        }
+        unset($item);
+
+        if (empty($result)) {
+            return [
+                'rows' => [],
+                'summary' => $emptySummary,
+            ];
+        }
+
+        $sum_rate = $sum_money > 0 ? round(($sum_profit / $sum_money) * 100, 2) : 0.0;
+        $sum_conversion = $sum_inquiry > 0
+            ? round(($sum_non_repeat / $sum_inquiry) * 100, 2)
+            : 0.0;
+
+        return [
+            'rows' => $result,
+            'summary' => [
+                'total_profit' => number_format($sum_profit, 2),
+                'total_money' => number_format($sum_money, 2),
+                'profit_rate' => number_format($sum_rate, 2),
+                'total_inquiry_count' => $sum_inquiry,
+                'total_order_count' => $sum_order,
+                'total_non_repeat_order_count' => $sum_non_repeat,
+                'conversion_rate' => number_format($sum_conversion, 2),
+            ],
+        ];
+    }
+
+    /**
+     * 团队业绩：初始化统一聚合桶。
+     */
+    private function ensureTeamPerformanceAggBucket(array &$teamAgg, string $teamName): void
+    {
+        if ($teamName === '') {
+            $teamName = '未分组';
+        }
+        if (!isset($teamAgg[$teamName])) {
+            $teamAgg[$teamName] = [
+                'team_name' => $teamName,
+                'inquiry_count' => 0,
+                'order_count' => 0,
+                'non_repeat_order_count' => 0,
+                'profit_raw' => 0.0,
+                'total_money_raw' => 0.0,
+            ];
+        }
+    }
+
+    /**
+     * 团队业绩：解析订单负责人所属团队（订单量归属）。
+     * 优先 pr_user_id→admin，其次 pr_user→admin，再回退订单快照 team_name，最后「未分组」。
+     */
+    private function resolveTeamPerformanceOwnerTeamName(array $order, array $adminMapById, array $adminMapByUsername): string
+    {
+        $teamName = '';
+        $prUserId = (int)($order['pr_user_id'] ?? 0);
+        if ($prUserId > 0 && isset($adminMapById[$prUserId])) {
+            $teamName = trim((string)($adminMapById[$prUserId]['team_name'] ?? ''));
+        }
+        if ($teamName === '') {
+            $prUser = trim((string)($order['pr_user'] ?? ''));
+            if ($prUser !== '' && isset($adminMapByUsername[$prUser])) {
+                $teamName = trim((string)($adminMapByUsername[$prUser]['team_name'] ?? ''));
+            }
+        }
+        if ($teamName === '') {
+            $teamName = trim((string)($order['team_name'] ?? ''));
+        }
+        if ($teamName === '') {
+            $teamName = '未分组';
+        }
+        return $teamName;
+    }
+
+    /**
+     * 团队业绩：批量统计各团队询盘量。
+     * status=1 + pr_user 非空 + at_time OR to_kh_time + 含返单 + COUNT(*)，不 JOIN contacts。
+     *
+     * @return array team_name => inquiry_count
+     */
+    private function buildTeamPerformanceInquiryCountMap(string $timebucket = '', string $at_time = '', string $month_keys = '', array $excludedUsers = []): array
+    {
+        $normalizedTeamExpr = "CASE WHEN a.team_name IS NULL OR TRIM(a.team_name) = '' THEN '未分组' ELSE TRIM(a.team_name) END";
+
+        $query = Db::table('crm_leads')->alias('l')
+            ->leftJoin('admin a', 'TRIM(l.pr_user) = TRIM(a.username)');
+        $query->where('l.status', 1);
+        $query->whereRaw("TRIM(IFNULL(l.pr_user, '')) <> ''");
+        $this->applyOrderListInquiryTimeWhere($query, $timebucket, $at_time, $month_keys);
+        if (!empty($excludedUsers)) {
+            $query->where('l.pr_user', 'not in', $excludedUsers);
+        }
+
+        $rows = $query
+            ->field($normalizedTeamExpr . ' as team_name, COUNT(*) as inquiry_count')
+            ->group($normalizedTeamExpr)
+            ->select();
+
+        $map = [];
+        foreach ((array)$rows as $row) {
+            $teamName = trim((string)($row['team_name'] ?? ''));
+            if ($teamName === '') {
+                $teamName = '未分组';
+            }
+            $map[$teamName] = (int)($row['inquiry_count'] ?? 0);
+        }
+        return $map;
     }
 
     /**
