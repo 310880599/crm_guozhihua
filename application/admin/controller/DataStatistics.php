@@ -700,13 +700,14 @@ class DataStatistics extends Common
         }
 
         $orders = $this->buildPerformanceOrderQuery($timebucket, $at_time, [], '', $month_keys)
-            ->field('id,order_no,order_time,cname,money,profit,pr_user,pr_user_id,team_name,joint_person,owner_profit_rate,collaborator_profit_rate')
+            ->field('id,order_no,order_time,cname,money,profit,pr_user,pr_user_id,team_name,joint_person,owner_profit_rate,collaborator_profit_rate,product_name')
             ->order('order_time desc,id desc')
             ->limit(20000)
             ->select();
 
         $result = [];
         $sumSplitProfit = 0.0;
+        $orderHeaderProductMap = [];
         foreach ((array)$orders as $order) {
             $splitRows = $service->splitOrderProfit((array)$order, $adminMapById);
             foreach ($splitRows as $splitRow) {
@@ -737,8 +738,13 @@ class DataStatistics extends Common
                 $splitProfit = round((float)($splitRow['profit'] ?? 0), 2);
                 $sumSplitProfit = round($sumSplitProfit + $splitProfit, 2);
 
+                $orderId = (int)($order['id'] ?? 0);
+                if ($orderId > 0 && !isset($orderHeaderProductMap[$orderId])) {
+                    $orderHeaderProductMap[$orderId] = trim((string)($order['product_name'] ?? ''));
+                }
+
                 $result[] = [
-                    'order_id' => (int)($order['id'] ?? 0),
+                    'order_id' => $orderId,
                     'order_no' => (string)($order['order_no'] ?? ''),
                     'deal_time' => (string)($order['order_time'] ?? ''),
                     'order_time' => (string)($order['order_time'] ?? ''),
@@ -751,6 +757,49 @@ class DataStatistics extends Common
                 ];
             }
         }
+
+        // 仅针对第三屏最终展示的订单，批量查询产品明细（避免 N+1）
+        $orderIds = [];
+        foreach ($result as $row) {
+            $oid = (int)($row['order_id'] ?? 0);
+            if ($oid > 0) {
+                $orderIds[] = $oid;
+            }
+        }
+        $orderIds = array_values(array_unique($orderIds));
+
+        $productMap = [];
+        if (!empty($orderIds)) {
+            $itemRows = Db::table('crm_order_item')
+                ->whereIn('order_id', $orderIds)
+                ->field('id,order_id,line_no,product_name')
+                ->order('order_id asc,line_no asc,id asc')
+                ->select();
+            foreach ((array)$itemRows as $itemRow) {
+                $oid = (int)($itemRow['order_id'] ?? 0);
+                $pname = trim((string)($itemRow['product_name'] ?? ''));
+                if ($oid <= 0 || $pname === '') {
+                    continue;
+                }
+                if (!isset($productMap[$oid])) {
+                    $productMap[$oid] = [];
+                }
+                $productMap[$oid][] = $pname;
+            }
+        }
+
+        foreach ($result as &$row) {
+            $orderId = (int)($row['order_id'] ?? 0);
+            if (!empty($productMap[$orderId])) {
+                $row['product_names'] = $productMap[$orderId];
+            } else {
+                $headerName = isset($orderHeaderProductMap[$orderId])
+                    ? trim((string)$orderHeaderProductMap[$orderId])
+                    : '';
+                $row['product_names'] = $headerName !== '' ? [$headerName] : [];
+            }
+        }
+        unset($row);
 
         return json([
             'code' => 200,

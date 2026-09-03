@@ -673,7 +673,7 @@
             '<table class="wukong-table" style="width:100%;">' +
             '<thead><tr>' +
             '<th>成交日期</th>' +
-            '<th>客户名称</th>' +
+            '<th style="text-align:left;">产品明细</th>' +
             '<th style="text-align:center;">角色</th>' +
             '<th style="text-align:right;">占比</th>' +
             '<th style="text-align:right;">实际业绩</th>' +
@@ -681,9 +681,15 @@
 
         $.each(data, function (_, item) {
             var rateDisplay = item.rate_display || (((item.rate || '0.00') + '').replace('%', '') + '%');
+            var productNames = Array.isArray(item.product_names) ? item.product_names : [];
+            var productHtml = productNames.length
+                ? productNames.map(function(name) {
+                    return esc(name || '');
+                }).filter(Boolean).join('<br>')
+                : '-';
             html += '<tr style="border-bottom:1px solid #dee2e6;">' +
                 '<td>' + esc(item.deal_time || item.order_time || item.deal_date || '') + '</td>' +
-                '<td>' + esc(item.cname || item.client_name || item.customer_name || '') + '</td>' +
+                '<td style="text-align:left;">' + productHtml + '</td>' +
                 '<td style="text-align:center;">' + esc(item.role_type || '') + '</td>' +
                 '<td style="text-align:right;">' + esc(rateDisplay) + '</td>' +
                 '<td style="text-align:right;color:#28a745;">' + esc(item.split_profit || item.profit || '0.00') + '</td>' +

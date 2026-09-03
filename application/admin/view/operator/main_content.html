@@ -5708,7 +5708,7 @@
                 '<thead style="background: #f8f9fa;">' +
                 '<tr>' +
                 '<th style="padding: 12px; text-align: left; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">成交日期</th>' +
-                '<th style="padding: 12px; text-align: left; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">客户名称</th>' +
+                '<th style="padding: 12px; text-align: left; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">产品明细</th>' +
                 '<th style="padding: 12px; text-align: center; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">角色</th>' +
                 '<th style="padding: 12px; text-align: right; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">占比</th>' +
                 '<th style="padding: 12px; text-align: right; font-weight: 600; color: #495057; border-bottom: 2px solid #dee2e6;">实际业绩</th>' +
@@ -5719,9 +5719,18 @@
             if (data && data.length > 0) {
                 $.each(data, function(index, item) {
                     var rateDisplay = item.rate_display || (((item.rate || '0.00') + '').replace('%', '') + '%');
+                    var names = Array.isArray(item.product_names) ? item.product_names : [];
+                    var productHtml = '-';
+                    if (names.length > 0) {
+                        productHtml = names.map(function(name) {
+                            return escapeHtml(name || '');
+                        }).filter(function(name) {
+                            return name !== '';
+                        }).join('<br>') || '-';
+                    }
                     html += '<tr style="border-bottom: 1px solid #dee2e6;">' +
                         '<td style="padding: 12px;">' + (item.deal_time || item.order_time || item.deal_date || '') + '</td>' +
-                        '<td style="padding: 12px;">' + (item.cname || item.client_name || item.customer_name || '') + '</td>' +
+                        '<td style="padding: 12px; text-align: left;">' + productHtml + '</td>' +
                         '<td style="padding: 12px; text-align: center;">' + (item.role_type || '') + '</td>' +
                         '<td style="padding: 12px; text-align: right;">' + rateDisplay + '</td>' +
                         '<td style="padding: 12px; text-align: right; color: #28a745;">' + (item.split_profit || item.profit || '0.00') + '</td>' +
