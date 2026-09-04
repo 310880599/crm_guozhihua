@@ -2492,12 +2492,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             case 'alterAll':
                 var ids2 = collectCheckedIdsFromCurrentTable();
                 if (ids2.length === 0) { layer.msg('请选择当前列表中的客户'); return; }
-                layer.confirm('确定要转移选中的 ' + ids2.length + ' 个客户吗？', function(index){
-                    layer.open({
-                        type: 2, title: '转移客户', area: ['100%','86%'],
-                        content: "{:url('Client/alterPrUserCheck')}?ids=" + ids2.join(',')
-                    });
-                    layer.close(index);
+                // 精准二次确认已移至转移弹窗（选择新负责人后），此处不再做模糊确认
+                layer.open({
+                    type: 2, title: '转移客户负责人', area: ['100%','86%'],
+                    content: "{:url('Client/alterPrUserCheck')}?ids=" + ids2.join(',')
                 });
                 break;
             case 'chengjiaoAll':
@@ -2565,7 +2563,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         } else if (event === 'edit') {
             layer_add("编辑客户", "{:url('Client/edit')}?id=" + id);
         } else if (event === 'alter') {
-            layer_add("转移客户", "{:url('Client/alterPrUserCheck')}?ids=" + id);
+            layer_add("转移客户负责人", "{:url('Client/alterPrUserCheck')}?ids=" + id);
         } else if (event === 'chengjiao') {
             layer.confirm('确定这个客户已成交吗？', function(index){
                 $.post("{:url('Client/chengjiao')}", { ids: id }, function(res){

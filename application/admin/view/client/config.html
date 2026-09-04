@@ -1,0 +1,186 @@
+{include file="common/head"/}
+<style>
+    body { background: #f5f7fa !important; }
+    .client-config-container {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 20px;
+        background: #f5f7fa;
+        overflow: auto;
+    }
+    .config-card {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        padding: 22px 20px 10px 20px;
+        max-width: 920px;
+    }
+    .config-form .layui-form-label {
+        width: 160px;
+    }
+    .config-form .layui-input-block {
+        margin-left: 190px;
+        max-width: 620px;
+    }
+    .config-help {
+        color: #666;
+        margin-top: 8px;
+        line-height: 1.6;
+        font-size: 12px;
+    }
+    .config-alert {
+        margin-bottom: 16px;
+        padding: 10px 12px;
+        border-radius: 4px;
+        color: #fff;
+        background: #FFB800;
+    }
+    .config-meta {
+        margin-top: 8px;
+        color: #999;
+        font-size: 12px;
+    }
+    #allowedOwnerSelect {
+        min-height: 38px;
+    }
+    @media screen and (max-width: 768px) {
+        .config-card {
+            max-width: 100%;
+            padding: 16px 12px 8px 12px;
+        }
+        .config-form .layui-form-label {
+            width: 120px;
+        }
+        .config-form .layui-input-block {
+            margin-left: 130px;
+            max-width: calc(100% - 140px);
+        }
+    }
+</style>
+
+<div class="client-config-container">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>客户管理配置</legend>
+    </fieldset>
+
+    <div class="config-card">
+        {if condition="$isSuggestedDefault eq 1"}
+        <div class="config-alert">
+            当前尚未保存客户管理配置，以下为系统建议默认人员，保存后正式生效。
+        </div>
+        {/if}
+
+        <form class="layui-form config-form" lay-filter="client-config-form">
+            <fieldset class="layui-elem-field layui-field-title" style="margin-top: 0;">
+                <legend style="font-size: 16px;">负责人转移配置</legend>
+            </fieldset>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">允许接收客户的人员</label>
+                <div class="layui-input-block">
+                    <div id="allowedOwnerSelect"></div>
+                    <div class="config-help">
+                        仅被选中的人员可作为客户负责人、客户转移目标和首次超时分配目标。超级管理员和运营人员不会进入候选范围。
+                    </div>
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <label class="layui-form-label">排除禁用账号</label>
+                <div class="layui-input-block" style="padding-top: 5px;">
+                    <input type="checkbox"
+                           name="exclude_disabled_users"
+                           lay-skin="switch"
+                           lay-text="开启|关闭"
+                           value="1"
+                           {if condition="$excludeDisabledUsers eq 1"}checked{/if}>
+                    <div class="config-help">开启后，is_open=0 的账号不能成为客户负责人。</div>
+                </div>
+            </div>
+
+            <div class="layui-form-item">
+                <div class="layui-input-block">
+                    <button type="button" class="layui-btn" id="btnSaveClientConfig">保存配置</button>
+                    {if condition="$hasConfig eq 1"}
+                    <div class="config-meta">
+                        最近更新：{$updateUser|default=''}
+                        {if condition="$updateTime neq ''"}（{$updateTime}）{/if}
+                    </div>
+                    {/if}
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{include file="common/foot"/}
+<script>
+layui.use(['form', 'layer', 'jquery'], function () {
+    var form = layui.form;
+    var layer = layui.layer;
+    var $ = layui.jquery;
+
+    var xmSelectData = {$xmSelectDataJson|default='[]'|raw};
+    var selectedOwnerIds = {$selectedOwnerIdsJson|default='[]'|raw};
+
+    if (typeof xmSelect === 'undefined') {
+        layer.msg('xmSelect 组件未引入，请检查 xm-select.js 文件路径', { icon: 2, time: 3000 });
+        return;
+    }
+
+    var ownerSelect = xmSelect.render({
+        el: '#allowedOwnerSelect',
+        name: 'allowed_owner_user_ids',
+        tips: '请选择允许接收客户的人员',
+        filterable: true,
+        toolbar: { show: true },
+        model: { label: { type: 'block' } },
+        data: xmSelectData || []
+    });
+
+    if (selectedOwnerIds && selectedOwnerIds.length) {
+        ownerSelect.setValue(selectedOwnerIds);
+    }
+
+    form.render();
+
+    $('#btnSaveClientConfig').on('click', function () {
+        var selectedRows = ownerSelect.getValue() || [];
+        var ids = [];
+        $.each(selectedRows, function (_, item) {
+            var id = parseInt(item.value, 10) || 0;
+            if (id > 0 && ids.indexOf(id) === -1) {
+                ids.push(id);
+            }
+        });
+
+        if (!ids.length) {
+            layer.msg('请至少选择 1 个允许接收客户的人员', { icon: 2, time: 2500 });
+            return;
+        }
+
+        var excludeDisabled = $('input[name="exclude_disabled_users"]').is(':checked') ? 1 : 0;
+        var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+
+        $.post("{:url('Client/config')}", {
+            allowed_owner_user_ids: ids,
+            exclude_disabled_users: excludeDisabled
+        }, function (res) {
+            layer.close(loadIdx);
+            if (res && parseInt(res.code, 10) === 0) {
+                layer.msg(res.msg || '保存成功', { icon: 1, time: 1500 }, function () {
+                    location.reload();
+                });
+                return;
+            }
+            layer.msg((res && res.msg) ? res.msg : '保存失败', { icon: 2, time: 3000 });
+        }).fail(function () {
+            layer.close(loadIdx);
+            layer.msg('网络异常，请稍后重试', { icon: 2, time: 2500 });
+        });
+    });
+});
+</script>

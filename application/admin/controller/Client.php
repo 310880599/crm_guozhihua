@@ -13,9 +13,11 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use think\facade\Cache;
 use app\admin\model\Admin;
 use app\admin\service\CheckOrderService;
+use app\admin\service\ClientConfigService;
 use app\admin\service\ClientDetailService;
 use app\admin\service\ClientFollowService;
 use app\admin\service\ClientOrderService;
+use app\admin\service\ClientOwnerCandidateService;
 use app\admin\service\ClientOwnerHistoryService;
 use app\admin\service\ClientRowMarkService;
 use app\admin\service\ClientStatusService;
@@ -5393,6 +5395,135 @@ class Client extends Common
 
 
     //客户转移，变更负责人（客户列表页批量）
+    /**
+     * 转移二次确认用主电话映射：crm_contacts contact_type=1 且 is_delete=0
+     *
+     * @param int[] $leadIds
+     * @return array<int,string>
+     */
+    private function buildAlterTransferMainPhoneMap(array $leadIds)
+    {
+        $result = [];
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($leadIds)) {
+            return $result;
+        }
+
+        try {
+            $query = Db::table('crm_contacts')
+                ->field('leads_id,contact_value')
+                ->whereIn('leads_id', $leadIds)
+                ->where('contact_type', 1)
+                ->order('id', 'asc');
+            if ($this->tableHasColumn('crm_contacts', 'is_delete')) {
+                $query->where('is_delete', 0);
+            }
+            $rows = $query->select();
+        } catch (\Throwable $e) {
+            Log::error('[Client.buildAlterTransferMainPhoneMap] query failed', [
+                'error' => $e->getMessage(),
+            ]);
+            return $result;
+        }
+
+        if (is_object($rows) && method_exists($rows, 'toArray')) {
+            $rows = $rows->toArray();
+        }
+        if (!is_array($rows)) {
+            $rows = [];
+        }
+
+        foreach ($rows as $row) {
+            $leadId = (int)($row['leads_id'] ?? 0);
+            if ($leadId <= 0 || isset($result[$leadId])) {
+                continue;
+            }
+            $result[$leadId] = trim((string)($row['contact_value'] ?? ''));
+        }
+
+        return $result;
+    }
+
+    /**
+     * 规范化转移弹窗二次确认 client_list：id / kh_name / main_phone / pr_user
+     *
+     * @param int[] $idsArr 请求顺序
+     * @param array $rows 已查到的客户行（可含 main_phone）
+     * @return array<int,array{id:int,kh_name:string,main_phone:string,pr_user:string}>
+     */
+    private function buildAlterTransferClientList(array $idsArr, array $rows = [])
+    {
+        $byId = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $id = (int)($row['id'] ?? 0);
+            if ($id <= 0) {
+                continue;
+            }
+            $byId[$id] = $row;
+        }
+
+        $needPhoneIds = [];
+        foreach ($idsArr as $id) {
+            $id = (int)$id;
+            if ($id <= 0 || !isset($byId[$id])) {
+                continue;
+            }
+            if (!array_key_exists('main_phone', $byId[$id])) {
+                $needPhoneIds[] = $id;
+            }
+        }
+
+        $phoneMap = [];
+        if (!empty($needPhoneIds)) {
+            $phoneMap = $this->buildAlterTransferMainPhoneMap($needPhoneIds);
+        }
+
+        $list = [];
+        foreach ($idsArr as $id) {
+            $id = (int)$id;
+            if ($id <= 0 || !isset($byId[$id])) {
+                continue;
+            }
+            $row = $byId[$id];
+            if (array_key_exists('main_phone', $row)) {
+                $mainPhone = trim((string)$row['main_phone']);
+            } else {
+                $mainPhone = (string)($phoneMap[$id] ?? '');
+            }
+            $list[] = [
+                'id' => $id,
+                'kh_name' => trim((string)($row['kh_name'] ?? '')),
+                'main_phone' => $mainPhone,
+                'pr_user' => trim((string)($row['pr_user'] ?? '')),
+            ];
+        }
+
+        return $list;
+    }
+
+    /**
+     * 向模板注入 client_list 及安全 JSON（二次确认用）
+     *
+     * @param array $clientList
+     * @return void
+     */
+    private function assignAlterTransferClientList(array $clientList)
+    {
+        $this->assign('client_list', $clientList);
+        $this->assign(
+            'client_list_json',
+            json_encode(
+                $clientList,
+                JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT
+            )
+        );
+    }
+
     public function alterPrUser()
     {
         // ids 严格清洗：仅保留正整数，去重并保持顺序
@@ -5419,8 +5550,9 @@ class Client extends Common
             'is_ajax' => Request::isAjax() ? 1 : 0
         ]);
 
-        // 查询所有管理员（去除admin）
-        $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
+        // 仅展示可合法成为客户负责人的销售相关账号
+        $ownerCandidateService = new ClientOwnerCandidateService();
+        $adminResult = $ownerCandidateService->getTransferableOwnerCandidates();
         $this->assign('adminResult', $adminResult);
 
         $batchLimit = 500;
@@ -5456,14 +5588,17 @@ class Client extends Common
             if ($scopeError !== '') {
                 return json(['code' => 500, 'msg' => $scopeError, 'data' => []]);
             }
-            if ($username === '') {
-                return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
-            }
 
-            $newPrUserId = Db::name('admin')->where('username', $username)->value('admin_id');
-            if (empty($newPrUserId)) {
-                return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
+            $ownerValidate = $ownerCandidateService->validateTransferTargetOwner($username);
+            if (empty($ownerValidate['ok'])) {
+                return json([
+                    'code' => (int)($ownerValidate['code'] ?? 500),
+                    'msg' => (string)($ownerValidate['msg'] ?? '该账号当前不能作为客户负责人，请重新选择'),
+                    'data' => [],
+                ]);
             }
+            $username = (string)$ownerValidate['username'];
+            $newPrUserId = (int)$ownerValidate['admin_id'];
 
             $ownerHistoryService = new ClientOwnerHistoryService();
             $operatorInfo = [
@@ -5575,7 +5710,7 @@ class Client extends Common
         if ($scopeError !== '') {
             $this->assign('ids', '');
             $this->assign('client_name', $scopeError);
-            $this->assign('client_list', []);
+            $this->assignAlterTransferClientList([]);
             return $this->fetch('client/alter_pr_user');
         }
 
@@ -5583,19 +5718,17 @@ class Client extends Common
         $clientName = '';
         $clientList = [];
         if (!empty($idsArr)) {
-            $clientList = model('Client')->buildClientSearchAllBaseQuery([])
+            $rawList = model('Client')->buildClientSearchAllBaseQuery([])
                 ->where('l.id', 'in', $idsArr)
-                ->field('l.id,l.kh_name')
+                ->field('l.id,l.kh_name,l.pr_user')
                 ->select();
-            if (is_object($clientList) && method_exists($clientList, 'toArray')) {
-                $clientList = $clientList->toArray();
+            if (is_object($rawList) && method_exists($rawList, 'toArray')) {
+                $rawList = $rawList->toArray();
             }
-            $orderMap = array_flip($idsArr);
-            usort($clientList, function ($a, $b) use ($orderMap) {
-                $pa = isset($orderMap[(int)$a['id']]) ? $orderMap[(int)$a['id']] : 9999;
-                $pb = isset($orderMap[(int)$b['id']]) ? $orderMap[(int)$b['id']] : 9999;
-                return $pa - $pb;
-            });
+            if (!is_array($rawList)) {
+                $rawList = [];
+            }
+            $clientList = $this->buildAlterTransferClientList($idsArr, $rawList);
             $clientCount = count($clientList);
             if ($clientCount > 1) {
                 $clientName = '已选择' . $clientCount . '个客户';
@@ -5608,7 +5741,7 @@ class Client extends Common
             $clientName = '未找到客户';
         }
         $this->assign('client_name', $clientName);
-        $this->assign('client_list', $clientList);
+        $this->assignAlterTransferClientList($clientList);
         return $this->fetch('client/alter_pr_user');
     }
 
@@ -5634,8 +5767,9 @@ class Client extends Common
         }
         $ids = implode(',', $idsArr);
 
-        //查询所有管理员（去除admin）
-        $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
+        // 仅展示可合法成为客户负责人的销售相关账号
+        $ownerCandidateService = new ClientOwnerCandidateService();
+        $adminResult = $ownerCandidateService->getTransferableOwnerCandidates();
         $this->assign('adminResult', $adminResult);
 
         $batchLimit = 500;
@@ -5675,15 +5809,16 @@ class Client extends Common
             }
 
             $username = trim((string)Request::param('username'));
-            if ($username === '') {
-                return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
+            $ownerValidate = $ownerCandidateService->validateTransferTargetOwner($username);
+            if (empty($ownerValidate['ok'])) {
+                return json([
+                    'code' => (int)($ownerValidate['code'] ?? 500),
+                    'msg' => (string)($ownerValidate['msg'] ?? '该账号当前不能作为客户负责人，请重新选择'),
+                    'data' => [],
+                ]);
             }
-
-            // 查询新负责人的 admin_id
-            $newPrUserId = Db::name('admin')->where('username', $username)->value('admin_id');
-            if (empty($newPrUserId)) {
-                return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
-            }
+            $username = (string)$ownerValidate['username'];
+            $newPrUserId = (int)$ownerValidate['admin_id'];
 
             $ownerHistoryService = new ClientOwnerHistoryService();
             $operatorInfo = [
@@ -5810,22 +5945,43 @@ class Client extends Common
         if ($scopeError !== '') {
             $this->assign('ids', '');
             $this->assign('client_name', $scopeError);
+            $this->assignAlterTransferClientList([]);
             return $this->fetch('personclient/alter_pr_user');
         }
 
         $this->assign('ids', $ids);
         $clientName = '';
+        $clientList = [];
         if (!empty($idsArr)) {
-            $clientList = Db::name('crm_leads')
+            $rawList = Db::name('crm_leads')
                 ->where('id', 'in', $idsArr)
                 ->where('pr_user', $currentUsername)
                 ->where('status', 1)
                 ->where('issuccess', -1)
-                ->field('id,kh_name')
+                ->field('id,kh_name,pr_user')
                 ->select();
-            $clientName = implode(',', array_column((array)$clientList, 'kh_name'));
+            if (is_object($rawList) && method_exists($rawList, 'toArray')) {
+                $rawList = $rawList->toArray();
+            }
+            if (!is_array($rawList)) {
+                $rawList = [];
+            }
+            $clientList = $this->buildAlterTransferClientList($idsArr, $rawList);
+            $clientCount = count($clientList);
+            if ($clientCount > 1) {
+                $clientName = '已选择' . $clientCount . '个客户';
+            } elseif ($clientCount === 1) {
+                $singleName = trim((string)$clientList[0]['kh_name']);
+                $clientName = $singleName === '' ? '未命名' : $singleName;
+            } else {
+                $clientName = '';
+            }
+        }
+        if ($clientName === '') {
+            $clientName = '未找到客户';
         }
         $this->assign('client_name', $clientName);
+        $this->assignAlterTransferClientList($clientList);
 
         return $this->fetch('personclient/alter_pr_user');
     }
@@ -5859,7 +6015,8 @@ class Client extends Common
             'is_ajax' => Request::isAjax() ? 1 : 0
         ]);
 
-        $adminResult = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
+        $ownerCandidateService = new ClientOwnerCandidateService();
+        $adminResult = $ownerCandidateService->getTransferableOwnerCandidates();
         $this->assign('adminResult', $adminResult);
         $this->assign('transfer_submit_url', url('Client/alterPrUserCheck'));
 
@@ -5911,14 +6068,17 @@ class Client extends Common
             if ($scopeError !== '') {
                 return json(['code' => 500, 'msg' => $scopeError, 'data' => []]);
             }
-            if ($username === '') {
-                return json(['code' => 500, 'msg' => '负责人不能为空', 'data' => []]);
-            }
 
-            $newPrUserId = Db::name('admin')->where('username', $username)->value('admin_id');
-            if (empty($newPrUserId)) {
-                return json(['code' => 500, 'msg' => '未找到该负责人账号，请重新选择', 'data' => []]);
+            $ownerValidate = $ownerCandidateService->validateTransferTargetOwner($username);
+            if (empty($ownerValidate['ok'])) {
+                return json([
+                    'code' => (int)($ownerValidate['code'] ?? 500),
+                    'msg' => (string)($ownerValidate['msg'] ?? '该账号当前不能作为客户负责人，请重新选择'),
+                    'data' => [],
+                ]);
             }
+            $username = (string)$ownerValidate['username'];
+            $newPrUserId = (int)$ownerValidate['admin_id'];
 
             $ownerHistoryService = new ClientOwnerHistoryService();
             $operatorInfo = [
@@ -6022,7 +6182,7 @@ class Client extends Common
         if ($scopeError !== '') {
             $this->assign('ids', '');
             $this->assign('client_name', $scopeError);
-            $this->assign('client_list', []);
+            $this->assignAlterTransferClientList([]);
             return $this->fetch('client/alter_pr_user');
         }
 
@@ -6030,13 +6190,8 @@ class Client extends Common
         $clientName = '';
         $clientList = [];
         if (!empty($idsArr) && !empty($scopedRows)) {
-            $clientList = $scopedRows;
-            $orderMap = array_flip($idsArr);
-            usort($clientList, function ($a, $b) use ($orderMap) {
-                $pa = isset($orderMap[(int)$a['id']]) ? $orderMap[(int)$a['id']] : 9999;
-                $pb = isset($orderMap[(int)$b['id']]) ? $orderMap[(int)$b['id']] : 9999;
-                return $pa - $pb;
-            });
+            // scopedRows 已含 pr_user / main_phone（getCheckClientSearchList）
+            $clientList = $this->buildAlterTransferClientList($idsArr, $scopedRows);
             $clientCount = count($clientList);
             if ($clientCount > 1) {
                 $clientName = '已选择' . $clientCount . '个客户';
@@ -6049,7 +6204,7 @@ class Client extends Common
             $clientName = '未找到客户';
         }
         $this->assign('client_name', $clientName);
-        $this->assign('client_list', $clientList);
+        $this->assignAlterTransferClientList($clientList);
         return $this->fetch('client/alter_pr_user');
     }
 
@@ -6904,5 +7059,42 @@ class Client extends Common
         }
     }
 
+    /**
+     * 客户管理配置
+     * GET: 页面（读取/回显配置）
+     * POST: 保存配置（复用 Client/config 权限节点）
+     */
+    public function config()
+    {
+        $service = new ClientConfigService();
+
+        if (request()->isPost()) {
+            $rawIds = input('post.allowed_owner_user_ids/a', null);
+            if (!is_array($rawIds)) {
+                $rawIds = input('post.allowed_owner_user_ids', '');
+            }
+
+            $excludeDisabled = input('post.exclude_disabled_users', '1');
+
+            $result = $service->saveConfig([
+                'allowed_owner_user_ids' => $rawIds,
+                'exclude_disabled_users' => $excludeDisabled,
+            ]);
+
+            return json($result);
+        }
+
+        $pageData = $service->getConfigPageData();
+        $this->assign('pageData', $pageData);
+        $this->assign('xmSelectDataJson', json_encode($pageData['xm_select_data'] ?? [], JSON_UNESCAPED_UNICODE));
+        $this->assign('selectedOwnerIdsJson', json_encode($pageData['selected_owner_ids'] ?? [], JSON_UNESCAPED_UNICODE));
+        $this->assign('excludeDisabledUsers', (int)($pageData['exclude_disabled_users'] ?? 1));
+        $this->assign('hasConfig', !empty($pageData['has_config']) ? 1 : 0);
+        $this->assign('isSuggestedDefault', !empty($pageData['is_suggested_default']) ? 1 : 0);
+        $this->assign('updateUser', (string)($pageData['update_user'] ?? ''));
+        $this->assign('updateTime', (string)($pageData['update_time'] ?? ''));
+
+        return $this->fetch('client/config');
+    }
 
 }

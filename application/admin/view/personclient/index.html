@@ -6188,12 +6188,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             case 'alterAll':
                 if (data.length === 0) { layer.msg('请选择要操作的数据'); return; }
                 var ids2 = data.map(function(it){ return it.id; });
-                layer.confirm('确定要转移选中的 ' + data.length + ' 个客户吗？', function(index){
-                    layer.open({
-                        type: 2, title: '转移客户', area: ['100%','86%'],
-                        content: "{:url('Client/alterPrUserPri')}?ids=" + ids2.join(',')
-                    });
-                    layer.close(index);
+                // 精准二次确认已移至转移弹窗（选择新负责人后），此处不再做模糊确认
+                layer.open({
+                    type: 2, title: '转移客户负责人', area: ['100%','86%'],
+                    content: "{:url('Client/alterPrUserPri')}?ids=" + ids2.join(',')
                 });
                 break;
             case 'chengjiaoAll':
@@ -6266,7 +6264,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 content: "{:url('Client/details')}?id=" + id
             });
         } else if (event === 'alter') {
-            layer_add("转移客户", "{:url('Client/alterPrUserPri')}?ids=" + id);
+            layer_add("转移客户负责人", "{:url('Client/alterPrUserPri')}?ids=" + id);
         } else if (event === 'chengjiao') {
             openApplySuccessClientDialog(row, function () {
                 tableIns.reload();

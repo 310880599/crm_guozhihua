@@ -1,24 +1,24 @@
 {include file="common/head"/}
 <div class="admin-main layui-anim layui-anim-upbit" ng-app="hd" ng-controller="ctrl">
 
-    <form class="layui-form layui-form-pane">
+    <form class="layui-form layui-form-pane" autocomplete="off">
 
 
 
         <div class="layui-form-item">
             <label class="layui-form-label">客户</label>
             <div class="layui-input-4">
-                <input type="text" id="client_name_display" class="layui-input" disabled value="{$client_name}" placeholder="未找到客户">
+                <input type="text" id="client_name_display" class="layui-input" disabled value="{$client_name}" placeholder="未找到客户" autocomplete="off">
                 <input type="hidden" name="ids" id="ids" value="{$ids}" lay-verify="required">
                 {if $ids}<div class="layui-form-mid layui-word-aux" style="margin-top:4px;">客户ID（只读）：{$ids}</div>{/if}
             </div>
         </div>
 
         <div class="layui-form-item">
-            <label class="layui-form-label">负责人</label>
+            <label class="layui-form-label">新负责人</label>
             <div class="layui-input-4" >
-                <select id="username" name="username" lay-verify="required" lay-search="">
-                    <option value="">请选择负责人</option>
+                <select id="username" name="username" lay-verify="required" lay-search="" autocomplete="off">
+                    <option value="">请选择新的客户负责人</option>
                     {volist name='adminResult' id='vo'}
                     <option value="{$vo.username}">{$vo.username}</option>
                     {/volist}
@@ -31,7 +31,8 @@
 
         <div class="layui-form-item">
             <div class="layui-input-block">
-                <button type="button" class="layui-btn" lay-submit="" lay-filter="submit">确认分配</button>
+                <div class="layui-form-mid layui-word-aux" style="display:block;margin-bottom:10px;padding:0;">确认后客户负责人将变更为所选人员，原负责人将不再作为该客户当前负责人。</div>
+                <button type="button" class="layui-btn" lay-submit="" lay-filter="submit">确认转移客户负责人</button>
             </div>
         </div>
     </form>
@@ -39,43 +40,112 @@
 {include file="common/foot"/}
 
 <script>
-
+    var TRANSFER_CLIENT_LIST = {if isset($client_list_json) && $client_list_json}{$client_list_json|raw}{else /}[]{/if};
+    if (!Array.isArray(TRANSFER_CLIENT_LIST)) {
+        TRANSFER_CLIENT_LIST = [];
+    }
 
     layui.use(['form', 'layer'], function () {
         var form = layui.form, layer = layui.layer,$= layui.jquery;
 
+        function displayName(c) {
+            var name = (c && c.kh_name) ? String(c.kh_name).trim() : '';
+            return name === '' ? '未命名' : name;
+        }
+        function displayPhone(c) {
+            var phone = (c && c.main_phone) ? String(c.main_phone).trim() : '';
+            return phone === '' ? '未填写' : phone;
+        }
+        function displayOwner(c) {
+            var owner = (c && c.pr_user) ? String(c.pr_user).trim() : '';
+            return owner === '' ? '无' : owner;
+        }
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+        function buildTransferConfirmHtml(newOwner, clients) {
+            clients = Array.isArray(clients) ? clients : [];
+            var n = clients.length;
+            var ownerText = escapeHtml(newOwner || '');
 
-        //监听提交
-        form.on('submit(submit)', function(data){
-            var $submitBtn = $('button[lay-filter="submit"]');
-            var originalText = $submitBtn.text();
+            if (n <= 1) {
+                var c = clients[0] || {};
+                return '确定要将客户【' + escapeHtml(displayName(c)) + ' / ' + escapeHtml(displayPhone(c)) + '】'
+                    + '<br>从【' + escapeHtml(displayOwner(c)) + '】'
+                    + '<br>转移给【' + ownerText + '】吗？'
+                    + '<br><br>确认后，该客户当前负责人将变更。';
+            }
 
-            // 防重复点击：提交期间禁用按钮并提示“提交中...”
-            $submitBtn.prop('disabled', true).addClass('layui-btn-disabled').text('提交中...');
+            var html = '确定要将选中的【' + n + '】个客户<br>转移给【' + ownerText + '】吗？<br><br>';
+            var showCount = Math.min(3, n);
+            for (var i = 0; i < showCount; i++) {
+                var item = clients[i] || {};
+                html += (i + 1) + '. ' + escapeHtml(displayName(item)) + ' / ' + escapeHtml(displayPhone(item)) + '<br>';
+            }
+            if (n > 3) {
+                html += '等 ' + n + ' 个客户<br>';
+            }
 
-            {if isset($transfer_submit_url) && $transfer_submit_url}
-            var submitUrl = "{$transfer_submit_url}";
-            {else /}
-            var submitUrl = "{:url('Client/alterPrUser')}";
-            {/if}
-            var request = $.post(submitUrl, data.field, function (res) {
-                if (res.code == 0){
-                    layer.msg(res.msg,{time:1000},function () {
-                        var index = parent.layer.getFrameIndex(window.name); //获取窗口索引
-                        parent.layer.close(index); // 关闭layer
-                    });
-                    window.parent.location.reload();
-                } else {
-                    layer.msg(res.msg,{time:2000});
+            var firstOwnerKey = null;
+            var multiOwner = false;
+            for (var j = 0; j < n; j++) {
+                var key = (clients[j] && clients[j].pr_user) ? String(clients[j].pr_user).trim() : '';
+                if (firstOwnerKey === null) {
+                    firstOwnerKey = key;
+                } else if (key !== firstOwnerKey) {
+                    multiOwner = true;
+                    break;
                 }
-            }, 'json');
+            }
+            html += '<br>原负责人：' + (multiOwner ? '多个负责人' : escapeHtml(firstOwnerKey === '' || firstOwnerKey === null ? '无' : firstOwnerKey));
+            return html;
+        }
 
-            // 网络错误等情况的处理
-            request.fail(function () {
-                layer.msg('请求失败，请稍后重试',{time:2000});
-            }).always(function () {
-                // 请求结束后恢复按钮状态（成功时一般已经关闭弹窗，这里是兜底）
-                $submitBtn.prop('disabled', false).removeClass('layui-btn-disabled').text(originalText);
+        //监听提交：先二次确认，确定后再禁用按钮并 POST
+        form.on('submit(submit)', function(data){
+            var newOwner = (data.field.username || '').trim();
+            if (!newOwner) {
+                layer.msg('请选择新的客户负责人', {time: 2000});
+                return false;
+            }
+
+            layer.confirm(buildTransferConfirmHtml(newOwner, TRANSFER_CLIENT_LIST), {
+                title: '确认转移',
+                btn: ['确定转移', '取消']
+            }, function (confirmIndex) {
+                layer.close(confirmIndex);
+
+                var $submitBtn = $('button[lay-filter="submit"]');
+                var originalText = $submitBtn.text();
+                $submitBtn.prop('disabled', true).addClass('layui-btn-disabled').text('提交中...');
+
+                {if isset($transfer_submit_url) && $transfer_submit_url}
+                var submitUrl = "{$transfer_submit_url}";
+                {else /}
+                var submitUrl = "{:url('Client/alterPrUser')}";
+                {/if}
+                var request = $.post(submitUrl, data.field, function (res) {
+                    if (res.code == 0){
+                        layer.msg(res.msg,{time:1000},function () {
+                            var index = parent.layer.getFrameIndex(window.name);
+                            parent.layer.close(index);
+                        });
+                        window.parent.location.reload();
+                    } else {
+                        layer.msg(res.msg,{time:2000});
+                    }
+                }, 'json');
+
+                request.fail(function () {
+                    layer.msg('请求失败，请稍后重试',{time:2000});
+                }).always(function () {
+                    $submitBtn.prop('disabled', false).removeClass('layui-btn-disabled').text(originalText);
+                });
             });
 
             return false;

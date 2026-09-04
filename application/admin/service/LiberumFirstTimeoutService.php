@@ -5,6 +5,7 @@ namespace app\admin\service;
 use think\Db;
 use think\facade\Session;
 use think\facade\Log;
+use app\admin\service\ClientOwnerCandidateService;
 use app\admin\service\ClientOwnerHistoryService;
 use app\admin\service\LiberumConfigService;
 
@@ -205,6 +206,7 @@ class LiberumFirstTimeoutService
 
     /**
      * 重新分配可选业务员列表
+     * 与客户负责人转移共用「合法客户负责人」资格规则。
      *
      * @return array<int,array{name:string,value:string}>
      */
@@ -214,51 +216,45 @@ class LiberumFirstTimeoutService
             return [];
         }
 
-        $fields = ['username'];
-        if ($this->tableHasColumn('admin', 'admin_id')) {
-            $fields[] = 'admin_id';
-        }
-        if ($this->tableHasColumn('admin', 'group_id')) {
-            $fields[] = 'group_id';
-        }
-        if ($this->tableHasColumn('admin', 'inquiry_id')) {
-            $fields[] = 'inquiry_id';
+        $candidates = (new ClientOwnerCandidateService())->getTransferableOwnerCandidates();
+        if (empty($candidates)) {
+            return [];
         }
 
-        $rows = Db::table('admin')
-            ->where('username', '<>', '')
-            ->field(implode(',', array_values(array_unique($fields))))
-            ->order('username asc')
-            ->select();
-        if (is_object($rows) && method_exists($rows, 'toArray')) {
-            $rows = $rows->toArray();
-        } elseif (!is_array($rows)) {
-            $rows = [];
+        $inquiryMap = [];
+        if ($this->tableHasColumn('admin', 'inquiry_id') && $this->tableHasColumn('admin', 'admin_id')) {
+            $adminIds = [];
+            foreach ($candidates as $item) {
+                $adminId = (int)($item['admin_id'] ?? 0);
+                if ($adminId > 0) {
+                    $adminIds[] = $adminId;
+                }
+            }
+            if (!empty($adminIds)) {
+                $inquiryRows = Db::table('admin')
+                    ->where('admin_id', 'in', array_values(array_unique($adminIds)))
+                    ->field('admin_id,inquiry_id')
+                    ->select();
+                if (is_object($inquiryRows) && method_exists($inquiryRows, 'toArray')) {
+                    $inquiryRows = $inquiryRows->toArray();
+                }
+                foreach ((array)$inquiryRows as $row) {
+                    $inquiryMap[(int)($row['admin_id'] ?? 0)] = (int)($row['inquiry_id'] ?? 0);
+                }
+            }
         }
 
         $currentAdmin = $this->getCurrentAdminInfo();
         $currentInquiryId = (int)($currentAdmin['inquiry_id'] ?? 0);
 
-        $seen = [];
         $list = [];
-        foreach ($rows as $row) {
-            $username = trim((string)($row['username'] ?? ''));
-            if ($username === '' || isset($seen[$username])) {
+        foreach ($candidates as $item) {
+            $username = trim((string)($item['username'] ?? ''));
+            if ($username === '') {
                 continue;
             }
-
-            $candidate = [
-                'admin_id' => (int)($row['admin_id'] ?? 0),
-                'username' => $username,
-                'group_id' => (int)($row['group_id'] ?? 0),
-                'inquiry_id' => trim((string)($row['inquiry_id'] ?? '')),
-            ];
-            if ($this->isSuperAdmin($candidate)) {
-                continue;
-            }
-
-            $seen[$username] = true;
-            $candidateInquiryId = (int)$candidate['inquiry_id'];
+            $adminId = (int)($item['admin_id'] ?? 0);
+            $candidateInquiryId = (int)($inquiryMap[$adminId] ?? 0);
             $list[] = [
                 'name' => $username,
                 'value' => $username,
@@ -313,8 +309,17 @@ class LiberumFirstTimeoutService
             return ['code' => -200, 'msg' => '登录状态异常，无法执行首次超时重新分配', 'data' => []];
         }
 
+        $ownerValidate = (new ClientOwnerCandidateService())->validateTransferTargetOwner($assignUser);
+        if (empty($ownerValidate['ok'])) {
+            return [
+                'code' => -200,
+                'msg' => (string)($ownerValidate['msg'] ?? '该账号当前不能作为客户负责人，请重新选择'),
+                'data' => [],
+            ];
+        }
+        $assignUser = (string)$ownerValidate['username'];
         $assignAdminInfo = $this->findAdminByUsername($assignUser);
-        if (empty($assignAdminInfo) || $this->isSuperAdmin($assignAdminInfo)) {
+        if (empty($assignAdminInfo)) {
             return ['code' => -200, 'msg' => '请选择有效业务员', 'data' => []];
         }
 

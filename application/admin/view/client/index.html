@@ -1710,7 +1710,7 @@
                         main_phone: data.main_phone || '',
                         url_ids: String(data.id)
                     });
-                    layer_add("转移客户", "{:url('Client/alterPrUser')}?ids=" + data.id)
+                    layer_add("转移客户负责人", "{:url('Client/alterPrUser')}?ids=" + data.id)
                 } else if (obj.event === 'chengjiao') {
                     openApplySuccessClientDialog(data.id, function () {
                         reloadKeepColWidth();
@@ -1812,18 +1812,16 @@
                                 layer.msg('请选择当前列表中的客户');
                                 return;
                             }
-                            var currConfirm2 = layer.confirm('您确定要转移这' + alterList2.length + '个客户吗？', function () {
-                                layer.close(currConfirm2);
-                                layer.open({
-                                    type: 2,
-                                    title: '转移客户',
-                                    closeBtn: 1,
-                                    area: ['100%', '86%'],
-                                    anim: 2,
-                                    shadeClose: false,
-                                    maxmin: false,
-                                    content: ["{:url('Client/alterPrUser')}?ids=" + alterList2.join(',')]
-                                });
+                            // 精准二次确认已移至转移弹窗（选择新负责人后），此处不再做模糊确认
+                            layer.open({
+                                type: 2,
+                                title: '转移客户负责人',
+                                closeBtn: 1,
+                                area: ['100%', '86%'],
+                                anim: 2,
+                                shadeClose: false,
+                                maxmin: false,
+                                content: ["{:url('Client/alterPrUser')}?ids=" + alterList2.join(',')]
                             });
                         })();
                         break;
