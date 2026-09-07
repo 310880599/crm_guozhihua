@@ -654,7 +654,7 @@ class Client extends Common
     {
         $adminId = (int) Session::get('aid');
         $groupId = (int) Session::get('group_id');
-        $specialAdminIds = [395, 350, 375, 387,391, 405];
+        $specialAdminIds = [395, 350, 375, 387,391, 405, 392];
 
         return (
             $adminId === 1
