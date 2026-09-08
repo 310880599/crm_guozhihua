@@ -3576,10 +3576,9 @@ class Order extends Common
         if (isset($keyword['customer_type_flag']) && $keyword['customer_type_flag'] !== '') {
             $where[] = ['customer_type_flag', '=', $keyword['customer_type_flag']];
         }
-        if (isset($keyword['product_name'])) {
-            $where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
-            $client_where[] = ['product_name', 'like', "%{$keyword['product_name']}%"];
-        }
+        // 产品名称 / 供应商：走订单明细快照 EXISTS，不再用主表 product_name，也不写入 $client_where
+        $productName = isset($keyword['product_name']) ? trim((string)$keyword['product_name']) : '';
+        $supplierName = isset($keyword['supplier_name']) ? trim((string)$keyword['supplier_name']) : '';
         if (!$team_name && isset($keyword['team_name'])) {
             $where[] = ['team_name', '=', $keyword['team_name']];
             $team_name = $keyword['team_name'];
@@ -3620,8 +3619,9 @@ class Order extends Common
             $client_where[] = ['pr_user', '=', $keyword['pr_user']];
         }
 
-        $list = Db::table('crm_client_order')
-            ->where($where)
+        $listQuery = Db::table('crm_client_order')->where($where);
+        $this->applyOrderItemSnapshotSearch($listQuery, $productName, $supplierName);
+        $list = $listQuery
             ->order('create_time desc,id desc')
             ->paginate([
                 'list_rows' => $limit,
@@ -3712,8 +3712,8 @@ class Order extends Common
 
         $successOrders = $list['total'];
         $successRate = $totalInquiries > 0 ? ($successOrders / $totalInquiries * 100) : 0;
-        $totalMoney = $this->getSum($where, 'money');
-        $totalProfit = $this->getSum($where, 'profit');
+        $totalMoney = $this->getSum($where, 'money', $productName, $supplierName);
+        $totalProfit = $this->getSum($where, 'profit', $productName, $supplierName);
         return $result = [
             'code' => 0,
             'msg' => '获取成功!',
@@ -3734,14 +3734,49 @@ class Order extends Common
      * 获取指定字段的总和
      * @param array $where 查询条件
      * @param string $field 要统计的字段
+     * @param string $productName 订单明细产品名称（快照模糊搜，可选）
+     * @param string $supplierName 订单明细供应商名称（快照模糊搜，可选）
      * @return float 字段总和
      */
-    private function getSum($where, $field)
+    private function getSum($where, $field, $productName = '', $supplierName = '')
     {
-        $sum = Db::table('crm_client_order')
-            ->where($where)
-            ->sum($field);
-        return $sum;
+        $query = Db::table('crm_client_order')->where($where);
+        $this->applyOrderItemSnapshotSearch($query, $productName, $supplierName);
+        return $query->sum($field);
+    }
+
+    /**
+     * 按订单明细快照追加产品名称 / 供应商筛选（同一 EXISTS，同一明细行）
+     * 仅处理查询条件，不改权限/统计/保存逻辑。
+     * @param \think\db\Query $query crm_client_order 查询对象（无主表 alias）
+     * @param string $productName
+     * @param string $supplierName
+     * @return \think\db\Query
+     */
+    private function applyOrderItemSnapshotSearch($query, $productName = '', $supplierName = '')
+    {
+        $productName = trim((string)$productName);
+        $supplierName = trim((string)$supplierName);
+        if ($productName === '' && $supplierName === '') {
+            return $query;
+        }
+
+        $conditions = [];
+        $bind = [];
+        if ($productName !== '') {
+            $conditions[] = 'oi.product_name LIKE :item_product_name';
+            $bind['item_product_name'] = '%' . $productName . '%';
+        }
+        if ($supplierName !== '') {
+            $conditions[] = 'oi.supplier_name LIKE :item_supplier_name';
+            $bind['item_supplier_name'] = '%' . $supplierName . '%';
+        }
+
+        $sql = 'EXISTS (SELECT 1 FROM crm_order_item oi WHERE oi.order_id = crm_client_order.id AND '
+            . implode(' AND ', $conditions)
+            . ')';
+
+        return $query->whereRaw($sql, $bind);
     }
 
     /**
