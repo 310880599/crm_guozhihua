@@ -34,12 +34,18 @@ use think\Db;
  *   aggregateRows() 按该顺序遍历，一个分组第一次遇到的非空名称即为最近订单的名称
  *   （若最近一笔订单的名称为空，会继续向后取下一笔非空名称；整组均为空才使用兜底占位名）。
  *
- * 利润口径（V1，临时，务必保留后续替换点）：
- *   profit = SUM(oi.sub_profit)
- *   后续如需切换为与 DataStatistics 一致的“订单 profit 按明细金额占比分摊”口径
- *   （参考 OrderProductProfitAllocationService::allocateOrderProfitByItems），
- *   只需改造 resolveLineProfit()（必要时先在 fetchRows() 内按 order_id 分组算出分摊比例），
- *   不影响分组 / 排序 / 分页等其余逻辑。
+ * 利润口径（正式）：
+ *   唯一权威来源：crm_client_order.profit（订单最终利润，已含运费/税费/调试费/佣金扣除）。
+ *   供应链分析不得自行再算 shipping_cost / tax_amount / debugging_cost / sales_commission，
+ *   也不得以 SUM(oi.sub_profit) 作为正式利润统计。
+ *   流程：fetchRows() 取当前展示/统计目标明细 → allocateProfitToRows() 按「整张订单全部明细」
+ *   将 order.profit 固定分摊到每条明细（写入 allocated_profit）→ aggregateRows() /
+ *   resolveLineProfit() 只读 allocated_profit → buildSummaryTotals()。
+ *   分摊优先级：1) SUM(total_price)>0 按 total_price；2) 否则 SUM(qty)>0 按 qty；
+ *   3) 否则按明细条数平均。单明细订单直接继承整单利润。多明细时前 N-1 条四舍五入到分，
+ *   最后一条（按 item_id ASC）吸收尾差，保证 SUM(allocated_profit)=order.profit。
+ *   支持负利润；keyword / product_id / supplier_id 筛选只决定哪些明细进入结果集，
+ *   不改变整单固定分摊结果（分母始终是整张订单完整明细，而非当前筛选子集）。
  *
  * keyword 搜索口径（V1 第三轮修正）：
  *   同一 product_id / supplier_id 在当前筛选时间范围内可能存在多个历史名称快照（如产品改名、
@@ -89,7 +95,7 @@ class SupplyChainService
             $extraWhere[] = ['oi.product_id', 'in', $matchedIds];
         }
 
-        $rows = $this->fetchRows($params, $extraWhere);
+        $rows = $this->fetchAllocatedRows($params, $extraWhere);
         $list = $this->aggregateRows($rows, 'product_id', 'product_name', self::UNCLASSIFIED_PRODUCT_NAME);
 
         $totals = $this->buildSummaryTotals($list);
@@ -130,7 +136,7 @@ class SupplyChainService
             $extraWhere[] = ['oi.supplier_id', 'in', $matchedIds];
         }
 
-        $rows = $this->fetchRows($params, $extraWhere);
+        $rows = $this->fetchAllocatedRows($params, $extraWhere);
         $list = $this->aggregateRows(
             $rows,
             'supplier_id',
@@ -167,7 +173,7 @@ class SupplyChainService
      */
     public function getSupplierBreakdownByProduct(string $productId, array $params = []): array
     {
-        $rows = $this->fetchRows($params, [['oi.product_id', '=', trim($productId)]]);
+        $rows = $this->fetchAllocatedRows($params, [['oi.product_id', '=', trim($productId)]]);
         $list = $this->aggregateRows($rows, 'supplier_id', 'supplier_name', self::UNCLASSIFIED_SUPPLIER_NAME);
 
         $totals = $this->buildSummaryTotals($list);
@@ -196,7 +202,7 @@ class SupplyChainService
      */
     public function getProductBreakdownBySupplier(string $supplierId, array $params = []): array
     {
-        $rows = $this->fetchRows($params, [['oi.supplier_id', '=', trim($supplierId)]]);
+        $rows = $this->fetchAllocatedRows($params, [['oi.supplier_id', '=', trim($supplierId)]]);
         $list = $this->aggregateRows($rows, 'product_id', 'product_name', self::UNCLASSIFIED_PRODUCT_NAME);
 
         $totals = $this->buildSummaryTotals($list);
@@ -218,9 +224,22 @@ class SupplyChainService
     // =========================================================
 
     /**
-     * 拉取明细行级数据（不在 SQL 层分组，聚合统一在 PHP 层完成，
-     * 便于后续把 profit 从"明细自带 sub_profit"切换为"订单级分摊"口径时，
-     * 能直接复用同一批行级数据中的 order_id / order_profit）。
+     * 拉取明细行级数据并完成订单利润分摊（四个公开入口统一走此方法，避免漏接分摊）。
+     *
+     * @param array $params timebucket/at_time/month_keys
+     * @param array<int, array{0:string,1:string,2:mixed}> $extraWhere 追加的 [field, op, value] 条件
+     */
+    private function fetchAllocatedRows(array $params, array $extraWhere = []): array
+    {
+        return $this->allocateProfitToRows($this->fetchRows($params, $extraWhere));
+    }
+
+    /**
+     * 拉取明细行级数据（不在 SQL 层分组，聚合统一在 PHP 层完成）。
+     *
+     * 注意：keyword / product_id / supplier_id 等 extraWhere 可能导致某一订单只返回部分明细。
+     * 正式利润不得在此处或仅基于本结果集计算分摊分母；须先经 allocateProfitToRows()
+     * 按整张订单完整明细固定分摊后再聚合。
      *
      * 固定按 o.order_time desc, o.id desc 排序：保证同一分组内行的遍历顺序稳定，
      * 且第一行即为当前筛选范围内最近一笔审核通过订单，供 aggregateRows() 取展示名称使用。
@@ -247,7 +266,7 @@ class SupplyChainService
 
         $rows = $query
             ->field(
-                'oi.order_id, o.id as o_id, o.order_time as order_time, o.profit as order_profit, ' .
+                'oi.id as item_id, oi.order_id, o.id as o_id, o.order_time as order_time, o.profit as order_profit, ' .
                 'oi.product_id, oi.product_name, oi.supplier_id, oi.supplier_name, ' .
                 'IFNULL(oi.qty,0) as qty, IFNULL(oi.total_price,0) as total_price, ' .
                 'IFNULL(oi.purchase_price,0) as purchase_price, IFNULL(oi.sub_profit,0) as sub_profit'
@@ -256,6 +275,196 @@ class SupplyChainService
             ->select();
 
         return (array)$rows;
+    }
+
+    /**
+     * 将 crm_client_order.profit 按整张订单完整明细固定分摊到当前结果行。
+     *
+     * 关键筛选结果可能只含某订单的部分明细（keyword / 下钻），分母必须来自这些订单的
+     * 全部明细（不再带 product_id / supplier_id / keyword 限制）。尾差在整单分摊阶段处理完毕，
+     * 不对当前筛选子集重做尾差，从而保证同一明细在任意页面上的 allocated_profit 一致。
+     *
+     * @param array $rows fetchRows() 返回的目标行
+     * @return array 已写入 allocated_profit 的行
+     */
+    private function allocateProfitToRows(array $rows): array
+    {
+        if (empty($rows)) {
+            return $rows;
+        }
+
+        $orderProfitMap = [];
+        $orderIds = [];
+        foreach ($rows as $row) {
+            $orderId = (int)($row['order_id'] ?? $row['o_id'] ?? 0);
+            if ($orderId <= 0) {
+                continue;
+            }
+            if (!isset($orderProfitMap[$orderId])) {
+                $orderProfitMap[$orderId] = (float)($row['order_profit'] ?? 0);
+                $orderIds[] = $orderId;
+            }
+        }
+
+        if (empty($orderIds)) {
+            foreach ($rows as &$row) {
+                $row['allocated_profit'] = 0.0;
+            }
+            unset($row);
+            return $rows;
+        }
+
+        $fullItemsByOrder = $this->loadFullOrderItemsForAllocation($orderIds);
+        $allocatedByItemId = $this->buildItemAllocatedProfitMap($fullItemsByOrder, $orderProfitMap);
+
+        foreach ($rows as &$row) {
+            $itemId = (int)($row['item_id'] ?? 0);
+            if ($itemId > 0 && array_key_exists($itemId, $allocatedByItemId)) {
+                $row['allocated_profit'] = $allocatedByItemId[$itemId];
+            } else {
+                $row['allocated_profit'] = 0.0;
+            }
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    /**
+     * 按 order_id IN (...) 批量加载订单完整明细（仅 id/order_id/total_price/qty），
+     * 不附加产品/供应商/keyword 过滤。order_id 较多时分批查询，避免 N+1。
+     *
+     * @param array<int, int> $orderIds
+     * @return array<int, array<int, array{item_id:int, order_id:int, total_price:float, qty:float}>>
+     */
+    private function loadFullOrderItemsForAllocation(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_map('intval', $orderIds)));
+        $fullItemsByOrder = [];
+        if (empty($orderIds)) {
+            return $fullItemsByOrder;
+        }
+
+        $batchSize = 500;
+        foreach (array_chunk($orderIds, $batchSize) as $chunk) {
+            $items = (array)Db::table('crm_order_item')
+                ->where('order_id', 'in', $chunk)
+                ->field('id as item_id, order_id, IFNULL(total_price,0) as total_price, IFNULL(qty,0) as qty')
+                ->order('id asc')
+                ->select();
+
+            foreach ($items as $item) {
+                $orderId = (int)($item['order_id'] ?? 0);
+                if ($orderId <= 0) {
+                    continue;
+                }
+                if (!isset($fullItemsByOrder[$orderId])) {
+                    $fullItemsByOrder[$orderId] = [];
+                }
+                $fullItemsByOrder[$orderId][] = [
+                    'item_id' => (int)($item['item_id'] ?? 0),
+                    'order_id' => $orderId,
+                    'total_price' => (float)($item['total_price'] ?? 0),
+                    'qty' => (float)($item['qty'] ?? 0),
+                ];
+            }
+        }
+
+        return $fullItemsByOrder;
+    }
+
+    /**
+     * 基于整张订单完整明细计算每条 item_id 的固定 allocated_profit。
+     *
+     * @param array<int, array<int, array{item_id:int, order_id:int, total_price:float, qty:float}>> $fullItemsByOrder
+     * @param array<int, float> $orderProfitMap order_id => order.profit
+     * @return array<int, float> item_id => allocated_profit
+     */
+    private function buildItemAllocatedProfitMap(array $fullItemsByOrder, array $orderProfitMap): array
+    {
+        $allocatedByItemId = [];
+        foreach ($orderProfitMap as $orderId => $orderProfit) {
+            $items = $fullItemsByOrder[$orderId] ?? [];
+            if (empty($items)) {
+                continue;
+            }
+
+            // 稳定顺序：item_id ASC，保证尾差落点与筛选无关
+            usort($items, function ($a, $b) {
+                return ((int)$a['item_id']) <=> ((int)$b['item_id']);
+            });
+
+            foreach ($this->allocateOrderProfitToItems((float)$orderProfit, $items) as $itemId => $profit) {
+                $allocatedByItemId[(int)$itemId] = $profit;
+            }
+        }
+
+        return $allocatedByItemId;
+    }
+
+    /**
+     * 单个订单内将 order_profit 分摊到完整明细列表。
+     *
+     * 规则与 OrderProductProfitAllocationService 基础算法对齐：
+     *   1) 单明细：直接继承整单利润；
+     *   2) 多明细：SUM(total_price)>0 按金额；否则 SUM(qty)>0 按数量；否则按条数平均；
+     *   3) 前 N-1 条 round(., 2)，最后一条 = round(order_profit - 前 N-1 合计, 2)；
+     *   4) 支持负利润，不做 max(0)/abs。
+     *
+     * @param float $orderProfit
+     * @param array<int, array{item_id:int, total_price:float, qty:float}> $items 已按 item_id ASC
+     * @return array<int, float> item_id => allocated_profit
+     */
+    private function allocateOrderProfitToItems(float $orderProfit, array $items): array
+    {
+        $normalized = [];
+        foreach ($items as $item) {
+            $itemId = (int)($item['item_id'] ?? 0);
+            if ($itemId <= 0) {
+                continue;
+            }
+            $normalized[] = [
+                'item_id' => $itemId,
+                'total_price' => (float)($item['total_price'] ?? 0),
+                'qty' => (float)($item['qty'] ?? 0),
+            ];
+        }
+
+        $itemCount = count($normalized);
+        if ($itemCount === 0) {
+            return [];
+        }
+
+        if ($itemCount === 1) {
+            return [$normalized[0]['item_id'] => round($orderProfit, 2)];
+        }
+
+        $priceDenominator = 0.0;
+        $qtyDenominator = 0.0;
+        foreach ($normalized as $item) {
+            $priceDenominator += $item['total_price'];
+            $qtyDenominator += $item['qty'];
+        }
+
+        $result = [];
+        $runningRounded = 0.0;
+        foreach ($normalized as $idx => $item) {
+            if ($idx < $itemCount - 1) {
+                if ($priceDenominator > 0.0) {
+                    $allocated = round($orderProfit * $item['total_price'] / $priceDenominator, 2);
+                } elseif ($qtyDenominator > 0.0) {
+                    $allocated = round($orderProfit * $item['qty'] / $qtyDenominator, 2);
+                } else {
+                    $allocated = round($orderProfit / $itemCount, 2);
+                }
+                $runningRounded += $allocated;
+            } else {
+                $allocated = round($orderProfit - $runningRounded, 2);
+            }
+            $result[$item['item_id']] = $allocated;
+        }
+
+        return $result;
     }
 
     /**
@@ -525,15 +734,12 @@ class SupplyChainService
     /**
      * 单行明细的利润取值（唯一的利润口径入口）。
      *
-     * V1：直接使用明细自带字段 sub_profit。
-     * 预留：后续如需改为"订单 profit 按明细 total_price 占比分摊"口径，
-     * 只需在此处替换实现（分摊比例可基于同一行已携带的 order_id / order_profit 计算，
-     * 但需要先在 fetchRows() 之后按 order_id 分组求出该订单全部明细的 total_price 合计作为分母），
-     * 不需要改动 aggregateRows() 及以外的任何逻辑。
+     * 正式统计只读 allocateProfitToRows() 写入的 allocated_profit（来自 crm_client_order.profit
+     * 按整张订单完整明细固定分摊）。sub_profit 仅保留查询字段供排查，不作为正式利润来源。
      */
     private function resolveLineProfit(array $row): float
     {
-        return (float)($row['sub_profit'] ?? 0);
+        return (float)($row['allocated_profit'] ?? 0);
     }
 
     /**
