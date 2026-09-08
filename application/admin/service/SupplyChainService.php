@@ -19,20 +19,22 @@ use think\Db;
  *      - at_time：自定义区间，支持 "YYYY-MM-DD,YYYY-MM-DD" 或 "YYYY-MM-DD - YYYY-MM-DD"
  *      - timebucket：today/yesterday/week/month/year/last_month
  *
- * 分组规则（强制，禁止按名称分组）：
- *   - 产品维度：按 oi.product_id 分组，product_name 仅作为展示字段
- *   - 供应商维度：按 oi.supplier_id 分组，supplier_name 仅作为展示字段
- *   - product_id / supplier_id 为空字符串的明细会归为一组（"未分类产品" / "未分类供应商"），
- *     不会被丢弃，详见 aggregateRows()。
+ * 分组规则：
+ *   - 产品维度：按 trim(oi.product_name) 的订单快照名称分组（normalizeProductName），
+ *     仅 trim 后完全相同才合并；不做 LIKE/包含/模糊/相似度合并。
+ *     历史改名按订单快照分别统计（方案 A），不 JOIN crm_products 用主档名覆盖。
+ *   - 供应商维度：仍按 oi.supplier_id 分组，supplier_name 仅作为展示字段。
+ *   - 产品未分类：normalizeProductName(product_name) === '' →「未分类产品」；
+ *     供应商未分类：supplier_id 为空 →「未分类供应商」。
  *   - 未分类分组仅用于统计展示（参与销量/金额/成本/利润汇总），不允许作为详情下钻对象，
  *     详情下钻的参数校验见 Controller。
  *
- * 展示名称口径（V1 第二轮修正）：
- *   同一 product_id / supplier_id 在当前筛选时间范围内可能对应多笔订单、多个快照名称，
- *   展示名称固定取“当前筛选范围内最近一笔审核通过订单”的快照名称：
- *   fetchRows() 按 o.order_time desc, o.id desc 排序保证行级数据的稳定顺序，
- *   aggregateRows() 按该顺序遍历，一个分组第一次遇到的非空名称即为最近订单的名称
- *   （若最近一笔订单的名称为空，会继续向后取下一笔非空名称；整组均为空才使用兜底占位名）。
+ * 展示名称口径：
+ *   - 产品：分组键即为规范化后的快照名称，直接作为展示名（空名用「未分类产品」占位）。
+ *   - 供应商：同一 supplier_id 在筛选范围内可能有多笔订单、多个快照名称，
+ *     展示名称取“当前筛选范围内最近一笔审核通过订单”的快照名称：
+ *     fetchRows() 按 o.order_time desc, o.id desc 排序，aggregateRows() 按该顺序遍历，
+ *     一个分组第一次遇到的非空名称即为最近订单名称（最近为空则向后取非空；整组空则用占位名）。
  *
  * 利润口径（正式）：
  *   唯一权威来源：crm_client_order.profit（订单最终利润，已含运费/税费/调试费/佣金扣除）。
@@ -40,28 +42,24 @@ use think\Db;
  *   也不得以 SUM(oi.sub_profit) 作为正式利润统计。
  *   流程：fetchRows() 取当前展示/统计目标明细 → allocateProfitToRows() 按「整张订单全部明细」
  *   将 order.profit 固定分摊到每条明细（写入 allocated_profit）→ aggregateRows() /
- *   resolveLineProfit() 只读 allocated_profit → buildSummaryTotals()。
+ *   aggregateRowsByProductName() / resolveLineProfit() 只读 allocated_profit → buildSummaryTotals()。
  *   分摊优先级：1) SUM(total_price)>0 按 total_price；2) 否则 SUM(qty)>0 按 qty；
  *   3) 否则按明细条数平均。单明细订单直接继承整单利润。多明细时前 N-1 条四舍五入到分，
  *   最后一条（按 item_id ASC）吸收尾差，保证 SUM(allocated_profit)=order.profit。
- *   支持负利润；keyword / product_id / supplier_id 筛选只决定哪些明细进入结果集，
+ *   支持负利润；keyword / product_name / supplier_id 筛选只决定哪些明细进入结果集，
  *   不改变整单固定分摊结果（分母始终是整张订单完整明细，而非当前筛选子集）。
  *
- * keyword 搜索口径（V1 第三轮修正）：
- *   同一 product_id / supplier_id 在当前筛选时间范围内可能存在多个历史名称快照（如产品改名、
- *   供应商更名），若直接用 "名称 LIKE keyword" 过滤明细再统计，会把该 ID 下不匹配 keyword 的
- *   其他历史快照明细漏掉，导致统计被截断。因此 keyword 非空时采用“两阶段查询”：
- *     第一阶段（findMatchedProductIds / findMatchedSupplierIds）：仅用 "名称 LIKE keyword" +
- *       相同的 check_status/时间筛选，找出匹配到的去重、非空 ID 列表，不做任何聚合；
- *     第二阶段（fetchRows 传入 "ID IN (...)"）：按第一阶段匹配到的 ID，在相同时间范围内取出
- *       这些 ID 的全部历史明细（不再附加名称过滤），再走现有 aggregateRows/summary/sort/paginate。
- *   即 keyword 只决定“哪些 ID 被选中”，不决定“这些 ID 的哪些明细参与统计”。
- *   若第一阶段未匹配到任何 ID，直接返回空结果（list=[]/total=0/summary 全 0），不做兜底全量查询。
- *   “未分类产品/未分类供应商”（ID 为空）不参与名称匹配，规则不变。
+ * keyword 搜索口径：
+ *   - 产品模式：直接对 oi.product_name LIKE keyword 过滤明细，再按 normalizeProductName 聚合。
+ *     LIKE 只是搜索，不是合并规则（如搜「水带」可同时命中「水带」「消防水带」两行）。
+ *   - 供应商模式：仍用两阶段查询（findMatchedSupplierIds → supplier_id IN (...)），
+ *     keyword 只决定哪些供应商 ID 被选中，再取这些 ID 的全部历史明细参与统计。
+ *   若供应商 keyword 未匹配到任何 ID，直接返回空结果，不做兜底全量查询。
+ *   「未分类产品/未分类供应商」不参与名称匹配下钻，规则不变。
  */
 class SupplyChainService
 {
-    /** product_id 为空时的展示名称 */
+    /** 规范化产品名为空时的展示名称 */
     const UNCLASSIFIED_PRODUCT_NAME = '未分类产品';
 
     /** supplier_id 为空时的展示名称 */
@@ -74,10 +72,10 @@ class SupplyChainService
     const DEFAULT_SORT_FIELD = 'qty';
 
     /**
-     * 产品排行：按 product_id 分组统计销量、销售额、进价、利润。
+     * 产品排行：按规范化 product_name（trim 后完全相同）分组统计销量、销售额、进价、利润。
      *
      * summary 基于筛选条件下的完整聚合结果计算（分页前），而非当前页数据：
-     *   product_count：有效（非空）product_id 的不同产品数量，"未分类产品"不计入
+     *   product_count：有效（非空）产品名称数量，"未分类产品"不计入
      *   qty/total_price/purchase_price/profit：全部分组（含"未分类产品"）之和
      *
      * @param array $params timebucket/at_time/month_keys/keyword/sort_field/sort_order/page/limit
@@ -88,19 +86,20 @@ class SupplyChainService
         $extraWhere = [];
         $keyword = trim((string)($params['keyword'] ?? ''));
         if ($keyword !== '') {
-            $matchedIds = $this->findMatchedProductIds($params, $keyword);
-            if (empty($matchedIds)) {
-                return $this->buildEmptyProductRankResult();
-            }
-            $extraWhere[] = ['oi.product_id', 'in', $matchedIds];
+            // 产品模式：直接 LIKE 快照名称，再按规范化名称聚合（LIKE 是搜索不是合并）
+            $extraWhere[] = ['oi.product_name', 'like', '%' . $keyword . '%'];
         }
 
         $rows = $this->fetchAllocatedRows($params, $extraWhere);
-        $list = $this->aggregateRows($rows, 'product_id', 'product_name', self::UNCLASSIFIED_PRODUCT_NAME);
+        if ($keyword !== '' && empty($rows)) {
+            return $this->buildEmptyProductRankResult();
+        }
+
+        $list = $this->aggregateRowsByProductName($rows);
 
         $totals = $this->buildSummaryTotals($list);
         $summary = [
-            'product_count' => $this->countValidGroups($list, 'product_id'),
+            'product_count' => $this->countValidProductNameGroups($list),
             'qty' => $totals['qty'],
             'total_price' => $totals['total_price'],
             'purchase_price' => $totals['purchase_price'],
@@ -114,11 +113,11 @@ class SupplyChainService
 
     /**
      * 供应商排行：按 supplier_id 分组统计销量、销售额、进价、利润，并附带该供应商成交过的
-     * 不同 product_id 数量（product_count，按 product_id 去重，空 product_id 不计入）。
+     * 不同产品名称数量（product_count，按 normalizeProductName 去重，空名称不计入）。
      *
      * summary 基于筛选条件下的完整聚合结果计算（分页前），而非当前页数据：
      *   supplier_count：有效（非空）supplier_id 的不同供应商数量，"未分类供应商"不计入
-     *   product_count：当前筛选范围内全部行（不分供应商）里有效 product_id 的去重总数
+     *   product_count：当前筛选范围内全部行（不分供应商）里有效产品名称的去重总数
      *   qty/total_price/purchase_price/profit：全部分组（含"未分类供应商"）之和
      *
      * @param array $params timebucket/at_time/month_keys/keyword/sort_field/sort_order/page/limit
@@ -142,14 +141,14 @@ class SupplyChainService
             'supplier_id',
             'supplier_name',
             self::UNCLASSIFIED_SUPPLIER_NAME,
-            'product_id',
+            'product_name',
             'product_count'
         );
 
         $totals = $this->buildSummaryTotals($list);
         $summary = [
             'supplier_count' => $this->countValidGroups($list, 'supplier_id'),
-            'product_count' => $this->countDistinctNonEmpty($rows, 'product_id'),
+            'product_count' => $this->countDistinctProductNames($rows),
             'qty' => $totals['qty'],
             'total_price' => $totals['total_price'],
             'purchase_price' => $totals['purchase_price'],
@@ -162,18 +161,25 @@ class SupplyChainService
     }
 
     /**
-     * 指定产品的供应商拆分：给定 product_id，按 supplier_id 分组统计该产品各供应商的占比数据。
+     * 指定产品的供应商拆分：给定规范化产品名称，按 supplier_id 分组统计该产品各供应商数据。
      *
-     * 注意：未分类分组（product_id 为空）仅用于统计展示，不允许作为详情下钻对象，
-     * 空 product_id 的校验由 Controller 拦截，本方法不做二次处理。
+     * 查询条件：TRIM(oi.product_name) = 规范化名称，以覆盖同名不同 product_id 的全部明细。
+     * 注意：未分类产品（名称为空）仅用于统计展示，不允许作为详情下钻对象，
+     * 空名称的校验由 Controller 拦截，本方法不做二次处理。
      *
-     * @param string $productId 产品ID（对应 crm_order_item.product_id，与前端展示的 product_id 保持一致）
+     * @param string $productName 产品名称（对应订单快照 oi.product_name，调用方应已 trim）
      * @param array $params timebucket/at_time/month_keys/sort_field/sort_order/page/limit
      * @return array{list: array<int, array>, total: int, summary: array}
      */
-    public function getSupplierBreakdownByProduct(string $productId, array $params = []): array
+    public function getSupplierBreakdownByProductName(string $productName, array $params = []): array
     {
-        $rows = $this->fetchAllocatedRows($params, [['oi.product_id', '=', trim($productId)]]);
+        $normalizedName = $this->normalizeProductName($productName);
+        $rows = $this->fetchAllocatedRows($params, [
+            [
+                'raw' => 'TRIM(oi.product_name) = :sc_product_name',
+                'bind' => ['sc_product_name' => $normalizedName],
+            ],
+        ]);
         $list = $this->aggregateRows($rows, 'supplier_id', 'supplier_name', self::UNCLASSIFIED_SUPPLIER_NAME);
 
         $totals = $this->buildSummaryTotals($list);
@@ -191,7 +197,19 @@ class SupplyChainService
     }
 
     /**
-     * 指定供应商的产品拆分：给定 supplier_id，按 product_id 分组统计该供应商各产品的占比数据。
+     * 兼容旧方法名：语义已改为按产品名称下钻，内部转发到 getSupplierBreakdownByProductName()。
+     *
+     * @param string $productName 产品名称（原参数名 $productId，语义已变更）
+     * @param array $params
+     * @return array{list: array<int, array>, total: int, summary: array}
+     */
+    public function getSupplierBreakdownByProduct(string $productName, array $params = []): array
+    {
+        return $this->getSupplierBreakdownByProductName($productName, $params);
+    }
+
+    /**
+     * 指定供应商的产品拆分：给定 supplier_id，按规范化 product_name 分组统计该供应商各产品数据。
      *
      * 注意：未分类分组（supplier_id 为空）仅用于统计展示，不允许作为详情下钻对象，
      * 空 supplier_id 的校验由 Controller 拦截，本方法不做二次处理。
@@ -203,11 +221,11 @@ class SupplyChainService
     public function getProductBreakdownBySupplier(string $supplierId, array $params = []): array
     {
         $rows = $this->fetchAllocatedRows($params, [['oi.supplier_id', '=', trim($supplierId)]]);
-        $list = $this->aggregateRows($rows, 'product_id', 'product_name', self::UNCLASSIFIED_PRODUCT_NAME);
+        $list = $this->aggregateRowsByProductName($rows);
 
         $totals = $this->buildSummaryTotals($list);
         $summary = [
-            'product_count' => $this->countValidGroups($list, 'product_id'),
+            'product_count' => $this->countValidProductNameGroups($list),
             'qty' => $totals['qty'],
             'total_price' => $totals['total_price'],
             'purchase_price' => $totals['purchase_price'],
@@ -237,7 +255,7 @@ class SupplyChainService
     /**
      * 拉取明细行级数据（不在 SQL 层分组，聚合统一在 PHP 层完成）。
      *
-     * 注意：keyword / product_id / supplier_id 等 extraWhere 可能导致某一订单只返回部分明细。
+     * 注意：keyword / product_name / supplier_id 等 extraWhere 可能导致某一订单只返回部分明细。
      * 正式利润不得在此处或仅基于本结果集计算分摊分母；须先经 allocateProfitToRows()
      * 按整张订单完整明细固定分摊后再聚合。
      *
@@ -245,7 +263,9 @@ class SupplyChainService
      * 且第一行即为当前筛选范围内最近一笔审核通过订单，供 aggregateRows() 取展示名称使用。
      *
      * @param array $params timebucket/at_time/month_keys
-     * @param array<int, array{0:string,1:string,2:mixed}> $extraWhere 追加的 [field, op, value] 条件
+     * @param array<int, array> $extraWhere 追加条件：
+     *   - 普通：[field, op, value]
+     *   - 原生：['raw' => 'SQL', 'bind' => [...]]（用于 TRIM(oi.product_name)=? 等）
      */
     private function fetchRows(array $params, array $extraWhere = []): array
     {
@@ -261,6 +281,10 @@ class SupplyChainService
         );
 
         foreach ($extraWhere as $condition) {
+            if (is_array($condition) && isset($condition['raw'])) {
+                $query->whereRaw((string)$condition['raw'], (array)($condition['bind'] ?? []));
+                continue;
+            }
             $query->where($condition[0], $condition[1], $condition[2]);
         }
 
@@ -281,7 +305,7 @@ class SupplyChainService
      * 将 crm_client_order.profit 按整张订单完整明细固定分摊到当前结果行。
      *
      * 关键筛选结果可能只含某订单的部分明细（keyword / 下钻），分母必须来自这些订单的
-     * 全部明细（不再带 product_id / supplier_id / keyword 限制）。尾差在整单分摊阶段处理完毕，
+     * 全部明细（不再带 product_name / supplier_id / keyword 限制）。尾差在整单分摊阶段处理完毕，
      * 不对当前筛选子集重做尾差，从而保证同一明细在任意页面上的 allocated_profit 一致。
      *
      * @param array $rows fetchRows() 返回的目标行
@@ -468,43 +492,11 @@ class SupplyChainService
     }
 
     /**
-     * keyword 两阶段查询 - 第一阶段：按 product_name LIKE keyword 找出匹配的 product_id 列表。
-     *
-     * 统计基础口径与 fetchRows() 完全一致（crm_order_item INNER JOIN crm_client_order，
-     * check_status=2，且调用同一个 applyTimeFilter()，保证“搜索 ID 的时间范围”与
-     * “最终统计数据的时间范围”完全一致），仅额外附加 product_name LIKE 条件。
-     *
-     * 只返回去重、非空的 product_id，不按 product_name 分组，不联查 crm_products /
-     * crm_product_category，不做任何聚合（聚合交由 fetchRows() + aggregateRows() 完成）。
-     *
-     * @param array $params timebucket/at_time/month_keys
-     * @param string $keyword 已 trim 过的非空关键字
-     * @return array<int, string> 去重后的有效 product_id 列表
-     */
-    private function findMatchedProductIds(array $params, string $keyword): array
-    {
-        $query = Db::table('crm_order_item')->alias('oi')
-            ->join('crm_client_order o', 'oi.order_id = o.id', 'INNER');
-
-        $query->where('o.check_status', '=', 2);
-        $this->applyTimeFilter(
-            $query,
-            (string)($params['timebucket'] ?? ''),
-            (string)($params['at_time'] ?? ''),
-            (string)($params['month_keys'] ?? '')
-        );
-        $query->where('oi.product_name', 'like', "%{$keyword}%");
-        $query->where('oi.product_id', '<>', '');
-
-        $ids = (array)$query->field('oi.product_id')->select();
-
-        return $this->extractDistinctNonEmptyIds($ids, 'product_id');
-    }
-
-    /**
      * keyword 两阶段查询 - 第一阶段：按 supplier_name LIKE keyword 找出匹配的 supplier_id 列表。
      *
-     * 逻辑与 findMatchedProductIds() 对称，详见其注释。
+     * 统计基础口径与 fetchRows() 完全一致（crm_order_item INNER JOIN crm_client_order，
+     * check_status=2，且调用同一个 applyTimeFilter()），仅额外附加 supplier_name LIKE 条件。
+     * 只返回去重、非空的 supplier_id；产品模式 keyword 已改为直接 LIKE，不再使用同类产品 ID 预查。
      *
      * @param array $params timebucket/at_time/month_keys
      * @param string $keyword 已 trim 过的非空关键字
@@ -550,7 +542,15 @@ class SupplyChainService
     }
 
     /**
-     * keyword 未匹配到任何 product_id 时的空结果（产品排行），避免 "IN ()" 空集合查询。
+     * 统一产品名称规范化：仅 trim，不做模糊/包含/相似度合并。
+     */
+    private function normalizeProductName($name): string
+    {
+        return trim((string)$name);
+    }
+
+    /**
+     * keyword 未匹配到任何明细时的空结果（产品排行）。
      */
     private function buildEmptyProductRankResult(): array
     {
@@ -587,20 +587,62 @@ class SupplyChainService
     }
 
     /**
-     * 按指定 ID 字段分组聚合（product_id 或 supplier_id）。
+     * 按规范化产品名称分组聚合（产品排行 / 供应商→产品下钻）。
+     *
+     * 分组键：normalizeProductName(product_name)；空名称归入「未分类产品」。
+     * 利润经 resolveLineProfit() 读取 allocated_profit。
+     * 结果不依赖 product_id 作为唯一键。
+     *
+     * @param array $rows fetchAllocatedRows() 返回的行级数据
+     * @return array<int, array>
+     */
+    private function aggregateRowsByProductName(array $rows): array
+    {
+        $aggregated = [];
+        foreach ($rows as $row) {
+            $groupKey = $this->normalizeProductName($row['product_name'] ?? '');
+
+            if (!isset($aggregated[$groupKey])) {
+                $aggregated[$groupKey] = [
+                    'product_name' => $groupKey !== '' ? $groupKey : self::UNCLASSIFIED_PRODUCT_NAME,
+                    'qty' => 0.0,
+                    'total_price' => 0.0,
+                    'purchase_price' => 0.0,
+                    'profit' => 0.0,
+                ];
+            }
+
+            $aggregated[$groupKey]['qty'] += (float)($row['qty'] ?? 0);
+            $aggregated[$groupKey]['total_price'] += (float)($row['total_price'] ?? 0);
+            $aggregated[$groupKey]['purchase_price'] += (float)($row['purchase_price'] ?? 0);
+            $aggregated[$groupKey]['profit'] += $this->resolveLineProfit($row);
+        }
+
+        foreach ($aggregated as &$item) {
+            $item['total_price'] = round($item['total_price'], 2);
+            $item['purchase_price'] = round($item['purchase_price'], 2);
+            $item['profit'] = round($item['profit'], 2);
+        }
+        unset($item);
+
+        return array_values($aggregated);
+    }
+
+    /**
+     * 按指定 ID 字段分组聚合（主要用于 supplier_id）。
      *
      * 展示名称口径：由于 fetchRows() 已按 o.order_time desc, o.id desc 排序，
      * 遍历中一个分组第一次遇到的非空名称即为"当前筛选范围内最近一笔审核通过订单"的快照名称；
      * 若最近一笔为空，会继续向后（更早的订单）寻找第一个非空名称；整组都为空则使用占位名称。
      *
      * 可选按 $distinctField 统计组内不同值数量（去重、忽略空值），
-     * 用于供应商排行的 product_count 等场景，结果写入 $distinctCountKey 对应字段。
+     * 用于供应商排行的 product_count：当 $distinctField 为 product_name 时按 normalizeProductName 去重。
      *
      * @param array $rows fetchRows() 返回的行级数据（须已按最近订单在前排序）
-     * @param string $groupField 分组字段：product_id / supplier_id
-     * @param string $nameField 展示名称字段：product_name / supplier_name
+     * @param string $groupField 分组字段：supplier_id
+     * @param string $nameField 展示名称字段：supplier_name
      * @param string $unclassifiedName 分组ID为空时的展示名称
-     * @param string|null $distinctField 需要在组内去重计数的字段（如 product_id），不需要则传 null
+     * @param string|null $distinctField 需要在组内去重计数的字段（如 product_name），不需要则传 null
      * @param string|null $distinctCountKey 去重计数结果写入的字段名（如 product_count）
      * @return array<int, array>
      */
@@ -644,7 +686,11 @@ class SupplyChainService
             $aggregated[$groupKey]['profit'] += $this->resolveLineProfit($row);
 
             if ($distinctField !== null) {
-                $distinctVal = trim((string)($row[$distinctField] ?? ''));
+                if ($distinctField === 'product_name') {
+                    $distinctVal = $this->normalizeProductName($row[$distinctField] ?? '');
+                } else {
+                    $distinctVal = trim((string)($row[$distinctField] ?? ''));
+                }
                 if ($distinctVal !== '') {
                     $distinctSets[$groupKey][$distinctVal] = true;
                 }
@@ -665,8 +711,25 @@ class SupplyChainService
     }
 
     /**
-     * 统计已聚合分组列表中，分组字段（product_id / supplier_id）为非空的分组数量，
-     * 即"未分类"分组不计入。用于 summary 中的 product_count / supplier_count。
+     * 统计已聚合产品名称列表中有效（非「未分类产品」）分组数量。
+     *
+     * @param array $list aggregateRowsByProductName() 返回的完整聚合列表（分页前）
+     */
+    private function countValidProductNameGroups(array $list): int
+    {
+        $count = 0;
+        foreach ($list as $item) {
+            $name = (string)($item['product_name'] ?? '');
+            if ($name !== '' && $name !== self::UNCLASSIFIED_PRODUCT_NAME) {
+                $count++;
+            }
+        }
+        return $count;
+    }
+
+    /**
+     * 统计已聚合分组列表中，分组字段（如 supplier_id）为非空的分组数量，
+     * 即"未分类"分组不计入。用于 summary 中的 supplier_count。
      *
      * @param array $list aggregateRows() 返回的完整聚合列表（分页前）
      * @param string $groupField 分组字段名
@@ -683,18 +746,16 @@ class SupplyChainService
     }
 
     /**
-     * 统计行级数据中指定字段的去重（忽略空值）数量。
-     * 用于供应商排行 summary 的 product_count：跨全部供应商去重的产品总数，
-     * 与"每个供应商各自的 product_count 之和"含义不同（同一产品可能出现在多个供应商下）。
+     * 统计行级数据中规范化产品名称的去重（忽略空名称）数量。
+     * 用于供应商排行 summary 的 product_count。
      *
-     * @param array $rows fetchRows() 返回的行级数据
-     * @param string $field 需要去重计数的字段名
+     * @param array $rows fetchRows() / fetchAllocatedRows() 返回的行级数据
      */
-    private function countDistinctNonEmpty(array $rows, string $field): int
+    private function countDistinctProductNames(array $rows): int
     {
         $set = [];
         foreach ($rows as $row) {
-            $val = trim((string)($row[$field] ?? ''));
+            $val = $this->normalizeProductName($row['product_name'] ?? '');
             if ($val !== '') {
                 $set[$val] = true;
             }

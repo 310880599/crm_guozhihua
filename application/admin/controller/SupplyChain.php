@@ -65,7 +65,7 @@ class SupplyChain extends Common
     // =========================================================
 
     /**
-     * 产品排行数据（按 product_id 分组）。
+     * 产品排行数据（按规范化 product_name 分组）。
      */
     public function getProductRankData()
     {
@@ -125,23 +125,23 @@ class SupplyChain extends Common
     }
 
     /**
-     * 产品-供应商详情数据：给定 product_id，按 supplier_id 拆分展示该产品对应的供应商明细。
+     * 产品-供应商详情数据：给定 product_name，按 supplier_id 拆分展示该产品对应的供应商明细。
      *
-     * 注意：product_id 为空代表"未分类产品"分组，仅用于排行页的统计展示，
+     * 注意：product_name 为空代表"未分类产品"分组，仅用于排行页的统计展示，
      * 不允许作为详情下钻对象，此处必须拒绝并返回参数错误。
      */
     public function getProductSupplierDetailData()
     {
-        $productId = trim((string)Request::param('product_id', ''));
-        if ($productId === '') {
-            return json(['code' => -200, 'msg' => 'product_id 不能为空', 'data' => [], 'count' => 0, 'summary' => []]);
+        $productName = trim((string)Request::param('product_name', ''));
+        if ($productName === '') {
+            return json(['code' => -200, 'msg' => 'product_name 不能为空', 'data' => [], 'count' => 0, 'summary' => []]);
         }
 
         try {
             $params = $this->collectCommonParams();
 
             $service = new SupplyChainService();
-            $result = $service->getSupplierBreakdownByProduct($productId, $params);
+            $result = $service->getSupplierBreakdownByProductName($productName, $params);
 
             return json([
                 'code' => 0,
@@ -163,7 +163,7 @@ class SupplyChain extends Common
     }
 
     /**
-     * 供应商下的产品明细：给定 supplier_id，按 product_id 拆分展示该供应商对应的产品明细
+     * 供应商下的产品明细：给定 supplier_id，按规范化 product_name 合并拆分展示该供应商对应的产品明细
      * （用于供应商排行页的下钻查看）。
      *
      * 注意：supplier_id 为空代表"未分类供应商"分组，仅用于排行页的统计展示，
