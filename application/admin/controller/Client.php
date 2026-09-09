@@ -7,6 +7,7 @@ use think\facade\Request;
 use think\facade\Session;
 use think\facade\Env;
 use think\facade\Log;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -663,6 +664,215 @@ class Client extends Common
         );
     }
 
+    /**
+     * 检查客户 Excel 导出权限（与 isCheckClientSuperAdmin 独立）
+     * 仅：真正超级管理员（admin_id=1 或 group_id=1）+ 叶诗龙(392)
+     */
+    private function canExportCheckClient(): bool
+    {
+        $adminId = (int) Session::get('aid');
+        $groupId = (int) Session::get('group_id');
+
+        return (
+            $adminId === 1
+            || $groupId === 1
+            || $adminId === 392
+        );
+    }
+
+    /**
+     * 检查客户 keyword 标准化（列表查询与 Excel 导出共用）
+     */
+    private function normalizeCheckClientKeyword(array $keyword): array
+    {
+        if (!empty($keyword['timebucket'])) {
+            $keyword['timebucket'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
+        }
+        if (!empty($keyword['at_time'])) {
+            $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
+        }
+
+        return $this->normalizeFollowFilterKeyword($keyword);
+    }
+
+    /**
+     * 检查客户结果行展示加工（列表与 Excel 共用，不使用 enrichLeadsRows）
+     */
+    private function decorateCheckClientRows(array &$rows): void
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $leadIds = array_column($rows, 'id');
+
+        // 1) 客户来源(ID->名称) 映射：若表不存在则优雅降级为原值
+        $statusMap = [];
+        try {
+            $hasStatusTable = Db::query("SHOW TABLES LIKE 'crm_client_status'");
+            if (!empty($hasStatusTable)) {
+                $statusMap = Db::table('crm_client_status')->column('status_name', 'id');
+            }
+        } catch (\Exception $e) {
+            $statusMap = [];
+        }
+
+        // 2) 产品名称映射表（product_name ID -> product_name 文字）
+        $productMap = Db::table('crm_products')->column('product_name', 'id');
+
+        // 3) 所属渠道和运营端口名称映射表
+        $inquiryMap = Db::table('crm_inquiry')->column('inquiry_name', 'id');
+        $portMap = Db::table('crm_inquiry_port')->column('port_name', 'id');
+
+        // 4) 批量查询主/辅电话（crm_contacts：1=主，3=辅；按 leads_id 汇总）
+        $phoneMap = [];
+        if (!empty($leadIds)) {
+            $contacts = Db::table('crm_contacts')
+                ->where('is_delete', 0)
+                ->where('leads_id', 'in', $leadIds)
+                ->where('contact_type', 'in', [1, 3])
+                ->order('id', 'asc')
+                ->field('leads_id, contact_type, contact_value')
+                ->select();
+
+            foreach ($contacts as $c) {
+                $lid = $c['leads_id'];
+                if (!isset($phoneMap[$lid])) {
+                    $phoneMap[$lid] = ['main' => '', 'aux' => ''];
+                }
+                if ($c['contact_type'] == 1 && $phoneMap[$lid]['main'] === '') {
+                    $phoneMap[$lid]['main'] = $c['contact_value'];
+                } elseif ($c['contact_type'] == 3 && $phoneMap[$lid]['aux'] === '') {
+                    $phoneMap[$lid]['aux'] = $c['contact_value'];
+                }
+            }
+        }
+
+        // 5) 协同人姓名：从 admin 表按 joint_person 映射（若表/ID不存在则回退为原ID）
+        $uidSet = [];
+        foreach ($rows as &$row) {
+            // 客户来源中文名（若映射不到则用原值）
+            $row['kh_status_name'] = isset($statusMap[$row['kh_status']]) ? $statusMap[$row['kh_status']] : (string)$row['kh_status'];
+
+            // 所属渠道名称（如无对应名称则用自身ID）
+            $row['inquiry_name'] = isset($inquiryMap[$row['inquiry_id']])
+                                    ? $inquiryMap[$row['inquiry_id']]
+                                    : (string)$row['inquiry_id'];
+            // 运营端口名称（如无对应名称则用自身ID）
+            $row['port_name'] = isset($portMap[$row['port_id']])
+                                ? $portMap[$row['port_id']]
+                                : (string)$row['port_id'];
+
+            // 产品名称（将ID转换为文字名称）
+            if (!empty($row['product_name'])) {
+                $row['product_name'] = isset($productMap[$row['product_name']])
+                                      ? $productMap[$row['product_name']]
+                                      : (string)$row['product_name'];
+            }
+
+            // 主/辅电话
+            $row['main_phone'] = isset($phoneMap[$row['id']]) ? $phoneMap[$row['id']]['main'] : '';
+            $row['aux_phone']  = isset($phoneMap[$row['id']]) ? $phoneMap[$row['id']]['aux'] : '';
+
+            // joint_person 可能是 JSON 数组或逗号分隔的 ID 字符串
+            $idsArr = [];
+            if (!empty($row['joint_person'])) {
+                $jp = $row['joint_person'];
+                if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
+                    $tmp = json_decode($jp, true);
+                    if (is_array($tmp)) $idsArr = $tmp;
+                } else {
+                    $idsArr = preg_split('/[,，\s]+/', $jp, -1, PREG_SPLIT_NO_EMPTY);
+                }
+            }
+            $row['_joint_ids'] = $idsArr;
+            foreach ($idsArr as $uid) {
+                $uidSet[$uid] = true;
+            }
+        }
+        unset($row);
+
+        // 一次性把协同人的 username 查出来（若 admin 表不存在则跳过）
+        $adminMap = [];
+        try {
+            if (!empty($uidSet) && Db::query("SHOW TABLES LIKE 'admin'")) {
+                $adminMap = Db::table('admin')
+                    ->where('admin_id', 'in', array_keys($uidSet))
+                    ->column('username', 'admin_id');
+            }
+        } catch (\Exception $e) {
+            $adminMap = [];
+        }
+
+        // 来源端口字段是否存在：整批只检测一次
+        $hasSourcePortColumn = false;
+        try {
+            $columns = Db::query("SHOW COLUMNS FROM `crm_leads` LIKE 'source_port'");
+            $hasSourcePortColumn = !empty($columns);
+        } catch (\Exception $e) {
+            $hasSourcePortColumn = false;
+        }
+
+        foreach ($rows as &$row) {
+            $names = [];
+            foreach ($row['_joint_ids'] as $uid) {
+                $names[] = isset($adminMap[$uid]) ? $adminMap[$uid] : (string)$uid;
+            }
+            $row['joint_person_names'] = $names ? implode('、', $names) : '';
+            unset($row['_joint_ids']);
+
+            // 处理来源端口（source_port）字段，将MD5加密值转换为店铺名称
+            $row['source_port_name'] = '';
+            try {
+                if ($hasSourcePortColumn && !empty($row['source_port'])) {
+                    $sourcePortId = $row['source_port'];
+
+                    // 尝试从 crm_operation_shops 表查找店铺名称
+                    $shopInfo = Db::table('crm_operation_shops')
+                        ->where('id', $sourcePortId)
+                        ->where('is_active', 1)
+                        ->field('shop_name')
+                        ->find();
+
+                    if ($shopInfo) {
+                        $row['source_port_name'] = $shopInfo['shop_name'];
+                    } else {
+                        // 如果表中找不到，尝试从 crm_client_status 的 shop_names 字段查找
+                        // source_port 可能是 md5(status_id + '_' + shop_name) 格式，需要反向查找
+                        $statusId = $row['kh_status'];
+                        if (!empty($statusId)) {
+                            $statusInfo = Db::table('crm_client_status')
+                                ->where('id', $statusId)
+                                ->field('id, shop_names')
+                                ->find();
+
+                            if ($statusInfo && !empty($statusInfo['shop_names'])) {
+                                $shop_names = array_filter(array_map('trim', explode(',', $statusInfo['shop_names'])));
+                                foreach ($shop_names as $shop_name) {
+                                    $expectedId = md5($statusInfo['id'] . '_' . $shop_name);
+                                    if ($expectedId === $sourcePortId) {
+                                        $row['source_port_name'] = $shop_name;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // 如果还是找不到，显示ID
+                        if (empty($row['source_port_name'])) {
+                            $row['source_port_name'] = $sourcePortId;
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                // 忽略错误
+            }
+        }
+        unset($row);
+
+        $this->appendKhRankDisplayForRows($rows);
+    }
+
     //（检查客户）
     public function checkClient()
     {
@@ -702,9 +912,7 @@ class Client extends Common
         $this->assign('khRankList', $khRankList);
         $this->assign('inquiryList', $inquiryList);
         $this->assign('xsSourceList', $xsSourceList);  //线索/客户来源
-
-
-        
+        $this->assign('canExportCheckClient', $this->canExportCheckClient());
 
         return $this->fetch('checkclient/index');
     }
@@ -4502,15 +4710,7 @@ class Client extends Common
         $limit   = input('limit/d', config('pageSize'));
         $keyword = input('keyword/a', []); // 强制为数组
 
-        // 处理时间范围筛选（与原有 buildTimeWhere 兼容）
-        if (!empty($keyword['timebucket'])) {
-            $keyword['timebucket'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
-        }
-        if (!empty($keyword['at_time'])) {
-            $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
-        }
-
-        $keyword = $this->normalizeFollowFilterKeyword($keyword);
+        $keyword = $this->normalizeCheckClientKeyword($keyword);
 
         // 获取当前登录人可见的负责人列表（支持团队可见）
         $visibleUsers = $this->getCheckClientVisibleUsernames();
@@ -4528,168 +4728,157 @@ class Client extends Common
             return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
         }
 
-        // ===== 补充展示所需的派生字段 =====
-        $rows    = &$list['data'];
-        $leadIds = array_column($rows, 'id');
-
-        // 1) 客户来源(ID->名称) 映射：若表不存在则优雅降级为原值
-        $statusMap = [];
-        try {
-            $hasStatusTable = Db::query("SHOW TABLES LIKE 'crm_client_status'");
-            if (!empty($hasStatusTable)) {
-                $statusMap = Db::table('crm_client_status')->column('status_name', 'id');
-            }
-        } catch (\Exception $e) {
-            $statusMap = [];
-        }
-        
-        // 2) 产品名称映射表（product_name ID -> product_name 文字）
-        $productMap = Db::table('crm_products')->column('product_name', 'id');
-        
-        // 3) 所属渠道和运营端口名称映射表
-        $inquiryMap = Db::table('crm_inquiry')->column('inquiry_name', 'id');
-        $portMap = Db::table('crm_inquiry_port')->column('port_name', 'id');
-
-        // 4) 批量查询主/辅电话（crm_contacts：1=主，3=辅；按 leads_id 汇总）
-        $phoneMap = [];
-        if (!empty($leadIds)) {
-            $contacts = Db::table('crm_contacts')
-                ->where('is_delete', 0)
-                ->where('leads_id', 'in', $leadIds)
-                ->where('contact_type', 'in', [1, 3])
-                ->order('id', 'asc')
-                ->field('leads_id, contact_type, contact_value')
-                ->select();
-
-            foreach ($contacts as $c) {
-                $lid = $c['leads_id'];
-                if (!isset($phoneMap[$lid])) {
-                    $phoneMap[$lid] = ['main' => '', 'aux' => ''];
-                }
-                if ($c['contact_type'] == 1 && $phoneMap[$lid]['main'] === '') {
-                    $phoneMap[$lid]['main'] = $c['contact_value'];
-                } elseif ($c['contact_type'] == 3 && $phoneMap[$lid]['aux'] === '') {
-                    $phoneMap[$lid]['aux'] = $c['contact_value'];
-                }
-            }
-        }
-
-        // 5) 协同人姓名：从 admin 表按 joint_person 映射（若表/ID不存在则回退为原ID）
-        $uidSet = [];
-        foreach ($rows as &$row) {
-            // 客户来源中文名（若映射不到则用原值）
-            $row['kh_status_name'] = isset($statusMap[$row['kh_status']]) ? $statusMap[$row['kh_status']] : (string)$row['kh_status'];
-            
-            // 所属渠道名称（如无对应名称则用自身ID）
-            $row['inquiry_name'] = isset($inquiryMap[$row['inquiry_id']]) 
-                                    ? $inquiryMap[$row['inquiry_id']] 
-                                    : (string)$row['inquiry_id'];
-            // 运营端口名称（如无对应名称则用自身ID）
-            $row['port_name'] = isset($portMap[$row['port_id']]) 
-                                ? $portMap[$row['port_id']] 
-                                : (string)$row['port_id'];
-            
-            // 产品名称（将ID转换为文字名称）
-            if (!empty($row['product_name'])) {
-                $row['product_name'] = isset($productMap[$row['product_name']]) 
-                                      ? $productMap[$row['product_name']] 
-                                      : (string)$row['product_name'];
-            }
-
-            // 主/辅电话
-            $row['main_phone'] = isset($phoneMap[$row['id']]) ? $phoneMap[$row['id']]['main'] : '';
-            $row['aux_phone']  = isset($phoneMap[$row['id']]) ? $phoneMap[$row['id']]['aux'] : '';
-
-            // joint_person 可能是 JSON 数组或逗号分隔的 ID 字符串（crm_leads 有该字段）:contentReference[oaicite:3]{index=3}
-            $idsArr = [];
-            if (!empty($row['joint_person'])) {
-                $jp = $row['joint_person'];
-                if (preg_match('/^\s*\[.*\]\s*$/', $jp)) {
-                    $tmp = json_decode($jp, true);
-                    if (is_array($tmp)) $idsArr = $tmp;
-                } else {
-                    $idsArr = preg_split('/[,，\s]+/', $jp, -1, PREG_SPLIT_NO_EMPTY);
-                }
-            }
-            $row['_joint_ids'] = $idsArr;
-            foreach ($idsArr as $uid) {
-                $uidSet[$uid] = true;
-            }
-        }
-        unset($row);
-
-        // 一次性把协同人的 username 查出来（若 admin 表不存在则跳过）
-        $adminMap = [];
-        try {
-            if (!empty($uidSet) && Db::query("SHOW TABLES LIKE 'admin'")) {
-                $adminMap = Db::table('admin')
-                    ->where('admin_id', 'in', array_keys($uidSet))
-                    ->column('username', 'admin_id');
-            }
-        } catch (\Exception $e) {
-            $adminMap = [];
-        }
-
-        foreach ($rows as &$row) {
-            $names = [];
-            foreach ($row['_joint_ids'] as $uid) {
-                $names[] = isset($adminMap[$uid]) ? $adminMap[$uid] : (string)$uid;
-            }
-            $row['joint_person_names'] = $names ? implode('、', $names) : '';
-            unset($row['_joint_ids']);
-
-            // 处理来源端口（source_port）字段，将MD5加密值转换为店铺名称
-            $row['source_port_name'] = '';
-            try {
-                $columns = Db::query("SHOW COLUMNS FROM `crm_leads` LIKE 'source_port'");
-                if (!empty($columns) && !empty($row['source_port'])) {
-                    $sourcePortId = $row['source_port'];
-                    
-                    // 尝试从 crm_operation_shops 表查找店铺名称
-                    $shopInfo = Db::table('crm_operation_shops')
-                        ->where('id', $sourcePortId)
-                        ->where('is_active', 1)
-                        ->field('shop_name')
-                        ->find();
-                    
-                    if ($shopInfo) {
-                        $row['source_port_name'] = $shopInfo['shop_name'];
-                    } else {
-                        // 如果表中找不到，尝试从 crm_client_status 的 shop_names 字段查找
-                        // source_port 可能是 md5(status_id + '_' + shop_name) 格式，需要反向查找
-                        $statusId = $row['kh_status'];
-                        if (!empty($statusId)) {
-                            $statusInfo = Db::table('crm_client_status')
-                                ->where('id', $statusId)
-                                ->field('id, shop_names')
-                                ->find();
-                            
-                            if ($statusInfo && !empty($statusInfo['shop_names'])) {
-                                $shop_names = array_filter(array_map('trim', explode(',', $statusInfo['shop_names'])));
-                                foreach ($shop_names as $shop_name) {
-                                    $expectedId = md5($statusInfo['id'] . '_' . $shop_name);
-                                    if ($expectedId === $sourcePortId) {
-                                        $row['source_port_name'] = $shop_name;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // 如果还是找不到，显示ID
-                        if (empty($row['source_port_name'])) {
-                            $row['source_port_name'] = $sourcePortId;
-                        }
-                    }
-                }
-            } catch (\Exception $e) {
-                // 忽略错误
-            }
-        }
-        unset($row);
-
-        $this->appendKhRankDisplayForRows($rows);
+        $rows = &$list['data'];
+        $this->decorateCheckClientRows($rows);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
+    }
+
+    /**
+     * 检查客户 Excel 导出（与列表同口径；不受当前分页影响）
+     */
+    public function exportCheckClientExcel()
+    {
+        if (!$this->canExportCheckClient()) {
+            return json(['code' => 1, 'msg' => '无权限导出']);
+        }
+
+        $keyword = input('keyword/a', []);
+        $keyword = $this->normalizeCheckClientKeyword($keyword);
+
+        $visibleUsers = $this->getCheckClientVisibleUsernames();
+        $currentAdmin = [
+            'admin_id' => (int)Session::get('aid'),
+            'group_id' => (int)Session::get('group_id'),
+            'username' => (string)Session::get('username'),
+            'is_super_admin' => $this->isCheckClientSuperAdmin() ? 1 : 0,
+        ];
+
+        $clientModel = model('client');
+        $headers = [
+            '客户名称',
+            '产品名称',
+            '主电话',
+            '最新跟进记录',
+            '最新跟进时间',
+            '辅助电话',
+            '所属渠道',
+            '运营端口',
+            '协同人',
+            '成交状态',
+            '负责人',
+            '客户级别',
+            '创建时间',
+            '更新于',
+            '原来创建时间',
+            '原来修改时间',
+        ];
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('检查客户');
+
+        $col = 1;
+        foreach ($headers as $title) {
+            $sheet->setCellValueByColumnAndRow($col, 1, (string)$title);
+            $sheet->getStyleByColumnAndRow($col, 1)->getFont()->setBold(true);
+            $col++;
+        }
+        $sheet->freezePane('A2');
+        $sheet->setAutoFilter('A1:P1');
+
+        $formatOriginalTime = function ($v) {
+            if ($v === null || $v === '') {
+                return '';
+            }
+            if (is_numeric($v)) {
+                return date('Y-m-d H:i:s', (int)$v);
+            }
+            return (string)$v;
+        };
+
+        $writeRow = function ($rowNum, array $row) use ($sheet, $formatOriginalTime) {
+            $values = [
+                (string)($row['kh_name'] ?? ''),
+                (string)($row['product_name'] ?? ''),
+                (string)($row['main_phone'] ?? ''),
+                (string)($row['last_up_records'] ?? ''),
+                (string)($row['last_up_time'] ?? ''),
+                (string)($row['aux_phone'] ?? ''),
+                (string)($row['inquiry_name'] ?? ''),
+                (string)($row['port_name'] ?? ''),
+                (string)($row['joint_person_names'] ?? ''),
+                ((isset($row['issuccess']) && (int)$row['issuccess'] === 1) ? '已成交' : '未成交'),
+                (string)($row['pr_user'] ?? ''),
+                (string)($row['kh_rank_text'] ?? ($row['kh_rank'] ?? '')),
+                (string)($row['at_time'] ?? ''),
+                (string)($row['ut_time'] ?? ''),
+                $formatOriginalTime($row['original_creation_time'] ?? ''),
+                $formatOriginalTime($row['original_modification_time'] ?? ''),
+            ];
+
+            // 电话列按文本写入，避免科学计数法 / 前导0丢失
+            $textCols = [3, 6]; // 主电话、辅助电话（1-based）
+            foreach ($values as $idx => $value) {
+                $c = $idx + 1;
+                if (in_array($c, $textCols, true)) {
+                    $sheet->setCellValueExplicitByColumnAndRow($c, $rowNum, (string)$value, DataType::TYPE_STRING);
+                } else {
+                    $sheet->setCellValueByColumnAndRow($c, $rowNum, (string)$value);
+                }
+            }
+        };
+
+        $page = 1;
+        $batchSize = 500;
+        $excelRow = 2;
+        $total = null;
+
+        while (true) {
+            $list = $clientModel->getCheckClientSearchList($page, $batchSize, $keyword, $visibleUsers, $currentAdmin);
+            if (empty($list) || empty($list['data'])) {
+                break;
+            }
+
+            if ($total === null) {
+                $total = (int)$list['total'];
+            }
+
+            $rows = $list['data'];
+            $this->decorateCheckClientRows($rows);
+
+            foreach ($rows as $row) {
+                $writeRow($excelRow, $row);
+                $excelRow++;
+            }
+
+            // __id_in 场景会一次返回全部；普通分页则按批推进
+            if (!empty($keyword['__id_in']) || ($page * $batchSize) >= $total) {
+                break;
+            }
+            $page++;
+        }
+
+        // 合理列宽
+        $widths = [18, 18, 16, 28, 18, 16, 14, 14, 16, 10, 12, 12, 18, 18, 18, 18];
+        foreach ($widths as $i => $w) {
+            $sheet->getColumnDimensionByColumn($i + 1)->setWidth($w);
+        }
+
+        $filename = '检查客户_' . date('Ymd_His') . '.xlsx';
+        if (function_exists('ob_get_level')) {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+        }
+        $encodedFilename = rawurlencode($filename);
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header("Content-Disposition: attachment; filename=\"{$filename}\"; filename*=UTF-8''{$encodedFilename}");
+        header('Pragma: no-cache');
+        header('Expires: 0');
+
+        $writer = new Xlsx($spreadsheet);
+        $writer->save('php://output');
+        exit;
     }
 
 

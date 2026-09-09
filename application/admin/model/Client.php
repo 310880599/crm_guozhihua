@@ -743,11 +743,16 @@ class Client extends Model
     }
 
     //检查客户
-    public function getCheckClientSearchList($page, $limit, $keyword, array $visibleUsers = [], array $currentAdmin = [])
+    /**
+     * 检查客户统一查询 Builder（列表分页与 Excel 全量导出共用同一口径）
+     *
+     * @param array $keyword
+     * @param array $visibleUsers
+     * @param array $currentAdmin
+     * @return array|null {query: Query, idIn: int[]} 无权限时返回 null
+     */
+    public function buildCheckClientQuery(array $keyword, array $visibleUsers = [], array $currentAdmin = [])
     {
-        $page  = max(1, (int)$page);
-        $limit = max(1, (int)$limit);
-
         $mapIsSuccess = [];
         if (isset($keyword['issuccess']) && $keyword['issuccess'] !== '') {
             $isSuccess = (int)$keyword['issuccess'];
@@ -868,6 +873,25 @@ class Client extends Model
             }
             $query->where('l.pr_user', '=', $selectedPrUser);
         }
+
+        return [
+            'query' => $query,
+            'idIn'  => $idIn,
+        ];
+    }
+
+    public function getCheckClientSearchList($page, $limit, $keyword, array $visibleUsers = [], array $currentAdmin = [])
+    {
+        $page  = max(1, (int)$page);
+        $limit = max(1, (int)$limit);
+
+        $built = $this->buildCheckClientQuery((array)$keyword, $visibleUsers, $currentAdmin);
+        if ($built === null) {
+            return null;
+        }
+
+        $query = $built['query'];
+        $idIn  = $built['idIn'];
 
         $total = (int)(clone $query)->distinct(true)->count('l.id');
         if ($total === 0) {

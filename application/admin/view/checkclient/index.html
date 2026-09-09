@@ -1266,6 +1266,15 @@
     <!-- <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="viewImportLog">
         <i class="layui-icon">&#xe621;</i>导入日志
     </button> -->
+    {if condition="$canExportCheckClient"}
+    <button
+        type="button"
+        class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm"
+        id="exportCheckClientExcel"
+        lay-event="exportExcel">
+        <i class="layui-icon">&#xe601;</i>导出Excel
+    </button>
+    {/if}
     {if session('aid') eq 1}
     <button type="button" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" id="moveGh" lay-event="moveGh"><i class="layui-icon">&#xe770;</i>移入公海</button>
     {/if}
@@ -1286,6 +1295,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var isMobile = $(window).width() < 768;
     var currentUsername = "{$Think.session.username}" || "default";
     var tableId = "table-list";
+    // 最后一次真正执行查询时的 keyword（导出必须用它，不能读未点查询的表单）
+    var lastCheckClientKeyword = {};
     // 生成 page_key：使用 location.pathname（不要 replace 下划线，否则和数据库存的不一致）
     var pageKey = location.pathname;
     // localStorage 的 key（用于兜底）
@@ -2471,6 +2482,31 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     table.on('toolbar(table-list)', function (obj) {
         var checkStatus = table.checkStatus(obj.config.id), data = checkStatus.data;
         switch (obj.event) {
+            case 'exportExcel':
+                (function () {
+                    var kw = lastCheckClientKeyword || {};
+                    var $form = $('<form>').attr({
+                        method: 'POST',
+                        action: "{:url('Client/exportCheckClientExcel')}",
+                        target: '_blank'
+                    });
+                    $.each(kw, function (key, val) {
+                        if (val === undefined || val === null) {
+                            return;
+                        }
+                        $form.append(
+                            $('<input>').attr({
+                                type: 'hidden',
+                                name: 'keyword[' + key + ']',
+                                value: val
+                            })
+                        );
+                    });
+                    $form.appendTo('body');
+                    $form[0].submit();
+                    $form.remove();
+                })();
+                break;
             case 'moveGh':
                 var ids1 = collectCheckedIdsFromCurrentTable();
                 if (ids1.length === 0) { layer.msg('请选择一行'); return; }
@@ -2611,6 +2647,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             console.warn('follow filter tip error:', e);
         }
 
+        // 仅在真正发起查询前保存条件，供导出使用（避免读未点查询的表单）
+        lastCheckClientKeyword = $.extend(true, {}, data.field);
         table.reload('table-list', {
             url: "{:url('Client/checkClientSearch')}",
             where: { keyword: data.field },
@@ -2636,6 +2674,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#follow_days').val('');
         form.render('select');
 
+        lastCheckClientKeyword = {};
         table.reload('table-list', {
             url: "{:url('Client/checkClientSearch')}",
             where: { keyword: {} },
