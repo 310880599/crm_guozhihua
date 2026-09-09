@@ -222,6 +222,66 @@ class Order extends Common
         $sourceList = Db::name('crm_client_status')->distinct(true)->column('status_name');
         $this->assign('sourceList', $sourceList);
         $this->assign('customer_type', self::CUSTOMER_TYPE);
+
+        // 高级查询：产品名称 / 供应商可搜索单选下拉（当前有效主档 + 历史明细快照补集）
+        // 仅供页面选项展示；实际筛选仍走 clientSearch → applyOrderItemSnapshotSearch（LIKE / 同一 EXISTS）
+        $needOrgFilter = ($user['org'] && strpos($user['org'], 'admin') === false);
+
+        // 当前有效产品（与 Order::add/edit 一致：p/c.is_deleted=0，按需 org）
+        $productQuery = Db::name('crm_products')->alias('p')
+            ->leftJoin('crm_product_category c', 'p.category_id = c.id')
+            ->where([
+                'p.is_deleted' => 0,
+                'c.is_deleted' => 0,
+            ]);
+        if ($needOrgFilter) {
+            $productQuery->where($this->getOrgWhere($user['org'], 'p'));
+        }
+        $currentProductNames = $productQuery->group('p.product_name')->column('p.product_name');
+
+        // 历史订单明细产品名称补集（快照，不按 org 缩小选项）
+        $historyProductNames = Db::name('crm_order_item')
+            ->whereNotNull('product_name')
+            ->where('product_name', '<>', '')
+            ->distinct(true)
+            ->column('product_name');
+
+        $productNameMap = [];
+        foreach (array_merge((array)$currentProductNames, (array)$historyProductNames) as $name) {
+            $name = trim((string)$name);
+            if ($name !== '') {
+                $productNameMap[$name] = true;
+            }
+        }
+        $productNameList = array_keys($productNameMap);
+        sort($productNameList, SORT_STRING);
+        $this->assign('productNameList', $productNameList);
+
+        // 当前有效供应商（crm_product_category，与 getCategoryList / 产品范围 org 规则一致）
+        $supplierQuery = Db::name('crm_product_category')->where('is_deleted', 0);
+        if ($needOrgFilter) {
+            $supplierQuery->where($this->getOrgWhere($user['org']));
+        }
+        $currentSupplierNames = $supplierQuery->column('category_name');
+
+        // 历史订单明细供应商名称补集
+        $historySupplierNames = Db::name('crm_order_item')
+            ->whereNotNull('supplier_name')
+            ->where('supplier_name', '<>', '')
+            ->distinct(true)
+            ->column('supplier_name');
+
+        $supplierNameMap = [];
+        foreach (array_merge((array)$currentSupplierNames, (array)$historySupplierNames) as $name) {
+            $name = trim((string)$name);
+            if ($name !== '') {
+                $supplierNameMap[$name] = true;
+            }
+        }
+        $supplierNameList = array_keys($supplierNameMap);
+        sort($supplierNameList, SORT_STRING);
+        $this->assign('supplierNameList', $supplierNameList);
+
         return $this->fetch();
     }
 

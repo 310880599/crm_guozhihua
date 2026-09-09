@@ -448,17 +448,23 @@
                                         <div class="layui-inline">
                                             <label class="layui-form-label">产品名称：</label>
                                             <div class="layui-input-inline">
-                                                <input type="text"  name="product_name" placeholder="请输入产品名称"
-                                                    class="layui-input">
+                                                <select name="product_name" lay-search="">
+                                                    <option value="">请选择产品</option>
+                                                    {volist name='productNameList' id='vo'}
+                                                    <option value="{$vo|htmlentities}">{$vo|htmlentities}</option>
+                                                    {/volist}
+                                                </select>
                                             </div>
                                         </div>
                                         <div class="layui-inline">
                                             <label class="layui-form-label">供应商：</label>
                                             <div class="layui-input-inline">
-                                                <input type="text"
-                                                       name="supplier_name"
-                                                       placeholder="请输入供应商名称"
-                                                       class="layui-input">
+                                                <select name="supplier_name" lay-search="">
+                                                    <option value="">请选择供应商</option>
+                                                    {volist name='supplierNameList' id='vo'}
+                                                    <option value="{$vo|htmlentities}">{$vo|htmlentities}</option>
+                                                    {/volist}
+                                                </select>
                                             </div>
                                         </div>
                                         <div class="layui-inline">
@@ -917,6 +923,10 @@
         }
         function resetForm() {
             document.getElementById('searchForm').reset();
+            // Layui select 显示层需同步刷新，否则产品/供应商仍显示旧选项文案
+            if (typeof layui !== 'undefined' && layui.form) {
+                layui.form.render('select');
+            }
         }
     </script>
 </body>
