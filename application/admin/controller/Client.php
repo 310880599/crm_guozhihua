@@ -93,6 +93,31 @@ class Client extends Common
         return $this->canEditClientByOwnership($clientRow);
     }
 
+    /**
+     * 客户详情只读查看权限：超级权限 / 负责人协同人 / 客户列表可见范围
+     * 仅用于 details、historyApprovedOrders，不扩大写权限
+     */
+    private function canViewClientDetail(array $clientRow)
+    {
+        if ($this->canEditAnyClientForOrder()) {
+            return true;
+        }
+        if ($this->canEditClientByOwnership($clientRow)) {
+            return true;
+        }
+
+        $clientId = (int)($clientRow['id'] ?? 0);
+        if ($clientId <= 0) {
+            return false;
+        }
+
+        $visibleId = model('Client')->buildClientSearchAllBaseQuery([])
+            ->where('l.id', $clientId)
+            ->value('l.id');
+
+        return !empty($visibleId);
+    }
+
     const CONTACT_MAP = [
         'phone'         => 1,
         'email'         => 2,
@@ -3634,8 +3659,7 @@ class Client extends Common
             'pr_user' => (string)($client['pr_user'] ?? ''),
             'joint_person' => (string)($client['joint_person'] ?? ''),
         ];
-        $canEditAnyClient = $this->canEditAnyClientForOrder();
-        if (!$canEditAnyClient && !$this->canEditClientByOwnership($clientForPermission)) {
+        if (!$this->canViewClientDetail($clientForPermission)) {
             return $this->error('您无此操作权限');
         }
 
@@ -3666,14 +3690,13 @@ class Client extends Common
             return json(['code' => 500, 'msg' => '客户不存在或已删除', 'count' => 0, 'data' => []]);
         }
 
-        // 与客户详情页保持一致的权限口径：超级权限或客户负责人/协同人
+        // 与客户详情页保持一致的只读查看权限口径
         $clientForPermission = [
             'id' => (int)($client['id'] ?? 0),
             'pr_user' => (string)($client['pr_user'] ?? ''),
             'joint_person' => (string)($client['joint_person'] ?? ''),
         ];
-        $canEditAnyClient = $this->canEditAnyClientForOrder();
-        if (!$canEditAnyClient && !$this->canEditClientByOwnership($clientForPermission)) {
+        if (!$this->canViewClientDetail($clientForPermission)) {
             return json(['code' => 500, 'msg' => '您无此操作权限', 'count' => 0, 'data' => []]);
         }
 
