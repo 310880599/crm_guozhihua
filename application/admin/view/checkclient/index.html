@@ -50,7 +50,15 @@
     }
     
     /* 查询区域样式优化 */
+    /*
+     * 高级搜索下拉层级：须高于本页表格 fixed 列(999)、工具栏(1100)、
+     * 字段 filter 按钮(1110)、字段面板(1120)，避免 select / lay-search 被遮挡。
+     * 仅作用于本页 .wukong-search-card，不改全局 Layui。
+     */
     .wukong-search-card {
+        position: relative;
+        z-index: 2000;
+        overflow: visible !important;
         background: #fff;
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -62,6 +70,7 @@
     
     .wukong-search-card .layui-form {
         display: flex !important;
+        overflow: visible !important;
     }
     .layui-table-view .layui-table td .layui-btn-xs{
         color: #fff !important;
@@ -69,6 +78,7 @@
     .wukong-search-card .layui-form-item {
         margin-bottom: 15px;
         display: block !important;
+        overflow: visible !important;
     }
     .layui-table-view .layui-table td, .layui-table-view .layui-table th{
         background-color: #fff !important;
@@ -86,10 +96,24 @@
         margin-right: 15px;
         margin-bottom: 15px;
         vertical-align: top;
+        overflow: visible !important;
     }
     
     .wukong-search-card .layui-input-inline {
         display: inline-block !important;
+        overflow: visible !important;
+    }
+
+    /* 展开中的 select 抬高，避免同行其他控件盖住 dl */
+    .wukong-search-card .layui-form-select {
+        position: relative;
+        z-index: 2010;
+    }
+    .wukong-search-card .layui-form-select.layui-form-selected {
+        z-index: 2020;
+    }
+    .wukong-search-card .layui-form-select dl {
+        z-index: 2030 !important;
     }
     
     .wukong-search-card .layui-input,
@@ -1091,7 +1115,12 @@
                     <div class="layui-inline">
                         <label class="layui-form-label">产品名称：</label>
                         <div class="layui-input-inline">
-                            <input type="text" id="product_name" name="product_name" placeholder="请输入产品名称" class="layui-input">
+                            <select name="product_name" id="product_name" lay-search>
+                                <option value="">请选择产品名称</option>
+                                {volist name="productList" id="vo"}
+                                <option value="{$vo.id}">{$vo.product_name}</option>
+                                {/volist}
+                            </select>
                         </div>
                     </div>
 

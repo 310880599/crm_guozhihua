@@ -972,12 +972,20 @@ class Client extends Common
         }
 
         $yyList = $this->getYyList();
+        $productList = Db::table('crm_products')
+            ->where('is_deleted', 0)
+            ->whereNotNull('product_name')
+            ->where('product_name', '<>', '')
+            ->field('id,product_name')
+            ->order('product_name', 'asc')
+            ->select();
         $this->assign('adminResult', $adminResult);
         $this->assign('_yyList', json_encode($yyList['_yyList']));
         $this->assign('khRankList', $khRankList);
         $this->assign('inquiryList', $inquiryList);
         $this->assign('xsSourceList', $xsSourceList);  //线索/客户来源
         $this->assign('canExportCheckClient', $this->canExportCheckClient());
+        $this->assign('productList', $productList);
 
         return $this->fetch('checkclient/index');
     }
