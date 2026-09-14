@@ -593,10 +593,41 @@ class Client extends Common
     }
 
     /**
-     * （检查客户）统一计算当前登录人可见的业务员用户名列表
-     * 返回经过 trim / 去空 / 去重 处理后的 username 数组
+     * 检查客户：是否拥有全员查看权限（仅控制查看范围，不含转移/导出）
+     * 现有特殊人员保持兼容，并新增乔亚锋(407)
      */
-    private function getCheckClientAllowedUsernames(): array
+    private function canViewAllCheckClients(): bool
+    {
+        $adminId = (int) Session::get('aid');
+        $groupId = (int) Session::get('group_id');
+        // 395李营 350李燕慧 375拜云梦 387张二凤 391范文清 405李鹏 392叶诗龙 407乔亚锋
+        $specialAdminIds = [395, 350, 375, 387, 391, 405, 392, 407];
+
+        return (
+            $adminId === 1
+            || $groupId === 1
+            || in_array($adminId, $specialAdminIds, true)
+        );
+    }
+
+    /**
+     * 检查客户：是否允许转移客户负责人（与全员查看独立）
+     * 仅 admin(1)、李营(395)
+     */
+    private function canTransferCheckClient(): bool
+    {
+        $adminId = (int) Session::get('aid');
+
+        return in_array($adminId, [1, 395], true);
+    }
+
+    /**
+     * 按特殊 admin 名单计算可见业务员用户名（检查客户 / 检查订单共用底层逻辑，名单彼此独立）
+     *
+     * @param int[] $specialAdminIds
+     * @return string[]
+     */
+    private function resolveAllowedUsernamesBySpecialAdminIds(array $specialAdminIds): array
     {
         $currentAdminId  = (int) Session::get('aid');
         $currentUsername = trim((string) Session::get('username'));
@@ -622,11 +653,9 @@ class Client extends Common
             }
         }
 
-        // 角色相关常量
-        $specialAdminIds     = [1, 395, 350, 375, 387,391, 405];
-        $allVisibleGroupIds  = [10, 11, 14, 17, 18 ,19, 21, 22]; 
+        $allVisibleGroupIds  = [10, 11, 14, 17, 18, 19, 21, 22];
         $teamVisibleGroupIds = [17, 18];
-        $selfVisibleGroupIds = [10, 11, 14 ,19, 21, 22]; 
+        $selfVisibleGroupIds = [10, 11, 14, 19, 21, 22];
 
         $allowed = [];
 
@@ -665,6 +694,24 @@ class Client extends Common
     }
 
     /**
+     * （检查客户）当前登录人可见的业务员用户名列表
+     * 含乔亚锋(407)；勿把此名单直接复用于检查订单
+     */
+    private function getCheckClientAllowedUsernames(): array
+    {
+        // 与历史一致，并新增 407；392 仍靠 canViewAllCheckClients / is_super_admin 全员查看
+        return $this->resolveAllowedUsernamesBySpecialAdminIds([1, 395, 350, 375, 387, 391, 405, 407]);
+    }
+
+    /**
+     * （检查订单）可见业务员用户名列表：保持修改前名单，不含乔亚锋(407)
+     */
+    private function getCheckOrderAllowedUsernames(): array
+    {
+        return $this->resolveAllowedUsernamesBySpecialAdminIds([1, 395, 350, 375, 387, 391, 405]);
+    }
+
+    /**
      * 兼容旧方法名，内部统一调用 getCheckClientAllowedUsernames
      */
     private function getCheckClientVisibleUsernames(): array
@@ -673,25 +720,18 @@ class Client extends Common
     }
 
     /**
-     * 检查客户页超级管理员识别
-     * - 与历史习惯兼容：admin_id=1 或 group_id=1 均视为超级管理员
+     * 检查客户页“全员查看”识别（兼容旧名；不等于转移权限）
+     * - 与历史习惯兼容：admin_id=1 或 group_id=1 均视为全员查看
      */
     private function isCheckClientSuperAdmin(): bool
     {
-        $adminId = (int) Session::get('aid');
-        $groupId = (int) Session::get('group_id');
-        $specialAdminIds = [395, 350, 375, 387,391, 405, 392];
-
-        return (
-            $adminId === 1
-            || $groupId === 1
-            || in_array($adminId, $specialAdminIds, true)
-        );
+        return $this->canViewAllCheckClients();
     }
 
     /**
-     * 检查客户 Excel 导出权限（与 isCheckClientSuperAdmin 独立）
+     * 检查客户 Excel 导出权限（与 canViewAllCheckClients / 转移权限独立）
      * 仅：真正超级管理员（admin_id=1 或 group_id=1）+ 叶诗龙(392)
+     * 注意：不得因 407 获得检查客户全员查看而自动放行导出
      */
     private function canExportCheckClient(): bool
     {
@@ -960,7 +1000,7 @@ class Client extends Common
 
         $svc = new CheckOrderService();
         $assign = $svc->getPageAssignData(
-            $this->getCheckClientAllowedUsernames(),
+            $this->getCheckOrderAllowedUsernames(),
             function () {
                 return $this->getTeamList();
             }
@@ -981,7 +1021,7 @@ class Client extends Common
             is_array($keyword) ? $keyword : [],
             input('page') ?? 1,
             input('limit') ?? config('pageSize'),
-            $this->getCheckClientAllowedUsernames(),
+            $this->getCheckOrderAllowedUsernames(),
             trim((string) Session::get('username')),
             function ($timeCondition, $field) {
                 return $this->buildTimeWhere($timeCondition, $field);
@@ -6204,6 +6244,14 @@ class Client extends Common
      */
     public function alterPrUserCheck()
     {
+        // 转移权限与全员查看解耦：无转移权则 GET/Ajax 均立即拒绝
+        if (!$this->canTransferCheckClient()) {
+            if (Request::isAjax()) {
+                return json(['code' => 500, 'msg' => '无权限转移客户负责人', 'data' => []]);
+            }
+            return $this->error('无权限转移客户负责人');
+        }
+
         $idsRawInput = Request::param('ids', '');
         if (is_array($idsRawInput)) {
             $idsRawInput = implode(',', $idsRawInput);
