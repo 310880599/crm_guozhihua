@@ -781,7 +781,7 @@ class Client extends Model
         }
         $baseKeyword = (array)$keyword;
         $baseKeyword['pr_user'] = '';
-        unset($baseKeyword['__id_in']);
+        unset($baseKeyword['__id_in'], $baseKeyword['team_name']);
 
         // 基础口径对齐“客户列表”查询链路
         $query = $this->buildClientSearchAllBaseQuery($baseKeyword, $isSuperAdmin);
@@ -850,6 +850,27 @@ class Client extends Model
                 });
             } else {
                 return null;
+            }
+        }
+
+        // 检查客户扩展筛选：团队名称（admin.team_name → username → l.pr_user）
+        $selectedTeamName = isset($keyword['team_name']) ? trim((string)$keyword['team_name']) : '';
+        if ($selectedTeamName !== '') {
+            $teamUsernames = Db::name('admin')
+                ->where('team_name', $selectedTeamName)
+                ->where('username', '<>', '')
+                ->column('username');
+            $teamUsernames = array_values(array_unique(array_filter(array_map('trim', (array)$teamUsernames))));
+
+            // 普通权限：团队成员 ∩ visibleUsers，只收窄不扩大
+            if (!$isSuperAdmin) {
+                $teamUsernames = array_values(array_intersect($teamUsernames, $visibleUsers));
+            }
+
+            if (empty($teamUsernames)) {
+                $query->where('l.id', -1);
+            } else {
+                $query->whereIn('l.pr_user', $teamUsernames);
             }
         }
 

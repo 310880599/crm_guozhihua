@@ -756,6 +756,9 @@ class Client extends Common
         if (!empty($keyword['at_time'])) {
             $keyword['timebucket'] = $this->buildTimeWhere($keyword['at_time'], 'at_time');
         }
+        if (isset($keyword['team_name'])) {
+            $keyword['team_name'] = trim((string)$keyword['team_name']);
+        }
 
         return $this->normalizeFollowFilterKeyword($keyword);
     }
@@ -971,6 +974,27 @@ class Client extends Common
                 ->select();
         }
 
+        // 团队名称下拉：与检查客户权限体系一致（超级看全部有效团队，普通仅 allowedUsernames 对应团队）
+        $teamList = [];
+        if ($this->isCheckClientSuperAdmin()) {
+            $teamList = Db::name('admin')
+                ->where('group_id', '<>', 1)
+                ->whereNotNull('team_name')
+                ->where('team_name', '<>', '')
+                ->group('team_name')
+                ->order('team_name', 'asc')
+                ->column('team_name');
+        } elseif (!empty($allowedUsernames)) {
+            $teamList = Db::name('admin')
+                ->where('username', 'in', $allowedUsernames)
+                ->whereNotNull('team_name')
+                ->where('team_name', '<>', '')
+                ->group('team_name')
+                ->order('team_name', 'asc')
+                ->column('team_name');
+        }
+        $teamList = array_values(array_unique(array_filter(array_map('trim', (array)$teamList))));
+
         $yyList = $this->getYyList();
         $productList = Db::table('crm_products')
             ->where('is_deleted', 0)
@@ -980,6 +1004,7 @@ class Client extends Common
             ->order('product_name', 'asc')
             ->select();
         $this->assign('adminResult', $adminResult);
+        $this->assign('teamList', $teamList);
         $this->assign('_yyList', json_encode($yyList['_yyList']));
         $this->assign('khRankList', $khRankList);
         $this->assign('inquiryList', $inquiryList);
