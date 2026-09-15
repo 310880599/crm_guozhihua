@@ -425,31 +425,18 @@
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     }
     
-    /* 操作列图标按钮紧凑样式（只影响操作列的图标按钮） */
-    .layui-table-view .layui-table td .action-icon-btn {
-        padding: 4px 6px !important;
-        min-width: 30px !important;
-        justify-content: center !important;
-        gap: 0 !important;
-    }
-
-    /* ✅只针对“检查客户”操作列：带文字的两个按钮（全部记录/转移） */
-    .layui-table-view .layui-table td .action-icon-btn.action-text-btn {
-        padding: 4px 10px !important;
-        min-width: 78px !important;
-        width: auto !important;
-        gap: 6px !important;
-        justify-content: center !important;
-    }
-    .layui-table-view .layui-table td .action-icon-btn.action-text-btn .btn-text {
-        display: inline-block;
-        line-height: 1;
-        white-space: nowrap;
-    }
-    
     /* 操作列单元格保持一行显示（针对固定列） */
     .layui-table-fixed-r .layui-table td {
         white-space: nowrap !important;
+    }
+
+    /* 检查客户“记录”列紧凑按钮 */
+    .personclient-list-container .checkclient-record-btn {
+        height: 26px !important;
+        line-height: 26px !important;
+        padding: 0 6px !important;
+        min-width: auto !important;
+        margin: 0 !important;
     }
     
     .layui-table-view .layui-table td .layui-btn-primary {
@@ -890,7 +877,7 @@
         min-height: 32px !important;
     }
 
-    /* 4) 操作列：按钮整体同步紧凑 + 垂直居中 */
+    /* 4) 表格内 xs 按钮整体同步紧凑 + 垂直居中 */
     .layui-table-view .layui-table td .layui-btn-xs{
         height: 26px !important;         /* 按钮高度更矮 */
         line-height: 26px !important;
@@ -900,19 +887,12 @@
         justify-content: center !important;
     }
 
-    /* 5) 只影响你这种"图标按钮"（action-icon-btn）让它更方更紧凑 */
-    .layui-table-view .layui-table td .action-icon-btn{
-        width: 28px !important;
-        min-width: 28px !important;
-        padding: 0 !important;
-    }
-
-    /* 6) 操作列单元格整体垂直居中（避免行高变化后按钮漂） */
+    /* 5) 表格单元格整体垂直居中（避免行高变化后按钮漂） */
     .layui-table-view .layui-table td{
         vertical-align: middle !important;
     }
 
-    /* 7) 确保固定列也应用相同的紧凑样式 */
+    /* 6) 确保固定列也应用相同的紧凑样式 */
     .layui-table-fixed-l .layui-table-cell,
     .layui-table-fixed-r .layui-table-cell{
         padding: 4px 8px !important;
@@ -1363,21 +1343,6 @@
     </div>
 </div>
 
-<!-- 操作列 -->
-<script type="text/html" id="action">
-    <!-- <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a> -->
-    <!-- ✅全部记录：图标+文字，保留 all-follow-btn 点击逻辑 -->
-    <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn action-text-btn all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="全部记录" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i><span class="btn-text">全部记录</span></a>
-    <!-- <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a> -->
-    <!-- ✅转移：图标+文字，保留 lay-event="alter" -->
-    {if in_array(session('aid'), [1,395])}
-    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn action-text-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i><span class="btn-text">转移</span></a>
-    {/if}
-    <!-- {if session('aid') eq 1}
-    <a class="layui-btn layui-btn-primary layui-btn-xs yincang" data-id="{{d.id}}" lay-event="chengjiao"><i class="layui-icon">&#xe63c;</i>成交</a>
-    {/if} -->
-</script>
-
 <!-- 顶部工具栏 -->
 <script type="text/html" id="topBtn">
     <!-- <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加客户</button> -->
@@ -1415,7 +1380,6 @@
 layui.use(['table','form','upload','util','laydate','layer'], function () {
     var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery, upload = layui.upload, layer = layui.layer;
     var followIndex = null; // 记住"写跟进弹窗"的 layer index
-    var isMobile = $(window).width() < 768;
     var currentUsername = "{$Think.session.username}" || "default";
     var tableId = "table-list";
     // 最后一次真正执行查询时的 keyword（导出必须用它，不能读未点查询的表单）
@@ -1552,6 +1516,14 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 var attr = personclientEncodeAttr(text);
                 return '<div class="pc-last-record-wrap"><span class="pc-last-record-cell" data-pc-full="' + attr + '">' + safe + '</span></div>';
             }},
+            {
+                title: '记录',
+                width: 68,
+                align: 'center',
+                templet: function (d) {
+                    return '<a class="layui-btn layui-btn-warm layui-btn-xs all-follow-btn checkclient-record-btn" href="javascript:void(0);" data-id="' + d.id + '" lay-tips="全部记录" lay-offset="0,-8">记录</a>';
+                }
+            },
             { field: 'last_up_time', title: '最新跟进时间', width: 120 },
             { field: 'aux_phone', title: '辅助电话', width: 120 },
             { field: 'inquiry_name', title: '所属渠道', width: 120},     // 原"询盘来源"列
@@ -1581,8 +1553,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
                 return v;
                 }
-            },
-            { fixed: 'right', title: '操作', width: isMobile ? 130 : 250, align: 'center', toolbar: '#action' }
+            }
         ];
     }
 
@@ -1598,28 +1569,30 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         return getCheckMainColField(col) === 'id';
     }
 
-    function isCheckMainActionCol(col) {
-        if (!col) return false;
-        if (col.toolbar === '#action') return true;
-        return col.fixed === 'right' && !col.field && String(col.title || '') === '操作';
+    function isCheckMainRecordsCol(col) {
+        return !!(
+            col &&
+            !getCheckMainColField(col) &&
+            String(col.title || '') === '记录'
+        );
     }
 
     function isCheckMainSortableBusinessCol(col) {
         var field = getCheckMainColField(col);
         if (!field || field === 'id') return false;
-        if (isCheckMainCheckboxCol(col) || isCheckMainActionCol(col)) return false;
+        if (isCheckMainCheckboxCol(col) || isCheckMainRecordsCol(col)) return false;
         return true;
     }
 
     /**
-     * 检查客户主表排序：始终 checkbox → id → 业务字段 → 操作列
+     * 检查客户主表排序：始终 checkbox → id → 业务字段（“记录”列固定插在 last_up_records 后）
      */
     function applyCheckMainColumnOrder(cols) {
         if (!cols || !cols.length) return cols;
 
         var checkboxCol = null;
         var idCol = null;
-        var actionCol = null;
+        var recordsCol = null;
         var businessCols = [];
 
         cols.forEach(function (col) {
@@ -1627,8 +1600,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 checkboxCol = col;
             } else if (isCheckMainIdCol(col)) {
                 idCol = col;
-            } else if (isCheckMainActionCol(col)) {
-                actionCol = col;
+            } else if (isCheckMainRecordsCol(col)) {
+                recordsCol = col;
             } else if (isCheckMainSortableBusinessCol(col)) {
                 businessCols.push(col);
             } else if (col) {
@@ -1666,11 +1639,33 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             orderedBusiness = businessCols.slice();
         }
 
+        // “记录”功能列固定跟随 last_up_records，不参与用户 column_order
+        if (recordsCol) {
+            var insertIdx = -1;
+            for (var i = 0; i < orderedBusiness.length; i++) {
+                if (getCheckMainColField(orderedBusiness[i]) === 'last_up_records') {
+                    insertIdx = i + 1;
+                    break;
+                }
+            }
+            if (insertIdx < 0) {
+                for (var j = 0; j < orderedBusiness.length; j++) {
+                    if (getCheckMainColField(orderedBusiness[j]) === 'last_up_time') {
+                        insertIdx = j;
+                        break;
+                    }
+                }
+            }
+            if (insertIdx < 0) {
+                insertIdx = orderedBusiness.length;
+            }
+            orderedBusiness.splice(insertIdx, 0, recordsCol);
+        }
+
         var result = [];
         if (checkboxCol) result.push(checkboxCol);
         if (idCol) result.push(idCol);
         result = result.concat(orderedBusiness);
-        if (actionCol) result.push(actionCol);
         return result;
     }
 
@@ -1943,7 +1938,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         var html = [
             '<div class="main-table-col-sort-dialog">',
-            '<div class="main-table-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”，排序将自动保存。复选框、ID、操作列不参与排序。</div>',
+            '<div class="main-table-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”，排序将自动保存。复选框、ID、记录列不参与排序。</div>',
             '<ul id="checkMainTableColumnSortList" class="main-table-col-sort-list">'
         ];
 
@@ -3135,52 +3130,6 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 break;
         }
     });
-
-    // 行内事件
-    table.on('tool(table-list)', function (obj) {
-        var layEvent = obj.event, id = obj.data.id;
-        lineEvent(layEvent, id);
-    });
-    // 弹层内按钮事件委托
-    $('body').on('click', '.layui-layer-content [lay-event]', function(){
-        var layEvent = $(this).attr('lay-event');
-        var id = $(this).data('id');
-        lineEvent(layEvent, id);
-    });
-    // 行内事件处理
-    function lineEvent(event, id) {
-        if (event === 'del') {
-            layer.confirm('确定要删除这个客户吗？', function(index){
-                var loading = layer.load(1, { shade: [0.1,'#fff'] });
-                $.post("{:url('del')}", { ids: [id] }, function(res){
-                    layer.close(loading);
-                    if (res.code === 0) {
-                        layer.msg(res.msg, { time: 1000, icon: 1 });
-                        tableIns.reload();
-                    } else {
-                        layer.msg('操作失败！', { time: 1000, icon: 2 });
-                    }
-                });
-                layer.close(index);
-            });
-        } else if (event === 'edit') {
-            layer_add("编辑客户", "{:url('Client/edit')}?id=" + id);
-        } else if (event === 'alter') {
-            layer_add("转移客户负责人", "{:url('Client/alterPrUserCheck')}?ids=" + id);
-        } else if (event === 'chengjiao') {
-            layer.confirm('确定这个客户已成交吗？', function(index){
-                $.post("{:url('Client/chengjiao')}", { ids: id }, function(res){
-                    layer.close(index);
-                    if (res.code === 0) {
-                        layer.msg(res.msg, { time: 1000, icon: 1 });
-                        tableIns.reload();
-                    } else {
-                        layer.msg('操作失败！', { time: 1000, icon: 2 });
-                    }
-                });
-            });
-        }
-    }
 
     // 搜索表单提交
     form.on('submit(LAY-app-contlist-search)', function (data) {
