@@ -668,10 +668,17 @@
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        flex-wrap: wrap !important; /* 允许按钮换行（如果空间不足） */
-        gap: 4px !important; /* 按钮间距 */
-        padding: 4px 8px !important; /* 保留适当 padding，确保按钮不贴边 */
+        flex-wrap: nowrap !important; /* 桌面端 6 个操作按钮单行 */
+        gap: 2px !important; /* 缩小按钮间距，保证单行可用宽度 */
+        padding: 4px 4px !important; /* 缩小左右 padding，增加可用宽度 */
         box-sizing: border-box !important;
+    }
+
+    /* 移动端操作列宽度不足，恢复允许换行（不影响桌面端 nowrap） */
+    @media (max-width: 767px) {
+        .layui-table-fixed-r td .layui-table-cell {
+            flex-wrap: wrap !important;
+        }
     }
     
     /* 左侧固定列也做同样处理（如果存在） */
@@ -1128,9 +1135,14 @@
     }
 
     /* 7) 确保固定列也应用相同的紧凑样式 */
-    .layui-table-fixed-l .layui-table-cell,
-    .layui-table-fixed-r .layui-table-cell{
+    .layui-table-fixed-l .layui-table-cell{
         padding: 4px 8px !important;
+        line-height: 18px !important;
+        min-height: 32px !important;
+        box-sizing: border-box !important;
+    }
+    .layui-table-fixed-r .layui-table-cell{
+        padding: 4px 4px !important; /* 与 fixed-r 操作列单行布局一致，避免后写规则覆盖 */
         line-height: 18px !important;
         min-height: 32px !important;
         box-sizing: border-box !important;
@@ -2768,7 +2780,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 return v;
                 }
             },
-            { fixed: 'right', title: '操作', width: isMobile ? 165 : 190, align: 'center', toolbar: '#action' }
+            { fixed: 'right', title: '操作', width: isMobile ? 165 : 200, align: 'center', toolbar: '#action' }
         ];
     }
 
