@@ -6605,6 +6605,54 @@ class Client extends Common
     }
 
     /**
+     * 申请成交资格预检（只读，不写库）
+     * 供前端打开申请弹窗前调用
+     */
+    public function checkApplySuccessClientEligibility()
+    {
+        if (!Request::isPost()) {
+            return json(['code' => 1, 'msg' => '请求方式错误']);
+        }
+
+        $leadsId = input('leads_id/d', 0);
+        if ($leadsId <= 0) {
+            return json(['code' => 1, 'msg' => '客户ID不能为空']);
+        }
+
+        $lead = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (!$lead) {
+            return json(['code' => 1, 'msg' => '客户不存在']);
+        }
+
+        // 先做身份权限，避免无权限用户通过本接口探测客户创建时间等信息
+        if (!$this->canApplySuccessClient($lead)) {
+            return json(['code' => 1, 'msg' => '仅客户负责人、协同人或超级管理员可提交申请']);
+        }
+        if ((int)($lead['status'] ?? 0) !== 1) {
+            return json(['code' => 1, 'msg' => '客户状态无效，无法提交成交申请']);
+        }
+        if ((int)($lead['issuccess'] ?? 0) !== -1) {
+            return json(['code' => 1, 'msg' => '仅未成交客户可提交成交申请']);
+        }
+
+        $pending = Db::table('crm_success_client_apply')
+            ->where('leads_id', $leadsId)
+            ->where('check_status', 0)
+            ->find();
+        if ($pending) {
+            return json(['code' => 1, 'msg' => '该客户已有成交申请待审核，请等待审核结果']);
+        }
+
+        $service = new SuccessClientApplyService();
+        $timeMsg = $service->getApplyTimeIneligibleMessage($lead['at_time'] ?? null);
+        if ($timeMsg !== '') {
+            return json(['code' => 1, 'msg' => $timeMsg]);
+        }
+
+        return json(['code' => 0, 'msg' => '可以申请成交']);
+    }
+
+    /**
      * 提交成交客户申请（不直接改 issuccess，待审核通过后生效）
      */
     public function applySuccessClient()
@@ -6639,6 +6687,11 @@ class Client extends Common
         }
 
         $service = new SuccessClientApplyService();
+        $timeMsg = $service->getApplyTimeIneligibleMessage($lead['at_time'] ?? null);
+        if ($timeMsg !== '') {
+            return json(['code' => 1, 'msg' => $timeMsg]);
+        }
+
         $result = $service->submitApply(
             $leadsId,
             $proofImage,

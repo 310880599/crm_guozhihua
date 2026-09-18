@@ -2383,6 +2383,42 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     /**
+     * 申请成交前资格校验：通过后才打开原弹窗
+     * @param {object} row 表格行数据
+     * @param {function} onSuccess 提交成功回调
+     */
+    var applySuccessEligibilityChecking = {};
+    function checkApplySuccessClientEligibilityThenOpen(row, onSuccess) {
+        if (!row || !row.id) {
+            layer.msg('客户数据无效', { icon: 2 });
+            return;
+        }
+        var leadsId = parseInt(row.id, 10);
+        if (!leadsId || leadsId <= 0) {
+            layer.msg('客户数据无效', { icon: 2 });
+            return;
+        }
+        if (applySuccessEligibilityChecking[leadsId]) {
+            return;
+        }
+        applySuccessEligibilityChecking[leadsId] = true;
+        var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+        $.post("{:url('Client/checkApplySuccessClientEligibility')}", { leads_id: leadsId }, function (res) {
+            layer.close(loadIdx);
+            applySuccessEligibilityChecking[leadsId] = false;
+            if (res && res.code === 0) {
+                openApplySuccessClientDialog(row, onSuccess);
+            } else {
+                layer.msg((res && res.msg) ? res.msg : '无法申请成交', { icon: 2, time: 2500 });
+            }
+        }).fail(function () {
+            layer.close(loadIdx);
+            applySuccessEligibilityChecking[leadsId] = false;
+            layer.msg('申请资格校验失败，请稍后重试。', { icon: 2 });
+        });
+    }
+
+    /**
      * 打开「申请成交」弹窗：展示客户信息 + 凭证上传 + 申请说明
      * @param {object} row 表格行数据
      * @param {function} onSuccess 提交成功回调（通常 tableIns.reload）
@@ -6860,7 +6896,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         } else if (event === 'alter') {
             layer_add("转移客户负责人", "{:url('Client/alterPrUserPri')}?ids=" + id);
         } else if (event === 'chengjiao') {
-            openApplySuccessClientDialog(row, function () {
+            checkApplySuccessClientEligibilityThenOpen(row, function () {
                 tableIns.reload();
             });
         }

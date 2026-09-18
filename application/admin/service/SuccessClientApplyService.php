@@ -21,6 +21,50 @@ class SuccessClientApplyService
     private const CHECK_REJECTED = 2;
 
     /**
+     * 申请成交时间准入截止点（业务时区 Asia/Shanghai）
+     * 规则：crm_leads.at_time 必须严格早于该时刻
+     */
+    private const APPLY_AT_TIME_DEADLINE = '2025-12-18 00:00:00';
+
+    private const MSG_APPLY_TIME_INELIGIBLE = '该客户不符合申请成交条件：仅允许2025年12月17日及以前创建或导入到CRM的客户申请成交。';
+    private const MSG_APPLY_TIME_INVALID = '客户创建时间异常，无法申请成交，请联系管理员核实。';
+
+    /**
+     * 判断客户 at_time 是否符合申请成交时间准入（严格早于截止时间）
+     *
+     * @param mixed $atTime crm_leads.at_time
+     * @return bool
+     */
+    public function isApplyTimeEligible($atTime)
+    {
+        $dt = $this->parseValidAtTime($atTime);
+        if ($dt === null) {
+            return false;
+        }
+
+        $deadline = $this->getApplyAtTimeDeadline();
+        return $dt < $deadline;
+    }
+
+    /**
+     * 时间准入失败时的业务提示；符合条件返回空字符串
+     *
+     * @param mixed $atTime crm_leads.at_time
+     * @return string
+     */
+    public function getApplyTimeIneligibleMessage($atTime)
+    {
+        if ($this->parseValidAtTime($atTime) === null) {
+            return self::MSG_APPLY_TIME_INVALID;
+        }
+        if (!$this->isApplyTimeEligible($atTime)) {
+            return self::MSG_APPLY_TIME_INELIGIBLE;
+        }
+
+        return '';
+    }
+
+    /**
      * 业务员提交成交客户申请（不修改 crm_leads.issuccess）
      */
     public function submitApply($leadsId, $proofImage, $applyRemark, array $lead, $applyUserId, $applyUser)
@@ -49,6 +93,11 @@ class SuccessClientApplyService
             }
             if ((int)($leadRow['issuccess'] ?? 0) !== -1) {
                 throw new \RuntimeException('仅未成交客户可提交成交申请');
+            }
+
+            $timeMsg = $this->getApplyTimeIneligibleMessage($leadRow['at_time'] ?? null);
+            if ($timeMsg !== '') {
+                throw new \RuntimeException($timeMsg);
             }
 
             $pending = Db::table(self::TABLE_APPLY)
@@ -500,6 +549,73 @@ class SuccessClientApplyService
         }
 
         return $this->ok('获取成功', ['list' => $rows]);
+    }
+
+    /**
+     * 解析并校验 crm_leads.at_time（业务时区 Asia/Shanghai）
+     * 无效值一律返回 null，不得放行
+     *
+     * @param mixed $atTime
+     * @return \DateTime|null
+     */
+    private function parseValidAtTime($atTime)
+    {
+        if ($atTime === null) {
+            return null;
+        }
+
+        if (is_string($atTime) || is_numeric($atTime)) {
+            $raw = trim((string)$atTime);
+        } else {
+            return null;
+        }
+
+        if ($raw === '' || $raw === '0000-00-00 00:00:00' || $raw === '0000-00-00') {
+            return null;
+        }
+
+        // 拒绝纯数字时间戳等隐式转换，避免落到 1970 年误判放行
+        if (preg_match('/^\d+$/', $raw)) {
+            return null;
+        }
+
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}:\d{2})?$/', $raw)) {
+            return null;
+        }
+
+        $tz = new \DateTimeZone('Asia/Shanghai');
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+            $raw .= ' 00:00:00';
+        }
+
+        $dt = \DateTime::createFromFormat('Y-m-d H:i:s', $raw, $tz);
+        $errors = \DateTime::getLastErrors();
+        if ($dt === false) {
+            return null;
+        }
+        if (is_array($errors) && (((int)($errors['warning_count'] ?? 0) > 0) || ((int)($errors['error_count'] ?? 0) > 0))) {
+            return null;
+        }
+        if ($dt->format('Y-m-d H:i:s') !== $raw) {
+            return null;
+        }
+
+        return $dt;
+    }
+
+    /**
+     * @return \DateTime
+     */
+    private function getApplyAtTimeDeadline()
+    {
+        $tz = new \DateTimeZone('Asia/Shanghai');
+        $deadline = \DateTime::createFromFormat('Y-m-d H:i:s', self::APPLY_AT_TIME_DEADLINE, $tz);
+        if ($deadline === false) {
+            // 常量非法时宁可全部拒绝，也不要误放行
+            return new \DateTime('1970-01-01 00:00:00', $tz);
+        }
+
+        return $deadline;
     }
 
     private function ok($msg, $data = null)

@@ -729,6 +729,36 @@
 
             var CLIENT_ADV_SEARCH_STORAGE_KEY = 'client_index_advanced_search_expanded';
             var CLIENT_ADV_SEARCH_CLICK_NS = 'clientAdvSearchToggle';
+            var applySuccessEligibilityChecking = {};
+
+            /**
+             * 申请成交前资格校验：通过后才打开原弹窗
+             */
+            function checkApplySuccessClientEligibilityThenOpen(leadsId, onSuccess) {
+                var id = parseInt(leadsId, 10);
+                if (!id || id <= 0) {
+                    layer.msg('客户数据无效', { icon: 2 });
+                    return;
+                }
+                if (applySuccessEligibilityChecking[id]) {
+                    return;
+                }
+                applySuccessEligibilityChecking[id] = true;
+                var loadIdx = layer.load(1, { shade: [0.12, '#fff'] });
+                $.post("{:url('Client/checkApplySuccessClientEligibility')}", { leads_id: id }, function (res) {
+                    layer.close(loadIdx);
+                    applySuccessEligibilityChecking[id] = false;
+                    if (res && res.code === 0) {
+                        openApplySuccessClientDialog(id, onSuccess);
+                    } else {
+                        layer.msg((res && res.msg) ? res.msg : '无法申请成交', { icon: 2, time: 2500 });
+                    }
+                }).fail(function () {
+                    layer.close(loadIdx);
+                    applySuccessEligibilityChecking[id] = false;
+                    layer.msg('申请资格校验失败，请稍后重试。', { icon: 2 });
+                });
+            }
 
             /** 打开「申请成交客户」弹窗（上传凭证 + 说明） */
             function openApplySuccessClientDialog(leadsId, onSuccess) {
@@ -1717,7 +1747,7 @@
                     });
                     layer_add("转移客户负责人", "{:url('Client/alterPrUser')}?ids=" + data.id)
                 } else if (obj.event === 'chengjiao') {
-                    openApplySuccessClientDialog(data.id, function () {
+                    checkApplySuccessClientEligibilityThenOpen(data.id, function () {
                         reloadKeepColWidth();
                     });
                 } else if (obj.event === 'ownerHistory') {
