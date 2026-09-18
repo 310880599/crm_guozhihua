@@ -2134,9 +2134,9 @@
     <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a>
     <!-- ✅新增：全部跟进 -->
     <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="全部跟进" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i></a>
-    <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="details" lay-tips="详情" lay-offset="0,-8"><i class="layui-icon">&#xe60b;</i></a>
-    <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a>
-    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i></a>
+    <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="details" lay-tips="客户详情" lay-offset="0,-8"><i class="layui-icon">&#xe60b;</i></a>
+    <a class="layui-btn layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="edit" lay-tips="编辑客户" lay-offset="0,-8"><i class="layui-icon">&#xe642;</i></a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="alter" lay-tips="转移客户" lay-offset="0,-8"><i class="layui-icon">&#xe60e;</i></a>
     <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn apply-success-btn" data-id="{{d.id}}" lay-event="chengjiao" lay-tips="申请成交" lay-offset="0,-8"><i class="layui-icon">&#xe63c;</i></a>
 </script>
 
@@ -2703,6 +2703,66 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
     $(window).off('resize.pcLastRecTip').on('resize.pcLastRecTip', function () {
         hideLastRecordTooltip();
+    });
+
+    /**
+     * 操作列图标按钮悬浮提示：
+     * Layui 2.4.5 不会自动解析 lay-tips，需用 layer.tips + document 事件委托。
+     * tip 挂到 body，规避表格 cell / fixed 列 overflow 裁切；全局只保留一个 tipIndex。
+     */
+    var actionIconTipIndex = null;
+    function closeActionIconTip() {
+        if (actionIconTipIndex !== null) {
+            try {
+                layer.close(actionIconTipIndex);
+            } catch (e) {}
+            actionIconTipIndex = null;
+        }
+    }
+    function escapeActionIconTipText(text) {
+        return String(text == null ? '' : text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+    function bindActionIconTips() {
+        var tipSelector = '.layui-table-view .action-icon-btn[lay-tips]';
+        $(document)
+            .off('mouseenter.pcActionTip mouseleave.pcActionTip click.pcActionTip', tipSelector)
+            .on('mouseenter.pcActionTip', tipSelector, function () {
+                var text = $(this).attr('lay-tips');
+                if (text == null || String(text).trim() === '') {
+                    return;
+                }
+                closeActionIconTip();
+                // tips:1 上方；右侧固定列贴边时 layer 会尽量落在可视区内
+                actionIconTipIndex = layer.tips(escapeActionIconTipText(text), this, {
+                    tips: [1, '#393D49'],
+                    time: 0,
+                    tipsMore: false,
+                    maxWidth: 160
+                });
+            })
+            .on('mouseleave.pcActionTip', tipSelector, function () {
+                closeActionIconTip();
+            })
+            .on('click.pcActionTip', tipSelector, function () {
+                closeActionIconTip();
+            });
+
+        var $view = $('#' + tableId).next('.layui-table-view');
+        if ($view.length) {
+            $view.find('.layui-table-main, .layui-table-fixed-r .layui-table-body, .layui-table-fixed-l .layui-table-body')
+                .off('scroll.pcActionTip')
+                .on('scroll.pcActionTip', function () {
+                    closeActionIconTip();
+                });
+        }
+    }
+    $(window).off('resize.pcActionTip').on('resize.pcActionTip', function () {
+        closeActionIconTip();
     });
 
     // 主表基础列定义（字段属性与 templet 保持原样）
@@ -3331,6 +3391,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 bindResizeSave();
 
                 bindLastRecordTooltip();
+                bindActionIconTips();
                 bindMainTableHideConfigSave();
 
                 // ===============================
