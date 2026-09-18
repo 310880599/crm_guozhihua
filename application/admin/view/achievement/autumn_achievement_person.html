@@ -1,0 +1,1985 @@
+<?php
+// 金秋大战个人页变量容错（数据由 Achievement::autumnAchievementPerson 赋值）
+$dashboardTitle     = isset($dashboardTitle) ? $dashboardTitle : '金秋大战·押注战况';
+$periodText         = isset($periodText) ? $periodText : '';
+$challengerRankList = isset($challengerRankList) && is_array($challengerRankList) ? $challengerRankList : [];
+$bettorRankList     = isset($bettorRankList) && is_array($bettorRankList) ? $bettorRankList : [];
+$summary            = isset($summary) && is_array($summary) ? $summary : [];
+$jqStamp            = isset($jqStamp) ? $jqStamp : '';
+
+// 首屏双色标题拆分（Ajax 后由 JS 同样重建，避免 .text() 冲掉 span）
+$jqTitleLeft  = $dashboardTitle;
+$jqTitleRight = '';
+if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
+    $jqTitleLeft  = trim($jqTitleMatch[1]);
+    $jqTitleRight = ' ' . trim($jqTitleMatch[2]);
+}
+?>
+<!-- 金秋大战个人看板：iframe 内独立依赖，保证 jQuery / layui 可用 -->
+<script src="/js/jquery.min.js"></script>
+<script src="/static/plugins/layui/layui.js"></script>
+<style>
+    /* ============================================================
+     * 金秋大战·押注战况（深蓝科技大屏视觉升级 · 左右双栏 · 无自动滚动）
+     * ============================================================ */
+
+    :root{
+        --jq-bg0:#050a1a;
+        --jq-bg1:#071b3a;
+        --jq-panel:#061a33cc;
+        --jq-border:rgba(46,194,255,.50);
+        --jq-glow:rgba(46,194,255,.28);
+        --jq-cyan:#2ec2ff;
+        --jq-cyan2:#64e7ff;
+        --jq-blue:#1e9fff;
+        --jq-gold:#ffcc5a;
+        --jq-gold2:#ffe9a8;
+        --jq-orange:#ff7a45;
+        --jq-green:#3be27f;
+        --jq-text:#e7f2ff;
+        --jq-text-dim:rgba(231,242,255,.68);
+        --jq-text-dimmer:rgba(231,242,255,.48);
+        --jq-muted:rgba(231,242,255,.52);
+        --jq-amount-target:rgba(210,232,255,.92);
+        --jq-amount-actual:#64e7ff;
+        --jq-amount-bet:#ffcc5a;
+    }
+
+    /* 纵向 flex：Hero 固定，cards 吃满剩余高度 */
+    .jq-dashboard-container{
+        position: relative;
+        padding: 10px 14px 12px;
+        background:
+            radial-gradient(1100px 380px at 50% -100px, rgba(46,194,255,.16), transparent 58%),
+            radial-gradient(640px 280px at 8% 8%, rgba(255,122,69,.07), transparent 55%),
+            radial-gradient(720px 300px at 92% 12%, rgba(255,204,90,.06), transparent 58%),
+            radial-gradient(800px 360px at 14% 10%, rgba(100,231,255,.08), transparent 55%),
+            linear-gradient(180deg, var(--jq-bg1) 0%, var(--jq-bg0) 62%, #040816 100%);
+        min-height: 100vh;
+        height: 100vh;
+        box-sizing: border-box;
+        overflow: hidden;
+        color: var(--jq-text);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .jq-dashboard-container > .jq-dashboard-hero{
+        flex: 0 0 auto;
+    }
+
+    .jq-dashboard-container::before{
+        content:'';
+        position:absolute;
+        inset:-1px;
+        background:
+            linear-gradient(rgba(46,194,255,.06) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(46,194,255,.05) 1px, transparent 1px);
+        background-size: 48px 48px;
+        opacity: .30;
+        pointer-events:none;
+        z-index: 0;
+        mask-image: radial-gradient(650px 420px at 50% 22%, rgba(0,0,0,1), rgba(0,0,0,.25) 70%, transparent 100%);
+    }
+
+    .jq-dashboard-container::after{
+        content:'';
+        position:absolute;
+        inset:-80px -60px;
+        background:
+            radial-gradient(380px 220px at 16% 18%, rgba(46,194,255,.08), transparent 65%),
+            radial-gradient(420px 240px at 84% 20%, rgba(255,122,69,.05), transparent 70%);
+        pointer-events:none;
+        z-index: 0;
+        opacity: .9;
+    }
+
+    /* ========== 顶部 Hero Banner ========== */
+    .jq-dashboard-hero{
+        position: relative;
+        z-index: 1;
+        margin-bottom: 10px;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid rgba(46,194,255,.48);
+        background:
+            radial-gradient(520px 160px at 12% 0%, rgba(255,122,69,.12), transparent 55%),
+            radial-gradient(480px 140px at 88% 10%, rgba(255,204,90,.10), transparent 58%),
+            radial-gradient(640px 180px at 50% 120%, rgba(46,194,255,.10), transparent 60%),
+            linear-gradient(135deg, rgba(7,27,58,.96) 0%, rgba(5,14,32,.92) 48%, rgba(6,26,51,.94) 100%);
+        box-shadow:
+            0 12px 28px rgba(0,0,0,.36),
+            0 0 0 1px rgba(46,194,255,.12) inset,
+            0 0 28px rgba(46,194,255,.10);
+        padding: 10px 14px 10px;
+        box-sizing: border-box;
+        min-height: 92px;
+        max-height: 118px;
+    }
+
+    /* 科技角线 */
+    .jq-dashboard-hero::before{
+        content:'';
+        position:absolute;
+        inset: 0;
+        pointer-events:none;
+        z-index: 0;
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.55), transparent) left top / 56px 2px no-repeat,
+            linear-gradient(180deg, rgba(46,194,255,.55), transparent) left top / 2px 36px no-repeat,
+            linear-gradient(270deg, rgba(255,204,90,.45), transparent) right top / 56px 2px no-repeat,
+            linear-gradient(180deg, rgba(255,204,90,.40), transparent) right top / 2px 36px no-repeat,
+            linear-gradient(90deg, rgba(46,194,255,.35), transparent) left bottom / 48px 2px no-repeat,
+            linear-gradient(0deg, rgba(46,194,255,.35), transparent) left bottom / 2px 28px no-repeat,
+            linear-gradient(270deg, rgba(46,194,255,.30), transparent) right bottom / 48px 2px no-repeat,
+            linear-gradient(0deg, rgba(46,194,255,.30), transparent) right bottom / 2px 28px no-repeat;
+        opacity: .9;
+    }
+
+    /* 枫叶 / 秋金装饰 */
+    .jq-dashboard-hero::after{
+        content:'🍁';
+        position:absolute;
+        top: 6px;
+        right: 132px;
+        font-size: 22px;
+        opacity: .22;
+        pointer-events:none;
+        z-index: 0;
+        filter: saturate(1.2);
+        transform: rotate(18deg);
+    }
+
+    .jq-hero-decor{
+        position:absolute;
+        inset: 0;
+        pointer-events:none;
+        z-index: 0;
+        overflow: hidden;
+    }
+    .jq-hero-decor-leaf{
+        position:absolute;
+        font-size: 18px;
+        opacity: .16;
+        color: #ff9a4a;
+    }
+    .jq-hero-decor-leaf.l1{ left: 8px; top: 8px; transform: rotate(-22deg); }
+    .jq-hero-decor-leaf.l2{ left: 42px; bottom: 6px; font-size: 14px; opacity: .12; transform: rotate(12deg); }
+    .jq-hero-decor-goldline{
+        position:absolute;
+        left: 18%;
+        right: 38%;
+        bottom: 0;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, rgba(255,204,90,.35), transparent);
+        opacity: .7;
+    }
+
+    .jq-dashboard-hero-main{
+        position: relative;
+        z-index: 1;
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) auto;
+        align-items: center;
+        gap: 12px 16px;
+        box-sizing: border-box;
+        padding-right: 118px;
+    }
+
+    .jq-dashboard-hero-left{
+        min-width: 0;
+        max-width: 520px;
+    }
+
+    .jq-dashboard-main-title{
+        margin: 0;
+        text-align: left;
+        font-size: clamp(22px, 2vw, 30px);
+        font-weight: 800;
+        letter-spacing: 1.4px;
+        line-height: 1.15;
+        color: #eaf6ff;
+        text-shadow:
+            0 0 18px rgba(46,194,255,.18),
+            0 2px 0 rgba(0,0,0,.35);
+    }
+
+    .jq-title-gold{
+        background: linear-gradient(135deg, #ffe9a8 0%, #ffcc5a 42%, #ff8a3d 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+        text-shadow: none;
+        filter: drop-shadow(0 0 10px rgba(255,204,90,.28));
+    }
+    .jq-title-light{
+        color: #f2f9ff;
+        -webkit-text-fill-color: #f2f9ff;
+        text-shadow:
+            0 0 14px rgba(100,231,255,.22),
+            0 0 28px rgba(46,194,255,.12);
+    }
+
+    .jq-dashboard-hero-sub{
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--jq-text-dim);
+        letter-spacing: .4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .jq-dashboard-hero-meta{
+        margin-top: 6px;
+        display:flex;
+        align-items:center;
+        gap: 8px;
+        flex-wrap: wrap;
+        min-width: 0;
+    }
+
+    .jq-dashboard-hero-period{
+        display:inline-flex;
+        align-items: baseline;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .jq-period-label{
+        font-size: 11px;
+        color: var(--jq-text-dimmer);
+    }
+    .jq-period-value{
+        font-size: 12px;
+        font-weight: 700;
+        color: rgba(231,242,255,.92);
+        letter-spacing: .2px;
+    }
+
+    .jq-dashboard-hero-tags{
+        display:inline-flex;
+        align-items:center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .jq-status-badge,
+    .jq-realtime-tip,
+    .jq-scroll-tip{
+        display:inline-flex;
+        align-items:center;
+        gap: 6px;
+        font-size: 11px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        letter-spacing: .2px;
+        white-space: nowrap;
+    }
+
+    .jq-realtime-tip{
+        color: rgba(231,242,255,.92);
+        border: 1px solid rgba(59,226,127,.32);
+        background: rgba(10,40,22,.40);
+        box-shadow: 0 0 0 1px rgba(59,226,127,.06) inset;
+    }
+
+    .jq-realtime-dot{
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--jq-green);
+        box-shadow: 0 0 10px rgba(59,226,127,.55);
+        animation: jq-pulse 1.3s ease-in-out infinite;
+    }
+
+    @keyframes jq-pulse{
+        0%, 100%{ transform: scale(1); opacity: 1; }
+        50%{ transform: scale(.82); opacity: .55; }
+    }
+
+    .jq-scroll-tip{
+        color: rgba(255,233,168,.92);
+        border: 1px solid rgba(255,204,90,.32);
+        background: rgba(48,32,8,.38);
+        box-shadow: 0 0 0 1px rgba(255,204,90,.06) inset;
+    }
+
+    /* ========== KPI ========== */
+    .jq-dashboard-hero-kpis{
+        display:grid;
+        grid-template-columns: repeat(5, minmax(88px, 118px));
+        gap: 8px;
+        align-items: stretch;
+        justify-content: end;
+    }
+
+    .jq-kpi-chip{
+        border-radius: 12px;
+        border: 1px solid rgba(46,194,255,.42);
+        background:
+            radial-gradient(180px 70px at 20% 0%, rgba(46,194,255,.14), transparent 65%),
+            linear-gradient(180deg, rgba(6,26,51,.72), rgba(5,14,28,.52));
+        box-shadow:
+            0 8px 18px rgba(0,0,0,.24),
+            0 0 0 1px rgba(46,194,255,.08) inset,
+            0 0 16px rgba(46,194,255,.08);
+        padding: 8px 10px 7px;
+        box-sizing: border-box;
+        min-height: 70px;
+        display:flex;
+        flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .jq-kpi-chip-icon{
+        position: absolute;
+        top: 6px;
+        right: 8px;
+        font-size: 14px;
+        color: rgba(100,231,255,.45);
+        line-height: 1;
+        pointer-events: none;
+    }
+    .jq-kpi-chip.is-gold .jq-kpi-chip-icon{ color: rgba(255,204,90,.50); }
+    .jq-kpi-chip.is-status .jq-kpi-chip-icon{ color: rgba(255,204,90,.55); }
+
+    .jq-kpi-chip-top{
+        display:flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        min-width: 0;
+        padding-right: 16px;
+    }
+
+    .jq-kpi-chip-title{
+        font-size: 12px;
+        color: rgba(231,242,255,.62);
+        letter-spacing: .3px;
+        flex: 0 0 auto;
+        line-height: 1.2;
+    }
+
+    .jq-kpi-chip-value{
+        font-size: clamp(18px, 1.6vw, 26px);
+        font-weight: 900;
+        letter-spacing: .2px;
+        line-height: 1.1;
+        color: rgba(231,242,255,.95);
+        text-shadow: 0 0 18px rgba(46,194,255,.14);
+        white-space: nowrap;
+    }
+
+    .jq-kpi-chip-value.jq-kpi-accent{
+        color: var(--jq-cyan2);
+        text-shadow: 0 0 14px rgba(100,231,255,.22);
+    }
+
+    .jq-kpi-chip-value.jq-kpi-accent2{
+        color: var(--jq-gold);
+        text-shadow: 0 0 14px rgba(255,204,90,.22);
+    }
+
+    .jq-kpi-chip-value.jq-kpi-status{
+        font-size: clamp(14px, 1.2vw, 18px);
+        color: var(--jq-gold2);
+        text-shadow: 0 0 12px rgba(255,204,90,.18);
+        letter-spacing: .6px;
+    }
+
+    .jq-kpi-chip-unit{
+        font-size: 10px;
+        color: rgba(231,242,255,.55);
+        margin-left: 2px;
+        font-weight: 600;
+    }
+
+    .jq-kpi-chip-sub{
+        margin-top: 2px;
+        font-size: 10px;
+        color: rgba(231,242,255,.48);
+        letter-spacing: .2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    @media screen and (max-width: 1599px){
+        .jq-dashboard-hero-kpis{
+            grid-template-columns: repeat(5, minmax(78px, 104px));
+            gap: 6px;
+        }
+        .jq-kpi-chip{ padding: 7px 8px 6px; min-height: 64px; }
+        .jq-kpi-chip-value{ font-size: clamp(16px, 1.4vw, 22px); }
+        .jq-dashboard-hero{ max-height: 112px; }
+    }
+
+    @media screen and (max-width: 1366px){
+        .jq-dashboard-main-title{ font-size: clamp(20px, 1.8vw, 24px); }
+        .jq-dashboard-hero{ padding: 8px 12px; min-height: 86px; max-height: 108px; }
+        .jq-dashboard-hero::after{ right: 118px; font-size: 18px; }
+        .jq-kpi-chip{ padding: 6px 7px; min-height: 60px; }
+        .jq-kpi-chip-title{ font-size: 11px; }
+        .jq-kpi-chip-value{ font-size: clamp(15px, 1.3vw, 20px); }
+        .jq-dashboard-hero-kpis{
+            grid-template-columns: repeat(5, minmax(70px, 96px));
+            gap: 5px;
+        }
+    }
+
+    @media screen and (max-width: 1199px){
+        .jq-dashboard-hero{
+            max-height: none;
+            min-height: 0;
+        }
+        .jq-dashboard-hero-main{
+            grid-template-columns: 1fr;
+            padding-right: 0;
+        }
+        .jq-dashboard-hero-left{ max-width: none; }
+        .jq-dashboard-hero-kpis{
+            width: 100%;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            justify-content: stretch;
+        }
+        .jq-dashboard-hero::after{ display: none; }
+    }
+
+    @media screen and (max-width: 760px){
+        .jq-dashboard-container{ padding: 8px 10px 10px; min-height: 100vh; height: 100vh; }
+        .jq-dashboard-hero-kpis{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .jq-dashboard-hero-sub{ white-space: normal; }
+        .jq-dashboard-hero-main{ padding-right: 0; }
+    }
+
+    /* ========== 左右双栏 ========== */
+    .jq-cards-row{
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 14px;
+        align-items: stretch;
+        position: relative;
+        z-index: 1;
+        margin-top: 0;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    .jq-card-col{
+        min-width: 0;
+        min-height: 0;
+        width: 100%;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .jq-card-col > .layui-card.jq-card{
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
+        margin-bottom: 0;
+    }
+
+    @media screen and (max-width: 900px){
+        .jq-cards-row{
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+    }
+
+    .jq-card{
+        height: 100%;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+        display:flex;
+        flex-direction: column;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid rgba(46,194,255,.50);
+        background:
+            radial-gradient(560px 220px at 16% 0%, rgba(46,194,255,.12), transparent 70%),
+            linear-gradient(180deg, rgba(6,26,51,.92), rgba(5,14,28,.78));
+        box-shadow:
+            0 14px 36px rgba(0,0,0,.40),
+            0 0 0 1px rgba(46,194,255,.12) inset,
+            0 0 24px rgba(46,194,255,.10);
+        position: relative;
+    }
+
+    .jq-card::before{
+        content:'';
+        position:absolute;
+        inset: 0;
+        pointer-events:none;
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.50), transparent) left top / 40px 1.5px no-repeat,
+            linear-gradient(180deg, rgba(46,194,255,.50), transparent) left top / 1.5px 28px no-repeat,
+            linear-gradient(270deg, rgba(46,194,255,.40), transparent) right top / 40px 1.5px no-repeat,
+            linear-gradient(180deg, rgba(46,194,255,.40), transparent) right top / 1.5px 28px no-repeat;
+        opacity: .85;
+        z-index: 0;
+    }
+
+    .jq-card-head{
+        position: relative;
+        z-index: 1;
+        flex: 0 0 auto;
+        padding: 12px 14px 10px;
+        border-bottom: 1px solid rgba(46,194,255,.22);
+        background:
+            linear-gradient(90deg, rgba(46,194,255,.16), rgba(46,194,255,0) 46%, rgba(255,204,90,.06));
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+    }
+
+    .jq-card-head-main{ min-width: 0; flex: 1 1 auto; }
+
+    .jq-card-head-title{
+        margin: 0;
+        display:flex;
+        align-items:center;
+        gap: 8px;
+        font-size: clamp(16px, 1.15vw, 20px);
+        font-weight: 800;
+        letter-spacing: .6px;
+        color: rgba(231,242,255,.96);
+        text-shadow: 0 0 16px rgba(46,194,255,.14);
+    }
+
+    .jq-card-head-title::before{
+        content:'';
+        width: 4px;
+        height: 18px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, var(--jq-cyan2), var(--jq-blue));
+        box-shadow: 0 0 14px rgba(46,194,255,.36);
+        flex: 0 0 auto;
+    }
+
+    .jq-card-head-icon{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        border: 1px solid rgba(46,194,255,.35);
+        background: rgba(46,194,255,.10);
+        color: var(--jq-cyan2);
+        font-size: 13px;
+        flex: 0 0 auto;
+    }
+
+    .jq-card-head-desc{
+        margin: 5px 0 0;
+        font-size: 12px;
+        color: var(--jq-text-dimmer);
+        letter-spacing: .3px;
+    }
+
+    .jq-legend{
+        display:inline-flex;
+        align-items:center;
+        gap: 10px;
+        flex: 0 0 auto;
+        padding-top: 2px;
+        white-space: nowrap;
+    }
+    .jq-legend-item{
+        display:inline-flex;
+        align-items:center;
+        gap: 4px;
+        font-size: 11px;
+        color: rgba(231,242,255,.62);
+    }
+    .jq-legend-dot{
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: 0 0 auto;
+    }
+    .jq-legend-dot.is-hold{
+        background: rgba(210,230,255,.85);
+        box-shadow: 0 0 6px rgba(210,230,255,.25);
+    }
+    .jq-legend-dot.is-double{
+        background: #ff5a5a;
+        box-shadow: 0 0 6px rgba(255,90,90,.35);
+    }
+    .jq-legend-dot.is-clear{
+        background: #3be27f;
+        box-shadow: 0 0 6px rgba(59,226,127,.35);
+    }
+
+    .jq-card-body{
+        position: relative;
+        z-index: 1;
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
+        width: 100%;
+        box-sizing: border-box;
+        overflow: auto;
+        padding: 0;
+        /* 取消固定 640px，吃满剩余高度 */
+        max-height: none;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(46,194,255,.55) rgba(5,14,28,.35);
+    }
+
+    .jq-card-body::-webkit-scrollbar{ width: 6px; height: 6px; }
+    .jq-card-body::-webkit-scrollbar-track{ background: rgba(5,14,28,.35); border-radius: 999px; }
+    .jq-card-body::-webkit-scrollbar-thumb{
+        background: linear-gradient(180deg, rgba(46,194,255,.55), rgba(30,159,255,.38));
+        border-radius: 999px;
+    }
+    .jq-card-body::-webkit-scrollbar-thumb:hover{
+        background: linear-gradient(180deg, rgba(100,231,255,.70), rgba(46,194,255,.48));
+    }
+
+    .jq-card-foot{
+        flex: 0 0 auto;
+        position: relative;
+        z-index: 1;
+        padding: 6px 14px 8px;
+        font-size: 11px;
+        color: rgba(231,242,255,.42);
+        border-top: 1px solid rgba(46,194,255,.12);
+        letter-spacing: .2px;
+        background: rgba(5,14,28,.28);
+    }
+
+    /* ========== 金额 / 排名 ========== */
+    .jq-amount-highlight{
+        font-weight: 800;
+        color: var(--jq-amount-actual);
+        text-shadow: 0 0 12px rgba(100,231,255,.14);
+    }
+    .jq-amount-target{
+        font-weight: 700;
+        color: var(--jq-amount-target);
+        text-shadow: none;
+    }
+    .jq-amount-actual{
+        font-weight: 900;
+        color: var(--jq-amount-actual);
+        text-shadow: 0 0 14px rgba(100,231,255,.18);
+    }
+    .jq-amount-bet,
+    .jq-amount-highlight.jq-amount-primary{
+        font-weight: 900;
+        color: var(--jq-amount-bet);
+        text-shadow: 0 0 14px rgba(255,204,90,.18);
+    }
+    .jq-amount-zero{ color: rgba(231,242,255,.40); font-weight: 600; }
+    .jq-amount-unit{ color: rgba(231,242,255,.42); font-size: 11px; margin-left: 3px; }
+    .jq-pending-text{
+        color: var(--jq-muted);
+        font-weight: 700;
+        letter-spacing: .3px;
+    }
+    /* 当前奖励档位徽章 */
+    .jq-reward-badge{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 56px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-weight: 700;
+        letter-spacing: .2px;
+        font-size: 12px;
+        white-space: nowrap;
+        cursor: default;
+    }
+    .jq-reward-badge.is-no-reward{
+        color: rgba(200,220,240,.88);
+        background: rgba(120,150,180,.14);
+        border: 1px solid rgba(160,190,220,.28);
+    }
+    .jq-reward-badge.is-win-1{
+        color: #8ef0ff;
+        background: rgba(46,194,255,.14);
+        border: 1px solid rgba(100,231,255,.42);
+        text-shadow: 0 0 8px rgba(100,231,255,.18);
+    }
+    .jq-reward-badge.is-win-1-5{
+        color: #6ef0a8;
+        background: rgba(59,226,127,.12);
+        border: 1px solid rgba(59,226,127,.40);
+        text-shadow: 0 0 8px rgba(59,226,127,.16);
+    }
+    .jq-reward-badge.is-win-2{
+        color: #ffcc5a;
+        background: rgba(255,204,90,.12);
+        border: 1px solid rgba(255,204,90,.42);
+        text-shadow: 0 0 8px rgba(255,204,90,.18);
+    }
+    .jq-reward-badge.is-win-3{
+        color: #ffe9a8;
+        background: rgba(255,138,61,.16);
+        border: 1px solid rgba(255,168,80,.48);
+        text-shadow: 0 0 10px rgba(255,204,90,.22);
+    }
+    .jq-reward-badge.is-mixed{
+        color: #c9b8ff;
+        background: rgba(120,140,255,.14);
+        border: 1px solid rgba(160,180,255,.38);
+        text-shadow: 0 0 8px rgba(140,160,255,.16);
+    }
+    .jq-reward-badge.is-pending{
+        color: rgba(180,200,220,.70);
+        background: rgba(100,120,140,.12);
+        border: 1px solid rgba(140,160,180,.22);
+        font-weight: 600;
+    }
+    .jq-amount-return{
+        font-weight: 900;
+        color: var(--jq-gold);
+        text-shadow: 0 0 14px rgba(255,204,90,.20);
+    }
+
+    .jq-rank-badge{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width: 40px;
+        height: 30px;
+        padding: 0 10px;
+        border-radius: 16px;
+        font-weight: 900;
+        font-size: 13px;
+        color: rgba(231,242,255,.92);
+        letter-spacing: .4px;
+        border: 1px solid rgba(231,242,255,.10);
+        background: rgba(20,36,58,.85);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.08) inset;
+    }
+    .jq-rank-badge-1{
+        background: linear-gradient(135deg, #ffe08a 0%, #ffcc5a 45%, #ff8a3d 100%);
+        border-color: rgba(255,204,90,.60);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 16px rgba(255,204,90,.28), 0 0 0 1px rgba(255,204,90,.18) inset;
+    }
+    .jq-rank-badge-2{
+        background: linear-gradient(135deg, #8ef0ff 0%, #64e7ff 40%, #2ec2ff 100%);
+        border-color: rgba(100,231,255,.55);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 16px rgba(100,231,255,.26), 0 0 0 1px rgba(100,231,255,.18) inset;
+    }
+    .jq-rank-badge-3{
+        background: linear-gradient(135deg, #6ef0a8 0%, #3be27f 45%, #1ec9a0 100%);
+        border-color: rgba(59,226,127,.48);
+        color: rgba(5,10,26,.92);
+        box-shadow: 0 0 14px rgba(59,226,127,.22), 0 0 0 1px rgba(59,226,127,.14) inset;
+    }
+    .jq-rank-badge-n{
+        background: rgba(16,28,48,.92);
+        border-color: rgba(46,194,255,.18);
+        color: rgba(180,205,230,.72);
+    }
+
+    /* ========== 表格（行卡片化） ========== */
+    .jq-board{
+        padding: 8px 10px 10px;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .jq-board-table{
+        width:100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        border-collapse: separate;
+        border-spacing: 0 6px;
+        font-size: 13px;
+        table-layout: fixed;
+    }
+
+    .jq-board-table thead th{
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: #061428;
+        background: linear-gradient(180deg, #071a33 0%, #061428 100%);
+        box-shadow: 0 1px 0 rgba(46,194,255,.22);
+        color: rgba(170,200,230,.72);
+        font-weight: 600;
+        font-size: 12px;
+        padding: 9px 8px;
+        border-bottom: none;
+        letter-spacing: .3px;
+        text-align: left;
+    }
+
+    .jq-board-table tbody tr{
+        background: transparent;
+        transition: background .12s ease, box-shadow .12s ease;
+    }
+
+    .jq-board-table tbody td{
+        padding: 11px 8px;
+        vertical-align: middle;
+        color: rgba(231,242,255,.88);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        background: rgba(8,22,42,.88);
+        border-top: 1px solid rgba(46,194,255,.18);
+        border-bottom: 1px solid rgba(46,194,255,.18);
+        box-shadow: 0 0 0 1px rgba(46,194,255,.04) inset;
+    }
+
+    .jq-board-table tbody td:first-child{
+        border-left: 1px solid rgba(46,194,255,.22);
+        border-radius: 10px 0 0 10px;
+    }
+    .jq-board-table tbody td:last-child{
+        border-right: 1px solid rgba(46,194,255,.22);
+        border-radius: 0 10px 10px 0;
+    }
+
+    .jq-board-table tbody tr:hover td{
+        background: rgba(12,36,64,.95);
+        border-color: rgba(100,231,255,.32);
+        box-shadow: 0 0 18px rgba(46,194,255,.10) inset;
+    }
+
+    .jq-person-name{
+        font-weight: 800;
+        color: #ffffff;
+        letter-spacing: .3px;
+    }
+
+    .jq-row-top3 td{
+        background: linear-gradient(90deg, rgba(255,204,90,.12), rgba(8,22,42,.88) 34%, rgba(8,22,42,.88));
+        border-color: rgba(255,204,90,.28);
+    }
+    .jq-row-top3.jq-row-2 td{
+        background: linear-gradient(90deg, rgba(100,231,255,.12), rgba(8,22,42,.88) 34%, rgba(8,22,42,.88));
+        border-color: rgba(100,231,255,.28);
+    }
+    .jq-row-top3.jq-row-3 td{
+        background: linear-gradient(90deg, rgba(59,226,127,.10), rgba(8,22,42,.88) 34%, rgba(8,22,42,.88));
+        border-color: rgba(59,226,127,.26);
+    }
+
+    /* 左栏列宽 */
+    #jq-challenger-container .jq-col-rank{ width: 56px; text-align:center; }
+    #jq-challenger-container .jq-col-name{ width: 13%; }
+    #jq-challenger-container .jq-col-target{ width: 14%; text-align:right; }
+    #jq-challenger-container .jq-col-actual{ width: 14%; text-align:right; }
+    #jq-challenger-container .jq-col-rate{ width: 18%; }
+    #jq-challenger-container .jq-col-bet{ width: 14%; text-align:right; }
+    #jq-challenger-container .jq-col-bettors{ width: 10%; text-align:center; }
+    #jq-challenger-container .jq-col-target,
+    #jq-challenger-container .jq-col-actual,
+    #jq-challenger-container .jq-col-bet{
+        text-overflow: clip;
+    }
+
+    /* 右栏列宽（排名徽章与押注对象完整显示，不影响左栏） */
+    #jq-bettor-container .jq-col-rank{
+        width: 68px;
+        text-align: center;
+        text-overflow: clip;
+    }
+    #jq-bettor-container .jq-rank-badge{
+        min-width: 28px;
+        padding: 0 6px;
+    }
+    #jq-bettor-container .jq-col-name{ width: 11%; }
+    #jq-bettor-container .jq-col-bet{ width: 13%; text-align:right; text-overflow: clip; }
+    #jq-bettor-container .jq-col-targets{
+        width: 30%;
+        overflow: hidden;
+        text-overflow: clip;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.4;
+    }
+    #jq-bettor-container .jq-col-reward{ width: 14%; text-align:center; }
+    #jq-bettor-container .jq-col-return{ width: 16%; text-align:right; text-overflow: clip; }
+
+    /* 完成率进度条：文字显示真实值，条宽上限 100% */
+    .jq-progress{
+        display:flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+    }
+    .jq-progress-text{
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--jq-cyan2);
+        letter-spacing: .2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-shadow: 0 0 10px rgba(100,231,255,.16);
+    }
+    .jq-progress-text.is-pending{
+        color: var(--jq-muted);
+        font-weight: 600;
+        text-shadow: none;
+    }
+    .jq-progress.jq-progress-over .jq-progress-text,
+    .jq-progress-text.jq-completion-over{
+        color: var(--jq-gold);
+        text-shadow: 0 0 12px rgba(255,204,90,.22);
+    }
+    .jq-progress-track{
+        width: 100%;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(231,242,255,.08);
+        border: 1px solid rgba(46,194,255,.18);
+        overflow: hidden;
+        box-shadow: 0 0 0 1px rgba(5,14,28,.35) inset;
+    }
+    .jq-progress-fill{
+        height: 100%;
+        width: 0;
+        max-width: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(30,159,255,.90), rgba(100,231,255,.95));
+        box-shadow: 0 0 10px rgba(46,194,255,.35);
+    }
+    .jq-progress.jq-progress-over .jq-progress-fill{
+        background: linear-gradient(90deg, #ff9a3d 0%, #ffcc5a 55%, #ffe9a8 100%);
+        box-shadow: 0 0 12px rgba(255,204,90,.40);
+    }
+
+    .jq-empty-state{
+        text-align:center;
+        padding: 38px 14px;
+        color: rgba(231,242,255,.58);
+        font-size: 13px;
+    }
+    .jq-empty-state-icon{
+        font-size: 40px;
+        margin-bottom: 10px;
+        opacity: .7;
+    }
+    .jq-empty-state small{
+        display:block;
+        margin-top: 6px;
+        color: rgba(231,242,255,.42);
+    }
+
+    /* ========== 全屏 ========== */
+    .jq-fullscreen-btn-wrap{
+        position: absolute;
+        top: 8px;
+        right: 10px;
+        z-index: 6;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+        pointer-events: none;
+    }
+
+    .jq-fullscreen-btn-wrap > *{
+        pointer-events: auto;
+    }
+
+    .jq-fullscreen-btn{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 7px 14px 7px 11px;
+        border-radius: 10px;
+        border: 1px solid rgba(46,194,255,.50);
+        background:
+            linear-gradient(180deg, rgba(6,26,51,.92) 0%, rgba(5,14,28,.80) 100%);
+        box-shadow:
+            0 0 0 1px rgba(46,194,255,.14) inset,
+            0 0 18px rgba(46,194,255,.16),
+            0 8px 22px rgba(0,0,0,.28);
+        color: rgba(231,242,255,.94);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .4px;
+        cursor: pointer;
+        outline: none;
+        transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+    }
+
+    .jq-fullscreen-btn:hover{
+        border-color: rgba(100,231,255,.65);
+        box-shadow:
+            0 0 0 1px rgba(100,231,255,.18) inset,
+            0 0 26px rgba(46,194,255,.26),
+            0 10px 26px rgba(0,0,0,.32);
+    }
+
+    .jq-fullscreen-btn.is-fullscreen{
+        border-color: rgba(100,231,255,.52);
+        background:
+            linear-gradient(180deg, rgba(8,40,62,.94) 0%, rgba(5,18,36,.82) 100%);
+    }
+
+    .jq-fullscreen-btn-icon{
+        display: inline-flex;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        opacity: .95;
+    }
+
+    .jq-fullscreen-btn-icon svg{
+        width: 100%;
+        height: 100%;
+        display: block;
+        fill: none;
+        stroke: var(--jq-cyan2);
+        stroke-width: 1.75;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .jq-fullscreen-btn.is-fullscreen .jq-fullscreen-btn-icon svg{
+        stroke: var(--jq-gold);
+    }
+
+    .jq-fullscreen-hint{
+        font-size: 10px;
+        color: rgba(231,242,255,.42);
+        letter-spacing: .2px;
+        white-space: nowrap;
+    }
+
+    .jq-dashboard-container:fullscreen,
+    .jq-dashboard-container:-webkit-full-screen,
+    .jq-dashboard-container:-moz-full-screen,
+    .jq-dashboard-container:-ms-fullscreen{
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        max-height: none;
+        min-height: 100vh;
+        margin: 0;
+        padding: 12px 18px 14px;
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen{
+        min-height: 100vh;
+        height: 100vh;
+    }
+
+    html.jq-is-fullscreen,
+    body.jq-is-fullscreen{
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-dashboard-hero,
+    .jq-dashboard-container:fullscreen .jq-dashboard-hero,
+    .jq-dashboard-container:-webkit-full-screen .jq-dashboard-hero,
+    .jq-dashboard-container:-moz-full-screen .jq-dashboard-hero,
+    .jq-dashboard-container:-ms-fullscreen .jq-dashboard-hero{
+        margin-bottom: 10px;
+        padding: 12px 16px;
+        min-height: 100px;
+        max-height: 130px;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-dashboard-main-title,
+    .jq-dashboard-container:fullscreen .jq-dashboard-main-title,
+    .jq-dashboard-container:-webkit-full-screen .jq-dashboard-main-title,
+    .jq-dashboard-container:-moz-full-screen .jq-dashboard-main-title,
+    .jq-dashboard-container:-ms-fullscreen .jq-dashboard-main-title{
+        font-size: clamp(26px, 2vw, 34px);
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-kpi-chip-value,
+    .jq-dashboard-container:fullscreen .jq-kpi-chip-value,
+    .jq-dashboard-container:-webkit-full-screen .jq-kpi-chip-value,
+    .jq-dashboard-container:-moz-full-screen .jq-kpi-chip-value,
+    .jq-dashboard-container:-ms-fullscreen .jq-kpi-chip-value{
+        font-size: clamp(22px, 1.6vw, 28px);
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-board-table tbody td,
+    .jq-dashboard-container:fullscreen .jq-board-table tbody td,
+    .jq-dashboard-container:-webkit-full-screen .jq-board-table tbody td,
+    .jq-dashboard-container:-moz-full-screen .jq-board-table tbody td,
+    .jq-dashboard-container:-ms-fullscreen .jq-board-table tbody td{
+        padding: 12px 9px;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen,
+    .jq-dashboard-container:fullscreen,
+    .jq-dashboard-container:-webkit-full-screen,
+    .jq-dashboard-container:-moz-full-screen,
+    .jq-dashboard-container:-ms-fullscreen{
+        display: flex;
+        flex-direction: column;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-cards-row,
+    .jq-dashboard-container:fullscreen .jq-cards-row,
+    .jq-dashboard-container:-webkit-full-screen .jq-cards-row,
+    .jq-dashboard-container:-moz-full-screen .jq-cards-row,
+    .jq-dashboard-container:-ms-fullscreen .jq-cards-row{
+        flex: 1 1 auto;
+        min-height: 0;
+        align-items: stretch;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-card-col,
+    .jq-dashboard-container:fullscreen .jq-card-col,
+    .jq-dashboard-container:-webkit-full-screen .jq-card-col,
+    .jq-dashboard-container:-moz-full-screen .jq-card-col,
+    .jq-dashboard-container:-ms-fullscreen .jq-card-col{
+        display: flex;
+        min-height: 0;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-card,
+    .jq-dashboard-container:fullscreen .jq-card,
+    .jq-dashboard-container:-webkit-full-screen .jq-card,
+    .jq-dashboard-container:-moz-full-screen .jq-card,
+    .jq-dashboard-container:-ms-fullscreen .jq-card{
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
+        max-height: none;
+    }
+
+    .jq-dashboard-container.jq-is-fullscreen .jq-card-body,
+    .jq-dashboard-container:fullscreen .jq-card-body,
+    .jq-dashboard-container:-webkit-full-screen .jq-card-body,
+    .jq-dashboard-container:-moz-full-screen .jq-card-body,
+    .jq-dashboard-container:-ms-fullscreen .jq-card-body{
+        max-height: none;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    @media screen and (max-width: 679px){
+        .jq-fullscreen-btn-wrap{
+            position: static;
+            align-items: flex-start;
+            margin: 0 0 8px 0;
+            width: 100%;
+        }
+        .jq-fullscreen-hint{ white-space: normal; }
+        .jq-legend{ display: none; }
+    }
+</style>
+
+<div class="layui-fluid jq-dashboard-container">
+    <div class="jq-dashboard-hero">
+        <div class="jq-hero-decor" aria-hidden="true">
+            <span class="jq-hero-decor-leaf l1">🍁</span>
+            <span class="jq-hero-decor-leaf l2">🍂</span>
+            <span class="jq-hero-decor-goldline"></span>
+        </div>
+
+        <div class="jq-fullscreen-btn-wrap" id="jq-fullscreen-toggle-wrap">
+            <button type="button" class="jq-fullscreen-btn" id="jq-fullscreen-toggle" aria-pressed="false" title="全屏展示">
+                <span class="jq-fullscreen-btn-icon" aria-hidden="true">
+                    <svg class="jq-fs-icon-enter" viewBox="0 0 24 24" focusable="false">
+                        <path d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/>
+                    </svg>
+                    <svg class="jq-fs-icon-exit" viewBox="0 0 24 24" focusable="false" style="display:none">
+                        <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+                    </svg>
+                </span>
+                <span class="jq-fullscreen-btn-text">进入全屏</span>
+            </button>
+            <span class="jq-fullscreen-hint">ESC 可退出全屏</span>
+        </div>
+
+        <div class="jq-dashboard-hero-main">
+            <div class="jq-dashboard-hero-left">
+                <h1 class="jq-dashboard-main-title">
+                    <span class="jq-title-gold"><?php echo htmlspecialchars($jqTitleLeft); ?></span><?php if ($jqTitleRight !== '') { ?><span class="jq-title-light"><?php echo htmlspecialchars($jqTitleRight); ?></span><?php } ?>
+                </h1>
+                <div class="jq-dashboard-hero-sub">国内事业部金秋押注实时战况</div>
+                <div class="jq-dashboard-hero-meta">
+                    <div class="jq-dashboard-hero-period">
+                        <span class="jq-period-label">统计周期：</span>
+                        <span class="jq-period-value"><?php echo htmlspecialchars($periodText); ?></span>
+                    </div>
+                    <div class="jq-dashboard-hero-tags">
+                        <span class="jq-realtime-tip"><span class="jq-realtime-dot"></span>实时统计</span>
+                        <span class="jq-scroll-tip">手动滚动</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="jq-dashboard-hero-kpis" id="jq-kpi-container">
+                <div class="jq-kpi-chip">
+                    <i class="layui-icon layui-icon-group jq-kpi-chip-icon" aria-hidden="true"></i>
+                    <div class="jq-kpi-chip-top">
+                        <span class="jq-kpi-chip-title">挑战人数</span>
+                        <span>
+                            <span class="jq-kpi-chip-value jq-kpi-accent" id="jq-kpi-challenger-count">0</span>
+                        </span>
+                    </div>
+                    <div class="jq-kpi-chip-sub">被押注人</div>
+                </div>
+                <div class="jq-kpi-chip">
+                    <i class="layui-icon layui-icon-user jq-kpi-chip-icon" aria-hidden="true"></i>
+                    <div class="jq-kpi-chip-top">
+                        <span class="jq-kpi-chip-title">押注人数</span>
+                        <span>
+                            <span class="jq-kpi-chip-value jq-kpi-accent" id="jq-kpi-bettor-count">0</span>
+                        </span>
+                    </div>
+                    <div class="jq-kpi-chip-sub">参与押注</div>
+                </div>
+                <div class="jq-kpi-chip is-gold">
+                    <i class="layui-icon layui-icon-rmb jq-kpi-chip-icon" aria-hidden="true"></i>
+                    <div class="jq-kpi-chip-top">
+                        <span class="jq-kpi-chip-title">押注总额</span>
+                        <span>
+                            <span class="jq-kpi-chip-value jq-kpi-accent2" id="jq-kpi-bet-total">0.00</span>
+                            <span class="jq-kpi-chip-unit">元</span>
+                        </span>
+                    </div>
+                    <div class="jq-kpi-chip-sub">单位：元</div>
+                </div>
+                <div class="jq-kpi-chip">
+                    <i class="layui-icon layui-icon-chart jq-kpi-chip-icon" aria-hidden="true"></i>
+                    <div class="jq-kpi-chip-top">
+                        <span class="jq-kpi-chip-title">真实业绩汇总</span>
+                        <span>
+                            <span class="jq-kpi-chip-value jq-kpi-accent" id="jq-kpi-actual-total">0.00</span>
+                            <span class="jq-kpi-chip-unit">元</span>
+                        </span>
+                    </div>
+                    <div class="jq-kpi-chip-sub">已匹配合计</div>
+                </div>
+                <div class="jq-kpi-chip is-status">
+                    <i class="layui-icon layui-icon-slider jq-kpi-chip-icon" aria-hidden="true"></i>
+                    <div class="jq-kpi-chip-top">
+                        <span class="jq-kpi-chip-title">页面状态</span>
+                        <span class="jq-kpi-chip-value jq-kpi-status">手动滚动</span>
+                    </div>
+                    <div class="jq-kpi-chip-sub">无自动轮播</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="jq-cards-row">
+        <!-- 左栏：被押注人业绩战况 -->
+        <div class="jq-card-col jq-col-left">
+            <div class="layui-card jq-card jq-card-left">
+                <div class="layui-card-header jq-card-head">
+                    <div class="jq-card-head-main">
+                        <div class="jq-card-head-title">
+                            <span class="jq-card-head-icon" aria-hidden="true"><i class="layui-icon layui-icon-chart"></i></span>
+                            被押注人业绩战况
+                        </div>
+                        <div class="jq-card-head-desc">按实际业绩降序 · 手动滚动</div>
+                    </div>
+                </div>
+                <div class="layui-card-body jq-card-body" id="jq-left-card-body">
+                    <div id="jq-challenger-container"></div>
+                </div>
+                <div class="jq-card-foot" id="jq-left-card-foot">共 — 名挑战者 · 手动滚动查看全部</div>
+            </div>
+        </div>
+
+        <!-- 右栏：押注人奖励与回款榜 -->
+        <div class="jq-card-col jq-col-right">
+            <div class="layui-card jq-card jq-card-right">
+                <div class="layui-card-header jq-card-head">
+                    <div class="jq-card-head-main">
+                        <div class="jq-card-head-title">
+                            <span class="jq-card-head-icon" aria-hidden="true"><i class="layui-icon layui-icon-diamond"></i></span>
+                            押注人奖励与回款榜
+                        </div>
+                        <div class="jq-card-head-desc">按当前奖励金额降序 · 实时按被押注人完成率计算</div>
+                    </div>
+                </div>
+                <div class="layui-card-body jq-card-body" id="jq-right-card-body">
+                    <div id="jq-bettor-container"></div>
+                </div>
+                <div class="jq-card-foot" id="jq-right-card-foot">共 — 名押注人 · 手动滚动查看全部</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    console.log('[JQ] 金秋大战个人页脚本已加载');
+    (function() {
+        // ========== 金秋大战个人看板 · 心跳轮询（无自动滚动） ==========
+        var jqHeartbeatUrl = "<?php echo url('Achievement/autumnAchievementPersonHeartbeat'); ?>";
+        var jqDataUrl = "<?php echo url('Achievement/autumnAchievementPersonData'); ?>";
+        console.log('[JQ] heartbeat url:', jqHeartbeatUrl);
+        console.log('[JQ] data url:', jqDataUrl);
+
+        var achievementTimer = null;
+        var achievementLastStamp = '<?php echo isset($jqStamp) ? addslashes($jqStamp) : ''; ?>';
+        var achievementFailCount = 0;
+        var achievementIsPolling = false;
+
+        /* ---------- Fullscreen API ---------- */
+        var jqFullscreenRootSelector = '.jq-dashboard-container';
+        var jqFullscreenEventsBound = false;
+
+        function jqGetFullscreenElement() {
+            return document.fullscreenElement
+                || document.webkitFullscreenElement
+                || document.mozFullScreenElement
+                || document.msFullscreenElement
+                || null;
+        }
+
+        function jqRequestFullscreen(el) {
+            if (!el) {
+                return Promise.reject(new Error('[JQ-Fullscreen] 目标元素不存在'));
+            }
+            try {
+                var req = el.requestFullscreen
+                    || el.webkitRequestFullscreen
+                    || el.mozRequestFullScreen
+                    || el.msRequestFullscreen;
+                if (!req) {
+                    return Promise.reject(new Error('[JQ-Fullscreen] 浏览器不支持全屏 API'));
+                }
+                var ret = req.call(el);
+                if (ret && typeof ret.then === 'function') {
+                    return ret;
+                }
+                return Promise.resolve();
+            } catch (e) {
+                console.warn('[JQ-Fullscreen] requestFullscreen 异常', e);
+                return Promise.reject(e);
+            }
+        }
+
+        function jqExitFullscreen() {
+            try {
+                var d = document;
+                if (d.exitFullscreen) return d.exitFullscreen();
+                if (d.webkitExitFullscreen) return d.webkitExitFullscreen();
+                if (d.mozCancelFullScreen) return d.mozCancelFullScreen();
+                if (d.msExitFullscreen) return d.msExitFullscreen();
+                return Promise.reject(new Error('[JQ-Fullscreen] 无可用退出接口'));
+            } catch (e) {
+                console.warn('[JQ-Fullscreen] exitFullscreen 异常', e);
+                return Promise.reject(e);
+            }
+        }
+
+        function jqUpdateFullscreenButtonState() {
+            var elActive = jqGetFullscreenElement();
+            var inFs = !!elActive;
+            var root = document.querySelector(jqFullscreenRootSelector);
+            var btn = document.getElementById('jq-fullscreen-toggle');
+            var htmlEl = document.documentElement;
+
+            try {
+                if (document.body) {
+                    if (inFs) document.body.classList.add('jq-is-fullscreen');
+                    else document.body.classList.remove('jq-is-fullscreen');
+                }
+                if (htmlEl) {
+                    if (inFs) htmlEl.classList.add('jq-is-fullscreen');
+                    else htmlEl.classList.remove('jq-is-fullscreen');
+                }
+                if (root) {
+                    if (inFs) root.classList.add('jq-is-fullscreen');
+                    else root.classList.remove('jq-is-fullscreen');
+                }
+            } catch (e) {
+                console.warn('[JQ-Fullscreen] 同步 class 失败', e);
+            }
+
+            if (!btn) return;
+            var textSpan = btn.querySelector('.jq-fullscreen-btn-text');
+            var iconEnter = btn.querySelector('.jq-fs-icon-enter');
+            var iconExit = btn.querySelector('.jq-fs-icon-exit');
+            if (inFs) {
+                btn.classList.add('is-fullscreen');
+                btn.setAttribute('aria-pressed', 'true');
+                btn.setAttribute('title', '退出全屏');
+                if (textSpan) textSpan.textContent = '退出全屏';
+                if (iconEnter) iconEnter.style.display = 'none';
+                if (iconExit) iconExit.style.display = 'block';
+            } else {
+                btn.classList.remove('is-fullscreen');
+                btn.setAttribute('aria-pressed', 'false');
+                btn.setAttribute('title', '进入全屏');
+                if (textSpan) textSpan.textContent = '进入全屏';
+                if (iconEnter) iconEnter.style.display = 'block';
+                if (iconExit) iconExit.style.display = 'none';
+            }
+        }
+
+        function jqBindFullscreenEvents() {
+            if (jqFullscreenEventsBound) return;
+            jqFullscreenEventsBound = true;
+            var fsTypes = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+            for (var fi = 0; fi < fsTypes.length; fi++) {
+                document.addEventListener(fsTypes[fi], function() {
+                    jqUpdateFullscreenButtonState();
+                });
+            }
+            document.addEventListener('click', function(ev) {
+                var t = ev.target;
+                if (!t || typeof t.closest !== 'function') return;
+                if (!t.closest('#jq-fullscreen-toggle')) return;
+                ev.preventDefault();
+                try {
+                    if (jqGetFullscreenElement()) {
+                        var pExit = jqExitFullscreen();
+                        if (pExit && typeof pExit.then === 'function') {
+                            pExit.catch(function(err) {
+                                console.warn('[JQ-Fullscreen] 退出全屏失败', err);
+                            });
+                        }
+                        return;
+                    }
+                    var rootEl = document.querySelector(jqFullscreenRootSelector);
+                    if (!rootEl) {
+                        console.warn('[JQ-Fullscreen] 未找到根容器', jqFullscreenRootSelector);
+                        return;
+                    }
+                    jqRequestFullscreen(rootEl).catch(function(err1) {
+                        console.warn('[JQ-Fullscreen] 根容器全屏失败，尝试 documentElement 降级', err1);
+                        return jqRequestFullscreen(document.documentElement);
+                    }).catch(function(err2) {
+                        console.warn('[JQ-Fullscreen] 全屏不可用（可能被 iframe 或策略限制）', err2);
+                    });
+                } catch (e) {
+                    console.warn('[JQ-Fullscreen] 点击处理异常', e);
+                }
+            }, false);
+        }
+
+        function getAchievementNextDelay() {
+            if (achievementFailCount === 0) {
+                return 8000 + Math.floor(Math.random() * 2000) - 1000; // ~7–9s，约 8–10s 区间
+            } else if (achievementFailCount === 1) {
+                return 15000;
+            } else if (achievementFailCount === 2) {
+                return 30000;
+            }
+            return 60000;
+        }
+
+        /** XSS：渲染前转义文本 */
+        function escapeHtml(str) {
+            return (str == null ? '' : String(str))
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        /** 金额千分位，保留 2 位小数 */
+        function formatAmount(n) {
+            var num = parseFloat(n);
+            if (!isFinite(num)) num = 0;
+            var fixed = num.toFixed(2);
+            return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        /**
+         * 双色标题：金秋大战（金）+ · 押注战况（亮白）
+         * 避免 $('.jq-dashboard-main-title').text() 冲掉内部 span
+         */
+        function updateDashboardTitle(title) {
+            var el = document.querySelector('.jq-dashboard-main-title');
+            if (!el || title == null || title === '') return;
+            var t = String(title);
+            var idx = t.search(/[·•]/);
+            var left;
+            var right;
+            if (idx >= 0) {
+                left = t.slice(0, idx).replace(/\s+$/, '');
+                right = ' ' + t.slice(idx).replace(/^\s+/, '');
+            } else {
+                left = t;
+                right = '';
+            }
+            var html = '<span class="jq-title-gold">' + escapeHtml(left) + '</span>';
+            if (right) {
+                html += '<span class="jq-title-light">' + escapeHtml(right) + '</span>';
+            }
+            el.innerHTML = html;
+        }
+
+        function getRankBadgeClass(rank) {
+            if (rank === 1) return 'jq-rank-badge-1';
+            if (rank === 2) return 'jq-rank-badge-2';
+            if (rank === 3) return 'jq-rank-badge-3';
+            return 'jq-rank-badge-n';
+        }
+
+        function getRowTopClass(rank) {
+            if (rank === 1) return 'jq-row-top3';
+            if (rank === 2) return 'jq-row-top3 jq-row-2';
+            if (rank === 3) return 'jq-row-top3 jq-row-3';
+            return '';
+        }
+
+        /** 保存左右面板滚动位置 */
+        function savePanelScrollTops() {
+            var leftBody = document.getElementById('jq-left-card-body');
+            var rightBody = document.getElementById('jq-right-card-body');
+            return {
+                left: leftBody ? leftBody.scrollTop : 0,
+                right: rightBody ? rightBody.scrollTop : 0
+            };
+        }
+
+        /** 恢复左右面板滚动位置 */
+        function restorePanelScrollTops(pos) {
+            if (!pos) return;
+            var leftBody = document.getElementById('jq-left-card-body');
+            var rightBody = document.getElementById('jq-right-card-body');
+            if (leftBody) leftBody.scrollTop = pos.left || 0;
+            if (rightBody) rightBody.scrollTop = pos.right || 0;
+        }
+
+        function updateKpiFromSummary(summary) {
+            var s = summary && typeof summary === 'object' ? summary : {};
+            var challengerCount = parseInt(s.challenger_count || 0, 10) || 0;
+            var bettorCount = parseInt(s.bettor_count || 0, 10) || 0;
+            var betTotal = parseFloat(s.bet_total || 0) || 0;
+            var actualTotal = parseFloat(s.actual_total || 0) || 0;
+
+            var elC = document.getElementById('jq-kpi-challenger-count');
+            var elB = document.getElementById('jq-kpi-bettor-count');
+            var elBet = document.getElementById('jq-kpi-bet-total');
+            var elAct = document.getElementById('jq-kpi-actual-total');
+            if (elC) elC.textContent = String(challengerCount);
+            if (elB) elB.textContent = String(bettorCount);
+            if (elBet) elBet.textContent = formatAmount(betTotal);
+            if (elAct) elAct.textContent = formatAmount(actualTotal);
+
+            var footL = document.getElementById('jq-left-card-foot');
+            var footR = document.getElementById('jq-right-card-foot');
+            if (footL) footL.textContent = '共 ' + challengerCount + ' 名挑战者 · 手动滚动查看全部';
+            if (footR) footR.textContent = '共 ' + bettorCount + ' 名押注人 · 手动滚动查看全部';
+        }
+
+        /** 完成率：文本可 >100%；进度条宽度上限 100%；≥100% 金色 over class；待配置/待核对时条宽 0 */
+        function buildCompletionRateHtml(item) {
+            var rateText = item.completion_rate_text != null ? String(item.completion_rate_text) : '';
+            var rate = item.completion_rate;
+            var isPendingText = (rateText === '待配置' || rateText === '待核对');
+            var rateNum = (!isPendingText && rate != null && isFinite(parseFloat(rate))) ? parseFloat(rate) : null;
+            var barWidth = 0;
+            if (rateNum != null) {
+                barWidth = Math.min(Math.max(rateNum, 0), 100);
+            }
+            var isOver = (rateNum != null && rateNum >= 100);
+            var wrapClass = 'jq-progress' + (isOver ? ' jq-progress-over' : '');
+            var textClass = 'jq-progress-text';
+            if (isPendingText) {
+                textClass += ' is-pending';
+            } else if (isOver) {
+                textClass += ' jq-completion-over';
+            }
+            var html = '<div class="' + wrapClass + '">';
+            html += '<div class="' + textClass + '">' + escapeHtml(rateText || '—') + '</div>';
+            if (isPendingText) {
+                html += '<div class="jq-progress-track"><div class="jq-progress-fill" style="width:0%"></div></div>';
+            } else {
+                html += '<div class="jq-progress-track"><div class="jq-progress-fill" style="width:' + barWidth + '%"></div></div>';
+            }
+            html += '</div>';
+            return html;
+        }
+
+        function renderChallengerRankList(list) {
+            var $container = $('#jq-challenger-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!list || !list.length) {
+                html = '<div class="jq-empty-state"><div class="jq-empty-state-icon">📊</div><div>暂无被押注人数据</div><small>等待配置或检查活动名单</small></div>';
+                $container.html(html);
+                return;
+            }
+
+            html += '<div class="jq-board"><table class="jq-board-table"><thead><tr>';
+            html += '<th class="jq-col-rank">排名</th>';
+            html += '<th class="jq-col-name">被押注人</th>';
+            html += '<th class="jq-col-target">目标业绩</th>';
+            html += '<th class="jq-col-actual">实际业绩</th>';
+            html += '<th class="jq-col-rate">完成率</th>';
+            html += '<th class="jq-col-bet">押注金额</th>';
+            html += '<th class="jq-col-bettors">押注人数</th>';
+            html += '</tr></thead><tbody>';
+
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i] || {};
+                var rank = parseInt(item.rank || (i + 1), 10) || (i + 1);
+                var displayName = item.display_name != null ? String(item.display_name) : '';
+                var excelName = item.excel_name != null ? String(item.excel_name) : '';
+                var nameTitle = (excelName && excelName !== displayName) ? (' title="' + escapeHtml(excelName) + '"') : '';
+                var status = item.achievement_status || 'ok';
+                var targetAmount = item.target_amount;
+                var actualAmount = item.actual_amount;
+                var betAmount = parseFloat(item.bet_amount || 0) || 0;
+                var betCount = parseInt(item.bet_count || 0, 10) || 0;
+
+                var targetHtml;
+                if (targetAmount === null || targetAmount === '' || typeof targetAmount === 'undefined') {
+                    targetHtml = '<span class="jq-pending-text">待配置</span>';
+                } else {
+                    var tNum = parseFloat(targetAmount) || 0;
+                    targetHtml = (tNum > 0
+                        ? '<span class="jq-amount-target">' + formatAmount(tNum) + '</span>'
+                        : '<span class="jq-amount-zero">0.00</span>') + '<span class="jq-amount-unit">元</span>';
+                }
+
+                var actualHtml;
+                if (status === 'pending_match') {
+                    // 待核对：不展示 0，避免误导
+                    actualHtml = '<span class="jq-pending-text">待核对</span>';
+                } else if (actualAmount === null || typeof actualAmount === 'undefined') {
+                    actualHtml = '<span class="jq-pending-text">待核对</span>';
+                } else {
+                    var aNum = parseFloat(actualAmount) || 0;
+                    actualHtml = (aNum > 0
+                        ? '<span class="jq-amount-actual">' + formatAmount(aNum) + '</span>'
+                        : '<span class="jq-amount-zero">0.00</span>') + '<span class="jq-amount-unit">元</span>';
+                }
+
+                var betHtml = (betAmount > 0
+                    ? '<span class="jq-amount-bet jq-amount-highlight jq-amount-primary">' + formatAmount(betAmount) + '</span>'
+                    : '<span class="jq-amount-zero">0.00</span>') + '<span class="jq-amount-unit">元</span>';
+
+                html += '<tr class="' + getRowTopClass(rank) + '">';
+                html += '<td class="jq-col-rank"><span class="jq-rank-badge ' + getRankBadgeClass(rank) + '">' + rank + '</span></td>';
+                html += '<td class="jq-col-name"><span class="jq-person-name"' + nameTitle + '>' + escapeHtml(displayName) + '</span></td>';
+                html += '<td class="jq-col-target">' + targetHtml + '</td>';
+                html += '<td class="jq-col-actual">' + actualHtml + '</td>';
+                html += '<td class="jq-col-rate">' + buildCompletionRateHtml(item) + '</td>';
+                html += '<td class="jq-col-bet">' + betHtml + '</td>';
+                html += '<td class="jq-col-bettors">' + betCount + '</td>';
+                html += '</tr>';
+            }
+
+            html += '</tbody></table></div>';
+            $container.html(html);
+        }
+
+        function getRewardBadgeClass(code, summary) {
+            var c = code != null ? String(code) : '';
+            var s = summary != null ? String(summary) : '';
+            if (c === 'no_reward' || s === '无奖励') return 'is-no-reward';
+            if (c === 'win_1' || s === '赢1倍') return 'is-win-1';
+            if (c === 'win_1_5' || s === '赢1.5倍') return 'is-win-1-5';
+            if (c === 'win_2' || s === '赢2倍') return 'is-win-2';
+            if (c === 'win_3' || s === '赢3倍') return 'is-win-3';
+            if (c === 'mixed' || s === '混合档位') return 'is-mixed';
+            return 'is-pending';
+        }
+
+        /** 由 reward_details 拼 tooltip；字段缺失时安全降级 */
+        function buildRewardDetailTitle(details) {
+            if (!details || !details.length) return '';
+            var lines = [];
+            for (var i = 0; i < details.length; i++) {
+                var d = details[i] || {};
+                var name = d.target_name != null ? String(d.target_name) : '未知对象';
+                var principal = (d.principal_amount != null && isFinite(parseFloat(d.principal_amount)))
+                    ? formatAmount(d.principal_amount) : '—';
+                var tierText = d.tier_text != null ? String(d.tier_text) : '待核对';
+                var ratePart = (d.completion_rate != null && isFinite(parseFloat(d.completion_rate)))
+                    ? ('完成率' + formatAmount(d.completion_rate) + '%')
+                    : '完成率待核对';
+                var returnPart = (d.return_amount != null && isFinite(parseFloat(d.return_amount)))
+                    ? ('预计返' + formatAmount(d.return_amount))
+                    : '预计返待核对';
+                lines.push(name + '：本金' + principal + '，' + ratePart + '，' + tierText + '，' + returnPart);
+            }
+            return lines.join('\n');
+        }
+
+        function renderBettorRankList(list) {
+            var $container = $('#jq-bettor-container');
+            if (!$container.length) return;
+            var html = '';
+            if (!list || !list.length) {
+                html = '<div class="jq-empty-state"><div class="jq-empty-state-icon">💰</div><div>暂无押注人数据</div><small>等待配置或检查押注明细</small></div>';
+                $container.html(html);
+                return;
+            }
+
+            html += '<div class="jq-board"><table class="jq-board-table"><thead><tr>';
+            html += '<th class="jq-col-rank">排名</th>';
+            html += '<th class="jq-col-name">押注人</th>';
+            html += '<th class="jq-col-bet">投入金额</th>';
+            html += '<th class="jq-col-targets">押注对象</th>';
+            html += '<th class="jq-col-reward">当前奖励</th>';
+            html += '<th class="jq-col-return">预计拿回（含本金）</th>';
+            html += '</tr></thead><tbody>';
+
+            for (var i = 0; i < list.length; i++) {
+                var item = list[i] || {};
+                var rank = parseInt(item.rank || (i + 1), 10) || (i + 1);
+                var displayName = item.display_name != null ? String(item.display_name) : '';
+                var excelName = item.excel_name != null ? String(item.excel_name) : '';
+                // 押注人优先展示正式 display_name；缺失时再回退 Excel 原名
+                var showName = displayName || excelName;
+                var nameTitle = '';
+                if (excelName && displayName && excelName !== displayName) {
+                    nameTitle = ' title="' + escapeHtml('原始Excel姓名：' + excelName) + '"';
+                }
+                var principalRaw = (item.principal_amount != null && item.principal_amount !== '')
+                    ? item.principal_amount
+                    : item.bet_amount;
+                var principalAmount = parseFloat(principalRaw || 0) || 0;
+                var targetsText = item.target_names_text != null ? String(item.target_names_text) : '';
+                var rewardSummary = item.reward_tier_summary != null && String(item.reward_tier_summary) !== ''
+                    ? String(item.reward_tier_summary)
+                    : '待核对';
+                var rewardCode = item.reward_tier_code != null ? String(item.reward_tier_code) : '';
+                var detailTitle = buildRewardDetailTitle(item.reward_details);
+                var titleAttr = detailTitle ? (' title="' + escapeHtml(detailTitle).replace(/\n/g, '&#10;') + '"') : '';
+                var hasPending = !!item.has_pending_reward || !!item.has_data_error;
+                var expectedReturn = item.expected_return_amount;
+
+                var betHtml = (principalAmount > 0
+                    ? '<span class="jq-amount-bet jq-amount-highlight jq-amount-primary">' + formatAmount(principalAmount) + '</span>'
+                    : '<span class="jq-amount-zero">0.00</span>') + '<span class="jq-amount-unit">元</span>';
+
+                var returnHtml;
+                if (hasPending || expectedReturn === null || typeof expectedReturn === 'undefined' || expectedReturn === '') {
+                    returnHtml = '<span class="jq-pending-text"' + titleAttr + '>待核对</span>';
+                } else {
+                    var rNum = parseFloat(expectedReturn);
+                    if (!isFinite(rNum)) {
+                        returnHtml = '<span class="jq-pending-text"' + titleAttr + '>待核对</span>';
+                    } else {
+                        returnHtml = (rNum > 0
+                            ? '<span class="jq-amount-return"' + titleAttr + '>' + formatAmount(rNum) + '</span>'
+                            : '<span class="jq-amount-zero"' + titleAttr + '>0.00</span>')
+                            + '<span class="jq-amount-unit">元</span>';
+                    }
+                }
+
+                html += '<tr class="' + getRowTopClass(rank) + '">';
+                html += '<td class="jq-col-rank"><span class="jq-rank-badge ' + getRankBadgeClass(rank) + '">' + rank + '</span></td>';
+                html += '<td class="jq-col-name"><span class="jq-person-name"' + nameTitle + '>' + escapeHtml(showName) + '</span></td>';
+                html += '<td class="jq-col-bet">' + betHtml + '</td>';
+                html += '<td class="jq-col-targets" title="' + escapeHtml(targetsText) + '">' + escapeHtml(targetsText || '—') + '</td>';
+                html += '<td class="jq-col-reward"><span class="jq-reward-badge ' + getRewardBadgeClass(rewardCode, rewardSummary) + '"' + titleAttr + '>' + escapeHtml(rewardSummary) + '</span></td>';
+                html += '<td class="jq-col-return">' + returnHtml + '</td>';
+                html += '</tr>';
+            }
+
+            html += '</tbody></table></div>';
+            $container.html(html);
+        }
+
+        /** 统一渲染入口（首屏 / Ajax 共用）；成功后由调用方更新 stamp */
+        function renderAllFromData(data) {
+            if (!data) return false;
+            try {
+                if (data.dashboardTitle) {
+                    updateDashboardTitle(data.dashboardTitle);
+                }
+                if (data.periodText) {
+                    $('.jq-period-value').text(data.periodText);
+                }
+                updateKpiFromSummary(data.summary || {});
+                renderChallengerRankList(data.challengerRankList || []);
+                renderBettorRankList(data.bettorRankList || []);
+                return true;
+            } catch (e) {
+                console.warn('[JQ] 渲染失败', e);
+                return false;
+            }
+        }
+
+        /**
+         * 拉取完整数据并渲染。
+         * 关键：仅在请求成功且渲染成功后，才把 achievementLastStamp 设为 data.stamp；
+         * 失败时保留旧 stamp 与旧 DOM，不清空。
+         */
+        function loadAchievementDataAndRender($, done) {
+            var scrollPos = savePanelScrollTops();
+            $.ajax({
+                url: jqDataUrl + (jqDataUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now(),
+                type: 'GET',
+                dataType: 'json',
+                cache: false,
+                timeout: 15000,
+                success: function (res) {
+                    if (!res || res.code != 1 || !res.data) {
+                        console.warn('[JQ] autumnAchievementPersonData 返回异常', res ? res.msg : '');
+                        if (typeof done === 'function') done(false);
+                        return;
+                    }
+                    var data = res.data;
+                    var ok = renderAllFromData(data);
+                    if (ok) {
+                        // 仅在完整数据 + 渲染成功后更新 stamp
+                        achievementLastStamp = data.stamp || achievementLastStamp;
+                        restorePanelScrollTops(scrollPos);
+                        console.log('[JQ] 完整数据拉取成功，DOM 已刷新，stamp=', achievementLastStamp);
+                        if (typeof done === 'function') done(true);
+                    } else {
+                        // 渲染失败：不改 stamp，不恢复滚动（DOM 可能半成品，尽量保持）
+                        console.warn('[JQ] 渲染未成功，保留旧 stamp');
+                        if (typeof done === 'function') done(false);
+                    }
+                },
+                error: function (xhr, status, error) {
+                    console.warn('[JQ] autumnAchievementPersonData 请求失败', status, error);
+                    // 失败保留旧 stamp 与旧 DOM
+                    if (typeof done === 'function') done(false);
+                }
+            });
+        }
+
+        function pollAchievementOnce($) {
+            if (document.visibilityState !== 'visible') return;
+            if (achievementIsPolling) return;
+            achievementIsPolling = true;
+
+            var heartbeatUrl = jqHeartbeatUrl + (jqHeartbeatUrl.indexOf('?') >= 0 ? '&' : '?') + '_t=' + Date.now();
+            console.log('[JQ] heartbeat request send', heartbeatUrl);
+
+            $.ajax({
+                url: heartbeatUrl,
+                type: 'GET',
+                dataType: 'json',
+                cache: false,
+                timeout: 8000,
+                success: function (res) {
+                    console.log('[JQ] heartbeat success:', res);
+                    if (!res || res.code != 1) {
+                        achievementIsPolling = false;
+                        achievementFailCount++;
+                        scheduleNextAchievementPoll($);
+                        return;
+                    }
+                    var stamp = (res.data && res.data.stamp) ? res.data.stamp : '';
+                    var changed = stamp !== achievementLastStamp;
+                    console.log('[JQ] stamp 是否变化:', changed ? '是' : '否', '远端 stamp=', stamp, '本地 stamp=', achievementLastStamp);
+
+                    if (!changed) {
+                        // 心跳变化但本地已同步：不拉全量，也不因心跳改 stamp
+                        achievementIsPolling = false;
+                        achievementFailCount = 0;
+                        scheduleNextAchievementPoll($);
+                        return;
+                    }
+
+                    // 关键：心跳发现变化时，不要提前写 achievementLastStamp
+                    loadAchievementDataAndRender($, function(ok) {
+                        achievementIsPolling = false;
+                        if (ok) {
+                            achievementFailCount = 0;
+                        } else {
+                            achievementFailCount++;
+                        }
+                        scheduleNextAchievementPoll($);
+                    });
+                },
+                error: function (xhr, status, error) {
+                    achievementIsPolling = false;
+                    achievementFailCount++;
+                    console.warn('[JQ] heartbeat error:', status, error);
+                    scheduleNextAchievementPoll($);
+                }
+            });
+        }
+
+        function scheduleNextAchievementPoll($) {
+            if (document.visibilityState !== 'visible') return;
+            if (achievementTimer != null) {
+                clearTimeout(achievementTimer);
+                achievementTimer = null;
+            }
+            var delay = getAchievementNextDelay();
+            achievementTimer = setTimeout(function() {
+                pollAchievementOnce($);
+            }, delay);
+        }
+
+        function startAchievementPolling($) {
+            stopAchievementPolling();
+            pollAchievementOnce($);
+        }
+
+        function stopAchievementPolling() {
+            if (achievementTimer != null) {
+                clearTimeout(achievementTimer);
+                achievementTimer = null;
+            }
+            achievementIsPolling = false;
+        }
+
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'hidden') {
+                stopAchievementPolling();
+            } else if (document.visibilityState === 'visible' && typeof layui !== 'undefined') {
+                layui.use(['jquery'], function() {
+                    var $ = layui.jquery;
+                    startAchievementPolling($);
+                });
+            }
+        });
+        window.addEventListener('beforeunload', function() {
+            stopAchievementPolling();
+        });
+
+        jqBindFullscreenEvents();
+        jqUpdateFullscreenButtonState();
+
+        if (typeof layui === 'undefined') {
+            console.error('[JQ] 未找到 layui，轮询将不启动。请确保本页已引入 /static/plugins/layui/layui.js');
+            return;
+        }
+
+        layui.use(['jquery'], function() {
+            var $ = layui.jquery;
+            if (!$ || !$.ajax) {
+                console.error('[JQ] jQuery 不可用，轮询将不启动');
+                return;
+            }
+            console.log('[JQ] jQuery ready，开始首屏渲染与轮询');
+            jqUpdateFullscreenButtonState();
+
+            try {
+                var initialChallengerRankList = <?php echo json_encode($challengerRankList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                var initialBettorRankList = <?php echo json_encode($bettorRankList, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                var initialSummary = <?php echo json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>;
+                renderAllFromData({
+                    dashboardTitle: <?php echo json_encode($dashboardTitle, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
+                    periodText: <?php echo json_encode($periodText, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
+                    challengerRankList: initialChallengerRankList || [],
+                    bettorRankList: initialBettorRankList || [],
+                    summary: initialSummary || {}
+                });
+            } catch (e) {
+                console.warn('[JQ] 首屏渲染失败（不影响轮询）', e);
+            }
+
+            startAchievementPolling($);
+        });
+    })();
+</script>

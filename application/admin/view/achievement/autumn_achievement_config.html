@@ -1,0 +1,584 @@
+{include file="common/head"/}
+<style>
+    body { background: #f5f7fa !important; }
+    .jq-config-wrap {
+        padding: 16px 18px 80px;
+        max-width: 1400px;
+    }
+    .jq-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 18px;
+        margin-bottom: 14px;
+        padding: 12px 14px;
+        background: #fff;
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(0,0,0,.06);
+        color: #333;
+        font-size: 13px;
+    }
+    .jq-summary b { color: #1e9fff; margin-right: 4px; }
+    .jq-card {
+        background: #fff;
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(0,0,0,.06);
+        margin-bottom: 14px;
+        overflow: hidden;
+    }
+    .jq-card-hd {
+        padding: 10px 14px;
+        background: #fafafa;
+        border-bottom: 1px solid #eee;
+        cursor: pointer;
+        user-select: none;
+        font-weight: 600;
+    }
+    .jq-card-hd .jq-toggle { float: right; color: #999; font-weight: 400; }
+    .jq-card-bd { padding: 12px 14px; }
+    .jq-card.collapsed .jq-card-bd { display: none; }
+    .jq-table-wrap { overflow: auto; max-height: 520px; }
+    .jq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .jq-table th, .jq-table td {
+        border: 1px solid #e6e6e6;
+        padding: 6px 8px;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+    .jq-table th { background: #f8f8f8; position: sticky; top: 0; z-index: 1; }
+    .jq-table input[type="text"],
+    .jq-table input[type="number"],
+    .jq-table select {
+        height: 30px;
+        line-height: 30px;
+        width: 100%;
+        min-width: 90px;
+        padding: 0 6px;
+        border: 1px solid #dcdfe6;
+        border-radius: 2px;
+        box-sizing: border-box;
+    }
+    .jq-table .jq-readonly { color: #888; }
+    .jq-actions { margin: 8px 0; }
+    .jq-help { color: #888; font-size: 12px; margin: 6px 0 10px; line-height: 1.6; }
+    .jq-fixed-bar {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        background: rgba(255,255,255,.96);
+        border-top: 1px solid #e6e6e6;
+        padding: 10px 20px;
+        text-align: right;
+        z-index: 1000;
+    }
+    .jq-target-text { max-width: 220px; white-space: normal; color: #333; }
+    .jq-form-inline .layui-form-label { width: 110px; }
+    .jq-form-inline .layui-input-inline { width: 220px; }
+    .jq-check-list { max-height: 360px; overflow: auto; padding: 8px 4px; }
+    .jq-check-list label { display: block; padding: 4px 8px; cursor: pointer; }
+    .jq-check-list label:hover { background: #f5f7fa; }
+</style>
+
+<div class="jq-config-wrap">
+    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
+        <legend>金秋大战配置</legend>
+    </fieldset>
+
+    <div class="jq-summary" id="jqSummary">
+        <div>配置版本：<b>{$summary.config_version}</b></div>
+        <div>Fingerprint：<b>{$summary.fingerprint_short}</b></div>
+        <div>挑战人数：<b>{$summary.challenger_count}</b></div>
+        <div>押注人数：<b>{$summary.bettor_count}</b></div>
+        <div>总押注金额：<b>{$summary.bet_total}</b></div>
+        <div>全员目标合计：<b>{$summary.goal_total_all}</b></div>
+        <div>挑战者目标合计：<b>{$summary.challenger_goal_total}</b></div>
+        <div>押注明细数：<b>{$summary.bet_detail_count}</b>（只读摘要，保存时自动重算）</div>
+    </div>
+
+    <form class="layui-form jq-form-inline" lay-filter="jq-config-form" id="jqConfigForm">
+        <input type="hidden" name="loaded_fingerprint" id="loadedFingerprint" value="{$configFingerprint}">
+
+        <div class="jq-card" data-section="activity">
+            <div class="jq-card-hd">二、活动设置 <span class="jq-toggle">收起</span></div>
+            <div class="jq-card-bd">
+                <div class="layui-form-item">
+                    <label class="layui-form-label">活动标题</label>
+                    <div class="layui-input-inline" style="width: 360px;">
+                        <input type="text" name="title" id="activityTitle" class="layui-input" autocomplete="off">
+                    </div>
+                </div>
+                <div class="layui-form-item">
+                    <label class="layui-form-label">开始日期</label>
+                    <div class="layui-input-inline">
+                        <input type="date" name="start_date" id="activityStartDate" class="layui-input" value="{$activityStartDate}">
+                    </div>
+                    <label class="layui-form-label">结束日期</label>
+                    <div class="layui-input-inline">
+                        <input type="date" name="end_date" id="activityEndDate" class="layui-input" value="{$activityEndDate}">
+                    </div>
+                </div>
+                <div class="layui-form-item">
+                    <label class="layui-form-label">近捕天数</label>
+                    <div class="layui-input-inline">
+                        <input type="number" name="recent_capture_days" id="recentCaptureDays" class="layui-input" min="0" step="1">
+                    </div>
+                </div>
+                <div class="jq-help">
+                    period_text 由开始/结束日期自动生成。结束日期按「含当天」理解，后端转为次日 00:00:00 半开区间。<br>
+                    固定只读：order_time_field=order_time，check_status=2，stamp_scope=jq_person。
+                </div>
+            </div>
+        </div>
+
+        <div class="jq-card" data-section="challengers">
+            <div class="jq-card-hd">三、挑战人配置 <span class="jq-toggle">收起</span></div>
+            <div class="jq-card-bd">
+                <div class="jq-actions">
+                    <button type="button" class="layui-btn layui-btn-sm" id="btnAddChallenger">新增挑战人</button>
+                </div>
+                <div class="jq-table-wrap">
+                    <table class="jq-table" id="challengerTable">
+                        <thead>
+                        <tr>
+                            <th>原始Excel姓名</th>
+                            <th>展示姓名</th>
+                            <th style="min-width:180px;">CRM账号</th>
+                            <th>目标业绩</th>
+                            <th>押注总额(只读)</th>
+                            <th>押注人数(只读)</th>
+                            <th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="jq-card" data-section="bettors">
+            <div class="jq-card-hd">四、押注人配置 <span class="jq-toggle">收起</span></div>
+            <div class="jq-card-bd">
+                <div class="jq-actions">
+                    <button type="button" class="layui-btn layui-btn-sm" id="btnAddBettor">新增押注人</button>
+                </div>
+                <div class="jq-table-wrap" style="max-height: 560px;">
+                    <table class="jq-table" id="bettorTable">
+                        <thead>
+                        <tr>
+                            <th>原始Excel姓名</th>
+                            <th>展示姓名</th>
+                            <th style="min-width:180px;">CRM账号</th>
+                            <th>押注总金额</th>
+                            <th style="min-width:220px;">押注对象</th>
+                            <th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="jq-card collapsed" data-section="aliases">
+            <div class="jq-card-hd">五、姓名别名 <span class="jq-toggle">展开</span></div>
+            <div class="jq-card-bd">
+                <div class="jq-help">姓名别名仅作为映射配置，不会自动批量改写当前挑战人/押注人数据。若要改展示姓名，请在对应人员行单独修改。</div>
+                <div class="jq-actions">
+                    <button type="button" class="layui-btn layui-btn-sm" id="btnAddAlias">新增别名</button>
+                </div>
+                <div class="jq-table-wrap" style="max-height: 320px;">
+                    <table class="jq-table" id="aliasTable">
+                        <thead>
+                        <tr>
+                            <th>原始姓名</th>
+                            <th>规范姓名</th>
+                            <th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="jq-card collapsed" data-section="goals">
+            <div class="jq-card-hd">六、全员目标配置 <span class="jq-toggle">展开</span></div>
+            <div class="jq-card-bd">
+                <div class="jq-help">
+                    全员目标合计（goal_total_all）由此处重新计算，语义为「全员目标合计」，不是仅 17 名挑战人合计。<br>
+                    挑战人目标仍由挑战人配置维护；同名不一致时仅提示 warning，不会自动改值。
+                </div>
+                <div class="jq-actions">
+                    <button type="button" class="layui-btn layui-btn-sm" id="btnAddGoal">新增目标</button>
+                </div>
+                <div class="jq-table-wrap" style="max-height: 420px;">
+                    <table class="jq-table" id="goalTable">
+                        <thead>
+                        <tr>
+                            <th>人员姓名</th>
+                            <th>目标业绩</th>
+                            <th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="jq-card" data-section="checksum">
+            <div class="jq-card-hd">七、校验汇总 <span class="jq-toggle">收起</span></div>
+            <div class="jq-card-bd">
+                <div class="jq-help" id="jqPreviewChecksum">
+                    保存时由后端自动重算 checksums / bet_details / 挑战人押注汇总 / config_version，前端数字仅供参考。
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<div class="jq-fixed-bar">
+    <button type="button" class="layui-btn layui-btn-normal" id="btnSaveConfig">保存配置</button>
+</div>
+
+{include file="common/foot"/}
+<script>
+layui.use(['layer', 'form'], function () {
+    var layer = layui.layer;
+    var form = layui.form;
+    var $ = layui.jquery;
+
+    var saveUrl = "{$saveUrl|raw}";
+    var configData = {$configJson|raw};
+    var adminList = {$adminListJson|raw};
+
+    function esc(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function adminOptionsHtml(selectedId, allowEmpty) {
+        var html = '';
+        if (allowEmpty) {
+            html += '<option value="">无CRM账号</option>';
+        } else {
+            html += '<option value="">请选择CRM账号</option>';
+        }
+        var sel = selectedId === null || selectedId === undefined || selectedId === '' ? '' : String(selectedId);
+        (adminList || []).forEach(function (a) {
+            var id = String(a.admin_id);
+            var openTag = parseInt(a.is_open, 10) === 1 ? '' : ' [停用]';
+            var selected = (sel !== '' && sel === id) ? ' selected' : '';
+            html += '<option value="' + esc(id) + '"' + selected + '>'
+                + esc(a.username) + '（ID: ' + esc(id) + '）' + openTag
+                + '</option>';
+        });
+        return html;
+    }
+
+    function buildChallengerRow(item) {
+        item = item || {};
+        var tr = $('<tr></tr>');
+        tr.append('<td><input type="text" class="c-excel" value="' + esc(item.excel_name || '') + '" placeholder="默认同展示姓名"></td>');
+        tr.append('<td><input type="text" class="c-display" value="' + esc(item.display_name || '') + '"></td>');
+        tr.append('<td><select class="c-admin" lay-search>' + adminOptionsHtml(item.admin_id, false) + '</select></td>');
+        tr.append('<td><input type="number" class="c-target" step="0.01" min="0" value="' + esc(item.target_amount != null ? item.target_amount : 0) + '"></td>');
+        tr.append('<td class="jq-readonly c-bet-total">' + esc(item.excel_bet_total != null ? item.excel_bet_total : 0) + '</td>');
+        tr.append('<td class="jq-readonly c-bet-count">' + esc(item.excel_bettor_count != null ? item.excel_bettor_count : 0) + '</td>');
+        tr.append('<td><button type="button" class="layui-btn layui-btn-danger layui-btn-xs btn-del-challenger">删除</button></td>');
+        return tr;
+    }
+
+    function buildBettorRow(item) {
+        item = item || { target_display_names: [] };
+        var targets = item.target_display_names || [];
+        var tr = $('<tr></tr>');
+        tr.data('targets', targets.slice());
+        tr.append('<td><input type="text" class="b-excel" value="' + esc(item.excel_name || '') + '" placeholder="默认同展示姓名"></td>');
+        tr.append('<td><input type="text" class="b-display" value="' + esc(item.display_name || '') + '"></td>');
+        tr.append('<td><select class="b-admin" lay-search>' + adminOptionsHtml(item.admin_id, true) + '</select></td>');
+        tr.append('<td><input type="number" class="b-amount" step="0.01" min="0.01" value="' + esc(item.bet_amount != null ? item.bet_amount : '') + '"></td>');
+        tr.append('<td><div class="jq-target-text b-targets-text">' + esc(targets.join('、')) + '</div>'
+            + '<button type="button" class="layui-btn layui-btn-primary layui-btn-xs btn-pick-targets" style="margin-top:4px;">选择对象</button></td>');
+        tr.append('<td><button type="button" class="layui-btn layui-btn-danger layui-btn-xs btn-del-bettor">删除</button></td>');
+        return tr;
+    }
+
+    function buildAliasRow(from, to) {
+        var tr = $('<tr></tr>');
+        tr.append('<td><input type="text" class="a-from" value="' + esc(from || '') + '"></td>');
+        tr.append('<td><input type="text" class="a-to" value="' + esc(to || '') + '"></td>');
+        tr.append('<td><button type="button" class="layui-btn layui-btn-danger layui-btn-xs btn-del-alias">删除</button></td>');
+        return tr;
+    }
+
+    function buildGoalRow(name, amount) {
+        var tr = $('<tr></tr>');
+        tr.append('<td><input type="text" class="g-name" value="' + esc(name || '') + '"></td>');
+        tr.append('<td><input type="number" class="g-amount" step="0.01" min="0" value="' + esc(amount != null ? amount : 0) + '"></td>');
+        tr.append('<td><button type="button" class="layui-btn layui-btn-danger layui-btn-xs btn-del-goal">删除</button></td>');
+        return tr;
+    }
+
+    function renderAll() {
+        var $cBody = $('#challengerTable tbody').empty();
+        (configData.challengers || []).forEach(function (c) {
+            $cBody.append(buildChallengerRow(c));
+        });
+
+        var $bBody = $('#bettorTable tbody').empty();
+        (configData.bettors || []).forEach(function (b) {
+            $bBody.append(buildBettorRow(b));
+        });
+
+        var $aBody = $('#aliasTable tbody').empty();
+        var aliases = configData.name_aliases || {};
+        Object.keys(aliases).forEach(function (k) {
+            $aBody.append(buildAliasRow(k, aliases[k]));
+        });
+
+        var $gBody = $('#goalTable tbody').empty();
+        var goals = configData.goals_all_by_display || {};
+        Object.keys(goals).forEach(function (k) {
+            $gBody.append(buildGoalRow(k, goals[k]));
+        });
+
+        $('#activityTitle').val((configData.activity && configData.activity.title) || '');
+        $('#recentCaptureDays').val((configData.activity && configData.activity.recent_capture_days) != null
+            ? configData.activity.recent_capture_days : 3);
+
+        form.render('select');
+        updatePreview();
+    }
+
+    function collectChallengerNames() {
+        var names = [];
+        $('#challengerTable tbody tr').each(function () {
+            var name = $.trim($(this).find('.c-display').val() || '');
+            if (name) names.push(name);
+        });
+        return names;
+    }
+
+    function collectPayload() {
+        var challengers = [];
+        $('#challengerTable tbody tr').each(function () {
+            var $tr = $(this);
+            challengers.push({
+                excel_name: $.trim($tr.find('.c-excel').val() || ''),
+                display_name: $.trim($tr.find('.c-display').val() || ''),
+                admin_id: $tr.find('.c-admin').val() || '',
+                target_amount: $tr.find('.c-target').val()
+            });
+        });
+
+        var bettors = [];
+        $('#bettorTable tbody tr').each(function () {
+            var $tr = $(this);
+            bettors.push({
+                excel_name: $.trim($tr.find('.b-excel').val() || ''),
+                display_name: $.trim($tr.find('.b-display').val() || ''),
+                admin_id: $tr.find('.b-admin').val() || '',
+                bet_amount: $tr.find('.b-amount').val(),
+                target_display_names: $tr.data('targets') || []
+            });
+        });
+
+        var name_aliases = [];
+        $('#aliasTable tbody tr').each(function () {
+            var $tr = $(this);
+            name_aliases.push({
+                from: $.trim($tr.find('.a-from').val() || ''),
+                to: $.trim($tr.find('.a-to').val() || '')
+            });
+        });
+
+        var goals_all_by_display = [];
+        $('#goalTable tbody tr').each(function () {
+            var $tr = $(this);
+            goals_all_by_display.push({
+                display_name: $.trim($tr.find('.g-name').val() || ''),
+                target_amount: $tr.find('.g-amount').val()
+            });
+        });
+
+        return {
+            loaded_fingerprint: $('#loadedFingerprint').val(),
+            activity: {
+                title: $.trim($('#activityTitle').val() || ''),
+                start_date: $('#activityStartDate').val(),
+                end_date: $('#activityEndDate').val(),
+                recent_capture_days: $('#recentCaptureDays').val()
+            },
+            challengers: challengers,
+            bettors: bettors,
+            name_aliases: name_aliases,
+            goals_all_by_display: goals_all_by_display
+        };
+    }
+
+    function updatePreview() {
+        var payload = collectPayload();
+        var betTotal = 0;
+        payload.bettors.forEach(function (b) {
+            var n = parseFloat(b.bet_amount);
+            if (!isNaN(n)) betTotal += n;
+        });
+        var goalTotal = 0;
+        payload.goals_all_by_display.forEach(function (g) {
+            var n = parseFloat(g.target_amount);
+            if (!isNaN(n)) goalTotal += n;
+        });
+        var challengerGoal = 0;
+        payload.challengers.forEach(function (c) {
+            var n = parseFloat(c.target_amount);
+            if (!isNaN(n)) challengerGoal += n;
+        });
+        $('#jqPreviewChecksum').html(
+            '前端预览（非正式）：挑战人 ' + payload.challengers.length
+            + '，押注人 ' + payload.bettors.length
+            + '，预估总押注 ' + betTotal.toFixed(2)
+            + '，预估全员目标 ' + goalTotal.toFixed(2)
+            + '，预估挑战者目标 ' + challengerGoal.toFixed(2)
+            + '。<br>正式 checksums / bet_details 仅以后端保存结果为准。'
+        );
+    }
+
+    // 折叠
+    $('.jq-card-hd').on('click', function () {
+        var $card = $(this).closest('.jq-card');
+        $card.toggleClass('collapsed');
+        $(this).find('.jq-toggle').text($card.hasClass('collapsed') ? '展开' : '收起');
+    });
+
+    $('#btnAddChallenger').on('click', function () {
+        $('#challengerTable tbody').append(buildChallengerRow({
+            excel_name: '', display_name: '', admin_id: '', target_amount: 0,
+            excel_bet_total: 0, excel_bettor_count: 0
+        }));
+        form.render('select');
+        updatePreview();
+    });
+    $('#challengerTable').on('click', '.btn-del-challenger', function () {
+        $(this).closest('tr').remove();
+        updatePreview();
+    });
+
+    $('#btnAddBettor').on('click', function () {
+        $('#bettorTable tbody').append(buildBettorRow({
+            excel_name: '', display_name: '', admin_id: '', bet_amount: '',
+            target_display_names: []
+        }));
+        form.render('select');
+        updatePreview();
+    });
+    $('#bettorTable').on('click', '.btn-del-bettor', function () {
+        $(this).closest('tr').remove();
+        updatePreview();
+    });
+
+    $('#btnAddAlias').on('click', function () {
+        $('#aliasTable tbody').append(buildAliasRow('', ''));
+    });
+    $('#aliasTable').on('click', '.btn-del-alias', function () {
+        $(this).closest('tr').remove();
+    });
+
+    $('#btnAddGoal').on('click', function () {
+        $('#goalTable tbody').append(buildGoalRow('', 0));
+        updatePreview();
+    });
+    $('#goalTable').on('click', '.btn-del-goal', function () {
+        $(this).closest('tr').remove();
+        updatePreview();
+    });
+
+    $('#jqConfigForm').on('input change', 'input,select', function () {
+        updatePreview();
+    });
+
+    // 押注对象多选：layer + checkbox
+    $('#bettorTable').on('click', '.btn-pick-targets', function () {
+        var $tr = $(this).closest('tr');
+        var selected = $tr.data('targets') || [];
+        var names = collectChallengerNames();
+        if (!names.length) {
+            layer.msg('请先配置挑战人');
+            return;
+        }
+        var html = '<div class="jq-check-list">';
+        names.forEach(function (name, idx) {
+            var checked = selected.indexOf(name) >= 0 ? ' checked' : '';
+            html += '<label><input type="checkbox" name="t" value="' + esc(name) + '"' + checked + '> '
+                + esc(name) + '</label>';
+        });
+        html += '</div>';
+        layer.open({
+            type: 1,
+            title: '选择押注对象（可多选）',
+            area: ['420px', '480px'],
+            btn: ['确定', '取消'],
+            content: html,
+            yes: function (index, layero) {
+                var picked = [];
+                layero.find('input[name="t"]:checked').each(function () {
+                    picked.push($(this).val());
+                });
+                if (!picked.length) {
+                    layer.msg('至少选择 1 个押注对象');
+                    return;
+                }
+                $tr.data('targets', picked);
+                $tr.find('.b-targets-text').text(picked.join('、'));
+                layer.close(index);
+                updatePreview();
+            }
+        });
+    });
+
+    $('#btnSaveConfig').on('click', function () {
+        var payload = collectPayload();
+        layer.confirm('本次保存将更新金秋大战正式配置，并影响金秋大战个人及后续大屏展示，确定继续吗？', {
+            btn: ['确定保存', '取消']
+        }, function (index) {
+            layer.close(index);
+            var $btn = $('#btnSaveConfig');
+            $btn.prop('disabled', true).addClass('layui-btn-disabled');
+            var loadIdx = layer.load(2);
+            $.ajax({
+                url: saveUrl,
+                type: 'POST',
+                contentType: 'application/json; charset=UTF-8',
+                dataType: 'json',
+                data: JSON.stringify(payload),
+                success: function (res) {
+                    layer.close(loadIdx);
+                    if (res && parseInt(res.code, 10) === 1) {
+                        var msg = (res.msg || '保存成功');
+                        if (res.data && res.data.warnings && res.data.warnings.length) {
+                            msg += '；警告：' + res.data.warnings.join('；');
+                        }
+                        layer.msg(msg, {icon: 1, time: 1800}, function () {
+                            window.location.reload();
+                        });
+                        return;
+                    }
+                    $btn.prop('disabled', false).removeClass('layui-btn-disabled');
+                    layer.msg((res && res.msg) ? res.msg : '保存失败', {icon: 2});
+                },
+                error: function () {
+                    layer.close(loadIdx);
+                    $btn.prop('disabled', false).removeClass('layui-btn-disabled');
+                    layer.msg('请求失败，请稍后重试', {icon: 2});
+                }
+            });
+        });
+    });
+
+    renderAll();
+});
+</script>
+</body>
+</html>
