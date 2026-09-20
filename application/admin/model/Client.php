@@ -4,10 +4,12 @@ namespace app\admin\model;
 
 use app\admin\controller\Client as ControllerClient;
 use app\admin\service\LiberumConfigService;
+use app\admin\service\ClientRowMarkService;
 use think\Model;
 use think\Db;
 use app\admin\model\Contacts;
 use think\facade\Log;
+use think\facade\Session;
 
 
 class Client extends Model
@@ -275,6 +277,13 @@ class Client extends Model
                 $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
             }
         }
+
+        // 颜色筛选：在 count/paginate 之前进入统一 Builder（含快速跟进复用本方法）
+        $colorFilter = isset($keyword['color_filter']) ? trim((string)$keyword['color_filter']) : '';
+        $rowMarkAdminId = isset($keyword['__row_mark_admin_id'])
+            ? (int)$keyword['__row_mark_admin_id']
+            : (int)Session::get('aid');
+        (new ClientRowMarkService())->applyColorFilterToQuery($query, $rowMarkAdminId, $colorFilter, 1);
 
         return $query
             ->field('*, ' . $obtainTypeNameSql)
@@ -726,6 +735,13 @@ class Client extends Model
                 $query->where('at_time', 'between', [$obtainStartTime, $obtainEndTime]);
             }
         }
+
+        // 颜色筛选：与 getMyClientList / 快速跟进统一 SQL 口径
+        $colorFilter = isset($keyword['color_filter']) ? trim((string)$keyword['color_filter']) : '';
+        $rowMarkAdminId = isset($keyword['__row_mark_admin_id'])
+            ? (int)$keyword['__row_mark_admin_id']
+            : (int)Session::get('aid');
+        (new ClientRowMarkService())->applyColorFilterToQuery($query, $rowMarkAdminId, $colorFilter, 1);
 
         $result = $query
             ->field('*, ' . $obtainTypeNameSql)

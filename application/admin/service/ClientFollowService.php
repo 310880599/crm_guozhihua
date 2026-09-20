@@ -89,8 +89,9 @@ class ClientFollowService
 
     /**
      * 当前用户是否有权限操作客户（admin_id=1 超管放行）
+     * 供颜色标记等场景复用，规则与跟进保存一致
      */
-    private function canOperateClient(array $client, $operatorId, $operatorName)
+    public function canOperateClient(array $client, $operatorId, $operatorName)
     {
         if ((int)$operatorId === 1) {
             return true;
@@ -103,6 +104,81 @@ class ClientFollowService
         }
 
         return $this->isJointPerson($client, $operatorId);
+    }
+
+    /**
+     * 校验单个客户是否可操作（重新查库，不信任前端）
+     *
+     * @return array{ok:bool,msg:string,client?:array}
+     */
+    public function assertCanOperateClientId($leadsId, $operatorId, $operatorName): array
+    {
+        $leadsId = (int)$leadsId;
+        $operatorId = (int)$operatorId;
+        $operatorName = trim((string)$operatorName);
+
+        if ($leadsId <= 0) {
+            return ['ok' => false, 'msg' => '缺少客户ID'];
+        }
+        if ($operatorId <= 0) {
+            return ['ok' => false, 'msg' => '登录状态已失效，请重新登录'];
+        }
+
+        $client = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (!$client) {
+            return ['ok' => false, 'msg' => '客户不存在'];
+        }
+
+        if (!$this->canOperateClient($client, $operatorId, $operatorName)) {
+            return ['ok' => false, 'msg' => '您没有权限操作该客户'];
+        }
+
+        return ['ok' => true, 'msg' => '', 'client' => $client];
+    }
+
+    /**
+     * 批量预校验客户操作权限：整批原子，任一失败则整批拒绝
+     *
+     * @param array $leadsIds
+     * @param int|string $operatorId
+     * @param string $operatorName
+     * @return array{ok:bool,msg:string,leads_ids?:int[]}
+     */
+    public function assertCanOperateAllClientIds(array $leadsIds, $operatorId, $operatorName): array
+    {
+        $operatorId = (int)$operatorId;
+        $operatorName = trim((string)$operatorName);
+
+        if ($operatorId <= 0) {
+            return ['ok' => false, 'msg' => '登录状态已失效，请重新登录'];
+        }
+
+        $leadsIds = array_values(array_unique(array_filter(array_map('intval', $leadsIds), function ($v) {
+            return $v > 0;
+        })));
+        if (empty($leadsIds)) {
+            return ['ok' => false, 'msg' => '请先选择客户'];
+        }
+
+        $clients = Db::table('crm_leads')
+            ->whereIn('id', $leadsIds)
+            ->field('id,pr_user,joint_person')
+            ->select();
+        $clientMap = [];
+        foreach ($clients as $client) {
+            $clientMap[(int)$client['id']] = $client;
+        }
+
+        foreach ($leadsIds as $lid) {
+            if (!isset($clientMap[$lid])) {
+                return ['ok' => false, 'msg' => '客户不存在（ID:' . $lid . '）'];
+            }
+            if (!$this->canOperateClient($clientMap[$lid], $operatorId, $operatorName)) {
+                return ['ok' => false, 'msg' => '您没有权限操作客户（ID:' . $lid . '），整批已拒绝'];
+            }
+        }
+
+        return ['ok' => true, 'msg' => '', 'leads_ids' => $leadsIds];
     }
 
     /**

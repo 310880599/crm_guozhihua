@@ -432,7 +432,7 @@ class Client extends Common
             $list = model('Client')->getMyClientList($page, $pageSize, Session::get('username'), $keyword);
 
             if (empty($list) || empty($list['data'])) {
-                return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
+                return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => (int)($list['total'] ?? 0), 'rel' => 1];
             }
 
             $rows = &$list['data'];
@@ -578,6 +578,7 @@ class Client extends Common
             unset($row);
 
             $this->appendKhRankDisplayForRows($rows);
+            $this->appendClientRowMarksForRows($rows);
             return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
         }
 
@@ -4653,7 +4654,7 @@ class Client extends Common
         $list = model('client')->getPersonClientSearchList($page, $limit, $keyword);
 
         if (empty($list) || empty($list['data'])) {
-            return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
+            return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => (int)($list['total'] ?? 0), 'rel' => 1];
         }
 
         // ===== 补充展示所需的派生字段 =====
@@ -4817,6 +4818,7 @@ class Client extends Common
         unset($row);
 
         $this->appendKhRankDisplayForRows($rows);
+        $this->appendClientRowMarksForRows($rows);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $rows, 'count' => $list['total'], 'rel' => 1];
     }
 
@@ -5271,9 +5273,8 @@ class Client extends Common
         $keyword['kh_rank'] = isset($keyword['kh_rank']) ? trim((string)$keyword['kh_rank']) : '';
         $keyword['inquiry_id'] = isset($keyword['inquiry_id']) ? trim((string)$keyword['inquiry_id']) : '';
         $keyword['port_id'] = isset($keyword['port_id']) ? trim((string)$keyword['port_id']) : '';
-        // V2：颜色筛选，仅在拿到当前页数据+颜色标记后做内存过滤，不参与数据库查询，不影响原查询逻辑
-        $colorFilter = isset($keyword['color_filter']) ? trim((string)$keyword['color_filter']) : '';
-        unset($keyword['color_filter']);
+        // 颜色筛选：保留 color_filter，交由 Model 层 SQL 在分页前过滤（修复内存过滤导致的 count/分页错误）
+        $keyword['color_filter'] = isset($keyword['color_filter']) ? trim((string)$keyword['color_filter']) : '';
         $keyword = $this->normalizeFollowFilterKeyword($keyword);
 
         $username = trim((string)Session::get('username'));
@@ -5281,13 +5282,15 @@ class Client extends Common
             return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => [], 'count' => 0]);
         }
 
+        $adminId = (int)Session::get('aid');
+        $keyword['__row_mark_admin_id'] = $adminId;
+
         $list = model('Client')->getQuickFollowList($page, $limit, $username, $keyword);
         if (empty($list) || empty($list['data'])) {
-            return json(['code' => 0, 'msg' => '获取成功', 'data' => [], 'count' => 0]);
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => [], 'count' => (int)($list['total'] ?? 0)]);
         }
 
         // 行颜色标记：仅查询当前登录员工自己的标记，颜色互不影响
-        $adminId = (int)Session::get('aid');
         $leadsIds = array_column((array)$list['data'], 'id');
         $rowMarkService = new ClientRowMarkService();
         $markDetailMap = $rowMarkService->getMarksMapDetail($leadsIds, $adminId, 1);
@@ -5301,17 +5304,37 @@ class Client extends Common
         $service = new ClientFollowService();
         $rows = $service->buildQuickFollowListRows((array)$list['data'], $markMap, $remarkMap);
 
-        // V2：颜色筛选（根据 admin_id + bg_color 在当前页数据上过滤，不改变数据库分页查询）
-        if ($colorFilter !== '') {
-            $rows = $rowMarkService->filterRowsByColor($rows, $colorFilter);
-        }
-
         return json([
             'code' => 0,
             'msg' => '获取成功',
             'data' => $rows,
             'count' => (int)($list['total'] ?? 0),
         ]);
+    }
+
+    /**
+     * 为我的客户列表当前页批量附加颜色/备注（admin 维度隔离，禁止 N+1）
+     *
+     * @param array $rows
+     * @return void
+     */
+    private function appendClientRowMarksForRows(array &$rows)
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $adminId = (int)Session::get('aid');
+        $leadsIds = array_column($rows, 'id');
+        $markDetailMap = (new ClientRowMarkService())->getMarksMapDetail($leadsIds, $adminId, 1);
+
+        foreach ($rows as &$row) {
+            $lid = (int)($row['id'] ?? 0);
+            $detail = $markDetailMap[$lid] ?? null;
+            $row['bg_color'] = $detail ? (string)($detail['bg_color'] ?? '') : '';
+            $row['remark'] = $detail ? (string)($detail['remark'] ?? '') : '';
+        }
+        unset($row);
     }
 
     /**
@@ -5325,8 +5348,18 @@ class Client extends Common
         $remark = trim((string)Request::param('remark', ''));
 
         $adminId = (int)Session::get('aid');
+        $username = trim((string)Session::get('username'));
         if ($adminId <= 0) {
             return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录']);
+        }
+
+        if ($markType !== 1) {
+            return json(['code' => 1, 'msg' => '标记类型不正确']);
+        }
+
+        $perm = (new ClientFollowService())->assertCanOperateClientId($leadsId, $adminId, $username);
+        if (empty($perm['ok'])) {
+            return json(['code' => 1, 'msg' => (string)($perm['msg'] ?? '您没有权限操作该客户')]);
         }
 
         $result = (new ClientRowMarkService())->saveMark($leadsId, $adminId, $bgColor, $markType, $remark);
@@ -5348,10 +5381,29 @@ class Client extends Common
         $markType = (int)Request::param('mark_type', 1);
 
         $adminId = (int)Session::get('aid');
+        $username = trim((string)Session::get('username'));
         if ($adminId <= 0) {
             return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录']);
         }
 
+        if ($markType !== 1) {
+            return json(['code' => 1, 'msg' => '标记类型不正确']);
+        }
+
+        if (!is_array($leadsIds)) {
+            return json(['code' => 1, 'msg' => '客户参数格式不正确', 'data' => []]);
+        }
+
+        $perm = (new ClientFollowService())->assertCanOperateAllClientIds($leadsIds, $adminId, $username);
+        if (empty($perm['ok'])) {
+            return json([
+                'code' => 1,
+                'msg' => (string)($perm['msg'] ?? '您没有权限操作选中客户'),
+                'data' => [],
+            ]);
+        }
+
+        $leadsIds = $perm['leads_ids'] ?? [];
         $result = (new ClientRowMarkService())->batchSaveMark($leadsIds, $adminId, $bgColor, $remark, $markType);
 
         return json([

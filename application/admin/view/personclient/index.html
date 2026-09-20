@@ -1858,6 +1858,21 @@
 
                     </div>
 
+                    <!-- 颜色筛选：复用批量跟进 color_filter 口径 -->
+                    <div class="layui-inline">
+                        <label class="layui-form-label">颜色筛选：</label>
+                        <div class="layui-input-inline">
+                            <select name="color_filter" id="main-color-filter" lay-search>
+                                <option value="">全部颜色</option>
+                                <option value="red">红色</option>
+                                <option value="yellow">黄色</option>
+                                <option value="green">绿色</option>
+                                <option value="blue">蓝色</option>
+                                <option value="none">无颜色</option>
+                            </select>
+                        </div>
+                    </div>
+
                 </div>
 
                 <div class="layui-inline" style="float:right;padding-bottom:15px">
@@ -2097,6 +2112,26 @@
                     </div>
                 </div>
                 <div class="layui-inline">
+                    <label class="layui-form-label">日期查询</label>
+                    <div class="layui-input-inline">
+                        <select id="quick-follow-dateRange" lay-filter="quickFollowDateRange" class="layui-select">
+                            <option value="" selected>自定义</option>
+                            <option value="today">今天</option>
+                            <option value="yesterday">昨天</option>
+                            <option value="week">本周</option>
+                            <option value="last week">上周</option>
+                            <option value="month">本月</option>
+                            <option value="last month">上月</option>
+                            <option value="year">今年</option>
+                            <option value="last year">去年</option>
+                            <option value="-2 hours">两个小时内</option>
+                        </select>
+                    </div>
+                    <div class="layui-input-inline">
+                        <input type="text" class="layui-input" id="quick-follow-at_time" placeholder="选择日期范围">
+                    </div>
+                </div>
+                <div class="layui-inline">
                     <label class="layui-form-label">颜色筛选</label>
                     <div class="layui-input-inline">
                         <select id="quick-follow-color-filter" lay-search>
@@ -2144,6 +2179,7 @@
 <script type="text/html" id="topBtn">
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加客户</button>
     <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="batchAddFollowBtn" lay-event="quickFollowBatch"><i class="layui-icon layui-icon-edit"></i>批量添加跟进记录</button>
+    <button type="button" class="layui-btn layui-btn-warm layui-btn-radius layui-btn-sm" lay-event="mainBatchMarkColor"><i class="layui-icon layui-icon-theme"></i>批量标记颜色</button>
     <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" lay-event="mainColumnSort"><i class="layui-icon layui-icon-cols"></i>字段排序</button>
     <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="toAll" style="margin-right:10px"><i class="layui-icon">&#xe681;</i>导入客户</button>
     <button type="button" class="layui-btn layui-btn-normal layui-btn-radius layui-btn-sm" id="downloadTemplate">
@@ -2197,6 +2233,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     var lastMainTableUrl = "{:url('perClilist')}";
     var lastMainTableWhere = {};
     var tableIns = null;
+    var mainTableRowMarkMap = {}; // 我的客户主表颜色缓存：leads_id -> bg_color
+    var mainTableRowMarkRemarkMap = {}; // 我的客户主表备注缓存：leads_id -> remark
+    var quickFollowDateInited = false;
 
     // ================= 高级查询：折叠/展开 + localStorage 记忆 =================
     var PERSONCLIENT_ADVANCED_SEARCH_KEY = 'personclient_mycustomer_advanced_search_expanded';
@@ -2805,6 +2844,19 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     function buildMainBaseCols() {
         return [
             { type: 'checkbox',  width: 50 },
+            {
+                field: 'row_mark',
+                title: '颜色',
+                width: 60,
+                align: 'center',
+                templet: function (d) {
+                    var leadsId = personclientEscapeHtml(d.id);
+                    var remark = $.trim(String(d.remark == null ? '' : d.remark));
+                    var titleText = remark ? ('设置行颜色（备注：' + remark + '）') : '设置行颜色';
+                    var dotHtml = remark ? '<span class="quick-follow-row-mark-dot"></span>' : '';
+                    return '<span class="main-table-row-mark-btn quick-follow-row-mark-btn" data-leads-id="' + leadsId + '" data-remark="' + personclientEscapeHtml(remark) + '" title="' + personclientEscapeHtml(titleText) + '">🎨' + dotHtml + '</span>';
+                }
+            },
             { field: 'id', title: 'ID',  width: 120, fixed: true, hide: true },
             { field: 'kh_name', title: '客户名称',  width: 120, sort: true, templet: function(res){
                 var name = res.kh_name || '';
@@ -2898,21 +2950,26 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         return col.fixed === 'right' && !col.field && String(col.title || '') === '操作';
     }
 
+    function isMainRowMarkCol(col) {
+        return getMainColField(col) === 'row_mark';
+    }
+
     function isMainSortableBusinessCol(col) {
         var field = getMainColField(col);
         if (!field || field === 'id') return false;
-        if (isMainCheckboxCol(col) || isMainActionCol(col)) return false;
+        if (isMainCheckboxCol(col) || isMainActionCol(col) || isMainRowMarkCol(col)) return false;
         return true;
     }
 
     /**
-     * 主表排序：始终 checkbox → id → 业务字段 → 操作列
+     * 主表排序：始终 checkbox → 颜色(row_mark) → id → 业务字段 → 操作列
      * 配置中缺失的新业务字段追加到已排序业务字段之后，避免历史配置导致新字段消失
      */
     function applyMainColumnOrder(cols) {
         if (!cols || !cols.length) return cols;
 
         var checkboxCol = null;
+        var rowMarkCol = null;
         var idCol = null;
         var actionCol = null;
         var businessCols = [];
@@ -2920,6 +2977,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         cols.forEach(function (col) {
             if (isMainCheckboxCol(col)) {
                 checkboxCol = col;
+            } else if (isMainRowMarkCol(col)) {
+                rowMarkCol = col;
             } else if (isMainIdCol(col)) {
                 idCol = col;
             } else if (isMainActionCol(col)) {
@@ -2941,7 +3000,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
             mainTableColumnOrder.forEach(function (field) {
                 field = String(field || '');
-                if (!field || field === 'id') return;
+                if (!field || field === 'id' || field === 'row_mark') return;
                 if (businessMap[field]) {
                     orderedBusiness.push(businessMap[field]);
                     delete businessMap[field];
@@ -2963,6 +3022,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         var result = [];
         if (checkboxCol) result.push(checkboxCol);
+        if (rowMarkCol) result.push(rowMarkCol);
         if (idCol) result.push(idCol);
         result = result.concat(orderedBusiness);
         if (actionCol) result.push(actionCol);
@@ -3238,7 +3298,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         var html = [
             '<div class="main-table-col-sort-dialog">',
-            '<div class="main-table-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”，排序将自动保存。复选框、ID、操作列不参与排序。</div>',
+            '<div class="main-table-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”，排序将自动保存。复选框、颜色、ID、操作列不参与排序。</div>',
             '<ul id="mainTableColumnSortList" class="main-table-col-sort-list">'
         ];
 
@@ -3429,6 +3489,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 bindLastRecordTooltip();
                 bindActionIconTips();
                 bindMainTableHideConfigSave();
+                bindMainTableRowMarkClick();
+                applyMainTableRowMarkColors(res && res.data ? res.data : []);
 
                 // ===============================
                 // 【修改】同步固定列行高 - 升级版（解决 Layui fixed 列晚生成问题）
@@ -3436,17 +3498,20 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 // ✅ 更稳：同步 3 次（下一帧 + 60ms + 180ms），每次都跑最新算法
                 requestAnimationFrame(function () {
                     syncFixedRowHeights();
+                    applyMainTableRowMarkColors(res && res.data ? res.data : []);
                     // 再补一次：防止 fixed 列刚生成/图片刚加载导致高度再次变化
                     setTimeout(syncFixedRowHeights, 0);
                 });
 
                 setTimeout(function () {
                     syncFixedRowHeights();
+                    applyMainTableRowMarkColors(res && res.data ? res.data : []);
                     setTimeout(syncFixedRowHeights, 0);
                 }, 60);
 
                 setTimeout(function () {
                     syncFixedRowHeights();
+                    applyMainTableRowMarkColors(res && res.data ? res.data : []);
                     setTimeout(syncFixedRowHeights, 0);
                 }, 180);
 
@@ -4649,8 +4714,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     function openQuickFollowRowMarkPicker($btn, leadsId) {
         closeQuickFollowRowMarkPicker();
 
-        var currentColor = normalizeQuickFollowText(quickFollowRowMarkMap[leadsId] || '');
-        var currentRemark = normalizeQuickFollowText(quickFollowRowMarkRemarkMap[leadsId] || '');
+        var isMainTable = $btn.hasClass('main-table-row-mark-btn');
+        var currentColor = normalizeQuickFollowText(
+            isMainTable ? (mainTableRowMarkMap[leadsId] || '') : (quickFollowRowMarkMap[leadsId] || '')
+        );
+        var currentRemark = normalizeQuickFollowText(
+            isMainTable ? (mainTableRowMarkRemarkMap[leadsId] || '') : (quickFollowRowMarkRemarkMap[leadsId] || '')
+        );
 
         var html = ['<div id="quick-follow-row-mark-picker" class="quick-follow-row-mark-picker">'];
         html.push('<div class="quick-follow-row-mark-colors">');
@@ -4699,7 +4769,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $picker.on('click', '.quick-follow-row-mark-save-btn', function () {
             var remarkVal = $.trim($picker.find('.quick-follow-row-mark-remark-input').val() || '');
             closeQuickFollowRowMarkPicker();
-            saveQuickFollowRowMark(leadsId, selectedColor, remarkVal);
+            if (isMainTable) {
+                saveMainTableRowMark(leadsId, selectedColor, remarkVal);
+            } else {
+                saveQuickFollowRowMark(leadsId, selectedColor, remarkVal);
+            }
         });
 
         $picker.on('click', '.quick-follow-row-mark-cancel-btn', function () {
@@ -4708,7 +4782,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
         setTimeout(function () {
             $(document).one('click.qfRowMarkOutside', function (e) {
-                if ($(e.target).closest('#quick-follow-row-mark-picker, .quick-follow-row-mark-btn').length) {
+                if ($(e.target).closest('#quick-follow-row-mark-picker, .quick-follow-row-mark-btn, .main-table-row-mark-btn').length) {
                     return;
                 }
                 closeQuickFollowRowMarkPicker();
@@ -4750,8 +4824,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 if (res && parseInt(res.code, 10) === 0) {
                     quickFollowRowMarkMap[key] = bgColor;
                     quickFollowRowMarkRemarkMap[key] = remark;
-                    applyQuickFollowRowColor(key, bgColor);
-                    updateQuickFollowRowMarkRemark(key, remark);
+                    var colorFilter = $.trim($('#quick-follow-color-filter').val() || '');
+                    if (colorFilter !== '') {
+                        table.reload(quickFollowTableId, {
+                            page: { curr: 1 },
+                            where: { keyword: collectQuickFollowSearchKeyword() }
+                        });
+                    } else {
+                        applyQuickFollowRowColor(key, bgColor);
+                        updateQuickFollowRowMarkRemark(key, remark);
+                    }
                     layer.msg(bgColor ? '颜色已设置' : '颜色已清除', { icon: 1, time: 800 });
                 } else {
                     layer.msg((res && res.msg) || '保存失败', { icon: 2, time: 1500 });
@@ -4764,7 +4846,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     }
 
     // 批量标记颜色：弹窗选择颜色 + 备注，确定后统一提交给 batchSaveClientRowMark
-    function openQuickFollowBatchMarkDialog(leadsIds) {
+    // options.scope: 'quick' | 'main'；主列表保存后若处于颜色筛选会 reload
+    function openQuickFollowBatchMarkDialog(leadsIds, options) {
+        options = options || {};
+        var scope = options.scope === 'main' ? 'main' : 'quick';
         if (!leadsIds || !leadsIds.length) {
             layer.msg('请先选择客户', { icon: 0, time: 1200 });
             return;
@@ -4798,9 +4883,15 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             },
             yes: function (index, layero) {
                 var remark = $.trim(layero.find('.quick-follow-batch-mark-remark').val() || '');
-                batchSaveQuickFollowRowMark(leadsIds, selectedColor, remark, function () {
-                    layer.close(index);
-                });
+                if (scope === 'main') {
+                    batchSaveMainTableRowMark(leadsIds, selectedColor, remark, function () {
+                        layer.close(index);
+                    });
+                } else {
+                    batchSaveQuickFollowRowMark(leadsIds, selectedColor, remark, function () {
+                        layer.close(index);
+                    });
+                }
             }
         });
     }
@@ -4827,6 +4918,187 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         applyQuickFollowRowColor(key, bgColor);
                         updateQuickFollowRowMarkRemark(key, remark);
                     });
+                    // 颜色筛选下批量改色后重新 SQL 筛选，避免残留不符合条件的行
+                    var colorFilter = $.trim($('#quick-follow-color-filter').val() || '');
+                    if (colorFilter !== '') {
+                        table.reload(quickFollowTableId, {
+                            page: { curr: 1 },
+                            where: { keyword: collectQuickFollowSearchKeyword() }
+                        });
+                    }
+                    layer.msg(res.msg || '批量设置成功', { icon: 1, time: 1000 });
+                    if (typeof onDone === 'function') onDone();
+                } else {
+                    layer.msg((res && res.msg) || '批量设置失败', { icon: 2, time: 1500 });
+                }
+            },
+            error: function () {
+                layer.close(loading);
+                layer.msg('网络错误，批量设置失败', { icon: 2, time: 1500 });
+            }
+        });
+    }
+
+    function getMainTableView() {
+        return $('#' + tableId).next('.layui-table-view');
+    }
+
+    function bindMainTableRowMarkClick() {
+        var $view = getMainTableView();
+        if (!$view.length) return;
+        $view
+            .off('click.mainRowMark', '.main-table-row-mark-btn')
+            .on('click.mainRowMark', '.main-table-row-mark-btn', function (e) {
+                e.stopPropagation();
+                var $btn = $(this);
+                var leadsId = String($btn.data('leads-id') || '');
+                if (!leadsId) return;
+                openQuickFollowRowMarkPicker($btn, leadsId);
+            });
+    }
+
+    function updateMainTableRowMarkRemark(leadsId, remark) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        remark = normalizeQuickFollowText(remark || '');
+        var $view = getMainTableView();
+        var $btns = $view.find('.main-table-row-mark-btn[data-leads-id="' + key + '"]');
+        if (!$btns.length) return;
+        $btns.each(function () {
+            var $btn = $(this);
+            $btn.attr('data-remark', remark);
+            $btn.attr('title', remark ? ('设置行颜色（备注：' + remark + '）') : '设置行颜色');
+            $btn.find('.quick-follow-row-mark-dot').remove();
+            if (remark) {
+                $btn.append('<span class="quick-follow-row-mark-dot"></span>');
+            }
+        });
+    }
+
+    function applyMainTableRowColor(leadsId, bgColor) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        var $view = getMainTableView();
+        if (!$view.length) return;
+
+        var $btn = $view.find('.main-table-row-mark-btn[data-leads-id="' + key + '"]').first();
+        if (!$btn.length) return;
+        var dataIndex = $btn.closest('tr').attr('data-index');
+        if (dataIndex === undefined || dataIndex === null || dataIndex === '') return;
+
+        $view.find('tr[data-index="' + dataIndex + '"]').each(function () {
+            $(this).find('> td').each(function () {
+                var td = this;
+                var cell = td.querySelector('.layui-table-cell');
+                if (bgColor) {
+                    td.style.setProperty('background-color', bgColor, 'important');
+                    if (cell) {
+                        cell.style.setProperty('background-color', bgColor, 'important');
+                    }
+                } else {
+                    td.style.removeProperty('background-color');
+                    if (cell) {
+                        cell.style.removeProperty('background-color');
+                    }
+                }
+            });
+        });
+    }
+
+    function applyMainTableRowMarkColors(rows) {
+        if (!rows || !rows.length) return;
+        rows.forEach(function (row) {
+            var leadsId = String((row && row.id) || '');
+            if (!leadsId) return;
+            var bgColor = normalizeQuickFollowText((row && row.bg_color) || '');
+            var remark = normalizeQuickFollowText((row && row.remark) || '');
+            mainTableRowMarkMap[leadsId] = bgColor;
+            mainTableRowMarkRemarkMap[leadsId] = remark;
+            applyMainTableRowColor(leadsId, bgColor);
+            updateMainTableRowMarkRemark(leadsId, remark);
+        });
+    }
+
+    function reloadMainTableAfterRowMarkChange() {
+        var colorFilter = '';
+        if (lastMainTableWhere && lastMainTableWhere.keyword) {
+            colorFilter = $.trim(String(lastMainTableWhere.keyword.color_filter || ''));
+        }
+        if (colorFilter === '') {
+            colorFilter = $.trim($('#main-color-filter').val() || '');
+        }
+        if (colorFilter !== '') {
+            table.reload(tableId, {
+                url: lastMainTableUrl,
+                where: lastMainTableWhere,
+                page: { curr: 1 }
+            });
+            return true;
+        }
+        return false;
+    }
+
+    function saveMainTableRowMark(leadsId, bgColor, remark) {
+        var key = String(leadsId || '');
+        if (!key) return;
+        remark = normalizeQuickFollowText(remark || '');
+
+        $.ajax({
+            url: "{:url('Client/saveClientRowMark')}",
+            type: 'post',
+            dataType: 'json',
+            data: {
+                leads_id: key,
+                bg_color: bgColor,
+                remark: remark,
+                mark_type: 1
+            },
+            success: function (res) {
+                if (res && parseInt(res.code, 10) === 0) {
+                    mainTableRowMarkMap[key] = bgColor;
+                    mainTableRowMarkRemarkMap[key] = remark;
+                    if (!reloadMainTableAfterRowMarkChange()) {
+                        applyMainTableRowColor(key, bgColor);
+                        updateMainTableRowMarkRemark(key, remark);
+                    }
+                    layer.msg(bgColor ? '颜色已设置' : '颜色已清除', { icon: 1, time: 800 });
+                } else {
+                    layer.msg((res && res.msg) || '保存失败', { icon: 2, time: 1500 });
+                }
+            },
+            error: function () {
+                layer.msg('网络错误，保存失败', { icon: 2, time: 1500 });
+            }
+        });
+    }
+
+    function batchSaveMainTableRowMark(leadsIds, bgColor, remark, onDone) {
+        var loading = layer.load(1, { shade: [0.1, '#fff'] });
+        $.ajax({
+            url: "{:url('Client/batchSaveClientRowMark')}",
+            type: 'post',
+            dataType: 'json',
+            data: {
+                leads_ids: leadsIds,
+                bg_color: bgColor,
+                remark: remark,
+                mark_type: 1
+            },
+            success: function (res) {
+                layer.close(loading);
+                if (res && parseInt(res.code, 10) === 0) {
+                    leadsIds.forEach(function (id) {
+                        var key = String(id);
+                        mainTableRowMarkMap[key] = bgColor;
+                        mainTableRowMarkRemarkMap[key] = remark;
+                    });
+                    if (!reloadMainTableAfterRowMarkChange()) {
+                        leadsIds.forEach(function (id) {
+                            var key = String(id);
+                            applyMainTableRowColor(key, bgColor);
+                            updateMainTableRowMarkRemark(key, remark);
+                        });
+                    }
                     layer.msg(res.msg || '批量设置成功', { icon: 1, time: 1000 });
                     if (typeof onDone === 'function') onDone();
                 } else {
@@ -4846,8 +5118,31 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     function applyQuickFollowRowColor(leadsId, bgColor) {
         var key = String(leadsId || '');
         if (!key) return;
-        var $btn = $('#quick-follow-dialog .quick-follow-row-mark-btn[data-leads-id="' + key + '"]');
+        var $dialog = $('#quick-follow-dialog');
+        var $btn = $dialog.find('.quick-follow-row-mark-btn[data-leads-id="' + key + '"]').first();
         if (!$btn.length) return;
+        var dataIndex = $btn.closest('tr').attr('data-index');
+        var $view = $dialog.find('.layui-table-view').first();
+        if ($view.length && dataIndex !== undefined && dataIndex !== null && dataIndex !== '') {
+            $view.find('tr[data-index="' + dataIndex + '"]').each(function () {
+                $(this).find('> td').each(function () {
+                    var td = this;
+                    var cell = td.querySelector('.layui-table-cell');
+                    if (bgColor) {
+                        td.style.setProperty('background-color', bgColor, 'important');
+                        if (cell) {
+                            cell.style.setProperty('background-color', bgColor, 'important');
+                        }
+                    } else {
+                        td.style.removeProperty('background-color');
+                        if (cell) {
+                            cell.style.removeProperty('background-color');
+                        }
+                    }
+                });
+            });
+            return;
+        }
         var $tds = $btn.closest('tr').find('> td');
         $tds.each(function () {
             var td = this;
@@ -4887,7 +5182,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             product_name: $.trim($('#quick-follow-product-name').val() || ''),
             inquiry_id: $.trim($('#quick-follow-inquiry-id').val() || ''),
             kh_rank: $.trim($('#quick-follow-kh-rank').val() || ''),
-            color_filter: $.trim($('#quick-follow-color-filter').val() || '')
+            color_filter: $.trim($('#quick-follow-color-filter').val() || ''),
+            timebucket: $.trim($('#quick-follow-dateRange').val() || ''),
+            at_time: $.trim($('#quick-follow-at_time').val() || '')
         };
     }
 
@@ -5951,6 +6248,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             $('#quick-follow-inquiry-id').val('');
             $('#quick-follow-kh-rank').val('');
             $('#quick-follow-color-filter').val('');
+            $('#quick-follow-dateRange').val('');
+            $('#quick-follow-at_time').val('');
+            $('#quick-follow-at_time').show();
             form.render('select');
             table.reload(quickFollowTableId, {
                 page: { curr: 1 },
@@ -6801,6 +7101,13 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             case 'mainColumnSort':
                 openMainColumnSortDialog();
                 break;
+            case 'mainBatchMarkColor':
+                if (data.length === 0) {
+                    layer.msg('请先选择客户', { icon: 0, time: 1200 });
+                    return;
+                }
+                openQuickFollowBatchMarkDialog(data.map(function (it) { return it.id; }), { scope: 'main' });
+                break;
             case 'quickFollowBatch':
                 openQuickFollowDialog();
                 break;
@@ -6938,6 +7245,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         data.field.product_name = ($('#product_name').val() || '').toString().trim();
         data.field.obtain_type = (data.field.obtain_type || '').toString().trim();
         data.field.obtain_time = (data.field.obtain_time || '').toString().trim();
+        data.field.color_filter = (data.field.color_filter || '').toString().trim();
         if (data.field.obtain_time && !data.field.obtain_type) {
             layer.msg('请选择获取方式后，再使用获取时间筛选', {icon: 0});
             return false;
@@ -6963,6 +7271,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         $('#oper_user_input').val('');
         $('#dateRange').val('');
         $('#at_time').val('');
+        $('#main-color-filter').val('');
         $('#obtain_type').val('');
         $('#obtain_time').val('');
         $('#follow_filter').val('');
@@ -6982,6 +7291,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
     // 日期控件
     laydate.render({ elem: '#at_time', range: true, trigger: 'click' });
     laydate.render({ elem: '#obtain_time', range: true, trigger: 'click' });
+    // 批量跟进专用日期（独立 ID，避免与主列表 #at_time 互相影响；只初始化一次）
+    if (!quickFollowDateInited) {
+        quickFollowDateInited = true;
+        laydate.render({ elem: '#quick-follow-at_time', range: true, trigger: 'click' });
+    }
     laydate.render({
         elem: '#next_up_time',
         type: 'datetime',
@@ -7009,6 +7323,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         var isCustom = data.value === '';
         $('#at_time').toggle(isCustom);
         if (!isCustom) $('#at_time').val('');
+    });
+    form.on('select(quickFollowDateRange)', function (data) {
+        var isCustom = data.value === '';
+        $('#quick-follow-at_time').toggle(isCustom);
+        if (!isCustom) $('#quick-follow-at_time').val('');
     });
 
     // 运营人员下拉（防重复初始化：避免脚本重复执行时再次 new）

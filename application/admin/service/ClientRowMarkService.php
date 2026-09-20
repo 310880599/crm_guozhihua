@@ -92,7 +92,104 @@ class ClientRowMarkService
     ];
 
     /**
-     * 按颜色筛选行数据（在颜色标记加载完成之后的内存过滤，不涉及数据库分页查询）
+     * 允许保存的颜色白名单（空字符串表示清除颜色）
+     *
+     * @return string[] 大写标准色值
+     */
+    public static function allowedBgColorsUpper(): array
+    {
+        return array_map('strtoupper', array_values(self::COLOR_FILTER_MAP));
+    }
+
+    /**
+     * 校验并标准化 bg_color：允许空（清除）或白名单内颜色
+     *
+     * @param string $bgColor
+     * @return array{ok:bool,color:string,msg:string}
+     */
+    public function normalizeAllowedBgColor(string $bgColor): array
+    {
+        $bgColor = trim($bgColor);
+        if ($bgColor === '') {
+            return ['ok' => true, 'color' => '', 'msg' => ''];
+        }
+        if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $bgColor)) {
+            return ['ok' => false, 'color' => '', 'msg' => '颜色格式不正确'];
+        }
+        $upper = strtoupper($bgColor);
+        if (!in_array($upper, self::allowedBgColorsUpper(), true)) {
+            return ['ok' => false, 'color' => '', 'msg' => '颜色不在允许范围内'];
+        }
+        // 统一存成 COLOR_FILTER_MAP 中的标准写法
+        foreach (self::COLOR_FILTER_MAP as $standard) {
+            if (strtoupper($standard) === $upper) {
+                return ['ok' => true, 'color' => $standard, 'msg' => ''];
+            }
+        }
+        return ['ok' => false, 'color' => '', 'msg' => '颜色不在允许范围内'];
+    }
+
+    /**
+     * 在客户列表查询 Builder 上追加颜色 SQL 筛选（分页前生效）
+     * 颜色按当前登录 admin_id + mark_type 隔离；all/空不追加条件，避免丢失无标记客户
+     *
+     * @param mixed $query ThinkPHP 查询对象
+     * @param int $adminId
+     * @param string $colorFilter all|red|yellow|green|blue|none|''
+     * @param int $markType
+     * @return mixed
+     */
+    public function applyColorFilterToQuery($query, int $adminId, string $colorFilter, int $markType = 1)
+    {
+        $colorFilter = trim($colorFilter);
+        if ($colorFilter === '' || $colorFilter === 'all') {
+            return $query;
+        }
+
+        $adminId = (int)$adminId;
+        $markType = (int)$markType;
+        if ($adminId <= 0) {
+            // 无有效登录人时：有色筛选无结果；无颜色筛选视为全部无标记
+            if ($colorFilter === 'none') {
+                return $query;
+            }
+            return $query->whereRaw('1 = 0');
+        }
+
+        if ($colorFilter === 'none') {
+            return $query->whereRaw(
+                "NOT EXISTS (
+                    SELECT 1 FROM crm_client_row_mark m
+                    WHERE m.leads_id = crm_leads.id
+                      AND m.admin_id = {$adminId}
+                      AND m.mark_type = {$markType}
+                      AND m.bg_color IS NOT NULL
+                      AND TRIM(m.bg_color) <> ''
+                )"
+            );
+        }
+
+        if (!isset(self::COLOR_FILTER_MAP[$colorFilter])) {
+            // 非法筛选值不拼进 SQL，直接忽略
+            return $query;
+        }
+
+        $target = strtoupper(self::COLOR_FILTER_MAP[$colorFilter]);
+        $targetSql = addslashes($target);
+
+        return $query->whereRaw(
+            "EXISTS (
+                SELECT 1 FROM crm_client_row_mark m
+                WHERE m.leads_id = crm_leads.id
+                  AND m.admin_id = {$adminId}
+                  AND m.mark_type = {$markType}
+                  AND UPPER(TRIM(m.bg_color)) = '{$targetSql}'
+            )"
+        );
+    }
+
+    /**
+     * 按颜色筛选行数据（兼容旧调用；新列表分页请使用 applyColorFilterToQuery）
      *
      * @param array $rows 每行需包含 bg_color 字段
      * @param string $colorFilter all|red|yellow|green|blue|none，为空或 all 表示不筛选
@@ -111,9 +208,9 @@ class ClientRowMarkService
             }));
         }
 
-        $target = self::COLOR_FILTER_MAP[$colorFilter] ?? $colorFilter;
+        $target = self::COLOR_FILTER_MAP[$colorFilter] ?? '';
         $target = strtoupper(trim($target));
-        if ($target === '' || $target[0] !== '#') {
+        if ($target === '') {
             return $rows;
         }
 
@@ -146,10 +243,11 @@ class ClientRowMarkService
             return $this->fail('登录状态已失效，请重新登录');
         }
 
-        $bgColor = trim($bgColor);
-        if ($bgColor !== '' && !preg_match('/^#[0-9A-Fa-f]{6}$/', $bgColor)) {
-            return $this->fail('颜色格式不正确');
+        $colorCheck = $this->normalizeAllowedBgColor($bgColor);
+        if (!$colorCheck['ok']) {
+            return $this->fail($colorCheck['msg']);
         }
+        $bgColor = $colorCheck['color'];
 
         $remark = trim($remark);
         $now = date('Y-m-d H:i:s');
@@ -232,16 +330,18 @@ class ClientRowMarkService
             return $this->fail('登录状态已失效，请重新登录');
         }
 
-        $bgColor = trim($bgColor);
-        if ($bgColor !== '' && !preg_match('/^#[0-9A-Fa-f]{6}$/', $bgColor)) {
-            return $this->fail('颜色格式不正确');
+        $colorCheck = $this->normalizeAllowedBgColor($bgColor);
+        if (!$colorCheck['ok']) {
+            return $this->fail($colorCheck['msg']);
         }
+        $bgColor = $colorCheck['color'];
 
         $now = date('Y-m-d H:i:s');
         $remark = trim($remark);
 
         $exists = ClientRowMark::where('leads_id', $leadsId)
             ->where('admin_id', $adminId)
+            ->where('mark_type', $markType)
             ->find();
 
         if ($exists) {
