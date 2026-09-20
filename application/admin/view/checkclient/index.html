@@ -1499,7 +1499,12 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             { type: 'checkbox',  width: 50 },
             { field: 'id', title: 'ID',  width: 120, fixed: true, hide: true },
             { field: 'kh_name', title: '客户名称',  width: 120, sort: true, templet: function(res){
-                return "<a href='{:url('dialogue')}?id=" + res.id + "'>" + (res.kh_name || '') + "</a>";
+                var clientName = personclientEscapeHtml(res.kh_name || '');
+                var clientId = parseInt(res.id, 10) || 0;
+                if (clientId <= 0) {
+                    return clientName || '--';
+                }
+                return '<a href="javascript:;" class="client-detail" data-id="' + clientId + '" style="color:#1E9FFF;">' + clientName + '</a>';
             }},
             { field: 'product_name', title: '产品名称',  width: 120 },
             { field: 'main_phone', title: '主电话', width: 120 },
@@ -2170,6 +2175,25 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
 
     // 列表初始化（先读字段配置，再 render；不改动 lastCheckClientKeyword）
     renderCheckMainTable();
+
+    // 检查客户：点击客户名称弹出客户详情（与客户列表同款，事件委托保证表格重渲后仍生效）
+    var clientDetailBaseUrl = "{:url('Client/details')}";
+    $(document).on('click', '.client-detail', function () {
+        var id = parseInt($(this).data('id'), 10) || 0;
+        if (id <= 0) {
+            layer.msg('客户信息缺失', { icon: 2, time: 1500 });
+            return;
+        }
+        layer.open({
+            type: 2,
+            title: '客户详情',
+            closeBtn: 1,
+            area: ['90%', '90%'],
+            shadeClose: false,
+            maxmin: true,
+            content: [clientDetailBaseUrl + '?id=' + id]
+        });
+    });
     
  // 点击写跟进按钮打开弹窗
     $(document).on('click', '.follow-btn, .client-link', function() {

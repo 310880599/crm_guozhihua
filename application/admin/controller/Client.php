@@ -114,8 +114,30 @@ class Client extends Common
         $visibleId = model('Client')->buildClientSearchAllBaseQuery([])
             ->where('l.id', $clientId)
             ->value('l.id');
+        if (!empty($visibleId)) {
+            return true;
+        }
 
-        return !empty($visibleId);
+        // 检查客户列表可见范围：列表能看的客户也应能打开只读详情（不含转移/导出等写权限）
+        // 仅用基础权限口径 + 当前客户 ID，不带页面临时搜索条件，避免误扩权或误拒
+        $visibleUsers = $this->getCheckClientVisibleUsernames();
+        $currentAdmin = [
+            'admin_id' => (int) Session::get('aid'),
+            'group_id' => (int) Session::get('group_id'),
+            'username' => (string) Session::get('username'),
+            'is_super_admin' => $this->isCheckClientSuperAdmin() ? 1 : 0,
+        ];
+        $built = model('Client')->buildCheckClientQuery(
+            ['__id_in' => [$clientId]],
+            $visibleUsers,
+            $currentAdmin
+        );
+        if ($built === null || empty($built['query'])) {
+            return false;
+        }
+        $checkVisibleId = $built['query']->value('l.id');
+
+        return !empty($checkVisibleId);
     }
 
     const CONTACT_MAP = [
