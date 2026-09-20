@@ -1009,10 +1009,9 @@ class Client extends Model
                 $mapPrUser['pr_user'] = session('username');
             }
         }
-        if ($keyword['at_time'] != '') {
-            $at = $keyword['at_time']; //日期
-            $end_at = date('Y-m-d', strtotime("$at+1day"));
-            $mapAtTime = [['at_time', 'between time', [strtotime($at), strtotime($end_at)]]];
+        // 日期条件由 Controller::buildTimeWhere 标准化后写入 keyword['timebucket']
+        if (!empty($keyword['timebucket'])) {
+            $mapAtTime[] = $keyword['timebucket'];
         }
 
         if ($keyword['kh_rank'] != '') {
@@ -1049,7 +1048,6 @@ class Client extends Model
             ->where($mapPrUser)
             ->where(['status' => 1, 'issuccess' => 1]) //0 线索，1客户，2公海
             // ->where(['pr_user' => session('username')]) //负责人
-            ->whereTime('at_time', $keyword['timebucket'] ? $keyword['timebucket'] : null)
             ->order('at_time desc')
             ->paginate(array('list_rows' => $limit, 'page' => $page))
             ->toArray();

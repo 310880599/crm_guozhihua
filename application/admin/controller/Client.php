@@ -5145,7 +5145,22 @@ class Client extends Common
     {
         $page = input('page') ? input('page') : 1;
         $limit = input('limit') ? input('limit') : config('pageSize');
-        $keyword = Request::param('keyword');
+        $keyword = Request::param('keyword', []);
+        if (!is_array($keyword)) {
+            $keyword = [];
+        }
+
+        // 日期标准化：自定义 at_time 优先于快捷 timebucket；非法自定义日期返回空结果（禁止静默扩大范围）
+        if (!empty($keyword['at_time'])) {
+            $atTime = trim((string)$keyword['at_time']);
+            if (!$this->isValidChengjiaoCustomDate($atTime)) {
+                return ['code' => 0, 'msg' => '日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
+            }
+            $keyword['timebucket'] = $this->buildTimeWhere($atTime, 'at_time');
+        } elseif (!empty($keyword['timebucket'])) {
+            $keyword['timebucket'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
+        }
+
         $list = model('client')->getChengjiaoClientSearchList($page, $limit, $keyword);
         if (empty($list) || empty($list['data'])) {
             return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
@@ -5153,6 +5168,38 @@ class Client extends Common
         $this->enrichLeadsRows($list['data']);
         $this->appendSuccessClientOrderSummary($list['data']);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
+    }
+
+    /**
+     * 成交客户自定义日期合法性校验（仅 chengjiaoClientSearch 使用）
+     * 支持单日 Y-m-d 或范围 Y-m-d - Y-m-d；开始晚于结束视为非法
+     */
+    private function isValidChengjiaoCustomDate($raw)
+    {
+        $raw = trim((string)$raw);
+        if ($raw === '') {
+            return false;
+        }
+        if (strpos($raw, ' - ') !== false) {
+            $parts = explode(' - ', $raw, 2);
+            $start = trim($parts[0]);
+            $end = trim(isset($parts[1]) ? $parts[1] : '');
+        } else {
+            $start = $raw;
+            $end = $raw;
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $start) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $end)) {
+            return false;
+        }
+        list($sy, $sm, $sd) = array_map('intval', explode('-', $start));
+        list($ey, $em, $ed) = array_map('intval', explode('-', $end));
+        if (!checkdate($sm, $sd, $sy) || !checkdate($em, $ed, $ey)) {
+            return false;
+        }
+        if (strcmp($start, $end) > 0) {
+            return false;
+        }
+        return true;
     }
     // ====== 修改 chengjiaoClientSearch 结束 ======
 
