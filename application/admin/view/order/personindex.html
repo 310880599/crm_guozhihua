@@ -456,8 +456,8 @@
                             <div class="layui-inline">
                                 <label class="layui-form-label">时间查询：</label>
                                 <div class="layui-input-inline">
-                                    <select name="timebucket">
-                                        <option value="">请选择时间</option>
+                                    <select id="dateRange" lay-filter="dateRange" name="timebucket" class="layui-select">
+                                        <option value="">自定义</option>
                                         <option value="today">今天</option>
                                         <option value="yesterday">昨天</option>
                                         <option value="week">本周</option>
@@ -468,6 +468,9 @@
                                         <option value="last year">去年</option>
                                         <option value="-2 hours">两个小时内</option>
                                     </select>
+                                </div>
+                                <div class="layui-input-inline">
+                                    <input type="text" class="layui-input" id="at_time" name="at_time" placeholder="选择日期范围">
                                 </div>
                             </div>
 
@@ -928,6 +931,29 @@
             //监听搜索
             form.on('submit(LAY-app-contlist-search)', function (data) {
                 var field = data.field;
+                // 自定义日期：未填范围时禁止无时间条件查询
+                if ((!field.timebucket || field.timebucket === '') && (!field.at_time || field.at_time === '')) {
+                    layer.msg('请选择自定义日期范围');
+                    return false;
+                }
+                // 自定义日期格式与起止校验
+                if (field.at_time && field.at_time !== '') {
+                    var parts = field.at_time.split(' - ');
+                    if (parts.length !== 2) {
+                        layer.msg('日期范围格式不正确');
+                        return false;
+                    }
+                    var start = new Date(parts[0].replace(/-/g, '/'));
+                    var end = new Date(parts[1].replace(/-/g, '/'));
+                    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                        layer.msg('日期范围格式不正确');
+                        return false;
+                    }
+                    if (start > end) {
+                        layer.msg('开始日期不能晚于结束日期');
+                        return false;
+                    }
+                }
                 table.reload('table-list', {
                     url: "{:url('Order/personClientSearch')}",
                     where: {
@@ -944,8 +970,21 @@
             // 初始化折叠面板
             element.render('collapse');
             laydate.render({
-                elem: '#create_time'
+                elem: '#at_time',
+                range: true,
+                trigger: 'click'
             });
+            // 控制日期范围选择框的显示与隐藏
+            form.on('select(dateRange)', function (data) {
+                const isCustom = data.value === '';
+                $('#at_time').toggle(isCustom);
+                if (!isCustom) {
+                    $('#at_time').val('');
+                }
+            });
+
+            // 初始隐藏日期范围选择框
+            $('#at_time').hide();
 
         });
 
@@ -965,6 +1004,11 @@
 
         function resetForm() {
             document.getElementById('searchForm').reset();
+            $('#at_time').val('');
+            $('#at_time').hide();
+            if (typeof layui !== 'undefined' && layui.form) {
+                layui.form.render('select');
+            }
         }
     </script>
 

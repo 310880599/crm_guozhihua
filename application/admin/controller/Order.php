@@ -3983,11 +3983,18 @@ class Order extends Common
 
         $where[] = ['check_status', '=', 2];
         if (isset($keyword['order_no'])) $where[] = ['order_no', 'like', "%{$keyword['order_no']}%"];
-        if (isset($keyword['timebucket'])) {
-            $where[] = $this->buildTimeWhere($keyword['timebucket'], 'order_time');
+        // 时间筛选优先级：非空 timebucket > 非空 at_time（自定义日期范围）
+        $timeCondition = null;
+        if (isset($keyword['timebucket']) && $keyword['timebucket'] !== '') {
+            $timeCondition = $keyword['timebucket'];
+        } elseif (isset($keyword['at_time']) && $keyword['at_time'] !== '') {
+            $timeCondition = $keyword['at_time'];
+        }
+        if ($timeCondition !== null) {
+            $where[] = $this->buildTimeWhere($timeCondition, 'order_time');
 
-            $timeWhere['at_time'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
-            $timeWhere['to_kh_time'] = $this->buildTimeWhere($keyword['timebucket'], 'to_kh_time');
+            $timeWhere['at_time'] = $this->buildTimeWhere($timeCondition, 'at_time');
+            $timeWhere['to_kh_time'] = $this->buildTimeWhere($timeCondition, 'to_kh_time');
             $client_where[] =  function ($query) use ($timeWhere) {
                 $query->where(...$timeWhere['at_time']);
                 $query->whereOr(...$timeWhere['to_kh_time']);
