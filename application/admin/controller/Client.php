@@ -1603,6 +1603,33 @@ class Client extends Common
     }
 
     /**
+     * 批量装配成交客户成交时间字段 deal_times（仅加工当前页）
+     *
+     * @param array $rows
+     * @return void
+     */
+    private function appendDealTimes(array &$rows): void
+    {
+        if (empty($rows)) {
+            return;
+        }
+
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', array_column($rows, 'id')))));
+        $dealTimesMap = [];
+        if (!empty($leadIds)) {
+            $dealTimesMap = (new SuccessClientOrderService())->getDealTimesByLeadIds($leadIds);
+        }
+
+        foreach ($rows as &$row) {
+            $leadId = (int)($row['id'] ?? 0);
+            $row['deal_times'] = (isset($dealTimesMap[$leadId]) && is_array($dealTimesMap[$leadId]))
+                ? array_values($dealTimesMap[$leadId])
+                : [];
+        }
+        unset($row);
+    }
+
+    /**
      * 跟进筛选参数归一（follow_filter + follow_days -> __follow_*）
      */
     private function normalizeFollowFilterKeyword(array $keyword): array
@@ -1647,6 +1674,7 @@ class Client extends Common
             $rows = &$list['data'];
             $this->enrichLeadsRows($rows);
             $this->appendSuccessClientOrderSummary($rows);
+            $this->appendDealTimes($rows);
             // ====== 修改 successCliList 结束 ======
             // 返回数据列表
             return [
@@ -5150,15 +5178,37 @@ class Client extends Common
             $keyword = [];
         }
 
-        // 日期标准化：自定义 at_time 优先于快捷 timebucket；非法自定义日期返回空结果（禁止静默扩大范围）
+        // 创建日期：自定义 at_time 优先于快捷 timebucket；非法自定义日期返回空结果（禁止静默扩大范围）
         if (!empty($keyword['at_time'])) {
-            $atTime = trim((string)$keyword['at_time']);
-            if (!$this->isValidChengjiaoCustomDate($atTime)) {
-                return ['code' => 0, 'msg' => '日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
+            $atTime = $this->normalizeChengjiaoCustomDateForBuildTimeWhere((string)$keyword['at_time']);
+            if ($atTime === '' || !$this->isValidChengjiaoCustomDate($atTime)) {
+                return ['code' => 0, 'msg' => '创建日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
             }
             $keyword['timebucket'] = $this->buildTimeWhere($atTime, 'at_time');
         } elseif (!empty($keyword['timebucket'])) {
             $keyword['timebucket'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
+        }
+
+        // 成交日期：自定义 deal_time 优先于快捷 deal_timebucket；转换为起止时间供 Model EXISTS 使用
+        $dealTimeWhere = null;
+        if (!empty($keyword['deal_time'])) {
+            $dealTime = $this->normalizeChengjiaoCustomDateForBuildTimeWhere((string)$keyword['deal_time']);
+            if ($dealTime === '' || !$this->isValidChengjiaoCustomDate($dealTime)) {
+                return ['code' => 0, 'msg' => '成交日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
+            }
+            $dealTimeWhere = $this->buildTimeWhere($dealTime, 'order_time');
+        } elseif (!empty($keyword['deal_timebucket'])) {
+            $dealTimeWhere = $this->buildTimeWhere($keyword['deal_timebucket'], 'order_time');
+        }
+        unset($keyword['deal_time'], $keyword['deal_timebucket']);
+
+        if (is_array($dealTimeWhere) && !$this->applyChengjiaoDealOrderTimeKeyword($keyword, $dealTimeWhere)) {
+            return ['code' => 0, 'msg' => '成交日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
+        }
+
+        // 高级查询权限：非超管禁止信任客户端传入的 pr_user（与 Model 强制绑定双保险）
+        if ((int)session('aid') !== 1) {
+            $keyword['pr_user'] = session('username');
         }
 
         $list = model('client')->getChengjiaoClientSearchList($page, $limit, $keyword);
@@ -5167,7 +5217,43 @@ class Client extends Common
         }
         $this->enrichLeadsRows($list['data']);
         $this->appendSuccessClientOrderSummary($list['data']);
+        $this->appendDealTimes($list['data']);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
+    }
+
+    /**
+     * 将 buildTimeWhere(order_time) 结果转为 Model 可用的起止参数（禁止把 order_time 条件直接挂到 crm_leads）
+     *
+     * @param array $keyword
+     * @param array $dealTimeWhere
+     * @return bool
+     */
+    private function applyChengjiaoDealOrderTimeKeyword(array &$keyword, array $dealTimeWhere): bool
+    {
+        if (count($dealTimeWhere) < 3) {
+            return false;
+        }
+        $op = isset($dealTimeWhere[1]) ? (string)$dealTimeWhere[1] : '';
+        if ($op === 'between time' && is_array($dealTimeWhere[2]) && count($dealTimeWhere[2]) >= 2) {
+            $start = trim((string)$dealTimeWhere[2][0]);
+            $end = trim((string)$dealTimeWhere[2][1]);
+            if ($start === '' || $end === '') {
+                return false;
+            }
+            $keyword['__deal_order_time_start'] = $start;
+            $keyword['__deal_order_time_end'] = $end;
+            return true;
+        }
+        if ($op === '>=') {
+            $start = trim((string)$dealTimeWhere[2]);
+            if ($start === '') {
+                return false;
+            }
+            $keyword['__deal_order_time_start'] = $start;
+            $keyword['__deal_order_time_end'] = '';
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -5200,6 +5286,28 @@ class Client extends Common
             return false;
         }
         return true;
+    }
+
+    /**
+     * 将自定义单日规范为 "Y-m-d - Y-m-d"，避免 Common::buildTimeWhere 单日分支多算一天
+     * （不修改公共方法，仅成交客户查询链生效）
+     *
+     * @param string $raw
+     * @return string 规范化后的日期串；非法返回空串
+     */
+    private function normalizeChengjiaoCustomDateForBuildTimeWhere($raw)
+    {
+        $raw = trim((string)$raw);
+        if ($raw === '') {
+            return '';
+        }
+        if (strpos($raw, ' - ') !== false) {
+            return $raw;
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+            return $raw;
+        }
+        return $raw . ' - ' . $raw;
     }
     // ====== 修改 chengjiaoClientSearch 结束 ======
 

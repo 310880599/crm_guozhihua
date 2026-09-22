@@ -105,6 +105,155 @@ class SuccessClientOrderService
     }
 
     /**
+     * 批量获取成交客户成交时间列表（固定 order_time，按 leads_id 分组）
+     *
+     * 关联口径（须与 Model 成交日期 EXISTS 完全一致）：
+     * crm_leads.id -> crm_contacts.leads_id (is_delete=0, contact_type IN (1,3))
+     * -> crm_contacts.contact_value = crm_client_order.contact
+     * -> crm_client_order.check_status = 2 且 order_time 有效
+     *
+     * @param array $leadIds 当前页客户 ID
+     * @return array<int,array<int,array{order_id:int,order_no:string,order_time:string}>>
+     */
+    public function getDealTimesByLeadIds(array $leadIds): array
+    {
+        $leadIds = array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($leadIds)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($leadIds as $leadId) {
+            $result[$leadId] = [];
+        }
+
+        $contactRows = [];
+        try {
+            $contactRows = Db::table('crm_contacts')
+                ->whereIn('leads_id', $leadIds)
+                ->where('is_delete', 0)
+                ->whereIn('contact_type', [1, 3])
+                ->field('leads_id,contact_value')
+                ->select();
+        } catch (Throwable $e) {
+            return $result;
+        }
+
+        // contact_value => [leads_id => true]；精确匹配，仅 trim，不做模糊/相似处理
+        $contactToLeadIds = [];
+        foreach ($contactRows as $row) {
+            $leadId = (int)($row['leads_id'] ?? 0);
+            $contact = trim((string)($row['contact_value'] ?? ''));
+            if ($leadId <= 0 || $contact === '') {
+                continue;
+            }
+            if (!isset($contactToLeadIds[$contact])) {
+                $contactToLeadIds[$contact] = [];
+            }
+            $contactToLeadIds[$contact][$leadId] = true;
+        }
+        if (empty($contactToLeadIds)) {
+            return $result;
+        }
+
+        $orders = [];
+        try {
+            $contactKeys = array_keys($contactToLeadIds);
+            $bind = [];
+            $placeholders = [];
+            foreach ($contactKeys as $i => $cv) {
+                $key = 'cv' . $i;
+                $placeholders[] = ':' . $key;
+                $bind[$key] = $cv;
+            }
+            $orders = Db::table('crm_client_order')->alias('o')
+                ->whereRaw('TRIM(o.contact) IN (' . implode(',', $placeholders) . ')', $bind)
+                ->where('o.check_status', 2)
+                ->whereNotNull('o.order_time')
+                ->where('o.order_time', '<>', '0000-00-00 00:00:00')
+                ->where('o.order_time', '<>', '0000-00-00')
+                ->field('o.id,o.order_no,o.order_time,o.contact')
+                ->select();
+        } catch (Throwable $e) {
+            return $result;
+        }
+
+        $byLead = [];
+        foreach ($orders as $order) {
+            $orderId = (int)($order['id'] ?? 0);
+            $contact = trim((string)($order['contact'] ?? ''));
+            if ($orderId <= 0 || $contact === '' || empty($contactToLeadIds[$contact])) {
+                continue;
+            }
+
+            $mappedLeadIds = array_keys($contactToLeadIds[$contact]);
+            // 与 Model EXISTS 一致：命中关联联系人的客户均装配（本页 leadIds 范围内）
+            // 不在此排除“一号多客”；库表 contact_value 唯一约束下实际不会出现跨客歧义
+            $orderTime = $this->normalizeValidOrderTime($order['order_time'] ?? null);
+            if ($orderTime === '') {
+                continue;
+            }
+
+            foreach ($mappedLeadIds as $leadId) {
+                $leadId = (int)$leadId;
+                if (!isset($result[$leadId])) {
+                    continue;
+                }
+                if (!isset($byLead[$leadId])) {
+                    $byLead[$leadId] = [];
+                }
+                // 按 order_id 去重（同时间多单保留多条）
+                if (isset($byLead[$leadId][$orderId])) {
+                    continue;
+                }
+                $byLead[$leadId][$orderId] = [
+                    'order_id'   => $orderId,
+                    'order_no'   => (string)($order['order_no'] ?? ''),
+                    'order_time' => $orderTime,
+                ];
+            }
+        }
+
+        foreach ($byLead as $leadId => $orderMap) {
+            $list = array_values($orderMap);
+            usort($list, function ($a, $b) {
+                $cmp = strcmp((string)$b['order_time'], (string)$a['order_time']);
+                if ($cmp !== 0) {
+                    return $cmp;
+                }
+                return ((int)$b['order_id'] - (int)$a['order_id']);
+            });
+            $result[$leadId] = $list;
+        }
+
+        return $result;
+    }
+
+    /**
+     * 归一化有效成交时间；非法/零日期返回空串（禁止 create_time/audit_time 兜底）
+     *
+     * @param mixed $orderTime
+     * @return string
+     */
+    private function normalizeValidOrderTime($orderTime): string
+    {
+        if ($orderTime === null) {
+            return '';
+        }
+        $raw = trim((string)$orderTime);
+        if ($raw === '' || $raw === '0000-00-00' || $raw === '0000-00-00 00:00:00') {
+            return '';
+        }
+        $ts = strtotime($raw);
+        if ($ts === false || $ts <= 0) {
+            return '';
+        }
+        return date('Y-m-d H:i:s', $ts);
+    }
+
+    /**
      * 分页获取某成交客户关联订单明细
      *
      * @param int $leadId

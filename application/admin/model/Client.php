@@ -1000,14 +1000,15 @@ class Client extends Model
         $mapXsSource = []; //线索/客户来源
         $mapPrUser = []; //业务员/负责人
 
-        if ($keyword['pr_user'] != '') {
-            $mapPrUser['pr_user'] = $keyword['pr_user'];
-            //$mapPrUser = [['pr_user','like','%'.$keyword['pr_user'].'%']];
-        } else {
-            if (session('aid') == 1) {
-            } else {
-                $mapPrUser['pr_user'] = session('username');
+        // 权限：非超级管理员（aid!=1）强制绑定当前登录用户，禁止信任客户端 keyword[pr_user]
+        // 与 successCliList 口径一致；超级管理员才可按请求参数筛选业务员
+        if ((int)session('aid') === 1) {
+            $selectedPrUser = isset($keyword['pr_user']) ? trim((string)$keyword['pr_user']) : '';
+            if ($selectedPrUser !== '') {
+                $mapPrUser['pr_user'] = $selectedPrUser;
             }
+        } else {
+            $mapPrUser['pr_user'] = session('username');
         }
         // 日期条件由 Controller::buildTimeWhere 标准化后写入 keyword['timebucket']
         if (!empty($keyword['timebucket'])) {
@@ -1038,7 +1039,7 @@ class Client extends Model
 
 
 
-        $result  = Db::table('crm_leads')
+        $query = Db::table('crm_leads')
             ->where($mapPhone)
             ->where($mapKhName)
             ->where($mapKhStatus)
@@ -1046,7 +1047,38 @@ class Client extends Model
             ->where($mapXsSource)
             ->where($mapAtTime)
             ->where($mapPrUser)
-            ->where(['status' => 1, 'issuccess' => 1]) //0 线索，1客户，2公海
+            ->where(['status' => 1, 'issuccess' => 1]); //0 线索，1客户，2公海
+
+        // 成交日期 EXISTS：与 SuccessClientOrderService::getDealTimesByLeadIds 关联口径一致
+        // 精确匹配 + 两侧 TRIM（与 Service 一致）；不 JOIN 订单，避免一人多单导致客户行重复；须在 paginate 前生效
+        $dealStart = isset($keyword['__deal_order_time_start']) ? trim((string)$keyword['__deal_order_time_start']) : '';
+        $dealEnd = isset($keyword['__deal_order_time_end']) ? trim((string)$keyword['__deal_order_time_end']) : '';
+        if ($dealStart !== '') {
+            $existsSql = 'EXISTS (
+                SELECT 1
+                FROM crm_contacts c
+                INNER JOIN crm_client_order o ON TRIM(o.contact) = TRIM(c.contact_value)
+                WHERE c.leads_id = crm_leads.id
+                  AND c.is_delete = 0
+                  AND c.contact_type IN (1, 3)
+                  AND TRIM(c.contact_value) <> \'\'
+                  AND TRIM(o.contact) <> \'\'
+                  AND o.check_status = 2
+                  AND o.order_time IS NOT NULL
+                  AND o.order_time <> \'0000-00-00 00:00:00\'
+                  AND o.order_time <> \'0000-00-00\'
+                  AND o.order_time >= :deal_order_time_start
+            ';
+            $bind = ['deal_order_time_start' => $dealStart];
+            if ($dealEnd !== '') {
+                $existsSql .= ' AND o.order_time <= :deal_order_time_end';
+                $bind['deal_order_time_end'] = $dealEnd;
+            }
+            $existsSql .= ')';
+            $query->whereRaw($existsSql, $bind);
+        }
+
+        $result = $query
             // ->where(['pr_user' => session('username')]) //负责人
             ->order('at_time desc')
             ->paginate(array('list_rows' => $limit, 'page' => $page))

@@ -71,6 +71,39 @@
             background: #fafafa;
         }
 
+        /* 成交时间列：允许多行展开，避免固定行高裁剪 */
+        td[data-field="deal_times"] .layui-table-cell {
+            height: auto !important;
+            line-height: 22px !important;
+            white-space: normal !important;
+            overflow: visible !important;
+            padding-top: 8px;
+            padding-bottom: 8px;
+        }
+        .deal-times-wrap {
+            text-align: left;
+        }
+        .deal-times-wrap .deal-time-item {
+            display: block;
+            color: #333;
+            font-size: 12px;
+            line-height: 20px;
+        }
+        .deal-times-wrap .deal-times-empty {
+            color: #999;
+        }
+        .deal-times-wrap .deal-times-toggle {
+            display: inline-block;
+            margin-top: 4px;
+            color: #1E9FFF;
+            cursor: pointer;
+            font-size: 12px;
+            user-select: none;
+        }
+        .deal-times-wrap .deal-times-toggle:hover {
+            text-decoration: underline;
+        }
+
         .layui-elem-field legend {
             font-size: 16px;
             font-weight: 600;
@@ -173,12 +206,13 @@
         }
 
         .layui-table tbody tr {
-            transition: all 0.2s ease;
+            transition: background-color 0.2s ease;
         }
 
-        .layui-table tbody tr:hover {
+        /* 成交客户主表：保留 hover 背景，去掉 scale，避免主表与固定列视觉错位 */
+        .layui-table-view[lay-id="table-list"] .layui-table-body tbody tr:hover {
             background-color: #f5f7fa;
-            transform: scale(1.01);
+            transform: none;
         }
 
         .layui-table tbody td {
@@ -528,7 +562,7 @@
                         </div>
                     </div>
                     <div class="layui-inline">
-                        <label class="layui-form-label">日期查询：</label>
+                        <label class="layui-form-label">创建日期：</label>
                         <div class="layui-input-inline">
                             <select id="dateRange" lay-filter="dateRange" name="timebucket" class="layui-select">
                                 <option value="" selected>自定义</option>
@@ -545,6 +579,26 @@
                         </div>
                         <div class="layui-input-inline">
                             <input type="text" class="layui-input" id="at_time" name="at_time" placeholder="选择日期范围">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label">成交日期：</label>
+                        <div class="layui-input-inline">
+                            <select id="dealDateRange" lay-filter="dealDateRange" name="deal_timebucket" class="layui-select">
+                                <option value="" selected>自定义</option>
+                                <option value="today">今天</option>
+                                <option value="yesterday">昨天</option>
+                                <option value="week">本周</option>
+                                <option value="last week">上周</option>
+                                <option value="month">本月</option>
+                                <option value="last month">上月</option>
+                                <option value="year">今年</option>
+                                <option value="last year">去年</option>
+                                <option value="-2 hours">两个小时内</option>
+                            </select>
+                        </div>
+                        <div class="layui-input-inline">
+                            <input type="text" class="layui-input" id="deal_time" name="deal_time" placeholder="选择日期范围">
                         </div>
                     </div>
                     {if $Think.session.aid == 1}
@@ -706,6 +760,232 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
     var lastSnapshot = {};
     var resizeSaveTimer = null;
 
+    // 主表 / 左右固定列行高同步（本页专用；合并 rAF，避免污染订单弹窗表格）
+    var chengjiaoRowHeightSyncToken = 0;
+    var chengjiaoRowHeightRafId = null;
+    var chengjiaoRowHeightResizeBound = false;
+    var chengjiaoRowHeightResizeTimer = null;
+
+    function getChengjiaoTableView() {
+        var $byLayId = $('.layui-table-view[lay-id="' + tableId + '"]');
+        if ($byLayId.length === 1) {
+            return $byLayId;
+        }
+        if ($byLayId.length > 1) {
+            return $();
+        }
+        var $elem = $('#' + tableId);
+        if (!$elem.length) {
+            return $();
+        }
+        var $next = $elem.nextAll('.layui-table-view[lay-id="' + tableId + '"]').first();
+        if ($next.length === 1) {
+            return $next;
+        }
+        return $();
+    }
+
+    function collectChengjiaoBodyRowsByIndex($scope) {
+        var map = {};
+        var duplicate = false;
+        if (!$scope || !$scope.length) {
+            return { map: map, duplicate: false, count: 0 };
+        }
+        $scope.find('table').first().children('tbody').children('tr').each(function () {
+            var idx = this.getAttribute('data-index');
+            if (idx === null || idx === '') {
+                return;
+            }
+            if (Object.prototype.hasOwnProperty.call(map, idx)) {
+                duplicate = true;
+                return;
+            }
+            map[idx] = this;
+        });
+        return {
+            map: map,
+            duplicate: duplicate,
+            count: Object.keys(map).length
+        };
+    }
+
+    function clearChengjiaoSyncedRowHeight(tr) {
+        if (!tr || !tr.style) {
+            return;
+        }
+        tr.style.removeProperty('height');
+        if (tr.getAttribute('data-cj-row-h-sync') === '1') {
+            tr.removeAttribute('data-cj-row-h-sync');
+        }
+    }
+
+    function applyChengjiaoSyncedRowHeight(tr, h) {
+        if (!tr || !tr.style || !(h > 0)) {
+            return;
+        }
+        tr.style.setProperty('height', h + 'px');
+        tr.setAttribute('data-cj-row-h-sync', '1');
+    }
+
+    function measureChengjiaoRowNaturalHeight(tr) {
+        if (!tr) {
+            return 0;
+        }
+        var rect = tr.getBoundingClientRect();
+        var h = rect && rect.height ? rect.height : 0;
+        if (!h) {
+            h = tr.offsetHeight || 0;
+        }
+        return Math.ceil(h);
+    }
+
+    /**
+     * 同步成交客户主表与左右固定列每一行高度（逐行取三侧最大值）
+     */
+    function syncChengjiaoFixedRowHeights(expectedToken) {
+        if (typeof expectedToken === 'number' && expectedToken !== chengjiaoRowHeightSyncToken) {
+            return;
+        }
+        try {
+            var $view = getChengjiaoTableView();
+            if (!$view.length) {
+                return;
+            }
+
+            var $main = $view.find('.layui-table-main').first();
+            var $left = $view.find('.layui-table-fixed-l .layui-table-body').first();
+            var $right = $view.find('.layui-table-fixed-r .layui-table-body').first();
+            if (!$main.length) {
+                return;
+            }
+
+            var mainRows = collectChengjiaoBodyRowsByIndex($main);
+            var leftRows = collectChengjiaoBodyRowsByIndex($left);
+            var rightRows = collectChengjiaoBodyRowsByIndex($right);
+            if (mainRows.duplicate || leftRows.duplicate || rightRows.duplicate) {
+                return;
+            }
+
+            var mainMap = mainRows.map;
+            var leftMap = leftRows.map;
+            var rightMap = rightRows.map;
+            var indices = Object.keys(mainMap);
+            if (!indices.length) {
+                return;
+            }
+
+            // 对应关系不可靠时不强制按错位索引写入
+            if ($left.length && leftRows.count && leftRows.count !== indices.length) {
+                return;
+            }
+            if ($right.length && rightRows.count && rightRows.count !== indices.length) {
+                return;
+            }
+
+            // 1) 清理本函数写入的旧高度，恢复自然高度以便重新测量（收起后可缩回）
+            indices.forEach(function (idx) {
+                clearChengjiaoSyncedRowHeight(mainMap[idx]);
+                if (leftMap[idx]) {
+                    clearChengjiaoSyncedRowHeight(leftMap[idx]);
+                }
+                if (rightMap[idx]) {
+                    clearChengjiaoSyncedRowHeight(rightMap[idx]);
+                }
+            });
+
+            if (typeof expectedToken === 'number' && expectedToken !== chengjiaoRowHeightSyncToken) {
+                return;
+            }
+            if (!document.contains($view[0])) {
+                return;
+            }
+
+            // 2) 统一读取自然高度
+            var heightPlan = [];
+            indices.forEach(function (idx) {
+                var mainTr = mainMap[idx];
+                var leftTr = leftMap[idx] || null;
+                var rightTr = rightMap[idx] || null;
+                var maxH = Math.max(
+                    measureChengjiaoRowNaturalHeight(mainTr),
+                    measureChengjiaoRowNaturalHeight(leftTr),
+                    measureChengjiaoRowNaturalHeight(rightTr)
+                );
+                if (maxH > 0) {
+                    heightPlan.push({ mainTr: mainTr, leftTr: leftTr, rightTr: rightTr, h: maxH });
+                }
+            });
+
+            if (typeof expectedToken === 'number' && expectedToken !== chengjiaoRowHeightSyncToken) {
+                return;
+            }
+            if (!document.contains($view[0])) {
+                return;
+            }
+
+            // 3) 集中写入统一高度（只改 tr，不改 deal_times 单元格 height:auto）
+            heightPlan.forEach(function (item) {
+                applyChengjiaoSyncedRowHeight(item.mainTr, item.h);
+                if (item.leftTr) {
+                    applyChengjiaoSyncedRowHeight(item.leftTr, item.h);
+                }
+                if (item.rightTr) {
+                    applyChengjiaoSyncedRowHeight(item.rightTr, item.h);
+                }
+            });
+        } catch (e) {
+            console.warn('成交客户固定列行高同步失败:', e);
+        }
+    }
+
+    function scheduleChengjiaoFixedRowHeights() {
+        chengjiaoRowHeightSyncToken += 1;
+        var token = chengjiaoRowHeightSyncToken;
+        if (chengjiaoRowHeightRafId !== null) {
+            if (typeof cancelAnimationFrame === 'function') {
+                cancelAnimationFrame(chengjiaoRowHeightRafId);
+            }
+            chengjiaoRowHeightRafId = null;
+        }
+
+        function runSync() {
+            chengjiaoRowHeightRafId = null;
+            if (token !== chengjiaoRowHeightSyncToken) {
+                return;
+            }
+            syncChengjiaoFixedRowHeights(token);
+        }
+
+        if (typeof requestAnimationFrame === 'function') {
+            chengjiaoRowHeightRafId = requestAnimationFrame(function () {
+                if (token !== chengjiaoRowHeightSyncToken) {
+                    chengjiaoRowHeightRafId = null;
+                    return;
+                }
+                // 再等一帧，确保 Layui 完成布局后再测量
+                chengjiaoRowHeightRafId = requestAnimationFrame(runSync);
+            });
+        } else {
+            setTimeout(runSync, 0);
+        }
+    }
+
+    function bindChengjiaoRowHeightResizeOnce() {
+        if (chengjiaoRowHeightResizeBound) {
+            return;
+        }
+        chengjiaoRowHeightResizeBound = true;
+        $(window).on('resize.chengjiaoRowHeight', function () {
+            if (chengjiaoRowHeightResizeTimer) {
+                clearTimeout(chengjiaoRowHeightResizeTimer);
+            }
+            chengjiaoRowHeightResizeTimer = setTimeout(function () {
+                chengjiaoRowHeightResizeTimer = null;
+                scheduleChengjiaoFixedRowHeights();
+            }, 150);
+        });
+    }
+
     // 定义表格列
     var mainCols = [[
         { type: 'checkbox', fixed: true , width: 50},
@@ -726,6 +1006,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                     return '<span style="color:#999;">暂无订单</span>';
                 }
                 return '<span style="color:#16baaa;font-weight:bold;">' + layui.util.escape(d.order_summary_text || '') + '</span>';
+            }
+        },
+        { field: 'deal_times', title: '成交时间', width: 220, templet: function(d){
+                return renderDealTimesCell(d);
             }
         },
         { field: 'last_up_records', title: '最新跟进记录', width:180 },
@@ -828,6 +1112,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                 if (Object.keys(snapshot).length > 0) {
                     lastSnapshot = snapshot;
                 }
+                bindChengjiaoRowHeightResizeOnce();
+                scheduleChengjiaoFixedRowHeights();
             }
         });
         window.tableIns = tableIns;
@@ -1066,6 +1352,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                 if (JSON.stringify(newSnapshot) !== JSON.stringify(lastSnapshot)) {
                     saveWidths();
                     lastSnapshot = newSnapshot;
+                    scheduleChengjiaoFixedRowHeights();
                 }
             }, 100);
         });
@@ -1313,21 +1600,130 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             }
         });
     });
+    var dealTimesExpandState = {};
+
+    // 成交时间展示：默认最近3条，支持展开/收起（事件委托，避免重复绑定）
+    function renderDealTimesCell(d) {
+        var list = Array.isArray(d.deal_times) ? d.deal_times : [];
+        if (!list.length) {
+            return '<div class="deal-times-wrap"><span class="deal-times-empty">暂无可确认的成交时间</span></div>';
+        }
+        var leadId = parseInt(d.id, 10) || 0;
+        var expanded = !!(dealTimesExpandState[leadId]);
+        var total = list.length;
+        var showCount = (expanded || total <= 3) ? total : 3;
+        var html = '<div class="deal-times-wrap" data-lead-id="' + leadId + '">';
+        for (var i = 0; i < showCount; i++) {
+            var item = list[i] || {};
+            var t = layui.util.escape(item.order_time || '');
+            if (!t) continue;
+            html += '<span class="deal-time-item">' + t + '</span>';
+        }
+        if (total > 3) {
+            if (expanded) {
+                html += '<a href="javascript:;" class="deal-times-toggle" data-action="collapse">收起</a>';
+            } else {
+                html += '<a href="javascript:;" class="deal-times-toggle" data-action="expand">展开全部（共' + total + '条）</a>';
+            }
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function isValidChengjiaoDateRange(raw) {
+        raw = $.trim(raw || '');
+        if (raw === '') return true;
+        var start = raw, end = raw;
+        if (raw.indexOf(' - ') !== -1) {
+            var parts = raw.split(' - ');
+            start = $.trim(parts[0] || '');
+            end = $.trim(parts[1] || '');
+        }
+        var re = /^\d{4}-\d{2}-\d{2}$/;
+        if (!re.test(start) || !re.test(end)) return false;
+        function parseYmd(s) {
+            var a = s.split('-');
+            return new Date(parseInt(a[0], 10), parseInt(a[1], 10) - 1, parseInt(a[2], 10));
+        }
+        var ds = parseYmd(start), de = parseYmd(end);
+        if (isNaN(ds.getTime()) || isNaN(de.getTime())) return false;
+        if (ds.getFullYear() !== parseInt(start.split('-')[0], 10)) return false;
+        if ((ds.getMonth() + 1) !== parseInt(start.split('-')[1], 10)) return false;
+        if (ds.getDate() !== parseInt(start.split('-')[2], 10)) return false;
+        if (de.getFullYear() !== parseInt(end.split('-')[0], 10)) return false;
+        if ((de.getMonth() + 1) !== parseInt(end.split('-')[1], 10)) return false;
+        if (de.getDate() !== parseInt(end.split('-')[2], 10)) return false;
+        if (start > end) return false;
+        return true;
+    }
+
     // 高级搜索表单提交
     form.on('submit(LAY-app-contlist-search)', function(data) {
+        var field = data.field || {};
+        // 自定义日期优先：有自定义值时清空对应快捷项，避免两组互相干扰
+        if ($.trim(field.at_time || '') !== '') {
+            field.timebucket = '';
+        }
+        if ($.trim(field.deal_time || '') !== '') {
+            field.deal_timebucket = '';
+        }
+        if (!isValidChengjiaoDateRange(field.at_time)) {
+            layer.msg('创建日期参数无效');
+            return false;
+        }
+        if (!isValidChengjiaoDateRange(field.deal_time)) {
+            layer.msg('成交日期参数无效');
+            return false;
+        }
+        dealTimesExpandState = {};
         table.reload('table-list', {
             url: "{:url('Client/chengjiaoClientSearch')}",
-            where: { keyword: data.field },
+            where: { keyword: field },
             page: { curr: 1 }
         });
         return false;
     });
-    // 日期选择组件初始化（支持范围选择）
+
+    $(document).off('click.dealTimesToggle').on('click.dealTimesToggle', '.deal-times-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var $wrap = $(this).closest('.deal-times-wrap');
+        var leadId = parseInt($wrap.attr('data-lead-id'), 10) || 0;
+        if (!leadId) return;
+        var action = $(this).attr('data-action');
+        dealTimesExpandState[leadId] = (action === 'expand');
+
+        var rowData = null;
+        var cache = table.cache['table-list'] || [];
+        for (var i = 0; i < cache.length; i++) {
+            if (parseInt(cache[i].id, 10) === leadId) {
+                rowData = cache[i];
+                break;
+            }
+        }
+        if (!rowData) return;
+
+        var $cell = $wrap.closest('td[data-field="deal_times"]').find('.layui-table-cell');
+        if ($cell.length) {
+            $cell.html(renderDealTimesCell(rowData));
+        } else {
+            $wrap.replaceWith($(renderDealTimesCell(rowData)));
+        }
+        scheduleChengjiaoFixedRowHeights();
+    });
+
+    // 日期选择组件初始化（支持范围选择）；创建日期与成交日期独立，不得互相清空
     laydate.render({ elem: '#at_time', range: true, trigger: 'click' });
+    laydate.render({ elem: '#deal_time', range: true, trigger: 'click' });
     form.on('select(dateRange)', function(data) {
         var isCustom = (data.value === '');
         $('#at_time').toggle(isCustom);
         if (!isCustom) $('#at_time').val('');
+    });
+    form.on('select(dealDateRange)', function(data) {
+        var isCustom = (data.value === '');
+        $('#deal_time').toggle(isCustom);
+        if (!isCustom) $('#deal_time').val('');
     });
     // 初始化运营人员下拉（EditableSelect插件）
     const yySelect = new EditableSelect(document.getElementById('oper_user_input'), {$_yyList|raw}, '运营人员', '', 'name');
