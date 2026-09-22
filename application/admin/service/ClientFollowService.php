@@ -9,6 +9,17 @@ use Throwable;
 class ClientFollowService
 {
     const NEXT_UP_TIME_DEFAULT_CLOCK = '09:00:00';
+
+    /** 跟进身份快照：客户负责人 */
+    const FOLLOW_ROLE_OWNER = 'owner';
+    /** 跟进身份快照：客户协同人 */
+    const FOLLOW_ROLE_COLLABORATOR = 'collaborator';
+    /** 跟进身份快照：仅超管权限写入 */
+    const FOLLOW_ROLE_ADMIN = 'admin';
+
+    /** @var bool|null */
+    private $followRoleColumnExists = null;
+
     /**
      * 保存客户跟进记录，并同步更新 crm_leads 跟进字段
      *
@@ -36,12 +47,22 @@ class ClientFollowService
             return $this->fail('请输入跟进内容');
         }
 
+        // 不信任前端传入的 follow_role；身份仅由后端计算
+        if (!$this->hasFollowRoleColumn()) {
+            return $this->fail('跟进身份字段未就绪，请先执行数据库变更后再保存跟进');
+        }
+
         $client = Db::table('crm_leads')->where('id', $leadsId)->find();
         if (!$client) {
             return $this->fail('客户不存在');
         }
 
         if (!$this->canOperateClient($client, $operatorId, $operatorName)) {
+            return $this->fail('您没有权限操作该客户');
+        }
+
+        $followRole = $this->resolveFollowRole($client, $operatorId, $operatorName);
+        if ($followRole === '') {
             return $this->fail('您没有权限操作该客户');
         }
 
@@ -55,9 +76,26 @@ class ClientFollowService
 
         Db::startTrans();
         try {
+            // 提交时重新读取客户状态，避免弹窗期间客户已转移仍写入旧身份
+            $freshClient = Db::table('crm_leads')
+                ->where('id', $leadsId)
+                ->lock(true)
+                ->find();
+            if (!$freshClient) {
+                throw new \RuntimeException('客户不存在');
+            }
+            if (!$this->canOperateClient($freshClient, $operatorId, $operatorName)) {
+                throw new \RuntimeException('您没有权限操作该客户');
+            }
+            $followRole = $this->resolveFollowRole($freshClient, $operatorId, $operatorName);
+            if ($followRole === '') {
+                throw new \RuntimeException('您没有权限操作该客户');
+            }
+
             Db::table('crm_comment')->insert([
                 'leads_id' => $leadsId,
                 'user_id' => $operatorId,
+                'follow_role' => $followRole,
                 'reply_msg' => $content,
                 'create_date' => $nowTimestamp,
             ]);
@@ -79,6 +117,8 @@ class ClientFollowService
                     'reply_msg' => $content,
                     'create_date' => date('Y年m月d日 H:i', $nowTimestamp),
                     'next_up_time' => $this->formatNextUpTimeForDisplay($nextUpValue),
+                    'follow_role' => $followRole,
+                    'follow_role_text' => $this->getFollowRoleText($followRole),
                 ],
             ];
         } catch (Throwable $e) {
@@ -93,17 +133,129 @@ class ClientFollowService
      */
     public function canOperateClient(array $client, $operatorId, $operatorName)
     {
-        if ((int)$operatorId === 1) {
-            return true;
+        return $this->resolveFollowRole($client, $operatorId, $operatorName) !== '';
+    }
+
+    /**
+     * 计算跟进写入身份（不信任前端）
+     * 优先级：owner > collaborator > admin
+     *
+     * @return string owner|collaborator|admin|''（空表示无写权限）
+     */
+    public function resolveFollowRole(array $client, $operatorId, $operatorName)
+    {
+        $operatorId = (int)$operatorId;
+        $operatorName = trim((string)$operatorName);
+        if ($operatorId <= 0) {
+            return '';
         }
 
         $ownerName = trim((string)($client['pr_user'] ?? ''));
-        $isOwner = ($ownerName !== '' && $ownerName === $operatorName);
-        if ($isOwner) {
+        if ($ownerName !== '' && $operatorName !== '' && $ownerName === $operatorName) {
+            return self::FOLLOW_ROLE_OWNER;
+        }
+
+        if ($this->isJointPerson($client, $operatorId)) {
+            return self::FOLLOW_ROLE_COLLABORATOR;
+        }
+
+        if ($operatorId === 1) {
+            return self::FOLLOW_ROLE_ADMIN;
+        }
+
+        return '';
+    }
+
+    /**
+     * 身份快照展示文案
+     */
+    public function getFollowRoleText($followRole)
+    {
+        $role = trim((string)$followRole);
+        if ($role === self::FOLLOW_ROLE_OWNER) {
+            return '客户负责人';
+        }
+        if ($role === self::FOLLOW_ROLE_COLLABORATOR) {
+            return '客户协同人';
+        }
+        if ($role === self::FOLLOW_ROLE_ADMIN) {
+            return '管理员';
+        }
+        if ($role === '') {
+            return '历史身份待确认';
+        }
+        return '未知身份';
+    }
+
+    /**
+     * 客户跟进只读权限（不扩大写权限）
+     * 覆盖：负责人 / 协同人 / admin_id=1 / 全订单管理权限 / 全部客户列表可见 / 检查客户可见
+     */
+    public function canReadClientFollow(array $client, $operatorId, $operatorName, array $adminContext = [])
+    {
+        $operatorId = (int)$operatorId;
+        $operatorName = trim((string)$operatorName);
+        if ($operatorId <= 0) {
+            return false;
+        }
+
+        if ($this->canOperateClient($client, $operatorId, $operatorName)) {
             return true;
         }
 
-        return $this->isJointPerson($client, $operatorId);
+        $adminInfo = [
+            'admin_id' => $operatorId,
+            'username' => $operatorName,
+            'group_id' => (int)($adminContext['group_id'] ?? 0),
+        ];
+        if (OrderService::canManageAllOrders($adminInfo)) {
+            return true;
+        }
+
+        $clientId = (int)($client['id'] ?? 0);
+        if ($clientId <= 0) {
+            return false;
+        }
+
+        $visibleId = model('Client')->buildClientSearchAllBaseQuery([])
+            ->where('l.id', $clientId)
+            ->value('l.id');
+        if (!empty($visibleId)) {
+            return true;
+        }
+
+        $visibleUsers = $this->resolveCheckClientVisibleUsernames($adminContext);
+        $currentAdmin = [
+            'admin_id' => $operatorId,
+            'group_id' => (int)($adminContext['group_id'] ?? 0),
+            'username' => $operatorName,
+            'is_super_admin' => $this->isCheckClientFullViewer($adminContext) ? 1 : 0,
+        ];
+        $built = model('Client')->buildCheckClientQuery(
+            ['__id_in' => [$clientId]],
+            $visibleUsers,
+            $currentAdmin
+        );
+        if ($built === null || empty($built['query'])) {
+            return false;
+        }
+        $checkVisibleId = $built['query']->value('l.id');
+
+        return !empty($checkVisibleId);
+    }
+
+    /**
+     * 为评论行附加跟进身份展示字段（增量，不覆盖原字段）
+     */
+    public function appendFollowRoleDisplay(array $comment)
+    {
+        $role = '';
+        if (array_key_exists('follow_role', $comment)) {
+            $role = trim((string)$comment['follow_role']);
+        }
+        $comment['follow_role'] = $role;
+        $comment['follow_role_text'] = $this->getFollowRoleText($role);
+        return $comment;
     }
 
     /**
@@ -275,8 +427,10 @@ class ClientFollowService
 
     /**
      * 跟进弹窗客户信息组装（控制器调度，service 统一组装展示字段）。
+     *
+     * @param array $operatorInfo ['admin_id'=>int,'username'=>string] 可选，传入时附加当前操作人身份
      */
-    public function buildFollowClientDetailData(array $client, $clientId)
+    public function buildFollowClientDetailData(array $client, $clientId, array $operatorInfo = [])
     {
         if (!array_key_exists('next_up_time', $client)) {
             $client['next_up_time'] = '';
@@ -390,6 +544,18 @@ class ClientFollowService
         $client['joint_person_ids'] = $jointPersonIds;
         $client['joint_person_names'] = implode('、', $jointPersonNames);
 
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? ''));
+        if ($operatorId > 0) {
+            $currentRole = $this->resolveFollowRole($client, $operatorId, $operatorName);
+            $client['current_operator'] = $operatorName;
+            $client['current_role'] = $currentRole;
+            $client['current_role_text'] = $currentRole !== ''
+                ? $this->getFollowRoleText($currentRole)
+                : '';
+            $client['can_write_follow'] = $currentRole !== '';
+        }
+
         return $client;
     }
 
@@ -408,6 +574,7 @@ class ClientFollowService
 
         foreach ($comments as &$comment) {
             $comment['create_date'] = date('Y年m月d日 H:i', $comment['create_date']);
+            $comment = $this->appendFollowRoleDisplay($comment);
         }
         unset($comment);
 
@@ -1127,6 +1294,102 @@ class ClientFollowService
             return false;
         }
         return $ts <= time();
+    }
+
+    /**
+     * crm_comment.follow_role 是否已就绪（带进程内缓存）
+     */
+    public function hasFollowRoleColumn()
+    {
+        if ($this->followRoleColumnExists !== null) {
+            return $this->followRoleColumnExists;
+        }
+
+        try {
+            $column = Db::query("SHOW COLUMNS FROM `crm_comment` LIKE 'follow_role'");
+            $this->followRoleColumnExists = !empty($column);
+        } catch (Throwable $e) {
+            $this->followRoleColumnExists = false;
+        }
+
+        return $this->followRoleColumnExists;
+    }
+
+    /**
+     * 检查客户「全员查看」识别（与 Client 控制器既有名单保持一致）
+     */
+    private function isCheckClientFullViewer(array $adminContext)
+    {
+        $adminId = (int)($adminContext['admin_id'] ?? 0);
+        $groupId = (int)($adminContext['group_id'] ?? 0);
+        // 395李营 350李燕慧 375拜云梦 387张二凤 391范文清 405李鹏 392叶诗龙 407乔亚锋
+        $specialAdminIds = [395, 350, 375, 387, 391, 405, 392, 407];
+
+        return (
+            $adminId === 1
+            || $groupId === 1
+            || in_array($adminId, $specialAdminIds, true)
+        );
+    }
+
+    /**
+     * 检查客户可见业务员用户名（与 Client::getCheckClientAllowedUsernames 口径一致）
+     *
+     * @return string[]
+     */
+    private function resolveCheckClientVisibleUsernames(array $adminContext)
+    {
+        $currentAdminId = (int)($adminContext['admin_id'] ?? 0);
+        $currentUsername = trim((string)($adminContext['username'] ?? ''));
+        $currentGroupId = (int)($adminContext['group_id'] ?? 0);
+        $currentTeamName = trim((string)($adminContext['team_name'] ?? ''));
+
+        if ($currentAdminId <= 0 && $currentUsername === '') {
+            return [];
+        }
+
+        if ($currentGroupId <= 0 || $currentTeamName === '' || $currentUsername === '') {
+            if ($currentAdminId > 0) {
+                $row = Db::name('admin')
+                    ->where('admin_id', $currentAdminId)
+                    ->field('admin_id,username,group_id,team_name')
+                    ->find();
+                if ($row) {
+                    $currentUsername = trim((string)($row['username'] ?? $currentUsername));
+                    $currentGroupId = (int)($row['group_id'] ?? $currentGroupId);
+                    $currentTeamName = trim((string)($row['team_name'] ?? $currentTeamName));
+                }
+            }
+        }
+
+        $specialAdminIds = [1, 395, 350, 375, 387, 391, 405, 407];
+        $allVisibleGroupIds = [10, 11, 14, 17, 18, 19, 21, 22];
+        $teamVisibleGroupIds = [17, 18];
+        $selfVisibleGroupIds = [10, 11, 14, 19, 21, 22];
+
+        $allowed = [];
+        if (in_array($currentAdminId, $specialAdminIds, true)) {
+            $allowed = Db::name('admin')
+                ->where('group_id', 'in', $allVisibleGroupIds)
+                ->where('username', '<>', '')
+                ->column('username');
+        } elseif (in_array($currentGroupId, $teamVisibleGroupIds, true) && $currentTeamName !== '') {
+            $allowed = Db::name('admin')
+                ->where('team_name', $currentTeamName)
+                ->where('username', '<>', '')
+                ->column('username');
+        } elseif (in_array($currentGroupId, $selfVisibleGroupIds, true) && $currentUsername !== '') {
+            $allowed = [$currentUsername];
+        } elseif ($currentUsername !== '') {
+            $allowed = [$currentUsername];
+        }
+
+        $allowed = array_values(array_unique(array_filter(array_map('trim', (array)$allowed))));
+        if (empty($allowed) && $currentUsername !== '') {
+            $allowed = [$currentUsername];
+        }
+
+        return $allowed;
     }
 
     private function fail($msg)

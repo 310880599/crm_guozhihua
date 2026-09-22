@@ -4134,6 +4134,28 @@ class Order extends Common
         ];
     }
 
+    /**
+     * 我的订单：按 order_id 解析可跟进的唯一客户（不信任前端 leads_id）
+     */
+    public function resolveOrderClientForFollow()
+    {
+        $orderId = (int)Request::param('order_id', 0);
+        $username = trim((string)(Session::get('username') ?? ''));
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => $username,
+            'group_id' => (int)Session::get('group_id'),
+            'team_name' => (string)(Session::get('team_name') ?? ''),
+        ];
+
+        if ($operatorInfo['admin_id'] <= 0 || $username === '') {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+
+        $result = OrderService::resolveOrderClientForFollow($orderId, $username, $operatorInfo);
+        return json($result);
+    }
+
     //订单草稿搜索接口
     public function draftClientSearch()
     {

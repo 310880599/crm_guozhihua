@@ -133,6 +133,158 @@ class OrderService
     }
 
     /**
+     * 按联系方式精确解析唯一客户 leads_id（跟进场景专用）
+     *
+     * 规则：
+     * - 复用 normalizeContact，不另起清洗规则
+     * - 仅匹配 is_delete=0 的联系人
+     * - 收集 distinct leads_id：0 拒绝 / 1 通过 / >1 拒绝
+     * - 禁止 find() 取第一条、禁止名称模糊兜底
+     *
+     * @param string $contact
+     * @return array{ok:bool,leads_id:int,msg:string,match_count:int}
+     */
+    public static function resolveUniqueLeadsIdByContact($contact)
+    {
+        $raw = trim((string)$contact);
+        $normalized = self::normalizeContact($raw);
+        if ($normalized === '') {
+            return [
+                'ok' => false,
+                'leads_id' => 0,
+                'msg' => '订单联系方式为空，无法定位客户',
+                'match_count' => 0,
+            ];
+        }
+
+        $candidateValues = array_values(array_unique(array_filter([$raw, $normalized])));
+        $rows = Db::name('crm_contacts')
+            ->where('is_delete', 0)
+            ->where(function ($query) use ($candidateValues, $normalized) {
+                $query->whereIn('contact_value', $candidateValues);
+                $query->whereOrRaw(
+                    "REPLACE(REPLACE(REPLACE(IFNULL(contact_value,''), '+', ''), '-', ''), ' ', '') = '"
+                    . addslashes($normalized) . "'"
+                );
+            })
+            ->field('leads_id, contact_value')
+            ->select();
+
+        $leadsIds = [];
+        foreach ($rows as $row) {
+            $lid = (int)($row['leads_id'] ?? 0);
+            if ($lid > 0) {
+                $leadsIds[$lid] = true;
+            }
+        }
+        $distinctIds = array_keys($leadsIds);
+        $matchCount = count($distinctIds);
+
+        if ($matchCount === 0) {
+            return [
+                'ok' => false,
+                'leads_id' => 0,
+                'msg' => '无法定位订单对应客户，请先核实客户关联',
+                'match_count' => 0,
+            ];
+        }
+        if ($matchCount > 1) {
+            return [
+                'ok' => false,
+                'leads_id' => 0,
+                'msg' => '订单联系方式匹配到多个客户，无法安全打开跟进',
+                'match_count' => $matchCount,
+            ];
+        }
+
+        return [
+            'ok' => true,
+            'leads_id' => (int)$distinctIds[0],
+            'msg' => '',
+            'match_count' => 1,
+        ];
+    }
+
+    /**
+     * 我的订单入口：按 order_id 解析可跟进的唯一客户
+     *
+     * @param int $orderId
+     * @param string $username 当前登录用户名（与 personClientSearch 口径一致）
+     * @param array $operatorInfo ['admin_id'=>int,'username'=>string,'group_id'=>int,'team_name'=>string]
+     * @return array{code:int,msg:string,data:array}
+     */
+    public static function resolveOrderClientForFollow($orderId, $username, array $operatorInfo = [])
+    {
+        $orderId = (int)$orderId;
+        $username = trim((string)$username);
+        if ($orderId <= 0) {
+            return ['code' => 1, 'msg' => '缺少订单ID', 'data' => []];
+        }
+        if ($username === '') {
+            return ['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []];
+        }
+
+        $order = Db::table('crm_client_order')
+            ->where('id', $orderId)
+            ->where('check_status', 2)
+            ->where(function ($query) use ($username) {
+                $query->where('at_user', '=', $username)
+                    ->whereOr('pr_user', '=', $username);
+            })
+            ->find();
+
+        if (empty($order)) {
+            return ['code' => 1, 'msg' => '订单不存在或无权操作', 'data' => []];
+        }
+
+        $contactMatch = self::resolveUniqueLeadsIdByContact($order['contact'] ?? '');
+        if (empty($contactMatch['ok'])) {
+            return [
+                'code' => 1,
+                'msg' => (string)($contactMatch['msg'] ?? '无法定位订单对应客户'),
+                'data' => [],
+            ];
+        }
+
+        $leadsId = (int)$contactMatch['leads_id'];
+        $client = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (empty($client)) {
+            return ['code' => 1, 'msg' => '无法定位订单对应客户', 'data' => []];
+        }
+
+        $followService = new ClientFollowService();
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? $username));
+        $adminContext = [
+            'admin_id' => $operatorId,
+            'username' => $operatorName,
+            'group_id' => (int)($operatorInfo['group_id'] ?? 0),
+            'team_name' => (string)($operatorInfo['team_name'] ?? ''),
+        ];
+
+        if (!$followService->canReadClientFollow($client, $operatorId, $operatorName, $adminContext)) {
+            return ['code' => 1, 'msg' => '您没有权限查看该客户跟进', 'data' => []];
+        }
+
+        $writeRole = $followService->resolveFollowRole($client, $operatorId, $operatorName);
+
+        return [
+            'code' => 0,
+            'msg' => 'ok',
+            'data' => [
+                'order_id' => $orderId,
+                'leads_id' => $leadsId,
+                'kh_name' => (string)($client['kh_name'] ?? ''),
+                'pr_user' => (string)($client['pr_user'] ?? ''),
+                'can_read_follow' => true,
+                'can_write_follow' => $writeRole !== '',
+                'current_role' => $writeRole,
+                'current_role_text' => $writeRole !== '' ? $followService->getFollowRoleText($writeRole) : '',
+            ],
+        ];
+    }
+
+    /**
      * 根据联系方式匹配客户ID（leads_id）
      *
      * 规则：

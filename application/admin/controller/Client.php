@@ -95,49 +95,22 @@ class Client extends Common
 
     /**
      * 客户详情只读查看权限：超级权限 / 负责人协同人 / 客户列表可见范围
-     * 仅用于 details、historyApprovedOrders，不扩大写权限
+     * 仅用于 details、historyApprovedOrders、跟进只读，不扩大写权限
      */
     private function canViewClientDetail(array $clientRow)
     {
-        if ($this->canEditAnyClientForOrder()) {
-            return true;
-        }
-        if ($this->canEditClientByOwnership($clientRow)) {
-            return true;
-        }
-
-        $clientId = (int)($clientRow['id'] ?? 0);
-        if ($clientId <= 0) {
-            return false;
-        }
-
-        $visibleId = model('Client')->buildClientSearchAllBaseQuery([])
-            ->where('l.id', $clientId)
-            ->value('l.id');
-        if (!empty($visibleId)) {
-            return true;
-        }
-
-        // 检查客户列表可见范围：列表能看的客户也应能打开只读详情（不含转移/导出等写权限）
-        // 仅用基础权限口径 + 当前客户 ID，不带页面临时搜索条件，避免误扩权或误拒
-        $visibleUsers = $this->getCheckClientVisibleUsernames();
-        $currentAdmin = [
-            'admin_id' => (int) Session::get('aid'),
-            'group_id' => (int) Session::get('group_id'),
-            'username' => (string) Session::get('username'),
-            'is_super_admin' => $this->isCheckClientSuperAdmin() ? 1 : 0,
-        ];
-        $built = model('Client')->buildCheckClientQuery(
-            ['__id_in' => [$clientId]],
-            $visibleUsers,
-            $currentAdmin
+        $followService = new ClientFollowService();
+        return $followService->canReadClientFollow(
+            $clientRow,
+            (int)Session::get('aid'),
+            trim((string)Session::get('username')),
+            [
+                'admin_id' => (int)Session::get('aid'),
+                'username' => trim((string)Session::get('username')),
+                'group_id' => (int)Session::get('group_id'),
+                'team_name' => (string)(Session::get('team_name') ?? ''),
+            ]
         );
-        if ($built === null || empty($built['query'])) {
-            return false;
-        }
-        $checkVisibleId = $built['query']->value('l.id');
-
-        return !empty($checkVisibleId);
     }
 
     const CONTACT_MAP = [
@@ -5607,8 +5580,22 @@ class Client extends Common
         if (!$client) {
             return json(['code' => 1, 'msg' => '客户不存在']);
         }
+
+        if (!$this->canViewClientDetail($client)) {
+            return json(['code' => 1, 'msg' => '您没有权限查看该客户跟进']);
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => trim((string)Session::get('username')),
+        ];
         $followService = new ClientFollowService();
-        $client = $followService->buildFollowClientDetailData($client, $clientId);
+        $client = $followService->buildFollowClientDetailData($client, $clientId, $operatorInfo);
+
+        $commentFields = 'c.id,c.leads_id,c.user_id,c.reply_msg,c.create_date,a.username as username';
+        if ($followService->hasFollowRoleColumn()) {
+            $commentFields = 'c.id,c.leads_id,c.user_id,c.follow_role,c.reply_msg,c.create_date,a.username as username';
+        }
         $comments = Db::table('crm_comment')
             ->alias('c')
             ->leftJoin('admin a', 'a.admin_id = c.user_id')
@@ -5616,7 +5603,7 @@ class Client extends Common
                 'c.leads_id' => (int)$clientId,
                 'c.is_deleted' => 0
             ])
-            ->field('c.id,c.leads_id,c.user_id,c.reply_msg,c.create_date,a.username as username')
+            ->field($commentFields)
             ->order('c.create_date desc')
             ->select();
         foreach ($comments as &$comment) {
@@ -5627,6 +5614,7 @@ class Client extends Common
                 $comment['create_date'] = '';
             }
             $comment['username'] = trim((string)($comment['username'] ?? ''));
+            $comment = $followService->appendFollowRoleDisplay($comment);
         }
         unset($comment);
 
@@ -5831,6 +5819,10 @@ class Client extends Common
             return json(['code' => 1, 'msg' => '客户不存在', 'count' => 0, 'data' => []]);
         }
 
+        if (!$this->canViewClientDetail($client)) {
+            return json(['code' => 1, 'msg' => '您没有权限查看该客户跟进', 'count' => 0, 'data' => []]);
+        }
+
         // 构建查询条件
         $where = [['com.leads_id', '=', $leadsId], ['com.is_deleted', '=', 0]];
 
@@ -5872,9 +5864,11 @@ class Client extends Common
             ->page($page, $limit)
             ->select();
 
+        $followService = new ClientFollowService();
         // 格式化时间：Y-m-d H:i（列表用紧凑格式）
         foreach ($list as &$item) {
             $item['create_date'] = date('Y-m-d H:i', $item['create_date']);
+            $item = $followService->appendFollowRoleDisplay($item);
         }
         unset($item);
 

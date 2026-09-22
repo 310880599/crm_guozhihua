@@ -1,4 +1,4 @@
-{include file="common/head"/}
+﻿{include file="common/head"/}
 <link rel="stylesheet" href="/static/admin/css/select.css" media="all">
 <style>
     /* 个人客户列表页面样式优化 - 撑满页面 */
@@ -1899,168 +1899,7 @@
       
     </div>
     </div> -->
-<!-- 跟进弹窗 -->
-<div id="follow-dialog" style="display: none;">
-    <div class="follow-container">
-        <div class="follow-header">
-            <h3>客户跟进</h3>
-        </div>
-        <div class="follow-content">
-            <div class="follow-info">
-                <div class="info-item">
-                    <span class="info-label">客户ID:</span>
-                    <span id="follow-client-id"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">客户名称:</span>
-                    <span id="follow-client-name"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">联系人:</span>
-                    <span id="follow-contact"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">主电话:</span>
-                    <span id="follow-main-phone"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">辅助电话:</span>
-                    <span id="follow-aux-phone"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">地区:</span>
-                    <span id="follow-area"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">所属渠道:</span>
-                    <span id="follow-source"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">运营端口:</span>
-                    <span id="follow-source-port"></span>
-                </div>
-                <div class="info-item" id="follow-rank-row">
-                    <span class="info-label">客户级别:</span>
-                    <span id="follow-rank-display">
-                        <span id="follow-rank"></span>
-                        <button type="button" class="follow-rank-btn follow-rank-btn-edit" id="follow-rank-edit-btn">修改</button>
-                    </span>
-                    <span id="follow-rank-editor" style="display:none;">
-                        <select id="follow-rank-select" class="follow-rank-select"></select>
-                        <button type="button" class="follow-rank-btn follow-rank-btn-save" id="follow-rank-save-btn">保存</button>
-                        <button type="button" class="follow-rank-btn follow-rank-btn-cancel" id="follow-rank-cancel-btn">取消</button>
-                    </span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">负责人:</span>
-                    <span id="follow-user"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">协同人:</span>
-                    <span id="follow-joint-person"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">创建时间:</span>
-                    <span id="follow-create-time"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">最后跟进:</span>
-                    <span id="follow-last-time"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">下次跟进时间:</span>
-                    <span id="follow-next-time"></span>
-                </div>
-                <div class="info-item">
-                    <span class="info-label">跟进记录:</span>
-                    <textarea id="follow-last-record" class="layui-textarea" readonly style="height: 80px;"></textarea>
-                </div>
-            </div>
-            <div class="follow-history">
-                <h4>跟进历史</h4>
-                <div id="follow-history-list" style="max-height: 240px; overflow-y: auto;">
-                    <!-- 跟进历史将通过JS动态加载 -->
-                </div>
-
-                <div class="follow-action-panel">
-                    <h4>新增跟进</h4>
-                    <div class="layui-form">
-                        <div class="layui-form-item layui-form-text">
-                            <textarea name="reply_msg" id="reply_msg" required lay-verify="required"
-                                placeholder="请输入跟进内容" class="layui-textarea" style="height: 96px;"></textarea>
-                        </div>
-                        <div class="layui-form-item">
-                            <label class="layui-form-label">下次跟进</label>
-                            <div class="layui-input-block">
-                                <input type="text" name="next_up_time" id="next_up_time" placeholder="请选择下次跟进时间（选填）"
-                                    autocomplete="off" class="layui-input">
-                            </div>
-                        </div>
-                        <div class="layui-form-item follow-action-btns">
-                            <input type="hidden" name="leads_id" id="leads_id" value="">
-                            <button type="button" class="layui-btn layui-btn-normal" id="submit-comment">保存跟进</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-<!-- 自定义遮罩层（替代 layui 的 shade） -->
-<div id="follow-mask" class="follow-mask" style="display:none;"></div>
-
-<!-- ✅新增：全部跟进弹窗 -->
-<div id="all-follow-dialog" style="display: none;">
-    <div class="follow-container">
-        <div class="follow-header">
-            <h3>全部跟进记录</h3>
-        </div>
-        <!-- 客户基本信息 -->
-        <div style="padding: 15px 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 20px;">
-            <div style="display: flex; flex-wrap: wrap; gap: 20px;">
-                <div class="info-item" style="margin-bottom: 0;">
-                    <span class="info-label">客户名称:</span>
-                    <span id="af-kh-name"></span>
-                </div>
-                <div class="info-item" style="margin-bottom: 0;">
-                    <span class="info-label">产品名称:</span>
-                    <span id="af-product-name"></span>
-                </div>
-                <div class="info-item" style="margin-bottom: 0;">
-                    <span class="info-label">主电话:</span>
-                    <span id="af-main-phone"></span>
-                </div>
-                <div class="info-item" style="margin-bottom: 0;">
-                    <span class="info-label">辅助电话:</span>
-                    <span id="af-aux-phone"></span>
-                </div>
-            </div>
-        </div>
-        <!-- 筛选区域 -->
-        <div class="layui-form" style="margin-bottom: 20px;">
-            <div class="layui-form-item" style="margin-bottom: 15px;">
-                <div class="layui-inline">
-                    <label class="layui-form-label" style="width: 120px;">关键字搜索:</label>
-                    <div class="layui-input-inline" style="width: 200px;">
-                        <input type="text" id="af-keyword" name="keyword" placeholder="输入跟进内容关键字" class="layui-input">
-                    </div>
-                </div>
-                <div class="layui-inline">
-                    <label class="layui-form-label" style="width: 100px;">时间范围:</label>
-                    <div class="layui-input-inline" style="width: 300px;">
-                        <input type="text" id="af-date-range" name="date_range" placeholder="选择时间范围" class="layui-input">
-                    </div>
-                </div>
-                <div class="layui-inline">
-                    <button type="button" class="layui-btn" id="af-search-btn"><i class="layui-icon">&#xe615;</i>查询</button>
-                    <button type="button" class="layui-btn layui-btn-primary" id="af-reset-btn"><i class="layui-icon">&#xe669;</i>重置</button>
-                </div>
-            </div>
-        </div>
-        <!-- 表格区域 -->
-        <table id="af-table" lay-filter="af-table"></table>
-    </div>
-</div>
+{include file="common/client_follow_dialogs"/}
 <!-- 批量快速跟进弹窗 -->
 <div id="quick-follow-dialog" style="display:none;">
     <div class="quick-follow-dialog">
@@ -4126,7 +3965,25 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 limits: [5,10, 20, 50, 100, 200, 500],
                 cols: [[
                     {field: 'create_date', title: '跟进时间', width: 180, sort: true},
-                    {field: 'username', title: '跟进人', width: 120},
+                    {
+                        field: 'username',
+                        title: '跟进人',
+                        width: 240,
+                        templet: function (d) {
+                            var name = d.username == null ? '' : String(d.username);
+                            var roleText = d.follow_role_text == null ? '历史身份待确认' : String(d.follow_role_text);
+                            var esc = (typeof layui !== 'undefined' && layui.util && typeof layui.util.escape === 'function')
+                                ? layui.util.escape
+                                : function (t) {
+                                    return String(t == null ? '' : t)
+                                        .replace(/&/g, '&amp;')
+                                        .replace(/</g, '&lt;')
+                                        .replace(/>/g, '&gt;')
+                                        .replace(/"/g, '&quot;');
+                                };
+                            return esc(name) + '【' + esc(roleText) + '】';
+                        }
+                    },
                     {
                         field: 'reply_msg',
                         title: '跟进内容',
@@ -4367,7 +4224,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                 time: formatFollowHistoryTime(timeVal),
                 user: item.user || item.username || item.user_name || item.realname || item.oper_user || item.create_user || '系统',
                 content: item.content || item.reply_msg || item.comment || '',
-                avatar: item.avatar || ''
+                avatar: item.avatar || '',
+                follow_role_text: item.follow_role_text || item.role_text || ''
             });
         });
         list.sort(function (a, b) {
@@ -6642,11 +6500,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
         if (normalized.length > 0) {
             $.each(normalized, function(index, item) {
                 var avatar = sanitizeAvatarSrc(item.avatar);
+                var roleText = item.follow_role_text || item.role_text || '';
+                var userLabel = escapeHtml(item.user || '系统');
+                if (roleText) {
+                    userLabel = userLabel + '【' + escapeHtml(roleText) + '】';
+                }
                 timelineHtml += '<div class="timeline-item">' +
                     '<div class="timeline-title">' + escapeHtml(item.time || '') + '</div>' +
                     '<div class="timeline-content">' +
                     '<img src="' + avatar + '" class="avatar" onerror="this.src=\'/static/admin/images/0.jpg\'">' +
-                    '<strong>' + escapeHtml(item.user || '系统') + '：</strong>' +
+                    '<strong>' + userLabel + '：</strong>' +
                     escapeHtml(item.content || '') +
                     '</div>' +
                     '</div>';
@@ -6678,6 +6541,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             .data('rankDisplayText', rankDisplayText);
         $('#follow-user').text(clientData.pr_user || '');
         $('#follow-joint-person').text(clientData.joint_person_names || '暂无');
+        $('#follow-current-operator').text(clientData.current_operator || '');
+        $('#follow-current-role').text(clientData.current_role_text || '无权写入');
+        var canWriteFollow = clientData.can_write_follow !== false && !!clientData.current_role;
+        if (canWriteFollow) {
+            $('#follow-write-panel').show();
+            $('#follow-write-denied').hide();
+        } else {
+            $('#follow-write-panel').hide();
+            $('#follow-write-denied').show();
+        }
         $('#follow-create-time').text(clientData.at_time || '');
         $('#follow-last-time').text(clientData.last_up_time || '暂无');
         $('#follow-next-time').text(normalizeNextUpTimeDisplay(clientData.next_up_time, '--'));

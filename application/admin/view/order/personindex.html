@@ -20,6 +20,15 @@
             display: none !important;
         }
 
+        .layui-table-view .layui-table td .action-icon-btn {
+            padding: 0 6px;
+            min-width: 28px;
+            margin-right: 4px;
+        }
+        .layui-table-view .layui-table td .action-icon-btn .layui-icon {
+            margin-right: 0;
+        }
+
         /* 筛选区域样式优化 */
         .filtrate-warp {
             margin-bottom: 15px;
@@ -586,15 +595,18 @@
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
     </div>
 
+    {include file="common/client_follow_dialogs"/}
 
     <!-- <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a> -->
     <script type="text/html" id="action">
     <!-- 是否审核通过 -->
     <!-- {//if $Think.session.aid == 1} -->
     <!-- <a class="layui-btn  layui-btn-xs" lay-event="shenhe"><i class="layui-icon">&#xe642;</i>审核通过</a> -->
-    <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="details"><i class="layui-icon">&#xe615;</i> 详情</a>
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn order-follow-btn" href="javascript:void(0);" data-order-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a>
+    <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn order-all-follow-btn" href="javascript:void(0);" data-order-id="{{d.id}}" lay-tips="全部跟进" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i></a>
+    <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" lay-event="details" lay-tips="详情" lay-offset="0,-8"><i class="layui-icon">&#xe615;</i></a>
     {if session('aid') eq 1} 
-    <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
+    <a class="layui-btn layui-btn-danger layui-btn-xs action-icon-btn" lay-event="del" lay-tips="删除" lay-offset="0,-8"><i class="layui-icon">&#xe640;</i></a>
     {/if}
     <!-- {/if} -->
 
@@ -607,11 +619,114 @@
 
 
     {include file="common/foot"/}
+    <script src="/static/admin/js/client_follow_dialogs.js"></script>
     <script>
-        layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element'], function () {
-            const { table, form, laydate, $, upload, util, element } = layui;
+        layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
+            const { table, form, laydate, $, upload, util, element, layer } = layui;
 
             var ADVANCED_SEARCH_STORAGE_KEY = 'order_personindex_advanced_search_expanded';
+
+            // 操作列图标悬浮提示（与我的客户一致）
+            var actionIconTipIndex = null;
+            function closeActionIconTip() {
+                if (actionIconTipIndex !== null) {
+                    try { layer.close(actionIconTipIndex); } catch (e) {}
+                    actionIconTipIndex = null;
+                }
+            }
+            function escapeActionIconTipText(text) {
+                return String(text == null ? '' : text)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+            (function bindActionIconTips() {
+                var tipSelector = '.layui-table-view .action-icon-btn[lay-tips]';
+                $(document)
+                    .off('mouseenter.orderActionTip mouseleave.orderActionTip click.orderActionTip', tipSelector)
+                    .on('mouseenter.orderActionTip', tipSelector, function () {
+                        var text = $(this).attr('lay-tips');
+                        if (text == null || String(text).trim() === '') return;
+                        closeActionIconTip();
+                        actionIconTipIndex = layer.tips(escapeActionIconTipText(text), this, {
+                            tips: [1, '#393D49'],
+                            time: 0,
+                            tipsMore: false,
+                            maxWidth: 160
+                        });
+                    })
+                    .on('mouseleave.orderActionTip', tipSelector, function () {
+                        closeActionIconTip();
+                    })
+                    .on('click.orderActionTip', tipSelector, function () {
+                        closeActionIconTip();
+                    });
+            })();
+
+            if (window.ClientFollowUI) {
+                ClientFollowUI.init({
+                    urls: {
+                        detail: "{:url('Client/getClientDetailAndComments')}",
+                        commentsPage: "{:url('Client/getClientCommentsPage')}",
+                        save: "{:url('Client/saveClientFollow')}",
+                        deleteComment: "{:url('Client/deleteFollowComment')}",
+                        rankOptions: "{:url('Client/getFollowRankOptions')}",
+                        updateRank: "{:url('Client/updateClientRankInFollow')}"
+                    },
+                    enableRankEdit: true,
+                    onFollowSaved: function () {
+                        // 我的订单不调用我的客户专属 reloadKeepColWidth
+                    }
+                });
+            }
+
+            function resolveOrderClientThen(orderId, mode) {
+                orderId = parseInt(orderId, 10) || 0;
+                if (orderId <= 0) {
+                    layer.msg('缺少订单ID', {icon: 2});
+                    return;
+                }
+                var loading = layer.load(1, {shade: 0});
+                $.ajax({
+                    url: "{:url('Order/resolveOrderClientForFollow')}",
+                    method: 'POST',
+                    data: { order_id: orderId },
+                    success: function (res) {
+                        layer.close(loading);
+                        if (!res || res.code !== 0 || !res.data || !res.data.leads_id) {
+                            layer.msg((res && res.msg) ? res.msg : '无法定位订单对应客户', {icon: 2});
+                            return;
+                        }
+                        var leadsId = res.data.leads_id;
+                        if (mode === 'write') {
+                            if (!res.data.can_write_follow) {
+                                layer.msg('您没有权限写入该客户跟进', {icon: 2});
+                                return;
+                            }
+                            if (window.ClientFollowUI) {
+                                ClientFollowUI.openFollowDialog(leadsId);
+                            }
+                        } else {
+                            if (window.ClientFollowUI) {
+                                ClientFollowUI.openAllFollowDialog(leadsId);
+                            }
+                        }
+                    },
+                    error: function () {
+                        layer.close(loading);
+                        layer.msg('网络错误，解析客户失败', {icon: 2});
+                    }
+                });
+            }
+
+            $(document).on('click', '.order-follow-btn', function () {
+                resolveOrderClientThen($(this).attr('data-order-id'), 'write');
+            });
+            $(document).on('click', '.order-all-follow-btn', function () {
+                resolveOrderClientThen($(this).attr('data-order-id'), 'all');
+            });
 
             function readAdvancedSearchState() {
                 try {
@@ -748,7 +863,7 @@
                     },
                     { field: 'create_time', title: '创建时间' , width: 180},
                     { field: 'update_time', title: '更新时间' , width: 180},
-                    { width: 200, title: '操作', toolbar: '#action' }
+                    { width: 240, title: '操作', toolbar: '#action' }
                 ]],
                 limit: 10, //每页默认显示的数量
 
