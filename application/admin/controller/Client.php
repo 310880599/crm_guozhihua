@@ -992,11 +992,13 @@ class Client extends Common
         $teamList = array_values(array_unique(array_filter(array_map('trim', (array)$teamList))));
 
         $yyList = $this->getYyList();
+        // 检查客户高级查询：按产品名称去重，每个名称保留稳定代表性 ID（MIN(id)）
         $productList = Db::table('crm_products')
             ->where('is_deleted', 0)
             ->whereNotNull('product_name')
             ->where('product_name', '<>', '')
-            ->field('id,product_name')
+            ->field('MIN(id) as id, product_name')
+            ->group('product_name')
             ->order('product_name', 'asc')
             ->select();
         $this->assign('adminResult', $adminResult);

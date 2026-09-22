@@ -806,10 +806,36 @@ class Client extends Model
             $query->whereIn('l.id', $idIn);
         }
 
-        // 检查客户扩展筛选：产品名称（前端直接提交 crm_products.id）
-        $productId = isset($keyword['product_name']) ? (int)$keyword['product_name'] : 0;
-        if ($productId > 0) {
-            $query->where('l.product_name', $productId);
+        // 检查客户扩展筛选：产品名称
+        // 前端提交代表性产品 ID → 查名称 → 同名产品 ID 集合 → whereIn（不绕开本 Builder 权限条件）
+        $rawProductParam = isset($keyword['product_name']) ? (string)$keyword['product_name'] : '';
+        if ($rawProductParam !== '') {
+            // 合法正整数才继续；非法参数必须空结果，不可因 (int) 转成 0 而跳过筛选
+            if (!preg_match('/^[1-9]\d*$/', $rawProductParam)) {
+                $query->where('l.id', -1);
+            } else {
+                $productId = (int)$rawProductParam;
+                $productRow = Db::table('crm_products')
+                    ->where('id', $productId)
+                    ->field('product_name')
+                    ->find();
+                $productName = is_array($productRow) && array_key_exists('product_name', $productRow)
+                    ? $productRow['product_name']
+                    : null;
+                if ($productName === null || $productName === '') {
+                    $query->where('l.id', -1);
+                } else {
+                    // 同名集合不做 is_deleted=0，兼容历史关联到已软删产品的客户
+                    $productIds = Db::table('crm_products')
+                        ->where('product_name', $productName)
+                        ->column('id');
+                    if (empty($productIds)) {
+                        $query->where('l.id', -1);
+                    } else {
+                        $query->whereIn('l.product_name', $productIds);
+                    }
+                }
+            }
         }
 
         // 检查客户扩展筛选：运营人员
