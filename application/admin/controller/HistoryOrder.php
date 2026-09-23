@@ -13,6 +13,11 @@ use think\facade\Request;
 class HistoryOrder extends Common
 {
     /**
+     * 历史订单成交时间截止（含 2025-12-02 全天）
+     */
+    private const HISTORY_ORDER_MAX_TIME = '2025-12-02 23:59:59';
+
+    /**
      * 当前登录管理员信息
      *
      * @var array
@@ -137,6 +142,11 @@ class HistoryOrder extends Common
             $data['create_time'] = date('Y-m-d H:i:s');
             $data['update_time'] = date('Y-m-d H:i:s');
 
+            $orderTimeCheck = $this->validateHistoryOrderTime($data['order_time'] ?? '');
+            if (!$orderTimeCheck['ok']) {
+                return json(['code' => -200, 'msg' => $orderTimeCheck['msg']]);
+            }
+
             $res = HistoryOrderModel::create($data);
             return $res ? json(['code' => 0, 'msg' => '添加成功！']) : json(['code' => -200, 'msg' => '添加失败！']);
         }
@@ -185,6 +195,11 @@ class HistoryOrder extends Common
                 if ($newClientPhone !== $oldClientPhone) {
                     $data['client_id'] = $this->resolveClientIdByPhone($newClientPhone);
                 }
+            }
+
+            $orderTimeCheck = $this->validateHistoryOrderTime($data['order_time'] ?? '');
+            if (!$orderTimeCheck['ok']) {
+                return json(['code' => -200, 'msg' => $orderTimeCheck['msg']]);
             }
 
             $res = Db::name('crm_client_history_order')
@@ -367,6 +382,7 @@ class HistoryOrder extends Common
                         'product_name' => trim((string)$line[5]),
                         'pr_user' => trim((string)$line[6]),
                         'remark' => trim((string)$line[7]),
+                        '_source_row' => $lineNo,
                     ];
                 }
                 fclose($tmp);
@@ -402,6 +418,7 @@ class HistoryOrder extends Common
                         'product_name' => trim((string)$sheet->getCell("F{$r}")->getFormattedValue()),
                         'pr_user' => trim((string)$sheet->getCell("G{$r}")->getFormattedValue()),
                         'remark' => trim((string)$sheet->getCell("H{$r}")->getFormattedValue()),
+                        '_source_row' => $r,
                     ];
 
                     if ($row['client_phone'] === ''
@@ -423,6 +440,13 @@ class HistoryOrder extends Common
 
         if (empty($rows)) {
             return json(['code' => -200, 'msg' => '没有可导入的数据']);
+        }
+
+        foreach ($rows as $row) {
+            $orderTimeCheck = $this->validateHistoryOrderTime($row['order_time'] ?? '', $row['_source_row'] ?? 0);
+            if (!$orderTimeCheck['ok']) {
+                return json(['code' => -200, 'msg' => $orderTimeCheck['msg']]);
+            }
         }
 
         $providedOrderNos = [];
@@ -513,8 +537,8 @@ class HistoryOrder extends Common
 
         $header = ['客户手机号', '订单编号', '成交时间', '成交金额', '利润', '产品名称', '负责人', '备注'];
         $examples = [
-            ['13800138000', 'H202607280001', '2026-07-28 10:00:00', '1999.00', '300.00', 'CRM系统A套餐', '张三', '首次合作'],
-            ['13900139000', '', '2026-07-28 11:00:00', '2999.00', '500.00', 'CRM系统B套餐', '李四', '续费客户'],
+            ['13800138000', 'H202512020001', '2025-12-02 10:00:00', '1999.00', '300.00', 'CRM系统A套餐', '张三', '首次合作'],
+            ['13900139000', '', '2025-12-01 11:00:00', '2999.00', '500.00', 'CRM系统B套餐', '李四', '续费客户'],
         ];
 
         if (function_exists('ob_get_level')) {
@@ -535,6 +559,56 @@ class HistoryOrder extends Common
             echo $csvLine($example);
         }
         exit;
+    }
+
+    /**
+     * 校验历史订单成交时间：非空、Y-m-d H:i:s 合法日期、不超过截止时间
+     *
+     * @param mixed $orderTime
+     * @param int|null $sourceRow 导入时的真实行号；为空则为手工新增/编辑
+     * @return array{ok: bool, msg: string}
+     */
+    private function validateHistoryOrderTime($orderTime, $sourceRow = null): array
+    {
+        $value = trim((string)$orderTime);
+        $isImport = $sourceRow !== null;
+
+        if ($value === '') {
+            return [
+                'ok' => false,
+                'msg' => $isImport
+                    ? ('导入失败：第' . (int)$sourceRow . '行成交时间不能为空。')
+                    : '成交时间不能为空',
+            ];
+        }
+
+        $dt = \DateTime::createFromFormat('Y-m-d H:i:s', $value);
+        $errors = \DateTime::getLastErrors();
+        $hasParseError = $dt === false
+            || ($errors !== false && (
+                (int)($errors['warning_count'] ?? 0) > 0
+                || (int)($errors['error_count'] ?? 0) > 0
+            ));
+        if ($hasParseError) {
+            return [
+                'ok' => false,
+                'msg' => $isImport
+                    ? ('导入失败：第' . (int)$sourceRow . '行成交时间格式不正确，请使用 yyyy-MM-dd HH:mm:ss。')
+                    : '成交时间格式不正确，请使用 yyyy-MM-dd HH:mm:ss。',
+            ];
+        }
+
+        $maxTime = \DateTime::createFromFormat('Y-m-d H:i:s', self::HISTORY_ORDER_MAX_TIME);
+        if ($dt > $maxTime) {
+            return [
+                'ok' => false,
+                'msg' => $isImport
+                    ? ('导入失败：第' . (int)$sourceRow . '行成交时间超过允许范围，历史订单成交时间必须为2025-12-02 23:59:59及以前。')
+                    : '历史订单成交时间只能选择2025年12月2日及以前的时间，请重新选择。',
+            ];
+        }
+
+        return ['ok' => true, 'msg' => ''];
     }
 
     /**
