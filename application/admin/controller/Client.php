@@ -700,11 +700,12 @@ class Client extends Common
     }
 
     /**
-     * （检查订单）可见业务员用户名列表：保持修改前名单，不含乔亚锋(407)
+     * （检查订单）当前登录人可见的业务员用户名列表
+     * 含乔亚锋(407)，仅扩大检查订单查看范围，不涉及转移/导出/编辑等权限
      */
     private function getCheckOrderAllowedUsernames(): array
     {
-        return $this->resolveAllowedUsernamesBySpecialAdminIds([1, 395, 350, 375, 387, 391, 405]);
+        return $this->resolveAllowedUsernamesBySpecialAdminIds([1, 395, 350, 375, 387, 391, 405, 407]);
     }
 
     /**
