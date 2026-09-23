@@ -44,7 +44,7 @@
     <div class="layui-form-item">
         <label class="layui-form-label">客户手机号</label>
         <div class="layui-input-block">
-            <input type="text" name="client_phone" lay-verify="required" placeholder="请输入客户手机号" autocomplete="off" class="layui-input">
+            <input type="text" name="client_phone" lay-verify="required|phone11" maxlength="11" inputmode="numeric" placeholder="请输入客户手机号" autocomplete="off" class="layui-input">
         </div>
     </div>
 
@@ -304,6 +304,11 @@ layui.use(['upload', 'form', 'jquery', 'layer', 'laydate'], function(){
                     return '请选择负责人';
                 }
                 return '必填项不能为空';
+            }
+        },
+        phone11: function(value){
+            if (!/^\d{11}$/.test($.trim(value))) {
+                return '请输入11位客户手机号';
             }
         }
     });

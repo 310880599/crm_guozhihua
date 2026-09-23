@@ -123,7 +123,14 @@ class HistoryOrder extends Common
             $service = new HistoryOrderService();
             $data['order_no'] = $service->generateOrderNo();
             $data['client_phone'] = trim((string)($data['client_phone'] ?? ''));
-            $data['client_id'] = $this->resolveClientIdByPhone($data['client_phone']);
+            $clientCheck = $this->validateHistoryOrderClientPhone($data['client_phone']);
+            if (!$clientCheck['ok']) {
+                return json([
+                    'code' => -200,
+                    'msg' => $clientCheck['msg']
+                ]);
+            }
+            $data['client_id'] = (int)$clientCheck['client_id'];
             $data['create_user_id'] = (int)session('aid');
             $data['create_user'] = (string)($admin['username'] ?? '');
 
@@ -188,13 +195,15 @@ class HistoryOrder extends Common
             unset($data['order_no']);
 
             if (array_key_exists('client_phone', $data)) {
-                $newClientPhone = trim((string)$data['client_phone']);
-                $oldClientPhone = trim((string)($entry['client_phone'] ?? ''));
-                $data['client_phone'] = $newClientPhone;
-
-                if ($newClientPhone !== $oldClientPhone) {
-                    $data['client_id'] = $this->resolveClientIdByPhone($newClientPhone);
+                $data['client_phone'] = trim((string)$data['client_phone']);
+                $clientCheck = $this->validateHistoryOrderClientPhone($data['client_phone']);
+                if (!$clientCheck['ok']) {
+                    return json([
+                        'code' => -200,
+                        'msg' => $clientCheck['msg']
+                    ]);
                 }
+                $data['client_id'] = (int)$clientCheck['client_id'];
             }
 
             $orderTimeCheck = $this->validateHistoryOrderTime($data['order_time'] ?? '');
@@ -442,11 +451,23 @@ class HistoryOrder extends Common
             return json(['code' => -200, 'msg' => '没有可导入的数据']);
         }
 
-        foreach ($rows as $row) {
+        foreach ($rows as $idx => $row) {
             $orderTimeCheck = $this->validateHistoryOrderTime($row['order_time'] ?? '', $row['_source_row'] ?? 0);
             if (!$orderTimeCheck['ok']) {
                 return json(['code' => -200, 'msg' => $orderTimeCheck['msg']]);
             }
+
+            $clientPhone = trim((string)($row['client_phone'] ?? ''));
+            $clientCheck = $this->validateHistoryOrderClientPhone($clientPhone);
+            if (!$clientCheck['ok']) {
+                $rowIndex = (int)($row['_source_row'] ?? 0);
+                return json([
+                    'code' => -200,
+                    'msg' => '导入失败：第' . $rowIndex . '行' . $clientCheck['msg'],
+                ]);
+            }
+            $rows[$idx]['client_phone'] = $clientPhone;
+            $rows[$idx]['client_id'] = (int)$clientCheck['client_id'];
         }
 
         $providedOrderNos = [];
@@ -474,13 +495,6 @@ class HistoryOrder extends Common
         $historyOrderService = new HistoryOrderService();
         $reservedOrderNos = $providedOrderNos;
         $insertData = [];
-        $phoneSet = [];
-        foreach ($rows as $row) {
-            if ($row['client_phone'] !== '') {
-                $phoneSet[$row['client_phone']] = true;
-            }
-        }
-        $clientIdMap = $this->buildClientIdMapByPhones(array_keys($phoneSet));
 
         foreach ($rows as $row) {
             $orderNo = $row['order_no'];
@@ -490,7 +504,7 @@ class HistoryOrder extends Common
             $reservedOrderNos[$orderNo] = true;
 
             $insertData[] = [
-                'client_id' => (int)($clientIdMap[$row['client_phone']] ?? 0),
+                'client_id' => (int)$row['client_id'],
                 'client_phone' => $row['client_phone'],
                 'order_no' => $orderNo,
                 'order_time' => $row['order_time'],
@@ -609,6 +623,87 @@ class HistoryOrder extends Common
         }
 
         return ['ok' => true, 'msg' => ''];
+    }
+
+    /**
+     * 校验历史订单客户手机号：11位纯数字、CRM 真实客户、归属权限
+     *
+     * @param string $clientPhone
+     * @return array{ok: bool, msg: string, client_id: int}
+     */
+    private function validateHistoryOrderClientPhone(string $clientPhone): array
+    {
+        $clientPhone = trim($clientPhone);
+        if (!preg_match('/^\d{11}$/', $clientPhone)) {
+            return [
+                'ok' => false,
+                'msg' => '客户手机号必须为11位数字',
+                'client_id' => 0,
+            ];
+        }
+
+        $leadId = $this->resolveClientIdByPhone($clientPhone);
+        if ($leadId <= 0) {
+            return [
+                'ok' => false,
+                'msg' => '未找到该客户，请确认客户手机号',
+                'client_id' => 0,
+            ];
+        }
+
+        $lead = Db::name('crm_leads')
+            ->where('id', $leadId)
+            ->field('id,pr_user,joint_person')
+            ->find();
+        if (empty($lead)) {
+            return [
+                'ok' => false,
+                'msg' => '未找到该客户，请确认客户手机号',
+                'client_id' => 0,
+            ];
+        }
+
+        if ($this->isSuperAdmin()) {
+            return [
+                'ok' => true,
+                'msg' => '',
+                'client_id' => (int)$leadId,
+            ];
+        }
+
+        $currentUsername = trim((string)session('username'));
+        $clientPrUser = trim((string)($lead['pr_user'] ?? ''));
+        $isOwner = ($clientPrUser === $currentUsername);
+
+        $currentAid = (string)((int)session('aid'));
+        $jointRaw = trim((string)($lead['joint_person'] ?? ''));
+        $jointPersonIds = [];
+        if ($jointRaw !== '') {
+            $decoded = json_decode($jointRaw, true);
+            if (is_array($decoded)) {
+                $jointPersonIds = $decoded;
+            } else {
+                $jointPersonIds = explode(',', $jointRaw);
+            }
+            $jointPersonIds = array_map('strval', array_filter(array_map('trim', $jointPersonIds), function ($v) {
+                return $v !== '';
+            }));
+        }
+        $isJointPerson = in_array($currentAid, $jointPersonIds, true);
+
+        if ($isOwner || $isJointPerson) {
+            return [
+                'ok' => true,
+                'msg' => '',
+                'client_id' => (int)$leadId,
+            ];
+        }
+
+        return [
+            'ok' => false,
+            'msg' => '该客户不属于您的客户或协同客户，无法保存历史订单',
+            'client_id' => 0,
+        ];
     }
 
     /**
