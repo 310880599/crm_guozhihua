@@ -618,6 +618,21 @@ class Client extends Common
     }
 
     /**
+     * 当前登录人上下文（供检查订单 / 检查客户可见用户名解析）
+     *
+     * @return array{admin_id:int,username:string,group_id:int,team_name:string}
+     */
+    private function getCurrentAdminContext(): array
+    {
+        return [
+            'admin_id' => (int) Session::get('aid'),
+            'username' => trim((string) Session::get('username')),
+            'group_id' => (int) Session::get('group_id'),
+            'team_name' => (string)(Session::get('team_name') ?? ''),
+        ];
+    }
+
+    /**
      * 按特殊 admin 名单计算可见业务员用户名（检查客户 / 检查订单共用底层逻辑，名单彼此独立）
      *
      * @param int[] $specialAdminIds
@@ -625,68 +640,8 @@ class Client extends Common
      */
     private function resolveAllowedUsernamesBySpecialAdminIds(array $specialAdminIds): array
     {
-        $currentAdminId  = (int) Session::get('aid');
-        $currentUsername = trim((string) Session::get('username'));
-        $currentGroupId  = (int) Session::get('group_id');
-        $currentTeamName = trim((string) (Session::get('team_name') ?? ''));
-
-        if (!$currentAdminId && $currentUsername === '') {
-            return [];
-        }
-
-        // 如 session 信息不完整，则从 admin 表补全
-        if (!$currentGroupId || $currentTeamName === '' || $currentUsername === '') {
-            if ($currentAdminId) {
-                $currentAdmin = Db::name('admin')
-                    ->where('admin_id', $currentAdminId)
-                    ->field('admin_id,username,group_id,team_name')
-                    ->find();
-                if ($currentAdmin) {
-                    $currentUsername = trim((string) $currentAdmin['username']);
-                    $currentGroupId  = (int) $currentAdmin['group_id'];
-                    $currentTeamName = trim((string) $currentAdmin['team_name']);
-                }
-            }
-        }
-
-        $allVisibleGroupIds  = [10, 11, 14, 17, 18, 19, 21, 22];
-        $teamVisibleGroupIds = [17, 18];
-        $selfVisibleGroupIds = [10, 11, 14, 19, 21, 22];
-
-        $allowed = [];
-
-        // 特殊 admin：可看指定 group_id 的所有人
-        if (in_array($currentAdminId, $specialAdminIds, true)) {
-            $allowed = Db::name('admin')
-                ->where('group_id', 'in', $allVisibleGroupIds)
-                ->where('username', '<>', '')
-                ->column('username');
-
-        // 团队角色：可看本 team_name 下所有人
-        } elseif (in_array($currentGroupId, $teamVisibleGroupIds, true) && $currentTeamName !== '') {
-            $allowed = Db::name('admin')
-                ->where('team_name', $currentTeamName)
-                ->where('username', '<>', '')
-                ->column('username');
-
-        // 自己可见角色：只看自己
-        } elseif (in_array($currentGroupId, $selfVisibleGroupIds, true) && $currentUsername !== '') {
-            $allowed = [$currentUsername];
-
-        // 兜底：只看自己
-        } elseif ($currentUsername !== '') {
-            $allowed = [$currentUsername];
-        }
-
-        // 统一清洗：trim / 去空 / 去重
-        $allowed = array_values(array_unique(array_filter(array_map('trim', (array) $allowed))));
-
-        // 兜底：若前面逻辑异常导致结果为空，但当前用户名有效，则只返回自己
-        if (empty($allowed) && $currentUsername !== '') {
-            $allowed = [$currentUsername];
-        }
-
-        return $allowed;
+        $svc = new CheckOrderService();
+        return $svc->resolveAllowedUsernamesBySpecialAdminIds($specialAdminIds, $this->getCurrentAdminContext());
     }
 
     /**
@@ -705,7 +660,8 @@ class Client extends Common
      */
     private function getCheckOrderAllowedUsernames(): array
     {
-        return $this->resolveAllowedUsernamesBySpecialAdminIds([1, 395, 350, 375, 387, 391, 405, 407]);
+        $svc = new CheckOrderService();
+        return $svc->getAllowedUsernames($this->getCurrentAdminContext());
     }
 
     /**
@@ -1062,6 +1018,30 @@ class Client extends Common
                 return $this->getOrgWhere($org, $alias);
             }
         ));
+    }
+
+    /**
+     * 检查订单：按 order_id 解析可只读查看跟进的唯一客户
+     * 权限仅走检查订单可见范围，不复用我的订单本人订单解析。
+     */
+    public function resolveCheckOrderClientForFollow()
+    {
+        $orderId = (int)Request::param('order_id', 0);
+        $username = trim((string)(Session::get('username') ?? ''));
+        $operatorInfo = $this->getCurrentAdminContext();
+
+        if ($operatorInfo['admin_id'] <= 0 || $username === '') {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+
+        $svc = new CheckOrderService();
+        $result = $svc->resolveOrderClientForFollow(
+            $orderId,
+            $this->getCheckOrderAllowedUsernames(),
+            $username,
+            $operatorInfo
+        );
+        return json($result);
     }
 
 

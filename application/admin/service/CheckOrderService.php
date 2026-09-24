@@ -8,6 +8,7 @@ use app\admin\model\CrmInquiry;
 use app\admin\model\CrmInquiryPort;
 use app\admin\model\Lead;
 use app\admin\model\OrderItem;
+use think\Db;
 
 /**
  * 客户管理 - 检查订单（业务编排：筛选、权限范围、统计、凭证图字段）
@@ -229,6 +230,159 @@ class CheckOrderService
             'successRate' => number_format(0, 2),
             'totalMoney' => number_format(0, 2),
             'totalProfit' => number_format(0, 2),
+        ];
+    }
+
+    /**
+     * 检查订单可见业务员用户名（单一口径，供 Controller / 跟进只读桥接共用）
+     * 特殊账号名单只维护在此，不在 ClientFollowService 再写一份。
+     *
+     * @param array $adminContext ['admin_id'=>int,'username'=>string,'group_id'=>int,'team_name'=>string]
+     * @return string[]
+     */
+    public function getAllowedUsernames(array $adminContext = []): array
+    {
+        return $this->resolveAllowedUsernamesBySpecialAdminIds(
+            [1, 395, 350, 375, 387, 391, 405, 407],
+            $adminContext
+        );
+    }
+
+    /**
+     * 按特殊 admin 名单计算可见业务员用户名（原 Client 控制器私有逻辑，检查客户 / 检查订单共用算法）
+     *
+     * @param int[] $specialAdminIds
+     * @param array $adminContext
+     * @return string[]
+     */
+    public function resolveAllowedUsernamesBySpecialAdminIds(array $specialAdminIds, array $adminContext = []): array
+    {
+        $currentAdminId  = (int)($adminContext['admin_id'] ?? 0);
+        $currentUsername = trim((string)($adminContext['username'] ?? ''));
+        $currentGroupId  = (int)($adminContext['group_id'] ?? 0);
+        $currentTeamName = trim((string)($adminContext['team_name'] ?? ''));
+
+        if (!$currentAdminId && $currentUsername === '') {
+            return [];
+        }
+
+        if (!$currentGroupId || $currentTeamName === '' || $currentUsername === '') {
+            if ($currentAdminId) {
+                $currentAdmin = Db::name('admin')
+                    ->where('admin_id', $currentAdminId)
+                    ->field('admin_id,username,group_id,team_name')
+                    ->find();
+                if ($currentAdmin) {
+                    $currentUsername = trim((string)$currentAdmin['username']);
+                    $currentGroupId  = (int)$currentAdmin['group_id'];
+                    $currentTeamName = trim((string)$currentAdmin['team_name']);
+                }
+            }
+        }
+
+        $allVisibleGroupIds  = [10, 11, 14, 17, 18, 19, 21, 22];
+        $teamVisibleGroupIds = [17, 18];
+        $selfVisibleGroupIds = [10, 11, 14, 19, 21, 22];
+
+        $allowed = [];
+
+        if (in_array($currentAdminId, $specialAdminIds, true)) {
+            $allowed = Db::name('admin')
+                ->where('group_id', 'in', $allVisibleGroupIds)
+                ->where('username', '<>', '')
+                ->column('username');
+        } elseif (in_array($currentGroupId, $teamVisibleGroupIds, true) && $currentTeamName !== '') {
+            $allowed = Db::name('admin')
+                ->where('team_name', $currentTeamName)
+                ->where('username', '<>', '')
+                ->column('username');
+        } elseif (in_array($currentGroupId, $selfVisibleGroupIds, true) && $currentUsername !== '') {
+            $allowed = [$currentUsername];
+        } elseif ($currentUsername !== '') {
+            $allowed = [$currentUsername];
+        }
+
+        $allowed = array_values(array_unique(array_filter(array_map('trim', (array)$allowed))));
+        if (empty($allowed) && $currentUsername !== '') {
+            $allowed = [$currentUsername];
+        }
+
+        return $allowed;
+    }
+
+    /**
+     * 检查订单入口：按 order_id 解析可只读查看跟进的唯一客户
+     * 权限仅来自检查订单可见用户名，不复用我的订单本人订单规则。
+     *
+     * @param int|string $orderId
+     * @param string[] $allowedUsernames
+     * @param string $currentUsername
+     * @param array $operatorInfo
+     * @return array{code:int,msg:string,data:array}
+     */
+    public function resolveOrderClientForFollow($orderId, array $allowedUsernames, $currentUsername, array $operatorInfo = []): array
+    {
+        $orderId = (int)$orderId;
+        if ($orderId <= 0) {
+            return ['code' => 1, 'msg' => '参数错误', 'data' => []];
+        }
+
+        $allowedUsernames = array_values(array_unique(array_filter(array_map('trim', $allowedUsernames))));
+        $currentUsername = trim((string)$currentUsername);
+        if (empty($allowedUsernames) && $currentUsername !== '') {
+            $allowedUsernames = [$currentUsername];
+        }
+
+        $order = Db::table('crm_client_order')
+            ->where('id', $orderId)
+            ->where('check_status', 2)
+            ->field('id,contact,pr_user')
+            ->find();
+
+        if (empty($order)) {
+            return ['code' => 1, 'msg' => '订单不存在或无权查看', 'data' => []];
+        }
+
+        $prUser = trim((string)($order['pr_user'] ?? ''));
+        if ($prUser === '' || empty($allowedUsernames) || !in_array($prUser, $allowedUsernames, true)) {
+            return ['code' => 1, 'msg' => '订单不存在或无权查看', 'data' => []];
+        }
+
+        $contactMatch = OrderService::resolveUniqueLeadsIdByContact($order['contact'] ?? '');
+        if (empty($contactMatch['ok'])) {
+            return [
+                'code' => 1,
+                'msg' => (string)($contactMatch['msg'] ?? '无法定位订单对应客户'),
+                'data' => [],
+            ];
+        }
+
+        $leadsId = (int)$contactMatch['leads_id'];
+        $client = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (empty($client)) {
+            return ['code' => 1, 'msg' => '无法定位订单对应客户', 'data' => []];
+        }
+
+        $followService = new ClientFollowService();
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? $currentUsername));
+        $adminContext = [
+            'admin_id' => $operatorId,
+            'username' => $operatorName,
+            'group_id' => (int)($operatorInfo['group_id'] ?? 0),
+            'team_name' => (string)($operatorInfo['team_name'] ?? ''),
+        ];
+
+        if (!$followService->canReadClientFollow($client, $operatorId, $operatorName, $adminContext)) {
+            return ['code' => 1, 'msg' => '无权查看客户跟进', 'data' => []];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => 'ok',
+            'data' => [
+                'leads_id' => $leadsId,
+            ],
         ];
     }
 }

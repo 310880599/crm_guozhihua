@@ -24,6 +24,7 @@
         urls: {},
         onFollowSaved: null,
         enableRankEdit: true,
+        enableDelete: true,
         followIndex: null,
         allFollowIndex: null,
         afTableIns: null,
@@ -557,6 +558,41 @@
                 state.afTableIns = null;
             }
 
+            var allFollowCols = [
+                { field: 'create_date', title: '跟进时间', width: 180, sort: true },
+                {
+                    field: 'username',
+                    title: '跟进人',
+                    width: 240,
+                    templet: function (d) {
+                        var name = d.username == null ? '' : String(d.username);
+                        var roleText = d.follow_role_text == null ? '' : String(d.follow_role_text);
+                        return formatFollowRoleLabel(name, roleText);
+                    }
+                },
+                {
+                    field: 'reply_msg',
+                    title: '跟进内容',
+                    minWidth: 420,
+                    templet: function (d) {
+                        var txt = d.reply_msg == null ? '' : String(d.reply_msg);
+                        var esc = escapeHtml(txt);
+                        return '<div class="af-reply-msg-cell">' + esc + '</div>';
+                    }
+                }
+            ];
+
+            if (state.enableDelete !== false) {
+                allFollowCols.push({
+                    field: 'operate',
+                    title: '操作',
+                    width: 100,
+                    templet: function (d) {
+                        return '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + escapeHtml(d.id) + '">删除</button>';
+                    }
+                });
+            }
+
             state.afTableIns = table.render({
                 elem: '#af-table',
                 id: 'af-table',
@@ -565,37 +601,7 @@
                 page: true,
                 limit: 10,
                 limits: [5, 10, 20, 50, 100, 200, 500],
-                cols: [[
-                    { field: 'create_date', title: '跟进时间', width: 180, sort: true },
-                    {
-                        field: 'username',
-                        title: '跟进人',
-                        width: 240,
-                        templet: function (d) {
-                            var name = d.username == null ? '' : String(d.username);
-                            var roleText = d.follow_role_text == null ? '' : String(d.follow_role_text);
-                            return formatFollowRoleLabel(name, roleText);
-                        }
-                    },
-                    {
-                        field: 'reply_msg',
-                        title: '跟进内容',
-                        minWidth: 420,
-                        templet: function (d) {
-                            var txt = d.reply_msg == null ? '' : String(d.reply_msg);
-                            var esc = escapeHtml(txt);
-                            return '<div class="af-reply-msg-cell">' + esc + '</div>';
-                        }
-                    },
-                    {
-                        field: 'operate',
-                        title: '操作',
-                        width: 100,
-                        templet: function (d) {
-                            return '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + escapeHtml(d.id) + '">删除</button>';
-                        }
-                    }
-                ]],
+                cols: [allFollowCols],
                 where: {
                     leads_id: leadsId,
                     keyword: '',
@@ -1075,6 +1081,7 @@
         state.urls = options.urls || {};
         state.onFollowSaved = typeof options.onFollowSaved === 'function' ? options.onFollowSaved : null;
         state.enableRankEdit = options.enableRankEdit !== false;
+        state.enableDelete = options.enableDelete !== false;
 
         state.followSubmitDefaultText = $.trim($('#submit-comment').text()) || '保存跟进';
 

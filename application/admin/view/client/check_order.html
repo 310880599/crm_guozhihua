@@ -419,6 +419,15 @@
             text-align: center;
         }
 
+        .layui-table-view .layui-table td .action-icon-btn {
+            padding: 0 6px;
+            min-width: 28px;
+            margin-right: 4px;
+        }
+        .layui-table-view .layui-table td .action-icon-btn .layui-icon {
+            margin-right: 0;
+        }
+
     </style>
 
 </head>
@@ -612,16 +621,104 @@
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
     </div>
 
+    {include file="common/client_follow_dialogs"/}
+
+    <script type="text/html" id="checkOrderAction">
+    <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn check-order-all-follow-btn" href="javascript:void(0);" data-order-id="{{d.id}}" lay-tips="全部跟进" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i></a>
+    <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" lay-event="details" lay-tips="订单详情" lay-offset="0,-8"><i class="layui-icon">&#xe615;</i></a>
+    </script>
+
     <script type="text/html" id="topBtn"></script>
 
     {include file="common/foot"/}
     <script src="/static/admin/js/sortable.min.js"></script>
+    <script src="/static/admin/js/client_follow_dialogs.js"></script>
     <script>
         layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
             const { table, form, laydate, upload, util, element } = layui;
             var $ = layui.$;
             var layer = layui.layer;
             var BASE_COL_WIDTH = 180;
+
+            if (window.ClientFollowUI) {
+                ClientFollowUI.init({
+                    urls: {
+                        detail: "{:url('Client/getClientDetailAndComments')}",
+                        commentsPage: "{:url('Client/getClientCommentsPage')}"
+                    },
+                    enableRankEdit: false,
+                    enableDelete: false
+                });
+            }
+
+            var actionIconTipIndex = null;
+            function closeActionIconTip() {
+                if (actionIconTipIndex !== null) {
+                    try { layer.close(actionIconTipIndex); } catch (e) {}
+                    actionIconTipIndex = null;
+                }
+            }
+            function escapeActionIconTipText(text) {
+                return String(text == null ? '' : text)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+            (function bindCheckOrderActionTips() {
+                var tipSelector = '.layui-table-view .action-icon-btn[lay-tips]';
+                $(document)
+                    .off('mouseenter.checkOrderActionTip mouseleave.checkOrderActionTip click.checkOrderActionTip', tipSelector)
+                    .on('mouseenter.checkOrderActionTip', tipSelector, function () {
+                        var text = $(this).attr('lay-tips');
+                        if (text == null || String(text).trim() === '') return;
+                        closeActionIconTip();
+                        actionIconTipIndex = layer.tips(escapeActionIconTipText(text), this, {
+                            tips: [1, '#393D49'],
+                            time: 0,
+                            tipsMore: false,
+                            maxWidth: 160
+                        });
+                    })
+                    .on('mouseleave.checkOrderActionTip', tipSelector, function () {
+                        closeActionIconTip();
+                    })
+                    .on('click.checkOrderActionTip', tipSelector, function () {
+                        closeActionIconTip();
+                    });
+            })();
+
+            $(document)
+                .off('click.checkOrderAllFollow', '.check-order-all-follow-btn')
+                .on('click.checkOrderAllFollow', '.check-order-all-follow-btn', function () {
+                    var orderId = parseInt($(this).attr('data-order-id'), 10) || 0;
+                    if (orderId <= 0) {
+                        layer.msg('缺少订单ID', {icon: 2});
+                        return;
+                    }
+                    var loading = layer.load(1, {shade: 0});
+                    $.ajax({
+                        url: "{:url('Client/resolveCheckOrderClientForFollow')}",
+                        method: 'POST',
+                        data: { order_id: orderId },
+                        success: function (res) {
+                            layer.close(loading);
+                            var leadsId = res && res.data && res.data.leads_id ? res.data.leads_id : (res && res.leads_id);
+                            if (!res || res.code !== 0 || !leadsId) {
+                                layer.msg((res && (res.message || res.msg)) ? (res.message || res.msg) : '无法定位订单对应客户', {icon: 2});
+                                return;
+                            }
+                            if (window.ClientFollowUI) {
+                                ClientFollowUI.openAllFollowDialog(leadsId);
+                            }
+                        },
+                        error: function () {
+                            layer.close(loading);
+                            layer.msg('网络错误，解析客户失败', {icon: 2});
+                        }
+                    });
+                });
             var IMAGE_COL_MIN_WIDTH = 300;
             var IMAGE_COL_WIDTH = 360;
 
@@ -724,6 +821,7 @@
                 if (!cols || !cols.length || !widthMap) return;
                 cols.forEach(function (c) {
                     if (!c || !c.field) return;
+                    if (c.field === 'action') return;
                     if (widthMap[c.field]) c.width = parseInt(widthMap[c.field], 10);
                 });
             }
@@ -931,6 +1029,10 @@
                     var field = c.field;
                     if (!field || field === '0') return;
                     if (/^\d+$/.test(field)) return;
+                    if (field === 'action') {
+                        c.hide = false;
+                        return;
+                    }
                     if (Object.prototype.hasOwnProperty.call(hideMap, field)) {
                         c.hide = parseInt(hideMap[field], 10) === 1;
                     }
@@ -969,6 +1071,7 @@
                             var field = c.field;
                             if (!field || field === '0') return;
                             if (/^\d+$/.test(field)) return;
+                            if (field === 'action') return;
                             var $th = $ths.filter('[data-field="' + field + '"]');
                             var hide = 1;
                             if ($th.length) {
@@ -1200,7 +1303,17 @@
                 { field: 'pr_user', title: '负责人', width: BASE_COL_WIDTH },
                 { field: 'team_name', title: '团队', width: BASE_COL_WIDTH },
                 { field: 'create_time', title: '创建时间', width: BASE_COL_WIDTH },
-                { field: 'update_time', title: '更新时间', width: BASE_COL_WIDTH }
+                { field: 'update_time', title: '更新时间', width: BASE_COL_WIDTH },
+                {
+                    field: 'action',
+                    title: '操作',
+                    width: 110,
+                    minWidth: 110,
+                    align: 'center',
+                    fixed: 'right',
+                    unresize: true,
+                    toolbar: '#checkOrderAction'
+                }
             ]];
 
             var CHECK_ORDER_COLS_MASTER = null;
@@ -1398,6 +1511,18 @@
 
             table.on('tool(table-list)', function (obj) {
                 var data = obj.data;
+                if (obj.event === 'details') {
+                    layer.open({
+                        type: 2,
+                        title: '订单详情',
+                        closeBtn: 1,
+                        area: ['100%', '86%'],
+                        anim: 2,
+                        shadeClose: false,
+                        maxmin: false,
+                        content: ["{:url('Order/details')}?id=" + data.id]
+                    });
+                }
             });
 
             table.on('toolbar(table-list)', function (obj) {

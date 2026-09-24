@@ -189,7 +189,7 @@ class ClientFollowService
 
     /**
      * 客户跟进只读权限（不扩大写权限）
-     * 覆盖：负责人 / 协同人 / admin_id=1 / 全订单管理权限 / 全部客户列表可见 / 检查客户可见
+     * 覆盖：负责人 / 协同人 / admin_id=1 / 全订单管理权限 / 全部客户列表可见 / 检查客户可见 / 检查订单可见
      */
     public function canReadClientFollow(array $client, $operatorId, $operatorName, array $adminContext = [])
     {
@@ -236,12 +236,96 @@ class ClientFollowService
             $visibleUsers,
             $currentAdmin
         );
-        if ($built === null || empty($built['query'])) {
+        if ($built !== null && !empty($built['query'])) {
+            $checkVisibleId = $built['query']->value('l.id');
+            if (!empty($checkVisibleId)) {
+                return true;
+            }
+        }
+
+        $bridgeContext = [
+            'admin_id' => $operatorId,
+            'username' => $operatorName,
+            'group_id' => (int)($adminContext['group_id'] ?? 0),
+            'team_name' => (string)($adminContext['team_name'] ?? ''),
+        ];
+        return $this->canReadByVisibleCheckOrder($client, $bridgeContext);
+    }
+
+    /**
+     * 检查订单只读桥接：当前用户对某客户对应的检查订单拥有查看权限时，允许只读跟进
+     * 不扩大写权限；可见用户名复用 CheckOrderService::getAllowedUsernames，不复制特殊账号名单
+     */
+    private function canReadByVisibleCheckOrder(array $client, array $adminContext)
+    {
+        $clientId = (int)($client['id'] ?? 0);
+        if ($clientId <= 0) {
             return false;
         }
-        $checkVisibleId = $built['query']->value('l.id');
 
-        return !empty($checkVisibleId);
+        $checkOrderService = new CheckOrderService();
+        $allowedUsernames = $checkOrderService->getAllowedUsernames($adminContext);
+        $allowedUsernames = array_values(array_unique(array_filter(array_map('trim', (array)$allowedUsernames))));
+        if (empty($allowedUsernames)) {
+            return false;
+        }
+
+        $contactRows = Db::table('crm_contacts')
+            ->where('leads_id', $clientId)
+            ->where('is_delete', 0)
+            ->column('contact_value');
+        if (empty($contactRows)) {
+            return false;
+        }
+
+        $uniqueRaw = [];
+        $uniqueNormalized = [];
+        $seen = [];
+        foreach ($contactRows as $raw) {
+            $raw = trim((string)$raw);
+            if ($raw === '') {
+                continue;
+            }
+            $norm = OrderService::normalizeContact($raw);
+            $seenKey = $norm !== '' ? $norm : $raw;
+            if (isset($seen[$seenKey])) {
+                continue;
+            }
+            $seen[$seenKey] = true;
+
+            $match = OrderService::resolveUniqueLeadsIdByContact($raw);
+            if (empty($match['ok']) || (int)$match['leads_id'] !== $clientId) {
+                continue;
+            }
+            $uniqueRaw[] = $raw;
+            if ($norm !== '') {
+                $uniqueNormalized[] = $norm;
+            }
+        }
+
+        $uniqueRaw = array_values(array_unique(array_filter($uniqueRaw)));
+        $uniqueNormalized = array_values(array_unique(array_filter($uniqueNormalized)));
+        if (empty($uniqueRaw) && empty($uniqueNormalized)) {
+            return false;
+        }
+
+        $orderId = Db::table('crm_client_order')
+            ->where('check_status', 2)
+            ->where('pr_user', 'in', $allowedUsernames)
+            ->where(function ($query) use ($uniqueRaw, $uniqueNormalized) {
+                if (!empty($uniqueRaw)) {
+                    $query->whereIn('contact', $uniqueRaw);
+                }
+                foreach ($uniqueNormalized as $norm) {
+                    $query->whereOrRaw(
+                        "REPLACE(REPLACE(REPLACE(IFNULL(contact,''), '+', ''), '-', ''), ' ', '') = '"
+                        . addslashes($norm) . "'"
+                    );
+                }
+            })
+            ->value('id');
+
+        return !empty($orderId);
     }
 
     /**
