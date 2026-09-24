@@ -209,6 +209,104 @@
             border-right: 2px solid #FFD700 !important;
         }
 
+        .client-info-collapse-bar {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            height: 28px;
+            margin-bottom: 6px;
+        }
+
+        .client-info-collapse-bar .client-info-collapse-btn {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid #e6e6e6;
+            background: #fff;
+            color: #666;
+            border-radius: 2px;
+            cursor: pointer;
+            line-height: 26px;
+        }
+
+        .client-info-collapse-bar .client-info-collapse-btn:hover {
+            color: #009688;
+            border-color: #009688;
+        }
+
+        .client-info-panel-inner {
+            width: 100%;
+        }
+
+        .client-details-container.is-info-collapsed .client-info-panel {
+            flex: 0 0 40px;
+            width: 40px;
+            max-width: 40px;
+            overflow: hidden;
+        }
+
+        .client-details-container.is-info-collapsed .client-info-panel-inner {
+            display: none;
+        }
+
+        .client-details-container.is-info-collapsed .client-info-collapse-bar {
+            justify-content: center;
+        }
+
+        .client-section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .client-section-toggle {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .client-follow-card {
+            width: 100%;
+            margin-top: 12px;
+        }
+
+        .client-follow-card .layui-card-body {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 0;
+        }
+
+        .client-follow-table-wrap {
+            width: 100%;
+            padding: 10px 15px;
+            box-sizing: border-box;
+        }
+
+        #clientFollowTable {
+            width: 100%;
+        }
+
+        .client-follow-card .layui-table-view,
+        .client-follow-card .layui-table-box {
+            width: 100%;
+        }
+
+        .client-follow-card .layui-table-header table,
+        .client-follow-card .layui-table-body table {
+            width: 100%;
+        }
+
+        .client-follow-card td[data-field="reply_msg"] .layui-table-cell,
+        .client-follow-card .client-follow-reply-cell {
+            white-space: normal;
+            height: auto;
+            line-height: 20px;
+            overflow: visible;
+            text-overflow: clip;
+            word-break: break-word;
+        }
+
         @media (max-width: 768px) {
             .client-details-container {
                 display: block;
@@ -294,6 +392,21 @@
                 flex: 0 0 100%;
             }
 
+            .client-info-collapse-bar {
+                display: none;
+            }
+
+            .client-details-container.is-info-collapsed .client-info-panel {
+                flex: none;
+                width: 100%;
+                max-width: none;
+                overflow: visible;
+            }
+
+            .client-details-container.is-info-collapsed .client-info-panel-inner {
+                display: block;
+            }
+
         }
     </style>
 </head>
@@ -302,6 +415,12 @@
 <div class="admin-main layui-anim layui-anim-upbit">
     <div class="client-details-container">
         <div class="client-info-panel">
+            <div class="client-info-collapse-bar">
+                <button type="button" class="client-info-collapse-btn" id="clientInfoCollapseBtn" title="折叠客户基本信息">
+                    <i class="layui-icon layui-icon-left"></i>
+                </button>
+            </div>
+            <div class="client-info-panel-inner">
             <form class="layui-form layui-form-pane client-info-form" action="" method="post">
                 <input type="hidden" name="id" value="{$result.id}" />
 
@@ -444,14 +563,29 @@
                     </div>
                 </div>
             </form>
+            </div>
         </div>
 
         <div class="client-order-panel">
             <div class="layui-card history-order-card">
-                <div class="layui-card-header">客户历史成交订单</div>
+                <div class="layui-card-header client-section-header" id="historyOrderSectionHeader">
+                    <span>客户历史成交订单</span>
+                    <i class="layui-icon layui-icon-up client-section-toggle"></i>
+                </div>
                 <div class="layui-card-body">
                     <div class="history-order-table-wrap">
                         <table id="historyApprovedOrderTable" lay-filter="historyApprovedOrderTable"></table>
+                    </div>
+                </div>
+            </div>
+            <div class="layui-card client-follow-card">
+                <div class="layui-card-header client-section-header" id="clientFollowSectionHeader">
+                    <span>客户跟进记录</span>
+                    <i class="layui-icon layui-icon-up client-section-toggle"></i>
+                </div>
+                <div class="layui-card-body">
+                    <div class="client-follow-table-wrap">
+                        <table id="clientFollowTable" lay-filter="clientFollowTable"></table>
                     </div>
                 </div>
             </div>
@@ -462,11 +596,12 @@
 {include file="common/foot"/}
 
 <script>
-layui.use(['form', 'layer', 'jquery', 'table'], function () {
+layui.use(['form', 'layer', 'jquery', 'table', 'util'], function () {
     var form = layui.form
       , layer = layui.layer
       , $ = layui.jquery
-      , table = layui.table;
+      , table = layui.table
+      , util = layui.util;
     var positionTitleList = {$positionTitleListJson|raw};
 
     var collaboratorData = {$collaboratorList|raw};          // [{name, value}]
@@ -598,7 +733,104 @@ layui.use(['form', 'layer', 'jquery', 'table'], function () {
         });
     }
 
+    function escapeFollowText(t) {
+        var text = t == null ? '' : String(t);
+        if (util && typeof util.escape === 'function') {
+            return util.escape(text);
+        }
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function resizeClientDetailTables(tableId) {
+        setTimeout(function () {
+            if (tableId) {
+                table.resize(tableId);
+                return;
+            }
+            table.resize('historyApprovedOrderTable');
+            table.resize('clientFollowTable');
+        }, 50);
+    }
+
+    function renderClientFollowTable() {
+        var clientId = parseInt($('input[name="id"]').val(), 10) || 0;
+        table.render({
+            elem: '#clientFollowTable',
+            id: 'clientFollowTable',
+            url: "{:url('Client/getClientCommentsPage')}",
+            method: 'post',
+            page: true,
+            limit: 10,
+            limits: [10, 20, 30, 50],
+            where: {
+                leads_id: clientId
+            },
+            text: {
+                none: '暂无跟进记录'
+            },
+            cols: [[
+                { field: 'create_date', title: '跟进时间', width: 160 },
+                {
+                    field: 'username',
+                    title: '跟进人',
+                    width: 200,
+                    templet: function (d) {
+                        var name = (d.username == null || d.username === '') ? '-' : String(d.username);
+                        var roleText = (d.follow_role_text == null || d.follow_role_text === '') ? '历史身份待确认' : String(d.follow_role_text);
+                        return escapeFollowText(name) + '【' + escapeFollowText(roleText) + '】';
+                    }
+                },
+                {
+                    field: 'reply_msg',
+                    title: '跟进内容',
+                    minWidth: 220,
+                    templet: function (d) {
+                        var txt = d.reply_msg == null ? '' : String(d.reply_msg);
+                        return '<div class="client-follow-reply-cell">' + escapeFollowText(txt) + '</div>';
+                    }
+                }
+            ]]
+        });
+    }
+
+    function bindCardToggle(headerSelector, cardSelector, tableId) {
+        $(headerSelector).on('click', function () {
+            var $card = $(cardSelector);
+            var $body = $card.children('.layui-card-body');
+            var $icon = $(this).find('.client-section-toggle');
+            if ($body.is(':visible')) {
+                $body.hide();
+                $icon.removeClass('layui-icon-up').addClass('layui-icon-down');
+                return;
+            }
+            $body.show();
+            $icon.removeClass('layui-icon-down').addClass('layui-icon-up');
+            resizeClientDetailTables(tableId);
+        });
+    }
+
     renderHistoryApprovedOrderTable();
+    renderClientFollowTable();
+    bindCardToggle('#historyOrderSectionHeader', '.history-order-card', 'historyApprovedOrderTable');
+    bindCardToggle('#clientFollowSectionHeader', '.client-follow-card', 'clientFollowTable');
+
+    $('#clientInfoCollapseBtn').on('click', function () {
+        var $container = $('.client-details-container');
+        var $icon = $(this).find('.layui-icon');
+        $container.toggleClass('is-info-collapsed');
+        if ($container.hasClass('is-info-collapsed')) {
+            $icon.removeClass('layui-icon-left').addClass('layui-icon-right');
+            $(this).attr('title', '展开客户基本信息');
+        } else {
+            $icon.removeClass('layui-icon-right').addClass('layui-icon-left');
+            $(this).attr('title', '折叠客户基本信息');
+        }
+        resizeClientDetailTables();
+    });
 
     table.on('tool(historyApprovedOrderTable)', function (obj) {
         var data = obj.data || {};
