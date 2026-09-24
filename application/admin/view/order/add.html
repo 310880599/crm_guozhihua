@@ -856,12 +856,12 @@
                     <textarea id="country" name="country" placeholder="请输入发货详细地址" class="layui-textarea" lay-verify="required"></textarea>
                 </div>
             </div>
-            <!-- 用户属性选择 -->
+            <!-- 客户类别选择 -->
             <div class="layui-form-item">
-                <label class="layui-form-label">用户属性<span style="color:red;">*</span></label>
+                <label class="layui-form-label">客户类别<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
                     <select name="customer_type_flag" id="customer_type_flag" lay-verify="required" lay-filter="customer_type_flag">
-                        <option value="">请选择用户属性</option>
+                        <option value="">请选择客户类别</option>
                         <option value="0">公司</option>
                         <option value="1">个人</option>
                     </select>
@@ -878,15 +878,12 @@
                     </div>
                 </div>
             </div>
-            <!-- 客户性质 -->
+            <!-- 公司类别 -->
             <div class="layui-form-item">
-                <label class="layui-form-label">客户性质<span style="color:red;">*</span></label>
+                <label class="layui-form-label">公司类别<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
                     <select name="customer_type" id="customer_type" lay-verify="required" lay-search="">
-                        <option value="">请选择客户性质</option>
-                        {volist name='customer_type' id='vo'}
-                        <option value="{$vo}" {if $vo==$customer_type} selected {/if}>{$vo}</option>
-                        {/volist}
+                        <option value="">请选择公司类别</option>
                     </select>
                 </div>
             </div>
@@ -1297,6 +1294,8 @@
             window.__fillingDraft = false;
             var __DRAFT_ID__ = 0;
             var __LAST_SNAPSHOT__ = '';
+            var PERSONAL_CUSTOMER_TYPES = {:json_encode($personalCustomerTypes ?? [], JSON_UNESCAPED_UNICODE)};
+            var COMPANY_CUSTOMER_TYPES = {:json_encode($companyCustomerTypes ?? [], JSON_UNESCAPED_UNICODE)};
             var __LAST_AUTOSAVE_MSG_TIME__ = 0;
             // 日期控件初始化
             laydate.render({
@@ -1516,7 +1515,10 @@
                     $('#collaborator_profit_rate').val(normalizeProfitRate(formData.collaborator_profit_rate, 0));
                 }
                 form.render('select');
-                updateCustomerTypeUI($('select[name="customer_type_flag"]').val());
+                updateCustomerTypeUI($('select[name="customer_type_flag"]').val(), {
+                    mode: 'init',
+                    keepCustomerType: formData.customer_type || ''
+                });
                 updateInvoiceUI($('select[name="invoice_type"]').val());
                 if (window.collaboratorSelectInstance) {
                     try {
@@ -2145,20 +2147,86 @@
         // 页面初始化时调用一次
         updateVoucherUI();
         
-        // 用户属性/票种依赖区域显隐（草稿回填或初始化时主动调用，避免仅 .val() 不触发 form.on）
-        function updateCustomerTypeUI(customerTypeFlag) {
+        // 客户类别/票种依赖区域显隐（草稿回填或初始化时主动调用，避免仅 .val() 不触发 form.on）
+        function rebuildCustomerTypeOptions(optionList, selectedValue, extraValue) {
+            var $sel = $('#customer_type');
+            $sel.empty();
+            $sel.append('<option value="">请选择公司类别</option>');
+            $.each(optionList || [], function (i, name) {
+                if (name === undefined || name === null || name === '') {
+                    return;
+                }
+                $sel.append($('<option></option>').attr('value', name).text(name));
+            });
+            extraValue = (extraValue === undefined || extraValue === null) ? '' : String(extraValue);
+            if (extraValue !== '' && $.inArray(extraValue, optionList || []) === -1) {
+                $sel.append($('<option></option>').attr('value', extraValue).text(extraValue));
+            }
+            if (selectedValue !== undefined && selectedValue !== null && selectedValue !== '') {
+                $sel.val(String(selectedValue));
+            } else {
+                $sel.val('');
+            }
+        }
+        function getCustomerTypeCombinationError(customerTypeFlag, customerType) {
+            var flag = (customerTypeFlag === undefined || customerTypeFlag === null) ? '' : String(customerTypeFlag);
+            var type = $.trim(customerType || '');
+            if (type === '') {
+                return '请选择公司类别';
+            }
+            if (flag === '1') {
+                if ($.inArray(type, PERSONAL_CUSTOMER_TYPES) === -1) {
+                    return '个人客户的公司类别只能选择“个人用户（无公司）”';
+                }
+                return '';
+            }
+            if (flag === '0') {
+                if ($.inArray(type, COMPANY_CUSTOMER_TYPES) === -1) {
+                    return '当前公司类别与客户类别不匹配';
+                }
+                return '';
+            }
+            return '请选择客户类别';
+        }
+        function updateCustomerTypeUI(customerTypeFlag, opts) {
+            opts = opts || {};
+            var mode = opts.mode || 'user';
+            customerTypeFlag = (customerTypeFlag === undefined || customerTypeFlag === null) ? '' : String(customerTypeFlag);
+            var keepCustomerType = (opts.keepCustomerType !== undefined && opts.keepCustomerType !== null)
+                ? String(opts.keepCustomerType)
+                : '';
             var $clientCompanyItem = $('#client_company_item');
             var $clientCompanyInput = $('#client_company');
-            if (customerTypeFlag === '0') {
-                $clientCompanyItem.show();
-                $clientCompanyInput.attr('lay-verify', 'required|chinaCompany');
-            } else {
-                $clientCompanyItem.hide();
-                $clientCompanyInput.removeAttr('lay-verify');
-                $clientCompanyInput.val('');
-                $('#companyList').hide();
+            if (customerTypeFlag === '1') {
+                if (mode === 'init') {
+                    rebuildCustomerTypeOptions(PERSONAL_CUSTOMER_TYPES, keepCustomerType, keepCustomerType);
+                    $clientCompanyItem.hide();
+                    $clientCompanyInput.removeAttr('lay-verify');
+                    $clientCompanyInput.val('');
+                    $('#companyList').hide();
+                } else {
+                    rebuildCustomerTypeOptions(PERSONAL_CUSTOMER_TYPES, PERSONAL_CUSTOMER_TYPES[0] || '个人用户（无公司）');
+                    $clientCompanyItem.hide();
+                    $clientCompanyInput.removeAttr('lay-verify');
+                    $clientCompanyInput.val('');
+                    $('#companyList').hide();
+                }
+            } else if (customerTypeFlag === '0') {
+                if (mode === 'init') {
+                    rebuildCustomerTypeOptions(COMPANY_CUSTOMER_TYPES, keepCustomerType, keepCustomerType);
+                    $clientCompanyItem.show();
+                    $clientCompanyInput.attr('lay-verify', 'required|chinaCompany');
+                } else {
+                    rebuildCustomerTypeOptions(COMPANY_CUSTOMER_TYPES, '');
+                    $clientCompanyItem.show();
+                    $clientCompanyInput.attr('lay-verify', 'required|chinaCompany');
+                }
+            } else if (mode === 'init' && keepCustomerType !== '') {
+                rebuildCustomerTypeOptions([], keepCustomerType, keepCustomerType);
+            } else if (mode === 'init') {
+                rebuildCustomerTypeOptions([], '');
             }
-            form.render();
+            form.render('select');
         }
         function updateInvoiceUI(invoiceType) {
             var $invoiceAmountItem = $('#invoice_amount_item');
@@ -2174,9 +2242,16 @@
             form.render();
         }
         
-        // 用户属性选择变化时的处理
+        // 客户类别选择变化时的处理
         form.on('select(customer_type_flag)', function (data) {
-            updateCustomerTypeUI(data.value);
+            if (window.__fillingDraft) {
+                updateCustomerTypeUI(data.value, {
+                    mode: 'init',
+                    keepCustomerType: $('#customer_type').val() || ''
+                });
+                return;
+            }
+            updateCustomerTypeUI(data.value, { mode: 'user' });
         });
         
         // 票种性质选择变化时的处理
@@ -2184,8 +2259,8 @@
             updateInvoiceUI(data.value);
         });
         
-        // 页面初始化跑一次，防止刷新/默认值异常
-        updateCustomerTypeUI($('#customer_type_flag').val());
+        // 页面初始化跑一次，防止刷新/默认值异常；空 flag 不当成个人
+        updateCustomerTypeUI($('#customer_type_flag').val(), { mode: 'init' });
         updateInvoiceUI($('#invoice_type').val());
 
         // **为新增产品行准备选项HTML** 
@@ -3010,10 +3085,15 @@
                 return false;
             }
             
-            // 检查用户属性是否已选择
+            // 检查客户类别是否已选择
             var customerTypeFlag = $("#customer_type_flag").val();
             if (!customerTypeFlag || customerTypeFlag === '') {
-                layer.msg('请选择用户属性（公司或个人）', { icon: 2, time: 2000 });
+                layer.msg('请选择客户类别（公司或个人）', { icon: 2, time: 2000 });
+                return false;
+            }
+            var customerTypeComboMsg = getCustomerTypeCombinationError(customerTypeFlag, $("#customer_type").val());
+            if (customerTypeComboMsg) {
+                layer.msg(customerTypeComboMsg, { icon: 2, time: 2000 });
                 return false;
             }
             

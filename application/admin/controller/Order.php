@@ -25,6 +25,21 @@ class Order extends Common
         '其他',
     ];
 
+    const CUSTOMER_TYPE_PERSONAL = [
+        '个人用户（无公司）',
+    ];
+
+    const CUSTOMER_TYPE_COMPANY = [
+        '小型私企（终端用户）',
+        '大型私企（上市/集团公司）',
+        '经销商（商贸非自用）',
+        '国企央企（含境外）',
+        '政府事业单位',
+        '部队/军企',
+        '国外客户(外国人/公司)',
+        '其他',
+    ];
+
     /**
      * 利润达到阈值时，必须上传两类凭证
      *
@@ -34,6 +49,39 @@ class Order extends Common
     private function isVoucherRequired($profit)
     {
         return floatval($profit) >= 2000;
+    }
+
+    /**
+     * 正式提交时校验客户类别与公司类别组合，不静默改值。
+     *
+     * @param mixed $customerTypeFlag
+     * @param mixed $customerType
+     * @return string 错误信息，空字符串表示通过
+     */
+    private function validateCustomerTypeCombination($customerTypeFlag, $customerType)
+    {
+        $flag = trim((string)$customerTypeFlag);
+        $type = trim((string)$customerType);
+
+        if ($type === '') {
+            return '请选择公司类别';
+        }
+
+        if ($flag === '1') {
+            if (!in_array($type, self::CUSTOMER_TYPE_PERSONAL, true)) {
+                return '个人客户的公司类别只能选择“个人用户（无公司）”';
+            }
+            return '';
+        }
+
+        if ($flag === '0') {
+            if (!in_array($type, self::CUSTOMER_TYPE_COMPANY, true)) {
+                return '当前公司类别与客户类别不匹配';
+            }
+            return '';
+        }
+
+        return '请选择客户类别';
     }
 
     /**
@@ -919,7 +967,14 @@ class Order extends Common
             $data['province']         = Request::param('province', '');  // 省份
             $data['city']             = Request::param('city', '');       // 城市
             $data['country']          = Request::param('country');        // 发货地址
-            $data['customer_type']    = Request::param('customer_type');  // 客户性质
+            $data['customer_type']    = Request::param('customer_type');  // 公司类别
+            // 正式提交 / 草稿转正式：按新规则校验客户类别与公司类别组合；普通草稿保持宽松
+            if (!$isDraft) {
+                $typeComboMsg = $this->validateCustomerTypeCombination($data['customer_type_flag'], $data['customer_type']);
+                if ($typeComboMsg !== '') {
+                    return json(['code' => -200, 'msg' => $typeComboMsg]);
+                }
+            }
             $data['source']           = Request::param('source');         // 询盘来源（运营渠道，存储为文字）
             // 强制覆盖 pr_user 为当前登录人，无论前端传什么值
             $data['pr_user']          = Session::get('username');
@@ -1413,6 +1468,8 @@ class Order extends Common
         $this->assign('sourceList', $sourceList);
 
         $this->assign('customer_type', self::CUSTOMER_TYPE);
+        $this->assign('personalCustomerTypes', self::CUSTOMER_TYPE_PERSONAL);
+        $this->assign('companyCustomerTypes', self::CUSTOMER_TYPE_COMPANY);
 
         $userlist = Db::name('admin')->where('group_id', '<>', 1)->field('admin_id,username')->select();
         // 【收款账户快照模式】只显示未删除的账户（is_deleted=0）
@@ -2086,14 +2143,26 @@ class Order extends Common
             $data['province']         = Request::param('province', '');
             $data['city']             = Request::param('city', '');
             $data['country']          = Request::param('country');        // 发货地址
-            $data['customer_type']    = Request::param('customer_type');  // 客户性质
+            $data['customer_type']    = Request::param('customer_type');  // 公司类别
             $data['source']           = Request::param('source');         // 询盘来源（运营渠道，存储为文字）
             $data['bank_account']     = Request::param('bank_account');  // 收款账户 ID (as string)
             
             // 【收款账户快照模式】根据 bank_account ID 查询账户名称并更新快照字段
-            // 先查出当前订单原来的快照字段做兜底
-            $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('bank_account_name')->find();
+            // 先查出当前订单原来的快照字段做兜底；同时取出历史客户类别/公司类别供祖父条款判断
+            $originalOrder = Db::name('crm_client_order')->where('id', $id)->field('bank_account_name,customer_type_flag,customer_type')->find();
             $originalBankAccountName = $originalOrder['bank_account_name'] ?? '';
+
+            // 祖父条款：仅当客户类别或公司类别被主动修改时，才按新规则校验
+            $originalTypeFlag = isset($originalOrder['customer_type_flag']) ? trim((string)$originalOrder['customer_type_flag']) : '';
+            $originalCustomerType = isset($originalOrder['customer_type']) ? trim((string)$originalOrder['customer_type']) : '';
+            $newTypeFlag = trim((string)$data['customer_type_flag']);
+            $newCustomerType = trim((string)($data['customer_type'] ?? ''));
+            if ($originalTypeFlag !== $newTypeFlag || $originalCustomerType !== $newCustomerType) {
+                $typeComboMsg = $this->validateCustomerTypeCombination($data['customer_type_flag'], $data['customer_type']);
+                if ($typeComboMsg !== '') {
+                    return json(['code' => -200, 'msg' => $typeComboMsg]);
+                }
+            }
             
             if (!empty($data['bank_account'])) {
                 // 根据本次提交的 bank_account 查询账户名称
@@ -2580,6 +2649,8 @@ class Order extends Common
         $this->assign('accountList', $accountList);
         $this->assign('teamList', $teamList);
         $this->assign('customer_type', self::CUSTOMER_TYPE);
+        $this->assign('personalCustomerTypes', self::CUSTOMER_TYPE_PERSONAL);
+        $this->assign('companyCustomerTypes', self::CUSTOMER_TYPE_COMPANY);
         // 当前登录用户信息
         $currentAdmin = \app\admin\model\Admin::getMyInfo();
         $this->assign('username', $currentAdmin['username'] ?? Session::get('username'));

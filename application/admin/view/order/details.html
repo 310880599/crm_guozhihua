@@ -248,12 +248,12 @@
                               class="layui-textarea">{:htmlentities($orderInfo.country)}</textarea>
                 </div>
             </div>
-            <!-- 【新增】用户属性选择（与 edit.html 对齐） -->
+            <!-- 【新增】客户类别选择（与 edit.html 对齐） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">用户属性<span style="color:red;">*</span></label>
+                <label class="layui-form-label">客户类别<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
                     <select name="customer_type_flag" id="customer_type_flag" lay-verify="required" disabled>
-                        <option value="">请选择用户属性</option>
+                        <option value="">请选择客户类别</option>
                         <option value="0" {if $orderInfo.customer_type_flag == 0}selected{/if}>公司</option>
                         <option value="1" {if $orderInfo.customer_type_flag == 1}selected{/if}>个人</option>
                     </select>
@@ -267,15 +267,20 @@
                            value="{$orderInfo.client_company|htmlentities}" placeholder="请输入客户公司" class="layui-input">
                 </div>
             </div>
-            <!-- 【修改】客户性质（与 edit.html 对齐） -->
+            <!-- 【修改】公司类别（与 edit.html 对齐） -->
             <div class="layui-form-item">
-                <label class="layui-form-label">客户性质<span style="color:red;">*</span></label>
+                <label class="layui-form-label">公司类别<span style="color:red;">*</span></label>
                 <div class="layui-input-4">
                     <select name="customer_type" id="customer_type" lay-verify="required" lay-search disabled>
-                        <option value="">请选择客户性质</option>
+                        <option value="">请选择公司类别</option>
                         {volist name='customer_type' id='vo'}
                         <option value="{$vo}" {if $vo == $orderInfo.customer_type}selected{/if}>{$vo}</option>
                         {/volist}
+                        {notempty name="orderInfo.customer_type"}
+                        {if condition="!in_array($orderInfo['customer_type'], $customer_type)"}
+                        <option value="{$orderInfo.customer_type|htmlentities}" selected>{$orderInfo.customer_type|htmlentities}</option>
+                        {/if}
+                        {/notempty}
                     </select>
                 </div>
             </div>
