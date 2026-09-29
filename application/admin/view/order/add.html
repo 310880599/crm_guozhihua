@@ -867,6 +867,15 @@
                     </select>
                 </div>
             </div>
+            <!-- 公司类别 -->
+            <div class="layui-form-item">
+                <label class="layui-form-label">公司类别<span style="color:red;">*</span></label>
+                <div class="layui-input-4">
+                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search="">
+                        <option value="">请选择公司类别</option>
+                    </select>
+                </div>
+            </div>
             <!-- 原有"客户公司"表单项，增加下拉列表容器 -->
             <div class="layui-form-item" id="client_company_item" style="display: none;">
                 <label class="layui-form-label">客户公司<span style="color:red;">*</span></label>
@@ -876,15 +885,6 @@
                     <div id="companyList" class="suggestion-list" 
                         style="position:absolute; top:38px; left:0; z-index:9999; background:#FFF; border:1px solid #ccc; display:none;"><!-- 新增：联想下拉列表容器 -->
                     </div>
-                </div>
-            </div>
-            <!-- 公司类别 -->
-            <div class="layui-form-item">
-                <label class="layui-form-label">公司类别<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
-                    <select name="customer_type" id="customer_type" lay-verify="required" lay-search="">
-                        <option value="">请选择公司类别</option>
-                    </select>
                 </div>
             </div>
             <div class="layui-form-item">

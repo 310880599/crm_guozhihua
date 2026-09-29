@@ -259,14 +259,6 @@
                     </select>
                 </div>
             </div>
-            <!-- 【修改】客户公司（与 edit.html 对齐，条件显示） -->
-            <div class="layui-form-item" id="client_company_item" {if condition="$orderInfo.customer_type_flag == 1"}style="display: none;"{/if}>
-                <label class="layui-form-label">客户公司<span style="color:red;">*</span></label>
-                <div class="layui-input-4">
-                    <input type="text" id="client_company" name="client_company" readonly
-                           value="{$orderInfo.client_company|htmlentities}" placeholder="请输入客户公司" class="layui-input">
-                </div>
-            </div>
             <!-- 【修改】公司类别（与 edit.html 对齐） -->
             <div class="layui-form-item">
                 <label class="layui-form-label">公司类别<span style="color:red;">*</span></label>
@@ -282,6 +274,14 @@
                         {/if}
                         {/notempty}
                     </select>
+                </div>
+            </div>
+            <!-- 【修改】客户公司（与 edit.html 对齐，条件显示） -->
+            <div class="layui-form-item" id="client_company_item" {if condition="$orderInfo.customer_type_flag == 1"}style="display: none;"{/if}>
+                <label class="layui-form-label">客户公司<span style="color:red;">*</span></label>
+                <div class="layui-input-4">
+                    <input type="text" id="client_company" name="client_company" readonly
+                           value="{$orderInfo.client_company|htmlentities}" placeholder="请输入客户公司" class="layui-input">
                 </div>
             </div>
             <!-- 【新增】客户名称（详情页显示，edit.html 中通过联系方式自动获取，不单独显示） -->
