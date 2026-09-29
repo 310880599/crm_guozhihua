@@ -4227,6 +4227,33 @@ class Order extends Common
         return json($result);
     }
 
+    /**
+     * 待审核订单：按 order_id 解析可跟进的唯一客户（独立入口，不复用我的订单 resolver）
+     */
+    public function resolvePendingOrderClientForFollow()
+    {
+        $orderId = (int)Request::param('order_id', 0);
+        $myInfo = \app\admin\model\Admin::getMyInfo();
+        if (empty($myInfo) || (int)($myInfo['admin_id'] ?? 0) <= 0) {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+
+        $username = trim((string)($myInfo['username'] ?? ''));
+        if ($username === '') {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)($myInfo['admin_id'] ?? 0),
+            'username' => $username,
+            'group_id' => (int)($myInfo['group_id'] ?? 0),
+            'team_name' => (string)($myInfo['team_name'] ?? ''),
+        ];
+
+        $result = OrderService::resolvePendingOrderClientForFollow($orderId, $username, $operatorInfo);
+        return json($result);
+    }
+
     //订单草稿搜索接口
     public function draftClientSearch()
     {

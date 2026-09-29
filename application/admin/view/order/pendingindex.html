@@ -20,6 +20,15 @@
             display: none !important;
         }
 
+        .layui-table-view .layui-table td .action-icon-btn {
+            padding: 0 6px;
+            min-width: 28px;
+            margin-right: 4px;
+        }
+        .layui-table-view .layui-table td .action-icon-btn .layui-icon {
+            margin-right: 0;
+        }
+
         /* 筛选区域样式优化 */
         .filtrate-warp {
             margin-bottom: 15px;
@@ -627,6 +636,7 @@
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
     </div>
 
+    {include file="common/client_follow_dialogs"/}
 
     <!-- <a class="layui-btn  layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a> -->
     <script type="text/html" id="action">
@@ -643,6 +653,8 @@
     <!-- 审核拒绝 -->
     <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="reject"><i class="layui-icon">&#x1006;</i> 拒绝</a>
     {/if}
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn pending-order-follow-btn" href="javascript:void(0);" data-order-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a>
+    <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn pending-order-all-follow-btn" href="javascript:void(0);" data-order-id="{{d.id}}" lay-tips="全部跟进" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i></a>
     
     </script>
 
@@ -657,10 +669,118 @@
 
     {include file="common/foot"/}
     <script src="/static/admin/js/sortable.min.js"></script>
+    <script src="/static/admin/js/client_follow_dialogs.js"></script>
     <script>
         layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
             const { table, form, laydate, $, upload, util, element } = layui;
             var layer = layui.layer;
+
+            // 操作列图标悬浮提示（待审核页独立 namespace，与我的订单行为一致）
+            var pendingActionIconTipIndex = null;
+            function closePendingActionIconTip() {
+                if (pendingActionIconTipIndex !== null) {
+                    try { layer.close(pendingActionIconTipIndex); } catch (e) {}
+                    pendingActionIconTipIndex = null;
+                }
+            }
+            function escapePendingActionIconTipText(text) {
+                return String(text == null ? '' : text)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+            (function bindPendingOrderActionTips() {
+                var tipSelector = '.layui-table-view .action-icon-btn[lay-tips]';
+                $(document)
+                    .off('mouseenter.pendingOrderActionTip mouseleave.pendingOrderActionTip click.pendingOrderActionTip', tipSelector)
+                    .on('mouseenter.pendingOrderActionTip', tipSelector, function () {
+                        var text = $(this).attr('lay-tips');
+                        if (text == null || String(text).trim() === '') return;
+                        closePendingActionIconTip();
+                        pendingActionIconTipIndex = layer.tips(escapePendingActionIconTipText(text), this, {
+                            tips: [1, '#393D49'],
+                            time: 0,
+                            tipsMore: false,
+                            maxWidth: 160
+                        });
+                    })
+                    .on('mouseleave.pendingOrderActionTip', tipSelector, function () {
+                        closePendingActionIconTip();
+                    })
+                    .on('click.pendingOrderActionTip', tipSelector, function () {
+                        closePendingActionIconTip();
+                    });
+            })();
+
+            if (window.ClientFollowUI) {
+                ClientFollowUI.init({
+                    urls: {
+                        detail: "{:url('Client/getClientDetailAndComments')}",
+                        commentsPage: "{:url('Client/getClientCommentsPage')}",
+                        save: "{:url('Client/saveClientFollow')}",
+                        deleteComment: "{:url('Client/deleteFollowComment')}",
+                        rankOptions: "{:url('Client/getFollowRankOptions')}",
+                        updateRank: "{:url('Client/updateClientRankInFollow')}"
+                    },
+                    enableRankEdit: true,
+                    onFollowSaved: function () {
+                        // 待审核订单不调用我的客户专属 reloadKeepColWidth
+                    }
+                });
+            }
+
+            function resolvePendingOrderClientThen(orderId, mode) {
+                orderId = parseInt(orderId, 10) || 0;
+                if (orderId <= 0) {
+                    layer.msg('缺少订单ID', {icon: 2});
+                    return;
+                }
+                var loading = layer.load(1, {shade: 0});
+                $.ajax({
+                    url: "{:url('Order/resolvePendingOrderClientForFollow')}",
+                    method: 'POST',
+                    data: { order_id: orderId },
+                    success: function (res) {
+                        layer.close(loading);
+                        if (!res || res.code !== 0 || !res.data || !res.data.leads_id) {
+                            layer.msg((res && res.msg) ? res.msg : '无法定位订单对应客户', {icon: 2});
+                            return;
+                        }
+                        var leadsId = res.data.leads_id;
+                        if (mode === 'write') {
+                            if (!res.data.can_write_follow) {
+                                layer.msg('您没有权限写入该客户跟进', {icon: 2});
+                                return;
+                            }
+                            if (window.ClientFollowUI) {
+                                ClientFollowUI.openFollowDialog(leadsId);
+                            }
+                        } else {
+                            if (window.ClientFollowUI) {
+                                ClientFollowUI.openAllFollowDialog(leadsId);
+                            }
+                        }
+                    },
+                    error: function () {
+                        layer.close(loading);
+                        layer.msg('网络错误，解析客户失败', {icon: 2});
+                    }
+                });
+            }
+
+            $(document)
+                .off('click.pendingOrderFollow', '.pending-order-follow-btn')
+                .on('click.pendingOrderFollow', '.pending-order-follow-btn', function () {
+                    resolvePendingOrderClientThen($(this).attr('data-order-id'), 'write');
+                });
+            $(document)
+                .off('click.pendingOrderFollow', '.pending-order-all-follow-btn')
+                .on('click.pendingOrderFollow', '.pending-order-all-follow-btn', function () {
+                    resolvePendingOrderClientThen($(this).attr('data-order-id'), 'all');
+                });
+
             // 根据超级管理员权限设置工具栏按钮
             var defaultToolbar = ['filter'];
             {if session('aid') eq 1}

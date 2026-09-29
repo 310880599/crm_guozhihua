@@ -285,6 +285,96 @@ class OrderService
     }
 
     /**
+     * 待审核订单入口：按 order_id 解析可跟进的唯一客户（独立于我的订单）
+     *
+     * 订单层规则对齐 pendingClientSearch：
+     * - 仅 check_status = 1
+     * - canManageAllOrders 可解析全部待审订单
+     * - 普通用户仅限 at_user / pr_user = 当前用户
+     * 客户跟进读写权限仍由 ClientFollowService 判定，不在此放宽。
+     *
+     * @param int $orderId
+     * @param string $username
+     * @param array $operatorInfo ['admin_id'=>int,'username'=>string,'group_id'=>int,'team_name'=>string]
+     * @return array{code:int,msg:string,data:array}
+     */
+    public static function resolvePendingOrderClientForFollow($orderId, $username, array $operatorInfo = [])
+    {
+        $orderId = (int)$orderId;
+        $username = trim((string)$username);
+        if ($orderId <= 0) {
+            return ['code' => 1, 'msg' => '缺少订单ID', 'data' => []];
+        }
+        if ($username === '') {
+            return ['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []];
+        }
+
+        $canManageAll = self::canManageAllOrders($operatorInfo);
+
+        $query = Db::table('crm_client_order')
+            ->where('id', $orderId)
+            ->where('check_status', 1);
+
+        if (!$canManageAll) {
+            $query->where(function ($q) use ($username) {
+                $q->where('at_user', '=', $username)
+                    ->whereOr('pr_user', '=', $username);
+            });
+        }
+
+        $order = $query->find();
+        if (empty($order)) {
+            return ['code' => 1, 'msg' => '订单不存在或无权操作', 'data' => []];
+        }
+
+        $contactMatch = self::resolveUniqueLeadsIdByContact($order['contact'] ?? '');
+        if (empty($contactMatch['ok'])) {
+            return [
+                'code' => 1,
+                'msg' => (string)($contactMatch['msg'] ?? '无法定位订单对应客户'),
+                'data' => [],
+            ];
+        }
+
+        $leadsId = (int)$contactMatch['leads_id'];
+        $client = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (empty($client)) {
+            return ['code' => 1, 'msg' => '无法定位订单对应客户', 'data' => []];
+        }
+
+        $followService = new ClientFollowService();
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? $username));
+        $adminContext = [
+            'admin_id' => $operatorId,
+            'username' => $operatorName,
+            'group_id' => (int)($operatorInfo['group_id'] ?? 0),
+            'team_name' => (string)($operatorInfo['team_name'] ?? ''),
+        ];
+
+        if (!$followService->canReadClientFollow($client, $operatorId, $operatorName, $adminContext)) {
+            return ['code' => 1, 'msg' => '您没有权限查看该客户跟进', 'data' => []];
+        }
+
+        $writeRole = $followService->resolveFollowRole($client, $operatorId, $operatorName);
+
+        return [
+            'code' => 0,
+            'msg' => 'ok',
+            'data' => [
+                'order_id' => $orderId,
+                'leads_id' => $leadsId,
+                'kh_name' => (string)($client['kh_name'] ?? ''),
+                'pr_user' => (string)($client['pr_user'] ?? ''),
+                'can_read_follow' => true,
+                'can_write_follow' => $writeRole !== '',
+                'current_role' => $writeRole,
+                'current_role_text' => $writeRole !== '' ? $followService->getFollowRoleText($writeRole) : '',
+            ],
+        ];
+    }
+
+    /**
      * 根据联系方式匹配客户ID（leads_id）
      *
      * 规则：
