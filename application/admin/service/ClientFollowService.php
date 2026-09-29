@@ -92,6 +92,56 @@ class ClientFollowService
                 throw new \RuntimeException('您没有权限操作该客户');
             }
 
+            // 10 秒短窗防重：必须在行锁与权限确认之后，避免并发双插
+            $duplicateComment = Db::table('crm_comment')
+                ->where('leads_id', $leadsId)
+                ->where('user_id', $operatorId)
+                ->where('reply_msg', $content)
+                ->where('is_deleted', 0)
+                ->where('create_date', '>=', $nowTimestamp - 10)
+                ->order('id', 'desc')
+                ->find();
+
+            if ($duplicateComment) {
+                $dupCreateTs = (int)($duplicateComment['create_date'] ?? $nowTimestamp);
+                $sameNextUp = $this->isSameNextUpTime($freshClient['next_up_time'] ?? null, $nextUpValue);
+
+                if (!$sameNextUp) {
+                    // 内容重复但下次跟进时间有变化：不插 comment，只更新 next_up_time / ut_time
+                    Db::table('crm_leads')->where('id', $leadsId)->update([
+                        'next_up_time' => $nextUpValue,
+                        'ut_time' => $nowDateTime,
+                    ]);
+                    Db::commit();
+                    return [
+                        'code' => 0,
+                        'msg' => '该跟进记录已保存，下次跟进时间已更新',
+                        'data' => [
+                            'leads_id' => $leadsId,
+                            'reply_msg' => $content,
+                            'create_date' => date('Y年m月d日 H:i', $dupCreateTs),
+                            'next_up_time' => $this->formatNextUpTimeForDisplay($nextUpValue),
+                            'follow_role' => $followRole,
+                            'follow_role_text' => $this->getFollowRoleText($followRole),
+                        ],
+                    ];
+                }
+
+                Db::commit();
+                return [
+                    'code' => 0,
+                    'msg' => '该跟进记录已保存，请勿重复提交',
+                    'data' => [
+                        'leads_id' => $leadsId,
+                        'reply_msg' => $content,
+                        'create_date' => date('Y年m月d日 H:i', $dupCreateTs),
+                        'next_up_time' => $this->formatNextUpTimeForDisplay($freshClient['next_up_time'] ?? null),
+                        'follow_role' => $followRole,
+                        'follow_role_text' => $this->getFollowRoleText($followRole),
+                    ],
+                ];
+            }
+
             Db::table('crm_comment')->insert([
                 'leads_id' => $leadsId,
                 'user_id' => $operatorId,
@@ -125,6 +175,34 @@ class ClientFollowService
             Db::rollback();
             return $this->fail('保存跟进失败：' . $e->getMessage());
         }
+    }
+
+    /**
+     * 比较两次下次跟进时间是否业务相同（兼容 NULL / 空串 / 可解析日期时间）
+     */
+    private function isSameNextUpTime($existing, $incoming)
+    {
+        return $this->normalizeNextUpForCompare($existing) === $this->normalizeNextUpForCompare($incoming);
+    }
+
+    /**
+     * @param mixed $value
+     * @return string 空表示无下次跟进；有值则尽量规范为 Y-m-d H:i:s
+     */
+    private function normalizeNextUpForCompare($value)
+    {
+        if ($value === null) {
+            return '';
+        }
+        $raw = trim((string)$value);
+        if ($raw === '' || strtolower($raw) === 'null' || strtolower($raw) === 'undefined') {
+            return '';
+        }
+        $ts = strtotime($raw);
+        if ($ts === false) {
+            return $raw;
+        }
+        return date('Y-m-d H:i:s', $ts);
     }
 
     /**
