@@ -11,8 +11,8 @@ class SuccessClientOrderService
     private $orderColumnMeta = [];
 
     /**
-     * 审核通过订单利润合计（数值表达式，供 SELECT / ORDER BY 共用）。
-     * 订单行在子查询内 SUM，联系方式用 IN 匹配，同一订单只计一次。
+     * 旧口径：按客户相关子查询计算审核通过订单利润。
+     * 列表排序已不再调用。保留该方法，便于与一次聚合结果对照。
      *
      * @param string $leadAlias 外层客户表别名，如 crm_leads 或 l
      * @return string
@@ -33,7 +33,60 @@ class SuccessClientOrderService
     }
 
     /**
-     * 分页前选出 profit_total，并按白名单排序。
+     * 审核通过订单利润一次性聚合。
+     * 每个 leads_id 最多一行，供利润排序 LEFT JOIN，以及当前页批量补利润。
+     *
+     * 不使用 TRIM / REPLACE，精确匹配 contact。
+     * 不要求 order_time 有效，不读历史订单，不统计 check_status 0/1/3。
+     *
+     * 本实现依赖 crm_contacts.contact_value 当前唯一约束：
+     * 一个订单 contact 最多命中一条联系人，GROUP BY leads_id 后不会因一号多联系人重复 SUM。
+     *
+     * @return \think\db\Query
+     */
+    public function buildApprovedProfitAggregateQuery()
+    {
+        return Db::table('crm_contacts')->alias('c')
+            ->join('crm_client_order o', 'o.contact = c.contact_value AND o.check_status = 2', 'INNER')
+            ->where('c.is_delete', 0)
+            ->where('c.contact_type', 'in', [1, 3])
+            ->where('c.contact_value', '<>', '')
+            ->fieldRaw('c.leads_id, SUM(IFNULL(o.profit, 0)) AS profit_total')
+            ->group('c.leads_id');
+    }
+
+    /**
+     * 按当前页客户批量取审核通过订单利润。没有订单的客户不在返回数组中，由调用方补 0。
+     *
+     * @param array $leadIds
+     * @return array<int,float>
+     */
+    public function getApprovedProfitTotalByLeadIds(array $leadIds): array
+    {
+        $leadIds = $this->normalizeLeadIds($leadIds);
+        if (empty($leadIds)) {
+            return [];
+        }
+
+        $rows = $this->buildApprovedProfitAggregateQuery()
+            ->where('c.leads_id', 'in', $leadIds)
+            ->select();
+
+        $map = [];
+        foreach ($rows as $row) {
+            $leadId = (int)($row['leads_id'] ?? 0);
+            if ($leadId <= 0) {
+                continue;
+            }
+            $map[$leadId] = (float)($row['profit_total'] ?? 0);
+        }
+
+        return $map;
+    }
+
+    /**
+     * 成交客户列表排序入口。
+     * 仅 profit_total 排序 LEFT JOIN 全量利润聚合；其余排序不聚合，分页后由当前页补利润。
      * field/order 非法、为空时回落 at_time desc, id desc。
      *
      * @param \think\db\Query $query
@@ -45,25 +98,41 @@ class SuccessClientOrderService
     public function applySuccessClientProfitQuery($query, $sortField, $sortOrder, $leadAlias = 'crm_leads')
     {
         $leadAlias = $this->normalizeSqlIdentifier($leadAlias, 'crm_leads');
-        $profitSql = $this->buildApprovedProfitTotalSql($leadAlias);
-        $query->fieldRaw($leadAlias . '.*, ' . $profitSql . ' AS profit_total');
-
         $field = strtolower(trim((string)$sortField));
         $order = strtolower(trim((string)$sortOrder));
         $allowedFields = ['profit_total', 'kh_name', 'at_time', 'ut_time'];
         $allowedOrders = ['asc', 'desc'];
-        if (!in_array($field, $allowedFields, true) || !in_array($order, $allowedOrders, true)) {
-            $query->order($leadAlias . '.at_time', 'desc')->order($leadAlias . '.id', 'desc');
-            return;
-        }
+        $sortAllowed = in_array($field, $allowedFields, true) && in_array($order, $allowedOrders, true);
 
-        if ($field === 'profit_total') {
+        if ($sortAllowed && $field === 'profit_total') {
+            $profitSubSql = $this->buildApprovedProfitAggregateQuery()->buildSql();
+            $query->leftJoin(
+                [$profitSubSql => 'profit_agg'],
+                'profit_agg.leads_id = ' . $leadAlias . '.id'
+            );
+            $query->fieldRaw($leadAlias . '.*, COALESCE(profit_agg.profit_total, 0) AS profit_total');
             $direction = $order === 'asc' ? 'ASC' : 'DESC';
             $query->orderRaw('profit_total ' . $direction . ', ' . $leadAlias . '.at_time DESC, ' . $leadAlias . '.id DESC');
             return;
         }
 
-        $query->order($leadAlias . '.' . $field, $order)->order($leadAlias . '.id', 'desc');
+        if ($sortAllowed) {
+            $query->order($leadAlias . '.' . $field, $order)->order($leadAlias . '.id', 'desc');
+            return;
+        }
+
+        $query->order($leadAlias . '.at_time', 'desc')->order($leadAlias . '.id', 'desc');
+    }
+
+    /**
+     * @param array $leadIds
+     * @return array<int,int>
+     */
+    private function normalizeLeadIds(array $leadIds): array
+    {
+        return array_values(array_unique(array_filter(array_map('intval', $leadIds), function ($id) {
+            return $id > 0;
+        })));
     }
 
     /**

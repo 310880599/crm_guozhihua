@@ -1541,7 +1541,23 @@ class Client extends Common
             return;
         }
 
-        $summaryMap = (new SuccessClientOrderService())->getOrderSummaryByLeadIds($leadIds);
+        $service = new SuccessClientOrderService();
+        $summaryMap = $service->getOrderSummaryByLeadIds($leadIds);
+
+        $missingProfitLeadIds = [];
+        foreach ($rows as $row) {
+            if (!array_key_exists('profit_total', $row)) {
+                $leadId = (int)($row['id'] ?? 0);
+                if ($leadId > 0) {
+                    $missingProfitLeadIds[$leadId] = $leadId;
+                }
+            }
+        }
+        $profitMap = [];
+        if (!empty($missingProfitLeadIds)) {
+            $profitMap = $service->getApprovedProfitTotalByLeadIds(array_values($missingProfitLeadIds));
+        }
+
         foreach ($rows as &$row) {
             $leadId = (int)($row['id'] ?? 0);
             $summary = $summaryMap[$leadId] ?? [
@@ -1553,9 +1569,9 @@ class Client extends Common
             $row['order_count'] = (int)($summary['order_count'] ?? 0);
             $row['order_amount_total'] = (float)($summary['order_amount_total'] ?? 0);
             $row['order_summary_text'] = (string)($summary['order_summary_text'] ?? '0单 / ¥0 / 利润¥0');
-            // 列表 SQL 已选出 profit_total 时保持该值，避免分页后 PHP 汇总覆盖排序口径
+            // 利润排序 SQL 已返回 profit_total 时保留，不用订单摘要里的 PHP 利润覆盖
             if (!array_key_exists('profit_total', $row)) {
-                $row['profit_total'] = (float)($summary['profit_total'] ?? 0);
+                $row['profit_total'] = isset($profitMap[$leadId]) ? (float)$profitMap[$leadId] : 0;
             }
         }
         unset($row);
