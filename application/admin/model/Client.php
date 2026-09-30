@@ -5,6 +5,7 @@ namespace app\admin\model;
 use app\admin\controller\Client as ControllerClient;
 use app\admin\service\LiberumConfigService;
 use app\admin\service\ClientRowMarkService;
+use app\admin\service\SuccessClientOrderService;
 use think\Model;
 use think\Db;
 use app\admin\model\Contacts;
@@ -1014,7 +1015,7 @@ class Client extends Model
 
 
     //成交客户查询
-    public function getChengjiaoClientSearchList($page, $limit, $keyword)
+    public function getChengjiaoClientSearchList($page, $limit, $keyword, $sortField = '', $sortOrder = '')
     {
 
 
@@ -1104,9 +1105,11 @@ class Client extends Model
             $query->whereRaw($existsSql, $bind);
         }
 
+        // 筛选完成后、分页前：选出 profit_total 并按白名单排序（Service 内再次校验 field/order）
+        (new SuccessClientOrderService())->applySuccessClientProfitQuery($query, $sortField, $sortOrder, 'crm_leads');
+
         $result = $query
             // ->where(['pr_user' => session('username')]) //负责人
-            ->order('at_time desc')
             ->paginate(array('list_rows' => $limit, 'page' => $page))
             ->toArray();
 

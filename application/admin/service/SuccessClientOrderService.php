@@ -11,6 +11,76 @@ class SuccessClientOrderService
     private $orderColumnMeta = [];
 
     /**
+     * 审核通过订单利润合计（数值表达式，供 SELECT / ORDER BY 共用）。
+     * 订单行在子查询内 SUM，联系方式用 IN 匹配，同一订单只计一次。
+     *
+     * @param string $leadAlias 外层客户表别名，如 crm_leads 或 l
+     * @return string
+     */
+    public function buildApprovedProfitTotalSql($leadAlias = 'crm_leads')
+    {
+        $leadAlias = $this->normalizeSqlIdentifier($leadAlias, 'crm_leads');
+
+        return 'COALESCE((SELECT SUM(IFNULL(o.profit, 0)) FROM crm_client_order o'
+            . ' WHERE o.check_status = 2'
+            . ' AND o.contact IN ('
+            . 'SELECT c.contact_value FROM crm_contacts c'
+            . ' WHERE c.leads_id = ' . $leadAlias . '.id'
+            . ' AND c.is_delete = 0'
+            . ' AND c.contact_type IN (1, 3)'
+            . " AND c.contact_value <> ''"
+            . ')), 0)';
+    }
+
+    /**
+     * 分页前选出 profit_total，并按白名单排序。
+     * field/order 非法、为空时回落 at_time desc, id desc。
+     *
+     * @param \think\db\Query $query
+     * @param mixed $sortField
+     * @param mixed $sortOrder
+     * @param string $leadAlias
+     * @return void
+     */
+    public function applySuccessClientProfitQuery($query, $sortField, $sortOrder, $leadAlias = 'crm_leads')
+    {
+        $leadAlias = $this->normalizeSqlIdentifier($leadAlias, 'crm_leads');
+        $profitSql = $this->buildApprovedProfitTotalSql($leadAlias);
+        $query->fieldRaw($leadAlias . '.*, ' . $profitSql . ' AS profit_total');
+
+        $field = strtolower(trim((string)$sortField));
+        $order = strtolower(trim((string)$sortOrder));
+        $allowedFields = ['profit_total', 'kh_name', 'at_time', 'ut_time'];
+        $allowedOrders = ['asc', 'desc'];
+        if (!in_array($field, $allowedFields, true) || !in_array($order, $allowedOrders, true)) {
+            $query->order($leadAlias . '.at_time', 'desc')->order($leadAlias . '.id', 'desc');
+            return;
+        }
+
+        if ($field === 'profit_total') {
+            $direction = $order === 'asc' ? 'ASC' : 'DESC';
+            $query->orderRaw('profit_total ' . $direction . ', ' . $leadAlias . '.at_time DESC, ' . $leadAlias . '.id DESC');
+            return;
+        }
+
+        $query->order($leadAlias . '.' . $field, $order)->order($leadAlias . '.id', 'desc');
+    }
+
+    /**
+     * @param mixed $identifier
+     * @param string $fallback
+     * @return string
+     */
+    private function normalizeSqlIdentifier($identifier, $fallback)
+    {
+        $identifier = trim((string)$identifier);
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $identifier)) {
+            return $identifier;
+        }
+        return $fallback;
+    }
+
+    /**
      * 批量获取成交客户关联订单汇总（按 leads_id 返回）
      *
      * @param array $leadIds

@@ -757,6 +757,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
     // localStorage 的 key（用于兜底）
     var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
     var tableIns = null;
+    var chengjiaoSortState = { field: '', order: '' };
     var lastSnapshot = {};
     var resizeSaveTimer = null;
 
@@ -986,6 +987,36 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         });
     }
 
+    function formatChengjiaoProfitTotal(value) {
+        var num = Number(value);
+        if (!isFinite(num)) {
+            num = 0;
+        }
+        return '¥' + num.toFixed(2);
+    }
+
+    function buildChengjiaoQueryWhere(keyword) {
+        var current = (tableIns && tableIns.config && tableIns.config.where) ? tableIns.config.where : {};
+        var where = {};
+        if (keyword !== undefined) {
+            where.keyword = keyword;
+        } else if (current.keyword) {
+            where.keyword = current.keyword;
+        }
+        if (chengjiaoSortState.field && (chengjiaoSortState.order === 'asc' || chengjiaoSortState.order === 'desc')) {
+            where.field = chengjiaoSortState.field;
+            where.order = chengjiaoSortState.order;
+        }
+        return where;
+    }
+
+    function chengjiaoInitSortOption(clickedField) {
+        if (chengjiaoSortState.field && (chengjiaoSortState.order === 'asc' || chengjiaoSortState.order === 'desc')) {
+            return { field: chengjiaoSortState.field, type: chengjiaoSortState.order };
+        }
+        return { field: clickedField || 'at_time', type: null };
+    }
+
     // 定义表格列
     var mainCols = [[
         { type: 'checkbox', fixed: true , width: 50},
@@ -1008,11 +1039,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         { field: 'aux_phone', title: '辅助电话' , width:180},
         { field: 'joint_person_names', title: '协同人' , width:180},
         { field: 'issuccess', title: '成交状态', templet: function(res){ return res.issuccess == 1 ? '已成交' : '未成交'; } , width:180},
-        { field: 'order_summary_text', title: '关联订单', width: 220, templet: function(d){
-                if (!d.order_count || parseInt(d.order_count, 10) <= 0) {
-                    return '<span style="color:#999;">暂无订单</span>';
-                }
-                return '<span style="color:#16baaa;font-weight:bold;">' + layui.util.escape(d.order_summary_text || '') + '</span>';
+        { field: 'profit_total', title: '订单利润合计', sort: true, width: 160, templet: function(d){
+                return '<span style="color:#16baaa;font-weight:bold;">' + formatChengjiaoProfitTotal(d.profit_total) + '</span>';
             }
         },
         { field: 'deal_times', title: '成交时间', width: 220, templet: function(d){
@@ -1098,6 +1126,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             method: 'post',
             toolbar: '#topBtn',
             defaultToolbar: ['filter'],
+            autoSort: false,
             page: true,
             limit: 30,
             cols: mainCols,
@@ -1692,6 +1721,21 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         return true;
     }
 
+    table.on('sort(table-list)', function (obj) {
+        if (obj.type === 'asc' || obj.type === 'desc') {
+            chengjiaoSortState.field = obj.field;
+            chengjiaoSortState.order = obj.type;
+        } else {
+            chengjiaoSortState.field = '';
+            chengjiaoSortState.order = '';
+        }
+        table.reload('table-list', {
+            where: buildChengjiaoQueryWhere(),
+            initSort: chengjiaoInitSortOption(obj.field),
+            page: { curr: 1 }
+        });
+    });
+
     // 高级搜索表单提交
     form.on('submit(LAY-app-contlist-search)', function(data) {
         var field = data.field || {};
@@ -1713,7 +1757,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         dealTimesExpandState = {};
         table.reload('table-list', {
             url: "{:url('Client/chengjiaoClientSearch')}",
-            where: { keyword: field },
+            where: buildChengjiaoQueryWhere(field),
+            initSort: chengjiaoInitSortOption(),
             page: { curr: 1 }
         });
         return false;

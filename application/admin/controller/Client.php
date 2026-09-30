@@ -1552,8 +1552,11 @@ class Client extends Common
             ];
             $row['order_count'] = (int)($summary['order_count'] ?? 0);
             $row['order_amount_total'] = (float)($summary['order_amount_total'] ?? 0);
-            $row['profit_total'] = (float)($summary['profit_total'] ?? 0);
             $row['order_summary_text'] = (string)($summary['order_summary_text'] ?? '0单 / ¥0 / 利润¥0');
+            // 列表 SQL 已选出 profit_total 时保持该值，避免分页后 PHP 汇总覆盖排序口径
+            if (!array_key_exists('profit_total', $row)) {
+                $row['profit_total'] = (float)($summary['profit_total'] ?? 0);
+            }
         }
         unset($row);
     }
@@ -1615,10 +1618,13 @@ class Client extends Common
             // 分页参数
             $page     = input('page/d', 1);
             $pageSize = input('limit/d', config('pageSize'));
-            // 查询已成交客户列表
-            $list = Db::table('crm_leads')
-                ->where($where)
-                ->order('at_time desc')
+            // 表头排序：顶层 field/order，白名单在 Service 内再次校验
+            $sortField = input('field/s', '');
+            $sortOrder = input('order/s', '');
+            // 查询已成交客户列表（profit_total 与排序均在 paginate 之前）
+            $query = Db::table('crm_leads')->where($where);
+            (new SuccessClientOrderService())->applySuccessClientProfitQuery($query, $sortField, $sortOrder, 'crm_leads');
+            $list = $query
                 ->paginate(['list_rows' => $pageSize, 'page' => $page])
                 ->toArray();
             // 无数据情况
@@ -5167,7 +5173,9 @@ class Client extends Common
             $keyword['pr_user'] = session('username');
         }
 
-        $list = model('client')->getChengjiaoClientSearchList($page, $limit, $keyword);
+        $sortField = input('field/s', '');
+        $sortOrder = input('order/s', '');
+        $list = model('client')->getChengjiaoClientSearchList($page, $limit, $keyword, $sortField, $sortOrder);
         if (empty($list) || empty($list['data'])) {
             return ['code' => 0, 'msg' => '获取成功!', 'data' => [], 'count' => 0, 'rel' => 1];
         }
