@@ -28,28 +28,7 @@ class ClientOrderService
         $page = max(1, (int)$page);
         $limit = max(1, (int)$limit);
 
-        // 第一步：读取客户电话/WhatsApp（contact_type=1/3）用于匹配订单联系方式
-        $contactRows = Db::table('crm_contacts')
-            ->where('leads_id', $clientId)
-            ->where('is_delete', 0)
-            ->whereIn('contact_type', [1, 3])
-            ->field('contact_value')
-            ->select();
-
-        if (empty($contactRows)) {
-            return ['count' => 0, 'data' => []];
-        }
-
-        $contacts = [];
-        foreach ($contactRows as $contactRow) {
-            $contact = $this->normalizeContact($contactRow['contact_value'] ?? '');
-            if ($contact === '') {
-                continue;
-            }
-            $contacts[$contact] = true;
-        }
-        $contacts = array_keys($contacts);
-
+        $contacts = $this->getNormalizedContactsByClientId($clientId);
         if (empty($contacts)) {
             return ['count' => 0, 'data' => []];
         }
@@ -117,28 +96,7 @@ class ClientOrderService
             return ['count' => 0, 'data' => []];
         }
 
-        // 第一步：读取客户电话/WhatsApp（contact_type=1/3）用于匹配历史订单联系方式
-        $contactRows = Db::table('crm_contacts')
-            ->where('leads_id', $clientId)
-            ->where('is_delete', 0)
-            ->whereIn('contact_type', [1, 3])
-            ->field('contact_value')
-            ->select();
-
-        if (empty($contactRows)) {
-            return ['count' => 0, 'data' => []];
-        }
-
-        $contacts = [];
-        foreach ($contactRows as $contactRow) {
-            $contact = $this->normalizeContact($contactRow['contact_value'] ?? '');
-            if ($contact === '') {
-                continue;
-            }
-            $contacts[$contact] = true;
-        }
-        $contacts = array_keys($contacts);
-
+        $contacts = $this->getNormalizedContactsByClientId($clientId);
         if (empty($contacts)) {
             return ['count' => 0, 'data' => []];
         }
@@ -173,6 +131,83 @@ class ClientOrderService
         unset($row);
 
         return ['count' => count($rows), 'data' => $rows];
+    }
+
+    /**
+     * 获取客户最近一张正式审核通过订单的客户属性
+     *
+     * 关联口径与 getHistoryApprovedOrders 一致：crm_contacts contact_type IN (1,3)
+     * 规范化后精确匹配 crm_client_order.contact，且 check_status = 2。
+     * 仅读 crm_client_order，不读 crm_client_history_order。
+     *
+     * @param int $clientId crm_leads.id
+     * @return array{id:int,order_time:string,customer_type_flag:mixed,customer_type:string,client_company:string}|null
+     */
+    public function getLatestApprovedOrderCustomerAttrs(int $clientId): ?array
+    {
+        if ($clientId <= 0) {
+            return null;
+        }
+
+        $contacts = $this->getNormalizedContactsByClientId($clientId);
+        if (empty($contacts)) {
+            return null;
+        }
+
+        try {
+            $row = Db::table('crm_client_order')
+                ->whereIn('contact', $contacts)
+                ->where('check_status', 2)
+                ->field('id,order_time,customer_type_flag,customer_type,client_company')
+                ->order('order_time', 'desc')
+                ->order('id', 'desc')
+                ->find();
+        } catch (Throwable $e) {
+            return null;
+        }
+
+        if (empty($row)) {
+            return null;
+        }
+
+        return [
+            'id' => (int)($row['id'] ?? 0),
+            'order_time' => trim((string)($row['order_time'] ?? '')),
+            'customer_type_flag' => $row['customer_type_flag'] ?? null,
+            'customer_type' => trim((string)($row['customer_type'] ?? '')),
+            'client_company' => trim((string)($row['client_company'] ?? '')),
+        ];
+    }
+
+    /**
+     * 读取并规范化客户主/辅联系方式（contact_type=1/3）
+     *
+     * @param int $clientId
+     * @return string[]
+     */
+    private function getNormalizedContactsByClientId(int $clientId): array
+    {
+        $contactRows = Db::table('crm_contacts')
+            ->where('leads_id', $clientId)
+            ->where('is_delete', 0)
+            ->whereIn('contact_type', [1, 3])
+            ->field('contact_value')
+            ->select();
+
+        if (empty($contactRows)) {
+            return [];
+        }
+
+        $contacts = [];
+        foreach ($contactRows as $contactRow) {
+            $contact = $this->normalizeContact($contactRow['contact_value'] ?? '');
+            if ($contact === '') {
+                continue;
+            }
+            $contacts[$contact] = true;
+        }
+
+        return array_keys($contacts);
     }
 
     /**

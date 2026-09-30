@@ -475,6 +475,32 @@
                     </div>
                 </div>
 
+                <!-- 客户类别（来自最近一张正式审核通过订单） -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">客户类别</label>
+                    <div class="client-form-item-body">
+                        <input type="text" class="layui-input" value="{$orderCustomerTypeText|default='无'}" readonly>
+                    </div>
+                </div>
+
+                <!-- 公司类别（来自最近一张正式审核通过订单） -->
+                <div class="layui-form-item">
+                    <label class="layui-form-label">公司类别</label>
+                    <div class="client-form-item-body">
+                        <input type="text" class="layui-input" value="{$orderCompanyTypeText|default='无'}" readonly>
+                    </div>
+                </div>
+
+                <!-- 客户公司：仅公司客户显示 -->
+                {if condition="$showOrderClientCompany"}
+                <div class="layui-form-item">
+                    <label class="layui-form-label">客户公司</label>
+                    <div class="client-form-item-body">
+                        <input type="text" class="layui-input" value="{$orderClientCompanyText|default='无'}" readonly>
+                    </div>
+                </div>
+                {/if}
+
                 <!-- 创建日期（只读展示，来源 $result.at_time） -->
                 <div class="layui-form-item">
                     <label class="layui-form-label">创建日期</label>

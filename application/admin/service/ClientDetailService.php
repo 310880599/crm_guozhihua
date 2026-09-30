@@ -81,6 +81,8 @@ class ClientDetailService
         $khRankValue = $this->normalizeKhRankToId($client['kh_rank'] ?? '', $clientRankList);
         $shopList = $this->buildShopList();
 
+        $orderCustomerAttrs = $this->resolveOrderCustomerDisplayAttrs($clientId);
+
         return [
             'result' => $client,
             'mainPhoneList' => json_encode($mainPhoneList, JSON_UNESCAPED_UNICODE),
@@ -97,7 +99,73 @@ class ClientDetailService
             'positionTitleListJson' => json_encode($positionTitleList, JSON_UNESCAPED_UNICODE),
             'shopList' => json_encode($shopList, JSON_UNESCAPED_UNICODE),
             'khRankValue' => $khRankValue,
+            'orderCustomerTypeFlag' => $orderCustomerAttrs['orderCustomerTypeFlag'],
+            'orderCustomerTypeText' => $orderCustomerAttrs['orderCustomerTypeText'],
+            'orderCompanyTypeText' => $orderCustomerAttrs['orderCompanyTypeText'],
+            'orderClientCompanyText' => $orderCustomerAttrs['orderClientCompanyText'],
+            'showOrderClientCompany' => $orderCustomerAttrs['showOrderClientCompany'],
         ];
+    }
+
+    /**
+     * 根据最近一张正式审核通过订单，生成客户类别/公司类别/客户公司展示变量
+     *
+     * @param int $clientId
+     * @return array{
+     *   orderCustomerTypeFlag:string,
+     *   orderCustomerTypeText:string,
+     *   orderCompanyTypeText:string,
+     *   orderClientCompanyText:string,
+     *   showOrderClientCompany:bool
+     * }
+     */
+    private function resolveOrderCustomerDisplayAttrs(int $clientId): array
+    {
+        $defaults = [
+            'orderCustomerTypeFlag' => '',
+            'orderCustomerTypeText' => '无',
+            'orderCompanyTypeText' => '无',
+            'orderClientCompanyText' => '无',
+            'showOrderClientCompany' => false,
+        ];
+
+        if ($clientId <= 0) {
+            return $defaults;
+        }
+
+        $order = (new ClientOrderService())->getLatestApprovedOrderCustomerAttrs($clientId);
+        if ($order === null) {
+            return $defaults;
+        }
+
+        $flag = isset($order['customer_type_flag'])
+            ? trim((string)$order['customer_type_flag'])
+            : '';
+        $customerType = trim((string)($order['customer_type'] ?? ''));
+        $clientCompany = trim((string)($order['client_company'] ?? ''));
+
+        if ($flag === '0') {
+            return [
+                'orderCustomerTypeFlag' => $flag,
+                'orderCustomerTypeText' => '公司',
+                'orderCompanyTypeText' => $customerType !== '' ? $customerType : '无',
+                'orderClientCompanyText' => $clientCompany !== '' ? $clientCompany : '无',
+                'showOrderClientCompany' => true,
+            ];
+        }
+
+        if ($flag === '1') {
+            return [
+                'orderCustomerTypeFlag' => $flag,
+                'orderCustomerTypeText' => '个人',
+                'orderCompanyTypeText' => $customerType !== '' ? $customerType : '无',
+                'orderClientCompanyText' => '无',
+                'showOrderClientCompany' => false,
+            ];
+        }
+
+        // 异常 flag（NULL / '' / 非 0/1）：视为无效客户类别
+        return $defaults;
     }
 
     private function buildProductList(array $client)
