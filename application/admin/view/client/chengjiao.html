@@ -245,6 +245,62 @@
             text-overflow: clip !important;
         }
 
+        .chengjiao-table-col-sort-dialog {
+            padding: 14px 16px;
+            box-sizing: border-box;
+        }
+        .chengjiao-table-col-sort-tip {
+            padding: 8px 10px;
+            margin-bottom: 10px;
+            background: #f8fafd;
+            border: 1px solid #eef2f8;
+            border-radius: 4px;
+            color: #666;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .chengjiao-table-col-sort-list {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            max-height: 420px;
+            overflow-y: auto;
+        }
+        .chengjiao-table-col-sort-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 10px;
+            margin-bottom: 6px;
+            border: 1px solid #e6e8ef;
+            border-radius: 4px;
+            background: #fff;
+            cursor: move;
+            user-select: none;
+        }
+        .chengjiao-table-col-sort-item:hover {
+            border-color: #4285f4;
+            background: #f6f9ff;
+        }
+        .chengjiao-table-col-sort-item.dragging {
+            opacity: .55;
+            border-color: #4285f4;
+            background: #eef5ff;
+        }
+        .chengjiao-table-col-sort-item .drag-handle {
+            color: #999;
+            font-size: 14px;
+        }
+        .chengjiao-table-col-sort-item .col-title {
+            flex: 1;
+            color: #333;
+            font-size: 13px;
+        }
+        .chengjiao-table-col-sort-item .col-field {
+            color: #999;
+            font-size: 12px;
+        }
+
         .layui-table-view[lay-id="table-list"] .action-icon-btn {
             width: 28px !important;
             min-width: 28px !important;
@@ -490,7 +546,10 @@
 <script type="text/html" id="topBtn">
     {if session('aid') eq 1}    
     <button type="button" id="delAlls" class="layui-btn layui-btn-danger layui-btn-radius layui-btn-sm" lay-event="delAlls"><i class="layui-icon">&#xe640;</i>选中删除</button>
-    {/if}    
+    {/if}
+    <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" lay-event="chengjiaoColumnSort">
+        <i class="layui-icon layui-icon-cols"></i>字段排序
+    </button>
 </script>
 
 {include file="common/foot"/}
@@ -562,6 +621,16 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
     var columnWidthKey = "crm_colwidth_" + currentUsername + "_" + pageKey.replace(/[^\w]/g, '_') + "_" + tableId;
     var tableIns = null;
     var chengjiaoSortState = { field: '', order: '' };
+    // 字段显隐/顺序与列宽 pageKey 隔离：列宽继续用 location.pathname
+    var chengjiaoTableConfigPageKey = 'chengjiao';
+    var chengjiaoTableConfigTableKey = 'table-list';
+    var chengjiaoTableHideConfig = {};
+    var chengjiaoTableColumnOrder = [];
+    var chengjiaoTableConfigLoaded = false;
+    var chengjiaoTableConfigSaving = false;
+    var chengjiaoCurrentUrl = "{:url('successCliList')}";
+    var chengjiaoCurrentWhere = {};
+    var chengjiaoRenderToken = 0;
     var lastSnapshot = {};
     var resizeSaveTimer = null;
 
@@ -821,8 +890,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         return { field: clickedField || 'at_time', type: null };
     }
 
-    // 定义表格列
-    var mainCols = [[
+    // 成交客户主表基础列（每次返回新的一维列数组，字段属性保持原样）
+    function buildChengjiaoBaseCols() {
+        return [
         { type: 'checkbox', fixed: true , width: 50},
         { field: 'id', title: 'ID', width: 80, hide: true, fixed: true },
         { field: 'kh_name', title: '客户名称', sort: true, templet: function (res) {
@@ -872,7 +942,476 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             }
         },
         { fixed: 'right', width: 230, align: 'center', toolbar: '#action' }
-    ]];
+        ];
+    }
+
+    function getChengjiaoColField(col) {
+        return col && col.field ? String(col.field) : '';
+    }
+
+    function isChengjiaoCheckboxCol(col) {
+        return !!(col && col.type === 'checkbox');
+    }
+
+    function isChengjiaoIdCol(col) {
+        return getChengjiaoColField(col) === 'id';
+    }
+
+    function isChengjiaoActionCol(col) {
+        return !!(col && col.toolbar === '#action');
+    }
+
+    function isChengjiaoSortableBusinessCol(col) {
+        var field = getChengjiaoColField(col);
+        if (!field || field === 'id') return false;
+        if (isChengjiaoCheckboxCol(col) || isChengjiaoActionCol(col)) return false;
+        return true;
+    }
+
+    /**
+     * 成交客户主表顺序：始终 checkbox → id → 业务字段 → 操作列
+     * 配置中缺失的新业务字段追加到已排序业务字段之后
+     */
+    function applyChengjiaoColumnOrder(cols) {
+        if (!cols || !cols.length) return cols;
+
+        var checkboxCol = null;
+        var idCol = null;
+        var actionCol = null;
+        var businessCols = [];
+
+        cols.forEach(function (col) {
+            if (isChengjiaoCheckboxCol(col)) {
+                checkboxCol = col;
+            } else if (isChengjiaoIdCol(col)) {
+                idCol = col;
+            } else if (isChengjiaoActionCol(col)) {
+                actionCol = col;
+            } else if (col) {
+                businessCols.push(col);
+            }
+        });
+
+        var orderedBusiness = [];
+        if (chengjiaoTableColumnOrder && chengjiaoTableColumnOrder.length) {
+            var businessMap = {};
+            businessCols.forEach(function (col) {
+                var field = getChengjiaoColField(col);
+                if (field) businessMap[field] = col;
+            });
+
+            chengjiaoTableColumnOrder.forEach(function (field) {
+                field = String(field || '');
+                if (!field || field === 'id') return;
+                if (businessMap[field]) {
+                    orderedBusiness.push(businessMap[field]);
+                    delete businessMap[field];
+                }
+            });
+
+            businessCols.forEach(function (col) {
+                var field = getChengjiaoColField(col);
+                if (field && businessMap[field]) {
+                    orderedBusiness.push(businessMap[field]);
+                    delete businessMap[field];
+                } else if (!field) {
+                    orderedBusiness.push(col);
+                }
+            });
+        } else {
+            orderedBusiness = businessCols.slice();
+        }
+
+        var result = [];
+        if (checkboxCol) result.push(checkboxCol);
+        if (idCol) result.push(idCol);
+        result = result.concat(orderedBusiness);
+        if (actionCol) result.push(actionCol);
+        return result;
+    }
+
+    function loadChengjiaoTableConfig() {
+        var config = {
+            hide_config: {},
+            column_order: []
+        };
+
+        $.ajax({
+            url: "{:url('Client/getQuickFollowTableConfig')}",
+            type: 'GET',
+            dataType: 'json',
+            async: false,
+            data: {
+                page_key: chengjiaoTableConfigPageKey,
+                table_key: chengjiaoTableConfigTableKey
+            },
+            success: function (res) {
+                if (res && parseInt(res.code, 10) === 0 && res.data) {
+                    if (res.data.hide_config && typeof res.data.hide_config === 'object') {
+                        config.hide_config = res.data.hide_config;
+                    }
+                    if ($.isArray(res.data.column_order)) {
+                        config.column_order = res.data.column_order;
+                    }
+                }
+            },
+            error: function () {
+                console.warn('读取成交客户主表字段配置失败，使用默认顺序/显示');
+            }
+        });
+
+        chengjiaoTableHideConfig = config.hide_config || {};
+        chengjiaoTableColumnOrder = config.column_order || [];
+        chengjiaoTableConfigLoaded = true;
+    }
+
+    function collectChengjiaoTableHideConfig() {
+        var baseCols = buildChengjiaoBaseCols();
+        var hideConfig = {};
+        var hasLevel1Value = {};
+        var hasLevel2Value = {};
+        var titleFieldMap = {};
+
+        function toHideValue(hidden) {
+            return (hidden === true || hidden === 1 || hidden === '1') ? 1 : 0;
+        }
+
+        baseCols.forEach(function (col) {
+            var field = getChengjiaoColField(col);
+            var title = $.trim(col && col.title ? String(col.title) : '');
+            if (!field || isChengjiaoCheckboxCol(col) || isChengjiaoActionCol(col)) return;
+            hideConfig[field] = toHideValue(col.hide);
+            hasLevel1Value[field] = false;
+            hasLevel2Value[field] = false;
+            if (title) {
+                titleFieldMap[title] = field;
+            }
+        });
+
+        try {
+            var $view = $('#' + tableId).next('.layui-table-view');
+            var tableOptions = null;
+
+            if (table && table.getOptions) {
+                tableOptions = table.getOptions(tableId);
+            }
+            if (!tableOptions && table && table.config && table.config[tableId]) {
+                tableOptions = table.config[tableId];
+            }
+
+            if (tableOptions && $.isArray(tableOptions.cols) && tableOptions.cols.length) {
+                (tableOptions.cols[0] || []).forEach(function (col) {
+                    var field = getChengjiaoColField(col);
+                    if (!field || isChengjiaoCheckboxCol(col) || isChengjiaoActionCol(col)) return;
+                    hideConfig[field] = toHideValue(col.hide);
+                    hasLevel1Value[field] = true;
+                });
+            }
+
+            $view.find('.layui-table-tool-panel input[type="checkbox"]').each(function () {
+                var $checkbox = $(this);
+                var field = $.trim(
+                    $checkbox.attr('name') ||
+                    $checkbox.attr('data-field') ||
+                    $checkbox.attr('lay-filter') ||
+                    ''
+                );
+
+                if (!field) {
+                    var titleText = $.trim(
+                        $checkbox.closest('li').text() ||
+                        $checkbox.next('.layui-form-checkbox').text() ||
+                        $checkbox.parent().text() ||
+                        ''
+                    );
+                    if (titleText && titleFieldMap[titleText]) {
+                        field = titleFieldMap[titleText];
+                    }
+                }
+
+                if (field && !hasLevel1Value[field] && Object.prototype.hasOwnProperty.call(hideConfig, field)) {
+                    hideConfig[field] = $checkbox.prop('checked') ? 0 : 1;
+                    hasLevel2Value[field] = true;
+                }
+            });
+
+            baseCols.forEach(function (col) {
+                var field = getChengjiaoColField(col);
+                if (!field || isChengjiaoCheckboxCol(col) || isChengjiaoActionCol(col)) return;
+                if (hasLevel1Value[field] || hasLevel2Value[field]) return;
+
+                var $headerCell = $view.find('.layui-table-header th[data-field="' + field + '"]');
+                if ($headerCell.length && $headerCell.css('display') === 'none') {
+                    hideConfig[field] = 1;
+                } else if ($headerCell.length) {
+                    hideConfig[field] = 0;
+                }
+            });
+        } catch (e) {
+            console.warn('收集成交客户主表字段隐藏配置失败:', e);
+        }
+
+        return hideConfig;
+    }
+
+    function saveChengjiaoTableConfig(options) {
+        options = options || {};
+        if (chengjiaoTableConfigSaving) return;
+
+        var order = [];
+        if (chengjiaoTableColumnOrder && chengjiaoTableColumnOrder.length) {
+            order = chengjiaoTableColumnOrder.slice();
+        } else {
+            buildChengjiaoBaseCols().forEach(function (col) {
+                if (isChengjiaoSortableBusinessCol(col)) {
+                    order.push(getChengjiaoColField(col));
+                }
+            });
+        }
+
+        var hideConfig = options.hide_config || collectChengjiaoTableHideConfig();
+
+        chengjiaoTableConfigSaving = true;
+        $.ajax({
+            url: "{:url('Client/saveQuickFollowTableConfig')}",
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                page_key: chengjiaoTableConfigPageKey,
+                table_key: chengjiaoTableConfigTableKey,
+                hide_config: JSON.stringify(hideConfig),
+                column_order: JSON.stringify(order)
+            },
+            complete: function () {
+                chengjiaoTableConfigSaving = false;
+            },
+            success: function (res) {
+                if (!res || parseInt(res.code, 10) !== 0) {
+                    console.warn('保存成交客户主表字段配置失败:', res && res.msg ? res.msg : res);
+                }
+            },
+            error: function () {
+                console.warn('保存成交客户主表字段配置请求失败');
+            }
+        });
+    }
+
+    function bindChengjiaoTableHideConfigSave() {
+        var $view = $('#' + tableId).next('.layui-table-view');
+        if (!$view.length) return;
+        var saveTimer = null;
+
+        function delaySaveHideConfig() {
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function () {
+                chengjiaoTableHideConfig = collectChengjiaoTableHideConfig();
+                saveChengjiaoTableConfig({
+                    hide_config: chengjiaoTableHideConfig
+                });
+            }, 300);
+        }
+
+        function bindChengjiaoHidePanelEvents() {
+            var $panel = $view.find('.layui-table-tool-panel');
+            if (!$panel.length) return;
+
+            $panel
+                .off('click.chengjiaoTableHidePanelItemSave')
+                .on('click.chengjiaoTableHidePanelItemSave', 'li,input,.layui-form-checkbox', function () {
+                    delaySaveHideConfig();
+                })
+                .off('change.chengjiaoTableHidePanelItemSave')
+                .on('change.chengjiaoTableHidePanelItemSave', 'input[type="checkbox"]', function () {
+                    delaySaveHideConfig();
+                });
+        }
+
+        $view.off('click.chengjiaoTableHidePanelSave');
+        $view.on('click.chengjiaoTableHidePanelSave', '.layui-table-tool-self', function () {
+            setTimeout(function () {
+                bindChengjiaoHidePanelEvents();
+            }, 120);
+        });
+
+        $view.off('click.chengjiaoTableHidePanelBodySave');
+        $view.on('click.chengjiaoTableHidePanelBodySave', '.layui-table-tool-panel', function () {
+            delaySaveHideConfig();
+        });
+
+        bindChengjiaoHidePanelEvents();
+        setTimeout(function () {
+            bindChengjiaoHidePanelEvents();
+        }, 80);
+        setTimeout(function () {
+            bindChengjiaoHidePanelEvents();
+        }, 220);
+        $view.off('mouseleave.chengjiaoTableHidePanelSave').on('mouseleave.chengjiaoTableHidePanelSave', '.layui-table-tool-panel', function () {
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function () {
+                setTimeout(function () {
+                    chengjiaoTableHideConfig = collectChengjiaoTableHideConfig();
+                    saveChengjiaoTableConfig({
+                        hide_config: chengjiaoTableHideConfig
+                    });
+                }, 80);
+            }, 220);
+        });
+    }
+
+    function bindChengjiaoColumnDragSort() {
+        var draggedEl = null;
+
+        $('#chengjiaoTableColumnSortList')
+            .off('dragstart.chengjiaoColSort dragover.chengjiaoColSort drop.chengjiaoColSort dragend.chengjiaoColSort')
+            .on('dragstart.chengjiaoColSort', '.chengjiao-table-col-sort-item', function (e) {
+                draggedEl = this;
+                $(this).addClass('dragging');
+                if (e.originalEvent && e.originalEvent.dataTransfer) {
+                    e.originalEvent.dataTransfer.effectAllowed = 'move';
+                    e.originalEvent.dataTransfer.setData('text/plain', $(this).attr('data-field') || '');
+                }
+            })
+            .on('dragover.chengjiaoColSort', '.chengjiao-table-col-sort-item', function (e) {
+                e.preventDefault();
+                if (!draggedEl || draggedEl === this) return;
+
+                var rect = this.getBoundingClientRect();
+                var offsetY = e.originalEvent.clientY - rect.top;
+                if (offsetY > rect.height / 2) {
+                    $(this).after(draggedEl);
+                } else {
+                    $(this).before(draggedEl);
+                }
+            })
+            .on('drop.chengjiaoColSort', '.chengjiao-table-col-sort-item', function (e) {
+                e.preventDefault();
+            })
+            .on('dragend.chengjiaoColSort', '.chengjiao-table-col-sort-item', function () {
+                $(this).removeClass('dragging');
+                draggedEl = null;
+            });
+    }
+
+    function openChengjiaoColumnSortDialog() {
+        var cols = buildChengjiaoBaseCols();
+        cols = applyChengjiaoColumnOrder(cols);
+
+        var html = [
+            '<div class="chengjiao-table-col-sort-dialog">',
+            '<div class="chengjiao-table-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”，排序将自动保存。复选框、ID、操作列不参与排序。</div>',
+            '<ul id="chengjiaoTableColumnSortList" class="chengjiao-table-col-sort-list">'
+        ];
+
+        cols.forEach(function (col) {
+            if (!isChengjiaoSortableBusinessCol(col)) return;
+            var field = getChengjiaoColField(col);
+            html.push(
+                '<li class="chengjiao-table-col-sort-item" draggable="true" data-field="' + escapeHtml(field) + '">' +
+                    '<span class="drag-handle">☰</span>' +
+                    '<span class="col-title">' + escapeHtml(col.title || field) + '</span>' +
+                    '<span class="col-field">' + escapeHtml(field) + '</span>' +
+                '</li>'
+            );
+        });
+
+        html.push('</ul></div>');
+
+        var sortIndex = layer.open({
+            type: 1,
+            title: '成交客户 - 字段排序',
+            area: ['420px', '560px'],
+            shadeClose: true,
+            content: html.join(''),
+            btn: ['应用排序', '恢复默认顺序', '取消'],
+            success: function () {
+                bindChengjiaoColumnDragSort();
+            },
+            yes: function () {
+                var order = [];
+                $('#chengjiaoTableColumnSortList .chengjiao-table-col-sort-item').each(function () {
+                    var field = $.trim($(this).attr('data-field') || '');
+                    if (field) order.push(field);
+                });
+                chengjiaoTableColumnOrder = order;
+                chengjiaoTableHideConfig = collectChengjiaoTableHideConfig();
+                saveChengjiaoTableConfig({
+                    hide_config: chengjiaoTableHideConfig
+                });
+                layer.close(sortIndex);
+                renderChengjiaoTable();
+            },
+            btn2: function () {
+                chengjiaoTableColumnOrder = [];
+                chengjiaoTableHideConfig = {};
+                saveChengjiaoTableConfig({
+                    hide_config: chengjiaoTableHideConfig
+                });
+                layer.close(sortIndex);
+                renderChengjiaoTable();
+                return false;
+            }
+        });
+    }
+
+    function renderChengjiaoTable() {
+        if (chengjiaoTableConfigLoaded === false) {
+            loadChengjiaoTableConfig();
+        }
+
+        var colList = buildChengjiaoBaseCols();
+        colList = applyChengjiaoColumnOrder(colList);
+
+        colList.forEach(function (col) {
+            var field = getChengjiaoColField(col);
+            if (field && Object.prototype.hasOwnProperty.call(chengjiaoTableHideConfig, field)) {
+                col.hide = parseInt(chengjiaoTableHideConfig[field], 10) === 1;
+            }
+        });
+
+        var renderToken = ++chengjiaoRenderToken;
+        loadSavedColWidths(function (savedWidths) {
+            if (renderToken !== chengjiaoRenderToken) return;
+            applySavedWidthsToCols([colList], savedWidths);
+            tableIns = table.render({
+                elem: '#' + tableId,
+                id: tableId,
+                url: chengjiaoCurrentUrl,
+                method: 'post',
+                toolbar: '#topBtn',
+                defaultToolbar: ['filter'],
+                autoSort: false,
+                page: true,
+                limit: 30,
+                cols: [colList],
+                limit: 10,
+                page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
+                where: chengjiaoCurrentWhere,
+                initSort: chengjiaoInitSortOption(),
+                parseData: function(res) {
+                    // 给每行数据添加aid字段，用于判断权限
+                    var aid = '{:session("aid")}';
+                    if (res.data && res.data.length > 0) {
+                        res.data.forEach(function(item) {
+                            item.aid = aid;
+                        });
+                    }
+                    return res;
+                },
+                done: function () {
+                    bindResizeSave();
+                    var snapshot = getCurrentWidthsSnapshot();
+                    if (Object.keys(snapshot).length > 0) {
+                        lastSnapshot = snapshot;
+                    }
+                    bindChengjiaoRowHeightResizeOnce();
+                    scheduleChengjiaoFixedRowHeights();
+                    bindActionIconTips();
+                    bindChengjiaoTableHideConfigSave();
+                }
+            });
+            window.tableIns = tableIns;
+        });
+    }
 
     function applySavedWidthsToCols(cols, widths) {
         if (!cols || !cols[0] || !widths) return;
@@ -920,45 +1459,8 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         });
     }
 
-    // 初始化表格（先读取列宽，再渲染）
-    loadSavedColWidths(function(savedWidths){
-        applySavedWidthsToCols(mainCols, savedWidths);
-        tableIns = table.render({
-            elem: '#' + tableId,
-            id: tableId,
-            url: "{:url('successCliList')}",
-            method: 'post',
-            toolbar: '#topBtn',
-            defaultToolbar: ['filter'],
-            autoSort: false,
-            page: true,
-            limit: 30,
-            cols: mainCols,
-            limit: 10,
-            page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
-            parseData: function(res) {
-                // 给每行数据添加aid字段，用于判断权限
-                var aid = '{:session("aid")}';
-                if (res.data && res.data.length > 0) {
-                    res.data.forEach(function(item) {
-                        item.aid = aid;
-                    });
-                }
-                return res;
-            },
-            done: function () {
-                bindResizeSave();
-                var snapshot = getCurrentWidthsSnapshot();
-                if (Object.keys(snapshot).length > 0) {
-                    lastSnapshot = snapshot;
-                }
-                bindChengjiaoRowHeightResizeOnce();
-                scheduleChengjiaoFixedRowHeights();
-                bindActionIconTips();
-            }
-        });
-        window.tableIns = tableIns;
-    });
+    // 初始化表格（先读字段配置，再应用顺序/显隐/列宽，再渲染）
+    renderChengjiaoTable();
 
     // 监听表格操作列事件
     table.on('tool(table-list)', function (obj) {
@@ -1023,6 +1525,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         var data = checkStatus.data;
         
         switch(obj.event){
+            case 'chengjiaoColumnSort':
+                openChengjiaoColumnSortDialog();
+                break;
             case 'delAlls':
                 // 批量删除
                 if (data.length === 0) {
@@ -2245,8 +2750,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             chengjiaoSortState.field = '';
             chengjiaoSortState.order = '';
         }
+        chengjiaoCurrentWhere = buildChengjiaoQueryWhere();
         table.reload('table-list', {
-            where: buildChengjiaoQueryWhere(),
+            where: chengjiaoCurrentWhere,
             initSort: chengjiaoInitSortOption(obj.field),
             page: { curr: 1 }
         });
@@ -2271,9 +2777,11 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             return false;
         }
         dealTimesExpandState = {};
+        chengjiaoCurrentUrl = "{:url('Client/chengjiaoClientSearch')}";
+        chengjiaoCurrentWhere = buildChengjiaoQueryWhere(field);
         table.reload('table-list', {
-            url: "{:url('Client/chengjiaoClientSearch')}",
-            where: buildChengjiaoQueryWhere(field),
+            url: chengjiaoCurrentUrl,
+            where: chengjiaoCurrentWhere,
             initSort: chengjiaoInitSortOption(),
             page: { curr: 1 }
         });
