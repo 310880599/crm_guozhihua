@@ -514,6 +514,15 @@
                         </div>
                     </div>
                     {/if}
+                    <div class="layui-inline">
+                        <label class="layui-form-label">利润：</label>
+                        <div class="layui-input-inline">
+                            <input type="number" step="any" name="min_profit_total" placeholder="最小值" class="layui-input">
+                        </div>
+                        <div class="layui-input-inline">
+                            <input type="number" step="any" name="max_profit_total" placeholder="最大值" class="layui-input">
+                        </div>
+                    </div>
                 </div>
                 <div class="layui-inline" style="float:right; padding-bottom:15px;">
                     <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
@@ -2774,6 +2783,29 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         }
         if (!isValidChengjiaoDateRange(field.deal_time)) {
             layer.msg('成交日期参数无效');
+            return false;
+        }
+        // 订单利润合计区间：0 为合法值，必须按 trim 后是否为空串判断
+        var minProfitRaw = $.trim(field.min_profit_total || '');
+        var maxProfitRaw = $.trim(field.max_profit_total || '');
+        var minProfit = null;
+        var maxProfit = null;
+        if (minProfitRaw !== '') {
+            minProfit = Number(minProfitRaw);
+            if (!isFinite(minProfit)) {
+                layer.msg('请输入正确的利润数值');
+                return false;
+            }
+        }
+        if (maxProfitRaw !== '') {
+            maxProfit = Number(maxProfitRaw);
+            if (!isFinite(maxProfit)) {
+                layer.msg('请输入正确的利润数值');
+                return false;
+            }
+        }
+        if (minProfit !== null && maxProfit !== null && minProfit > maxProfit) {
+            layer.msg('利润最小值不能大于最大值');
             return false;
         }
         dealTimesExpandState = {};

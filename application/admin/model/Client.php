@@ -1105,8 +1105,23 @@ class Client extends Model
             $query->whereRaw($existsSql, $bind);
         }
 
-        // 筛选完成后、分页前：选出 profit_total 并按白名单排序（Service 内再次校验 field/order）
-        (new SuccessClientOrderService())->applySuccessClientProfitQuery($query, $sortField, $sortOrder, 'crm_leads');
+        // 订单利润合计区间（客户级 profit_total）：0 为合法值，禁止 empty/array_filter；Controller 已校验
+        $minProfitTotal = isset($keyword['min_profit_total']) && trim((string)$keyword['min_profit_total']) !== ''
+            ? (float)$keyword['min_profit_total']
+            : null;
+        $maxProfitTotal = isset($keyword['max_profit_total']) && trim((string)$keyword['max_profit_total']) !== ''
+            ? (float)$keyword['max_profit_total']
+            : null;
+
+        // 筛选完成后、分页前：选出 profit_total、利润区间过滤并按白名单排序（Service 内再次校验 field/order）
+        (new SuccessClientOrderService())->applySuccessClientProfitQuery(
+            $query,
+            $sortField,
+            $sortOrder,
+            'crm_leads',
+            $minProfitTotal,
+            $maxProfitTotal
+        );
 
         $result = $query
             // ->where(['pr_user' => session('username')]) //负责人

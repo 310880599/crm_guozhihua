@@ -86,31 +86,56 @@ class SuccessClientOrderService
 
     /**
      * 成交客户列表排序入口。
-     * 仅 profit_total 排序 LEFT JOIN 全量利润聚合；其余排序不聚合，分页后由当前页补利润。
+     * 仅在 profit_total 排序，或传入利润区间上下限时，才 LEFT JOIN 一次全量利润聚合（profit_agg）；
+     * 否则不聚合，分页后由当前页补利润。
+     * 利润区间使用 COALESCE(profit_agg.profit_total, 0)，闭区间（>= / <=）；无审核通过订单视为 0。
      * field/order 非法、为空时回落 at_time desc, id desc。
      *
      * @param \think\db\Query $query
      * @param mixed $sortField
      * @param mixed $sortOrder
      * @param string $leadAlias
+     * @param float|int|string|null $minProfitTotal 订单利润合计下限；null 表示不限
+     * @param float|int|string|null $maxProfitTotal 订单利润合计上限；null 表示不限
      * @return void
      */
-    public function applySuccessClientProfitQuery($query, $sortField, $sortOrder, $leadAlias = 'crm_leads')
-    {
+    public function applySuccessClientProfitQuery(
+        $query,
+        $sortField,
+        $sortOrder,
+        $leadAlias = 'crm_leads',
+        $minProfitTotal = null,
+        $maxProfitTotal = null
+    ) {
         $leadAlias = $this->normalizeSqlIdentifier($leadAlias, 'crm_leads');
         $field = strtolower(trim((string)$sortField));
         $order = strtolower(trim((string)$sortOrder));
         $allowedFields = ['profit_total', 'kh_name', 'at_time', 'ut_time'];
         $allowedOrders = ['asc', 'desc'];
         $sortAllowed = in_array($field, $allowedFields, true) && in_array($order, $allowedOrders, true);
+        $profitSort = $sortAllowed && $field === 'profit_total';
 
-        if ($sortAllowed && $field === 'profit_total') {
+        $minProfitTotal = $this->normalizeProfitBound($minProfitTotal);
+        $maxProfitTotal = $this->normalizeProfitBound($maxProfitTotal);
+        $profitFilter = $minProfitTotal !== null || $maxProfitTotal !== null;
+
+        // 排序与筛选共用同一次 LEFT JOIN，避免重复 JOIN
+        if ($profitSort || $profitFilter) {
             $profitSubSql = $this->buildApprovedProfitAggregateQuery()->buildSql();
             $query->leftJoin(
                 [$profitSubSql => 'profit_agg'],
                 'profit_agg.leads_id = ' . $leadAlias . '.id'
             );
             $query->fieldRaw($leadAlias . '.*, COALESCE(profit_agg.profit_total, 0) AS profit_total');
+            if ($minProfitTotal !== null) {
+                $query->whereRaw('COALESCE(profit_agg.profit_total, 0) >= :min_profit_total', ['min_profit_total' => $minProfitTotal]);
+            }
+            if ($maxProfitTotal !== null) {
+                $query->whereRaw('COALESCE(profit_agg.profit_total, 0) <= :max_profit_total', ['max_profit_total' => $maxProfitTotal]);
+            }
+        }
+
+        if ($profitSort) {
             $direction = $order === 'asc' ? 'ASC' : 'DESC';
             $query->orderRaw('profit_total ' . $direction . ', ' . $leadAlias . '.at_time DESC, ' . $leadAlias . '.id DESC');
             return;
@@ -122,6 +147,23 @@ class SuccessClientOrderService
         }
 
         $query->order($leadAlias . '.at_time', 'desc')->order($leadAlias . '.id', 'desc');
+    }
+
+    /**
+     * 利润上下限归一化：null/空串表示不限；0 为合法值；非有限数字视为不限（调用方应已校验）。
+     *
+     * @param mixed $bound
+     * @return float|null
+     */
+    private function normalizeProfitBound($bound)
+    {
+        if ($bound === null || is_array($bound) || trim((string)$bound) === '') {
+            return null;
+        }
+        if (!is_numeric($bound) || !is_finite((float)$bound)) {
+            return null;
+        }
+        return (float)$bound;
     }
 
     /**

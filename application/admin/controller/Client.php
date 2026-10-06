@@ -5189,6 +5189,40 @@ class Client extends Common
             $keyword['pr_user'] = session('username');
         }
 
+        // 订单利润合计区间（客户级 profit_total）：isset + trim 判断，保留 "0"；非法/反向区间明确报错，禁止静默扩大范围
+        $minProfitRaw = isset($keyword['min_profit_total']) && !is_array($keyword['min_profit_total'])
+            ? trim((string)$keyword['min_profit_total']) : '';
+        $maxProfitRaw = isset($keyword['max_profit_total']) && !is_array($keyword['max_profit_total'])
+            ? trim((string)$keyword['max_profit_total']) : '';
+        if (isset($keyword['min_profit_total']) && is_array($keyword['min_profit_total'])
+            || isset($keyword['max_profit_total']) && is_array($keyword['max_profit_total'])) {
+            return ['code' => 1, 'msg' => '利润参数无效', 'data' => [], 'count' => 0, 'rel' => 0];
+        }
+        unset($keyword['min_profit_total'], $keyword['max_profit_total']);
+        $minProfitTotal = null;
+        $maxProfitTotal = null;
+        if ($minProfitRaw !== '') {
+            if (!is_numeric($minProfitRaw) || !is_finite((float)$minProfitRaw)) {
+                return ['code' => 1, 'msg' => '利润参数无效', 'data' => [], 'count' => 0, 'rel' => 0];
+            }
+            $minProfitTotal = (float)$minProfitRaw;
+        }
+        if ($maxProfitRaw !== '') {
+            if (!is_numeric($maxProfitRaw) || !is_finite((float)$maxProfitRaw)) {
+                return ['code' => 1, 'msg' => '利润参数无效', 'data' => [], 'count' => 0, 'rel' => 0];
+            }
+            $maxProfitTotal = (float)$maxProfitRaw;
+        }
+        if ($minProfitTotal !== null && $maxProfitTotal !== null && $minProfitTotal > $maxProfitTotal) {
+            return ['code' => 1, 'msg' => '利润最小值不能大于最大值', 'data' => [], 'count' => 0, 'rel' => 0];
+        }
+        if ($minProfitTotal !== null) {
+            $keyword['min_profit_total'] = $minProfitTotal;
+        }
+        if ($maxProfitTotal !== null) {
+            $keyword['max_profit_total'] = $maxProfitTotal;
+        }
+
         $sortField = input('field/s', '');
         $sortOrder = input('order/s', '');
         $list = model('client')->getChengjiaoClientSearchList($page, $limit, $keyword, $sortField, $sortOrder);
