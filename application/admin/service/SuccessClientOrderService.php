@@ -350,7 +350,7 @@ class SuccessClientOrderService
                 $bind[$key] = $cv;
             }
             $orders = Db::table('crm_client_order')->alias('o')
-                ->whereRaw('TRIM(o.contact) IN (' . implode(',', $placeholders) . ')', $bind)
+                ->whereRaw('o.contact IN (' . implode(',', $placeholders) . ')', $bind)
                 ->where('o.check_status', 2)
                 ->whereNotNull('o.order_time')
                 ->where('o.order_time', '<>', '0000-00-00 00:00:00')

@@ -668,6 +668,29 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         return $();
     }
 
+    // initSort 会在空结果渲染后再走一次 sort/renderData，删掉 .layui-none 且不再补回
+    function ensureChengjiaoMainEmptyTip(res, count) {
+        if (!res || res.code !== 0) {
+            return;
+        }
+        var emptyCount = count === 0 || res.count === 0;
+        if (!emptyCount) {
+            return;
+        }
+        if (res.data && res.data.length > 0) {
+            return;
+        }
+        var $tableView = getChengjiaoTableView();
+        if (!$tableView.length) {
+            return;
+        }
+        var $main = $tableView.find('.layui-table-main').first();
+        if (!$main.length || $main.find('.layui-none').length) {
+            return;
+        }
+        $main.append('<div class="layui-none">暂无数据</div>');
+    }
+
     function collectChengjiaoBodyRowsByIndex($scope) {
         var map = {};
         var duplicate = false;
@@ -1396,6 +1419,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                 page: { limits: [10, 20, 50, 100, 200, 500,9999999] },
                 where: chengjiaoCurrentWhere,
                 initSort: chengjiaoInitSortOption(),
+                text: {
+                    none: '暂无数据'
+                },
                 parseData: function(res) {
                     // 给每行数据添加aid字段，用于判断权限
                     var aid = '{:session("aid")}';
@@ -1406,7 +1432,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                     }
                     return res;
                 },
-                done: function () {
+                done: function (res, curr, count) {
                     bindResizeSave();
                     var snapshot = getCurrentWidthsSnapshot();
                     if (Object.keys(snapshot).length > 0) {
@@ -1416,6 +1442,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                     scheduleChengjiaoFixedRowHeights();
                     bindActionIconTips();
                     bindChengjiaoTableHideConfigSave();
+                    ensureChengjiaoMainEmptyTip(res, count);
                 }
             });
             window.tableIns = tableIns;

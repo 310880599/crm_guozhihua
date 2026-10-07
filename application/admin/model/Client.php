@@ -1077,19 +1077,19 @@ class Client extends Model
             ->where(['status' => 1, 'issuccess' => 1]); //0 线索，1客户，2公海
 
         // 成交日期 EXISTS：与 SuccessClientOrderService::getDealTimesByLeadIds 关联口径一致
-        // 精确匹配 + 两侧 TRIM（与 Service 一致）；不 JOIN 订单，避免一人多单导致客户行重复；须在 paginate 前生效
+        // contact 等值匹配，不对索引列包 TRIM；不 JOIN 订单，避免一人多单导致客户行重复；须在 paginate 前生效
         $dealStart = isset($keyword['__deal_order_time_start']) ? trim((string)$keyword['__deal_order_time_start']) : '';
         $dealEnd = isset($keyword['__deal_order_time_end']) ? trim((string)$keyword['__deal_order_time_end']) : '';
         if ($dealStart !== '') {
             $existsSql = 'EXISTS (
                 SELECT 1
                 FROM crm_contacts c
-                INNER JOIN crm_client_order o ON TRIM(o.contact) = TRIM(c.contact_value)
+                INNER JOIN crm_client_order o ON o.contact = c.contact_value
                 WHERE c.leads_id = crm_leads.id
                   AND c.is_delete = 0
                   AND c.contact_type IN (1, 3)
-                  AND TRIM(c.contact_value) <> \'\'
-                  AND TRIM(o.contact) <> \'\'
+                  AND c.contact_value <> \'\'
+                  AND o.contact <> \'\'
                   AND o.check_status = 2
                   AND o.order_time IS NOT NULL
                   AND o.order_time <> \'0000-00-00 00:00:00\'

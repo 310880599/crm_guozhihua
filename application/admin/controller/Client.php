@@ -5169,6 +5169,11 @@ class Client extends Common
 
         // 成交日期：自定义 deal_time 优先于快捷 deal_timebucket；转换为起止时间供 Model EXISTS 使用
         $dealTimeWhere = null;
+        // 成交日期参数必须是字符串，数组等非法类型明确返回错误（避免 trim() 抛 500）
+        if ((isset($keyword['deal_time']) && !is_scalar($keyword['deal_time']))
+            || (isset($keyword['deal_timebucket']) && !is_scalar($keyword['deal_timebucket']))) {
+            return ['code' => 0, 'msg' => '成交日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
+        }
         if (!empty($keyword['deal_time'])) {
             $dealTime = $this->normalizeChengjiaoCustomDateForBuildTimeWhere((string)$keyword['deal_time']);
             if ($dealTime === '' || !$this->isValidChengjiaoCustomDate($dealTime)) {
