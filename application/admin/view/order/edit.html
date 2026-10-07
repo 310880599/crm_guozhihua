@@ -2092,6 +2092,28 @@
             }
             form.render('select');
         }
+
+        // 用户主动选到「个人 + 个人用户（无公司）」时的一次性默认值，不锁字段、不覆盖历史订单
+        function applyPersonalCustomerDefaults() {
+            if (window.isEditInit) {
+                return;
+            }
+
+            var customerTypeFlag = String($('#customer_type_flag').val() || '');
+            var customerType = $.trim($('#customer_type').val() || '');
+
+            if (
+                customerTypeFlag !== '1'
+                || customerType !== '个人用户（无公司）'
+            ) {
+                return;
+            }
+
+            $('#invoice_type').val('不开票');
+            $('#tax_amount').val('0');
+            updateInvoiceUI('不开票');
+            updateTotals();
+        }
         
         // 客户类别选择变化时的处理
         form.on('select(customer_type_flag)', function (data) {
@@ -2103,6 +2125,7 @@
                 return;
             }
             updateCustomerTypeUI(data.value, { mode: 'user' });
+            applyPersonalCustomerDefaults();
         });
         
         // 票种性质选择变化时的处理
