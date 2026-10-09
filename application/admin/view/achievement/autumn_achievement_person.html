@@ -307,10 +307,10 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
     }
 
     /* ========== KPI ========== */
-    /* 不等宽：人数/状态偏窄，押注总额与真实业绩汇总加宽，避免金额 nowrap 被 overflow 裁切 */
+    /* 六列不等宽：金秋总业绩/押注总额/真实业绩加宽，人数与状态偏窄，优先保证金额不被裁切 */
     .jq-dashboard-hero-kpis{
         display:grid;
-        grid-template-columns: minmax(72px, 88px) minmax(72px, 88px) minmax(172px, 214px) minmax(172px, 214px) minmax(78px, 96px);
+        grid-template-columns: minmax(150px, 190px) minmax(64px, 80px) minmax(64px, 80px) minmax(150px, 190px) minmax(150px, 190px) minmax(72px, 88px);
         gap: 8px;
         align-items: stretch;
         justify-content: end;
@@ -411,7 +411,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
 
     @media screen and (max-width: 1599px){
         .jq-dashboard-hero-kpis{
-            grid-template-columns: minmax(66px, 80px) minmax(66px, 80px) minmax(156px, 196px) minmax(156px, 196px) minmax(72px, 88px);
+            grid-template-columns: minmax(140px, 176px) minmax(58px, 72px) minmax(58px, 72px) minmax(140px, 176px) minmax(140px, 176px) minmax(66px, 80px);
             gap: 6px;
         }
         .jq-kpi-chip{ padding: 7px 8px 6px; min-height: 64px; }
@@ -427,7 +427,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
         .jq-kpi-chip-title{ font-size: 11px; }
         .jq-kpi-chip-value{ font-size: clamp(15px, 1.3vw, 20px); }
         .jq-dashboard-hero-kpis{
-            grid-template-columns: minmax(58px, 72px) minmax(58px, 72px) minmax(142px, 178px) minmax(142px, 178px) minmax(66px, 82px);
+            grid-template-columns: minmax(128px, 160px) minmax(52px, 64px) minmax(52px, 64px) minmax(128px, 160px) minmax(128px, 160px) minmax(60px, 74px);
             gap: 5px;
         }
     }
@@ -444,8 +444,8 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
         .jq-dashboard-hero-left{ max-width: none; }
         .jq-dashboard-hero-kpis{
             width: 100%;
-            /* 窄屏仍保持金额列更宽，避免五列等分把大额裁切 */
-            grid-template-columns: minmax(0, .72fr) minmax(0, .72fr) minmax(0, 1.35fr) minmax(0, 1.35fr) minmax(0, .8fr);
+            /* 窄屏仍保持金额列更宽，避免六列等分把大额裁切 */
+            grid-template-columns: minmax(0, 1.3fr) minmax(0, .65fr) minmax(0, .65fr) minmax(0, 1.3fr) minmax(0, 1.3fr) minmax(0, .75fr);
             justify-content: stretch;
         }
         .jq-dashboard-hero::after{ display: none; }
@@ -1116,7 +1116,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
     .jq-dashboard-container:-webkit-full-screen .jq-dashboard-hero-kpis,
     .jq-dashboard-container:-moz-full-screen .jq-dashboard-hero-kpis,
     .jq-dashboard-container:-ms-fullscreen .jq-dashboard-hero-kpis{
-        grid-template-columns: minmax(80px, 92px) minmax(80px, 92px) minmax(188px, 230px) minmax(188px, 230px) minmax(84px, 100px);
+        grid-template-columns: minmax(170px, 210px) minmax(72px, 88px) minmax(72px, 88px) minmax(170px, 210px) minmax(170px, 210px) minmax(78px, 96px);
         gap: 8px;
     }
 
@@ -1239,6 +1239,17 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
             </div>
 
             <div class="jq-dashboard-hero-kpis" id="jq-kpi-container">
+                <div class="jq-kpi-chip">
+                    <i class="layui-icon layui-icon-rmb jq-kpi-chip-icon" aria-hidden="true"></i>
+                    <div class="jq-kpi-chip-top">
+                        <span class="jq-kpi-chip-title">金秋总业绩（9.15-11.15）</span>
+                        <span>
+                            <span class="jq-kpi-chip-value jq-kpi-accent" id="jq-kpi-autumn-total-profit">0.00</span>
+                            <span class="jq-kpi-chip-unit">元</span>
+                        </span>
+                    </div>
+                    <div class="jq-kpi-chip-sub">已审核订单利润合计</div>
+                </div>
                 <div class="jq-kpi-chip">
                     <i class="layui-icon layui-icon-group jq-kpi-chip-icon" aria-hidden="true"></i>
                     <div class="jq-kpi-chip-top">
@@ -1581,10 +1592,19 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
             var elB = document.getElementById('jq-kpi-bettor-count');
             var elBet = document.getElementById('jq-kpi-bet-total');
             var elAct = document.getElementById('jq-kpi-actual-total');
+            var elAutumn = document.getElementById('jq-kpi-autumn-total-profit');
             if (elC) elC.textContent = String(challengerCount);
             if (elB) elB.textContent = String(bettorCount);
             if (elBet) elBet.textContent = formatAmount(betTotal);
             if (elAct) elAct.textContent = formatAmount(actualTotal);
+            // 字段存在且可解析时更新（含成功无订单的 0.00）；缺失/null/NaN 不覆盖旧有效金额
+            if (elAutumn && Object.prototype.hasOwnProperty.call(s, 'autumn_total_profit')
+                && s.autumn_total_profit !== null && typeof s.autumn_total_profit !== 'undefined') {
+                var autumnTotal = parseFloat(s.autumn_total_profit);
+                if (isFinite(autumnTotal)) {
+                    elAutumn.textContent = formatAmount(autumnTotal);
+                }
+            }
 
             var footL = document.getElementById('jq-left-card-foot');
             var footR = document.getElementById('jq-right-card-foot');

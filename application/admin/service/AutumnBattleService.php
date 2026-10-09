@@ -9,11 +9,23 @@ use think\Db;
  */
 class AutumnBattleService
 {
+    /** 金秋总业绩固定统计起点（含），不受活动配置周期影响 */
+    const AUTUMN_TOTAL_PROFIT_START = '2026-09-15 00:00:00';
+
+    /** 金秋总业绩固定统计终点（不含），即 11.15 当日最后一刻仍计入 */
+    const AUTUMN_TOTAL_PROFIT_END_EXCLUSIVE = '2026-11-16 00:00:00';
+
     /** @var AutumnBattleConfigService */
     private $configService;
 
     /** @var OrderProfitAchievementService */
     private $orderProfitService;
+
+    /**
+     * 请求内复用的固定窗口聚合结果（避免同一次 buildPersonPageData 中 summary/stamp 重复 SUM）
+     * @var array<string,mixed>|null
+     */
+    private $autumnFixedWindowPack = null;
 
     public function __construct(
         AutumnBattleConfigService $configService = null,
@@ -213,9 +225,106 @@ class AutumnBattleService
             'order_time_field'    => $timeField,
             'challenger_count'    => count($config['challengers']),
             'bettor_count'        => count($config['bettors']),
-            'period_summary'      => $periodSummary,
-            'recent_changes'      => $recentSummary,
+            'period_summary'       => $periodSummary,
+            'recent_changes'       => $recentSummary,
+            // 固定窗口签名：与活动配置周期解耦，感知 9.15–11.15 内审核/利润/成交时间变化
+            'autumn_fixed_window'  => $this->buildAutumnFixedWindowStampPart(),
         ];
+    }
+
+    /**
+     * 金秋总业绩：固定日期窗口内全体已审核订单利润合计。
+     * 口径：check_status=2，order_time ∈ [START, END_EXCLUSIVE)，SUM(COALESCE(profit,0))。
+     *
+     * @return float 保留两位小数；无订单时为 0.0（查询异常由调用方捕获，不静默当作 0）
+     */
+    public function calcAutumnTotalProfit()
+    {
+        $pack = $this->getAutumnFixedWindowPack();
+
+        return (float)$pack['sum_profit'];
+    }
+
+    /**
+     * Stamp 用的固定窗口摘要（独立于活动配置 period_summary）。
+     *
+     * @return array<string,mixed>
+     */
+    private function buildAutumnFixedWindowStampPart()
+    {
+        $pack = $this->getAutumnFixedWindowPack();
+
+        return [
+            'stat_start'         => (string)$pack['stat_start'],
+            'stat_end_exclusive' => (string)$pack['stat_end_exclusive'],
+            'order_time_field'   => 'order_time',
+            'cnt'                => (int)$pack['cnt'],
+            // 字符串金额，避免 json_encode 浮点抖动导致 stamp 不稳定
+            'sum_profit'         => (string)$pack['sum_profit_text'],
+            'max_id'             => (int)$pack['max_id'],
+            'max_order_time'     => (string)$pack['max_order_time'],
+            'max_create_time'    => (string)$pack['max_create_time'],
+            'max_ut_time'        => (string)$pack['max_ut_time'],
+            'max_audit_time'     => (string)$pack['max_audit_time'],
+        ];
+    }
+
+    /**
+     * 固定窗口一次聚合；同请求内可被 summary 与 stamp 安全复用（无跨请求缓存）。
+     *
+     * @return array<string,mixed>
+     */
+    private function getAutumnFixedWindowPack()
+    {
+        if ($this->autumnFixedWindowPack !== null) {
+            return $this->autumnFixedWindowPack;
+        }
+
+        $row = Db::table('crm_client_order')
+            ->alias('o')
+            ->field([
+                'COUNT(1) AS cnt',
+                'SUM(COALESCE(o.profit,0)) AS sum_profit',
+                'MAX(o.id) AS max_id',
+                'MAX(o.order_time) AS max_order_time',
+                'MAX(o.create_time) AS max_create_time',
+                'MAX(o.ut_time) AS max_ut_time',
+                'MAX(o.audit_time) AS max_audit_time',
+            ])
+            ->where('o.check_status', 2)
+            ->where('o.order_time', '>=', self::AUTUMN_TOTAL_PROFIT_START)
+            ->where('o.order_time', '<', self::AUTUMN_TOTAL_PROFIT_END_EXCLUSIVE)
+            ->find();
+
+        $sumRaw = (is_array($row) && array_key_exists('sum_profit', $row)) ? $row['sum_profit'] : null;
+        // 无匹配行时 SUM 为 NULL → 视为成功的 0；查询失败会抛异常，不会走到这里
+        if ($sumRaw === null || $sumRaw === '') {
+            $sumProfitText = '0.00';
+            $sumProfit = 0.0;
+        } else {
+            // 先规范为两位小数字符串，再转 float，减少中间浮点误差
+            $sumProfitText = number_format((float)$sumRaw, 2, '.', '');
+            $sumProfit = (float)$sumProfitText;
+        }
+
+        $this->autumnFixedWindowPack = [
+            'stat_start'         => self::AUTUMN_TOTAL_PROFIT_START,
+            'stat_end_exclusive' => self::AUTUMN_TOTAL_PROFIT_END_EXCLUSIVE,
+            'cnt'                => (is_array($row) && isset($row['cnt'])) ? (int)$row['cnt'] : 0,
+            'sum_profit'         => $sumProfit,
+            'sum_profit_text'    => $sumProfitText,
+            'max_id'             => (is_array($row) && isset($row['max_id'])) ? (int)$row['max_id'] : 0,
+            'max_order_time'     => (is_array($row) && isset($row['max_order_time']) && $row['max_order_time'] !== null)
+                ? (string)$row['max_order_time'] : '',
+            'max_create_time'    => (is_array($row) && isset($row['max_create_time']) && $row['max_create_time'] !== null)
+                ? (string)$row['max_create_time'] : '',
+            'max_ut_time'        => (is_array($row) && isset($row['max_ut_time']) && $row['max_ut_time'] !== null)
+                ? (string)$row['max_ut_time'] : '',
+            'max_audit_time'     => (is_array($row) && isset($row['max_audit_time']) && $row['max_audit_time'] !== null)
+                ? (string)$row['max_audit_time'] : '',
+        ];
+
+        return $this->autumnFixedWindowPack;
     }
 
     /**
@@ -745,11 +854,13 @@ class AutumnBattleService
             'challenger_count'     => count($challengerRankList),
             'bettor_count'         => count($bettorRankList),
             'bet_total'            => $betTotal,
-            'actual_total'        => $actualTotal,
+            'actual_total'         => $actualTotal,
             'target_total'         => $targetTotal,
             'pending_match_count'  => $pendingMatchCount,
             'config_bet_total'     => isset($checksums['bet_total']) ? (float)$checksums['bet_total'] : $betTotal,
             'config_goal_total_all'=> isset($checksums['goal_total_all']) ? (float)$checksums['goal_total_all'] : null,
+            // 固定窗口全体已审核利润；与 actual_total（挑战人已匹配业绩）口径不同，互不影响
+            'autumn_total_profit'  => $this->calcAutumnTotalProfit(),
         ];
     }
 }
