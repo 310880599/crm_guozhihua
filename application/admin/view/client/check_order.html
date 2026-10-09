@@ -310,6 +310,83 @@
             padding-bottom: 8px;
             overflow: visible !important;
         }
+        /* 最新跟进记录：单行省略 */
+        .layui-table-view td[data-field="last_up_records"] .layui-table-cell {
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+        }
+        .layui-table-view td[data-field="last_up_records"] .co-follow-hover,
+        .layui-table-view td[data-field="last_up_records"] .co-follow-plain {
+            display: block;
+            width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            box-sizing: border-box;
+        }
+        .layui-table-view td[data-field="last_up_records"] .co-follow-hover {
+            cursor: pointer;
+            color: #333;
+        }
+        /* 最近10条跟进：body 级悬浮层 */
+        #co-follow-history-tooltip.co-follow-history-tooltip {
+            position: fixed;
+            z-index: 2000000000;
+            width: 420px;
+            max-width: calc(100vw - 24px);
+            max-height: 360px;
+            overflow-x: hidden;
+            overflow-y: auto;
+            background: #fff;
+            border: 1px solid #e5e6eb;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+            padding: 12px;
+            box-sizing: border-box;
+            color: #333;
+            line-height: 1.55;
+        }
+        #co-follow-history-tooltip .co-follow-tip-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            margin: 0 0 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        #co-follow-history-tooltip .co-follow-item {
+            padding: 0 0 10px;
+            margin: 0 0 10px;
+            border-bottom: 1px dashed #efefef;
+        }
+        #co-follow-history-tooltip .co-follow-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        #co-follow-history-tooltip .co-follow-time {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 2px;
+        }
+        #co-follow-history-tooltip .co-follow-user {
+            font-size: 12px;
+            color: #555;
+            margin-bottom: 4px;
+        }
+        #co-follow-history-tooltip .co-follow-content {
+            font-size: 13px;
+            color: #333;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+        #co-follow-history-tooltip .co-follow-empty,
+        #co-follow-history-tooltip .co-follow-loading {
+            color: #999;
+            font-size: 13px;
+        }
         .layui-table-view .layui-table td[data-field="wechat_receipt_image"] .layui-table-cell,
         .layui-table-view .layui-table td[data-field="inquiry_assign_image"] .layui-table-cell {
             white-space: normal !important;
@@ -719,6 +796,235 @@
                         }
                     });
                 });
+
+            // ========== 最新跟进记录：最近10条悬浮（事件委托，仅绑定一次）==========
+            var CO_FOLLOW_HOVER_DELAY = 300;
+            var CO_FOLLOW_HIDE_DELAY = 220;
+            var CO_FOLLOW_CACHE_TTL = 5 * 60 * 1000;
+            var CO_FOLLOW_HISTORY_MAX = 10;
+            var coFollowHoverTimer = null;
+            var coFollowHideTimer = null;
+            var coFollowHoverTarget = null;
+            var coFollowReqSeq = 0;
+            var coFollowCache = {};
+            var coFollowRequestMap = {};
+            var coFollowMousePos = { x: 0, y: 0 };
+            var coFollowOverTip = false;
+
+            function clearCoFollowCache() {
+                coFollowCache = {};
+                coFollowRequestMap = {};
+            }
+
+            function ensureCoFollowTooltipEl() {
+                var $tip = $('#co-follow-history-tooltip');
+                if (!$tip.length) {
+                    $('body').append('<div id="co-follow-history-tooltip" class="co-follow-history-tooltip" style="display:none;"></div>');
+                    $tip = $('#co-follow-history-tooltip');
+                    $tip.on('mouseenter.coFollowTip', function () {
+                        coFollowOverTip = true;
+                        clearTimeout(coFollowHideTimer);
+                        coFollowHideTimer = null;
+                    }).on('mouseleave.coFollowTip', function () {
+                        coFollowOverTip = false;
+                        scheduleHideCoFollowTooltip();
+                    });
+                }
+                return $tip;
+            }
+
+            function updateCoFollowTooltipPosition(target) {
+                var $tip = ensureCoFollowTooltipEl();
+                if (!$tip.is(':visible')) return;
+                var margin = 12;
+                var offset = 14;
+                var viewportW = window.innerWidth || document.documentElement.clientWidth;
+                var viewportH = window.innerHeight || document.documentElement.clientHeight;
+                var tipW = $tip.outerWidth();
+                var tipH = $tip.outerHeight();
+                var x = coFollowMousePos.x || 0;
+                var y = coFollowMousePos.y || 0;
+                if ((!x || !y) && target && target.getBoundingClientRect) {
+                    var rect = target.getBoundingClientRect();
+                    x = rect.left + 8;
+                    y = rect.bottom;
+                }
+                var left = x + offset;
+                var top = y + offset;
+                if (left + tipW > viewportW - margin) left = x - tipW - offset;
+                if (left < margin) left = Math.max(margin, viewportW - tipW - margin);
+                if (top + tipH > viewportH - margin) top = y - tipH - offset;
+                if (top < margin) top = Math.max(margin, viewportH - tipH - margin);
+                $tip.css({ left: left + 'px', top: top + 'px' });
+            }
+
+            function showCoFollowTooltip(target, html) {
+                var $tip = ensureCoFollowTooltipEl();
+                $tip.html(html || '').show();
+                updateCoFollowTooltipPosition(target);
+            }
+
+            function hideCoFollowTooltipNow() {
+                clearTimeout(coFollowHoverTimer);
+                coFollowHoverTimer = null;
+                clearTimeout(coFollowHideTimer);
+                coFollowHideTimer = null;
+                coFollowHoverTarget = null;
+                coFollowOverTip = false;
+                $('#co-follow-history-tooltip').hide().empty();
+            }
+
+            function scheduleHideCoFollowTooltip() {
+                clearTimeout(coFollowHideTimer);
+                coFollowHideTimer = setTimeout(function () {
+                    if (coFollowOverTip) return;
+                    if (coFollowHoverTarget) return;
+                    hideCoFollowTooltipNow();
+                }, CO_FOLLOW_HIDE_DELAY);
+            }
+
+            function renderCoFollowHistoryHtml(list) {
+                var title = '<div class="co-follow-tip-title">最近10条跟进记录</div>';
+                if (!list || !list.length) {
+                    return title + '<div class="co-follow-empty">暂无跟进记录</div>';
+                }
+                var html = title;
+                var max = Math.min(list.length, CO_FOLLOW_HISTORY_MAX);
+                for (var i = 0; i < max; i++) {
+                    var item = list[i] || {};
+                    var timeText = escapeActionIconTipText(item.create_date || item.time || '--');
+                    var userName = escapeActionIconTipText(item.username || item.user || '系统');
+                    var roleText = $.trim(String(item.follow_role_text || ''));
+                    var userLabel = userName;
+                    if (roleText) {
+                        userLabel = userName + '【' + escapeActionIconTipText(roleText) + '】';
+                    }
+                    var content = escapeActionIconTipText(item.reply_msg || item.content || '');
+                    html += '<div class="co-follow-item">' +
+                        '<div class="co-follow-time">' + timeText + '</div>' +
+                        '<div class="co-follow-user">' + userLabel + '</div>' +
+                        '<div class="co-follow-content">' + content + '</div>' +
+                        '</div>';
+                }
+                return html;
+            }
+
+            function getCachedCoFollow(leadsId, latestText) {
+                var key = String(leadsId || '');
+                if (!key) return null;
+                var cached = coFollowCache[key];
+                if (!cached) return null;
+                if (Date.now() - (cached.ts || 0) > CO_FOLLOW_CACHE_TTL) {
+                    delete coFollowCache[key];
+                    return null;
+                }
+                // 与当前列表最新一条明显冲突时丢弃缓存
+                var listLatest = $.trim(String(latestText == null ? '' : latestText));
+                var cacheFirst = '';
+                if (cached.list && cached.list.length) {
+                    cacheFirst = $.trim(String(cached.list[0].reply_msg || cached.list[0].content || ''));
+                }
+                if (listLatest !== '' && cacheFirst !== '' && listLatest !== cacheFirst) {
+                    delete coFollowCache[key];
+                    return null;
+                }
+                return cached.list;
+            }
+
+            function fetchCoFollowHistory(orderId, leadsId, latestText) {
+                var cacheKey = String(leadsId || '');
+                var cached = getCachedCoFollow(cacheKey, latestText);
+                if (cached) {
+                    return $.Deferred().resolve(cached).promise();
+                }
+                var reqKey = 'o:' + String(orderId);
+                if (coFollowRequestMap[reqKey]) {
+                    return coFollowRequestMap[reqKey];
+                }
+                var dfd = $.Deferred();
+                coFollowRequestMap[reqKey] = dfd.promise();
+                $.ajax({
+                    url: "{:url('Client/getCheckOrderRecentFollows')}",
+                    method: 'POST',
+                    data: { order_id: orderId },
+                    success: function (res) {
+                        if (res && parseInt(res.code, 10) === 0) {
+                            var payload = res.data || {};
+                            var list = payload.list || [];
+                            var authLeadsId = parseInt(payload.leads_id, 10) || leadsId;
+                            if (authLeadsId > 0) {
+                                coFollowCache[String(authLeadsId)] = { ts: Date.now(), list: list };
+                            }
+                            dfd.resolve(list);
+                            return;
+                        }
+                        dfd.reject((res && (res.msg || res.message)) ? (res.msg || res.message) : '获取跟进记录失败，请稍后重试');
+                    },
+                    error: function () {
+                        dfd.reject('获取跟进记录失败，请稍后重试');
+                    },
+                    complete: function () {
+                        delete coFollowRequestMap[reqKey];
+                    }
+                });
+                return coFollowRequestMap[reqKey];
+            }
+
+            (function bindCheckOrderFollowTip() {
+                var selector = '.layui-table-view .co-follow-hover';
+                $(document)
+                    .off('mouseenter.checkOrderFollowTip mouseleave.checkOrderFollowTip mousemove.checkOrderFollowTip', selector)
+                    .on('mouseenter.checkOrderFollowTip', selector, function (e) {
+                        var target = this;
+                        var orderId = parseInt($(target).attr('data-order-id'), 10) || 0;
+                        var leadsId = parseInt($(target).attr('data-leads-id'), 10) || 0;
+                        var latestText = $(target).attr('data-latest') || '';
+                        if (orderId <= 0) return;
+                        coFollowMousePos.x = e.clientX || 0;
+                        coFollowMousePos.y = e.clientY || 0;
+                        clearTimeout(coFollowHideTimer);
+                        coFollowHideTimer = null;
+                        coFollowHoverTarget = target;
+                        clearTimeout(coFollowHoverTimer);
+                        coFollowHoverTimer = setTimeout(function () {
+                            if (coFollowHoverTarget !== target) return;
+                            var seq = ++coFollowReqSeq;
+                            showCoFollowTooltip(target, '<div class="co-follow-loading">加载中...</div>');
+                            fetchCoFollowHistory(orderId, leadsId, latestText).done(function (list) {
+                                if (seq !== coFollowReqSeq || coFollowHoverTarget !== target) return;
+                                showCoFollowTooltip(target, renderCoFollowHistoryHtml(list));
+                            }).fail(function (msg) {
+                                if (seq !== coFollowReqSeq || coFollowHoverTarget !== target) return;
+                                showCoFollowTooltip(target, '<div class="co-follow-empty">' +
+                                    escapeActionIconTipText(msg || '获取跟进记录失败，请稍后重试') + '</div>');
+                            });
+                        }, CO_FOLLOW_HOVER_DELAY);
+                    })
+                    .on('mousemove.checkOrderFollowTip', selector, function (e) {
+                        if (coFollowHoverTarget !== this) return;
+                        coFollowMousePos.x = e.clientX || 0;
+                        coFollowMousePos.y = e.clientY || 0;
+                        updateCoFollowTooltipPosition(this);
+                    })
+                    .on('mouseleave.checkOrderFollowTip', selector, function () {
+                        if (coFollowHoverTarget === this) {
+                            coFollowHoverTarget = null;
+                            clearTimeout(coFollowHoverTimer);
+                            coFollowHoverTimer = null;
+                            scheduleHideCoFollowTooltip();
+                        }
+                    });
+
+                $(window).off('resize.checkOrderFollowTip').on('resize.checkOrderFollowTip', function () {
+                    hideCoFollowTooltipNow();
+                });
+                $(document)
+                    .off('scroll.checkOrderFollowTip', '.layui-table-view .layui-table-main, .layui-table-view .layui-table-body')
+                    .on('scroll.checkOrderFollowTip', '.layui-table-view .layui-table-main, .layui-table-view .layui-table-body', function () {
+                        hideCoFollowTooltipNow();
+                    });
+            })();
+
             var IMAGE_COL_MIN_WIDTH = 300;
             var IMAGE_COL_WIDTH = 360;
 
@@ -982,10 +1288,34 @@
                         normal.push(c);
                     }
                 });
+                // 旧列序缺少「最新跟进记录」时，插入到「产品明细」之后；已包含则尊重用户顺序
+                var workingOrder = orderArr;
+                if (workingOrder && workingOrder.length && byField['last_up_records']) {
+                    var hasFollowCol = false;
+                    for (var oi = 0; oi < workingOrder.length; oi++) {
+                        if (workingOrder[oi] === 'last_up_records') {
+                            hasFollowCol = true;
+                            break;
+                        }
+                    }
+                    if (!hasFollowCol) {
+                        workingOrder = workingOrder.slice();
+                        var insertAt = -1;
+                        for (var pi = 0; pi < workingOrder.length; pi++) {
+                            if (workingOrder[pi] === 'order_items') {
+                                insertAt = pi;
+                                break;
+                            }
+                        }
+                        if (insertAt >= 0) {
+                            workingOrder.splice(insertAt + 1, 0, 'last_up_records');
+                        }
+                    }
+                }
                 var ordered = [];
                 var used = {};
-                if (orderArr && orderArr.length) {
-                    orderArr.forEach(function (field) {
+                if (workingOrder && workingOrder.length) {
+                    workingOrder.forEach(function (field) {
                         if (byField[field] && !used[field]) {
                             ordered.push(byField[field]);
                             used[field] = true;
@@ -1276,6 +1606,34 @@
                         return name;
                     }).join('<br>');
                 }},
+                { field: 'last_up_records', title: '最新跟进记录', width: 200, templet: function (d) {
+                    var status = String(d.follow_status || '');
+                    var text = '';
+                    if (status === 'forbidden') {
+                        text = '无权限查看';
+                    } else if (status === 'unresolved') {
+                        text = '客户关联待确认';
+                    } else if (status === 'empty') {
+                        text = '暂无跟进记录';
+                    } else if (status === 'ok') {
+                        text = d.last_up_records == null ? '' : String(d.last_up_records);
+                    } else {
+                        text = d.last_up_records == null ? '暂无跟进记录' : String(d.last_up_records);
+                        if (!status && (text === '' || text === '暂无跟进记录')) {
+                            text = text || '暂无跟进记录';
+                        }
+                    }
+                    var escaped = escapeActionIconTipText(text);
+                    var canHover = status === 'ok';
+                    var orderId = parseInt(d.id, 10) || 0;
+                    var leadsId = parseInt(d.follow_leads_id, 10) || 0;
+                    if (canHover && orderId > 0) {
+                        return '<span class="co-follow-hover" data-order-id="' + orderId +
+                            '" data-leads-id="' + leadsId +
+                            '" data-latest="' + escapeHtmlAttr(text) + '">' + escaped + '</span>';
+                    }
+                    return '<span class="co-follow-plain">' + escaped + '</span>';
+                }},
                 { field: 'money', title: '成交金额(￥)', totalRow: true, width: BASE_COL_WIDTH },
                 { field: 'profit', title: '利润', totalRow: true, width: BASE_COL_WIDTH },
                 { field: 'margin_rate', title: '利润率(%)', totalRow: true, width: BASE_COL_WIDTH },
@@ -1381,6 +1739,8 @@
                     $('#total-profit').text(res.totalProfit);
                     $('#total-inquiries').text(res.totalInquiries);
                     $('#success-rate').text(res.successRate);
+                    clearCoFollowCache();
+                    hideCoFollowTooltipNow();
                     buildOrderColWhitelist(checkOrderCols[0]);
                     bindResizeSave();
                     bindColPanelSave();
@@ -1422,6 +1782,8 @@
                         $('#total-profit').text(res.totalProfit);
                         $('#total-inquiries').text(res.totalInquiries);
                         $('#success-rate').text(res.successRate);
+                        clearCoFollowCache();
+                        hideCoFollowTooltipNow();
                         buildOrderColWhitelist(checkOrderCols[0]);
                         bindResizeSave();
                         bindColPanelSave();

@@ -421,6 +421,110 @@ class ClientFollowService
     }
 
     /**
+     * 批量获取每个客户最新一条有效跟进（crm_comment，is_deleted=0）
+     * 排序：create_date DESC, id DESC；兼容 MySQL 5.7，有界查询。
+     *
+     * @param int[] $leadsIds
+     * @return array<int, array> leads_id => 评论行（含 username / follow_role_text / create_date 原文）
+     */
+    public function batchGetLatestValidComments(array $leadsIds)
+    {
+        $leadsIds = array_values(array_unique(array_filter(array_map('intval', $leadsIds))));
+        if (empty($leadsIds)) {
+            return [];
+        }
+
+        $map = [];
+        foreach (array_chunk($leadsIds, 100) as $chunk) {
+            if (empty($chunk)) {
+                continue;
+            }
+            $idList = implode(',', $chunk);
+            // 相关子查询：每个 leads_id 取 create_date DESC, id DESC 的第一条
+            $rows = Db::query(
+                "SELECT c.id, c.leads_id, c.reply_msg, c.create_date, c.follow_role, c.user_id, a.username
+                 FROM crm_comment c
+                 LEFT JOIN admin a ON c.user_id = a.admin_id
+                 WHERE c.is_deleted = 0
+                   AND c.leads_id IN ({$idList})
+                   AND c.id = (
+                       SELECT c2.id
+                       FROM crm_comment c2
+                       WHERE c2.leads_id = c.leads_id
+                         AND c2.is_deleted = 0
+                       ORDER BY c2.create_date DESC, c2.id DESC
+                       LIMIT 1
+                   )"
+            );
+            if (!is_array($rows)) {
+                continue;
+            }
+            foreach ($rows as $row) {
+                $lid = (int)($row['leads_id'] ?? 0);
+                if ($lid <= 0) {
+                    continue;
+                }
+                $row = $this->appendFollowRoleDisplay($row);
+                $map[$lid] = $row;
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * 获取客户最近 N 条有效跟进（口径与 batchGetLatestValidComments 一致）
+     *
+     * @param int $leadsId
+     * @param int $limit
+     * @return array
+     */
+    public function getRecentValidFollowComments($leadsId, $limit = 10)
+    {
+        $leadsId = (int)$leadsId;
+        $limit = max(1, min(10, (int)$limit));
+        if ($leadsId <= 0) {
+            return [];
+        }
+
+        $rows = Db::table('crm_comment')
+            ->alias('com')
+            ->leftJoin('admin adm', 'com.user_id = adm.admin_id')
+            ->where('com.leads_id', $leadsId)
+            ->where('com.is_deleted', 0)
+            ->field('com.id, com.leads_id, com.reply_msg, com.create_date, com.follow_role, com.user_id, adm.username')
+            ->order('com.create_date desc, com.id desc')
+            ->limit($limit)
+            ->select();
+
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $list = [];
+        foreach ($rows as $row) {
+            $row = $this->appendFollowRoleDisplay($row);
+            $createDate = $row['create_date'] ?? '';
+            if (is_numeric($createDate)) {
+                $timeText = date('Y-m-d H:i:s', (int)$createDate);
+            } else {
+                $ts = strtotime((string)$createDate);
+                $timeText = $ts ? date('Y-m-d H:i:s', $ts) : (string)$createDate;
+            }
+            $list[] = [
+                'id' => (int)($row['id'] ?? 0),
+                'create_date' => $timeText,
+                'username' => (string)($row['username'] ?? ''),
+                'follow_role' => (string)($row['follow_role'] ?? ''),
+                'follow_role_text' => (string)($row['follow_role_text'] ?? ''),
+                'reply_msg' => (string)($row['reply_msg'] ?? ''),
+            ];
+        }
+
+        return $list;
+    }
+
+    /**
      * 校验单个客户是否可操作（重新查库，不信任前端）
      *
      * @return array{ok:bool,msg:string,client?:array}

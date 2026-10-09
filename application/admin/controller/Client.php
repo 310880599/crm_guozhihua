@@ -1016,7 +1016,8 @@ class Client extends Common
             },
             function ($org, $alias = '') {
                 return $this->getOrgWhere($org, $alias);
-            }
+            },
+            $this->getCurrentAdminContext()
         ));
     }
 
@@ -1036,6 +1037,33 @@ class Client extends Common
 
         $svc = new CheckOrderService();
         $result = $svc->resolveOrderClientForFollow(
+            $orderId,
+            $this->getCheckOrderAllowedUsernames(),
+            $username,
+            $operatorInfo
+        );
+        return json($result);
+    }
+
+    /**
+     * 检查订单：按 order_id 获取关联客户最近最多 10 条有效跟进（只读）
+     * 不信任前端 leads_id；权限与 resolveCheckOrderClientForFollow 一致。
+     */
+    public function getCheckOrderRecentFollows()
+    {
+        $orderId = (int)Request::param('order_id', 0);
+        $username = trim((string)(Session::get('username') ?? ''));
+        $operatorInfo = $this->getCurrentAdminContext();
+
+        if ($operatorInfo['admin_id'] <= 0 || $username === '') {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+        if ($orderId <= 0) {
+            return json(['code' => 1, 'msg' => '参数错误', 'data' => []]);
+        }
+
+        $svc = new CheckOrderService();
+        $result = $svc->getRecentFollowsByOrderId(
             $orderId,
             $this->getCheckOrderAllowedUsernames(),
             $username,

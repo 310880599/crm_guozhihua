@@ -42,6 +42,7 @@ class CheckOrderService
      * @param string $currentUsername
      * @param callable(string $timeCondition, string $field): array $buildTimeWhere Controller->buildTimeWhere
      * @param callable(string $org, string $alias = ''): \Closure $getOrgWhere Controller->getOrgWhere
+     * @param array $operatorInfo ['admin_id'=>int,'username'=>string,'group_id'=>int,'team_name'=>string] 跟进只读权限上下文
      * @return array{code:int,msg:string,data:array,count:int,rel:int,totalInquiries:int,successRate:string,totalMoney:string,totalProfit:string}
      */
     public function search(
@@ -51,7 +52,8 @@ class CheckOrderService
         array $visibleUsers,
         string $currentUsername,
         callable $buildTimeWhere,
-        callable $getOrgWhere
+        callable $getOrgWhere,
+        array $operatorInfo = []
     ): array {
         $where = [];
         $client_where = [];
@@ -194,6 +196,9 @@ class CheckOrderService
 
         $list['data'] = OrderImageService::appendOrderImageFields($list['data'] ?? []);
 
+        // 分页结果之后补充客户最新跟进（不 JOIN 主查询，不影响 count/统计/排序）
+        $list['data'] = $this->appendLatestFollowFields($list['data'] ?? [], $operatorInfo);
+
         $leadModel = new Lead();
         $totalInquiries = $leadModel->countWithAlias($client_where);
 
@@ -212,6 +217,174 @@ class CheckOrderService
             'successRate' => number_format($successRate, 2),
             'totalMoney' => number_format($totalMoney, 2),
             'totalProfit' => number_format($totalProfit, 2),
+        ];
+    }
+
+    /**
+     * 为当前页检查订单批量回填最新跟进展示字段
+     *
+     * follow_status: ok|empty|unresolved|forbidden
+     * last_up_records: 表格展示文案（有跟进时为最新内容）
+     * follow_leads_id: 仅 ok/empty 时返回已授权客户 ID
+     *
+     * @param array $orders
+     * @param array $operatorInfo
+     * @return array
+     */
+    public function appendLatestFollowFields(array $orders, array $operatorInfo = []): array
+    {
+        if (empty($orders)) {
+            return $orders;
+        }
+
+        $contacts = [];
+        foreach ($orders as $order) {
+            $raw = trim((string)($order['contact'] ?? ''));
+            if ($raw !== '') {
+                $contacts[] = $raw;
+            }
+        }
+
+        $contactMap = OrderService::batchResolveUniqueLeadsIdByContacts($contacts);
+
+        $resolvedLeadsIds = [];
+        foreach ($contactMap as $match) {
+            if (!empty($match['ok']) && (int)($match['leads_id'] ?? 0) > 0) {
+                $resolvedLeadsIds[] = (int)$match['leads_id'];
+            }
+        }
+        $resolvedLeadsIds = array_values(array_unique($resolvedLeadsIds));
+
+        $clientsById = [];
+        if (!empty($resolvedLeadsIds)) {
+            $clientRows = Db::table('crm_leads')->whereIn('id', $resolvedLeadsIds)->select();
+            if (is_array($clientRows)) {
+                foreach ($clientRows as $client) {
+                    $cid = (int)($client['id'] ?? 0);
+                    if ($cid > 0) {
+                        $clientsById[$cid] = $client;
+                    }
+                }
+            }
+        }
+
+        $followService = new ClientFollowService();
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? ''));
+        $adminContext = [
+            'admin_id' => $operatorId,
+            'username' => $operatorName,
+            'group_id' => (int)($operatorInfo['group_id'] ?? 0),
+            'team_name' => (string)($operatorInfo['team_name'] ?? ''),
+        ];
+
+        // 请求内按 leads_id 缓存跟进读取权限，避免同客户多订单重复校验
+        $canReadCache = [];
+        $allowedLeadsIds = [];
+        foreach ($resolvedLeadsIds as $leadsId) {
+            if (!isset($clientsById[$leadsId])) {
+                $canReadCache[$leadsId] = false;
+                continue;
+            }
+            $canRead = $operatorId > 0
+                && $followService->canReadClientFollow($clientsById[$leadsId], $operatorId, $operatorName, $adminContext);
+            $canReadCache[$leadsId] = $canRead;
+            if ($canRead) {
+                $allowedLeadsIds[] = $leadsId;
+            }
+        }
+
+        $latestMap = $followService->batchGetLatestValidComments($allowedLeadsIds);
+
+        foreach ($orders as &$order) {
+            $raw = trim((string)($order['contact'] ?? ''));
+            if ($raw === '') {
+                $order['follow_status'] = 'unresolved';
+                $order['last_up_records'] = '客户关联待确认';
+                $order['follow_leads_id'] = 0;
+                continue;
+            }
+
+            $match = $contactMap[$raw] ?? null;
+            if (empty($match) || empty($match['ok']) || (int)($match['leads_id'] ?? 0) <= 0) {
+                $order['follow_status'] = 'unresolved';
+                $order['last_up_records'] = '客户关联待确认';
+                $order['follow_leads_id'] = 0;
+                continue;
+            }
+
+            $leadsId = (int)$match['leads_id'];
+            if (!isset($clientsById[$leadsId])) {
+                $order['follow_status'] = 'unresolved';
+                $order['last_up_records'] = '客户关联待确认';
+                $order['follow_leads_id'] = 0;
+                continue;
+            }
+
+            if (empty($canReadCache[$leadsId])) {
+                $order['follow_status'] = 'forbidden';
+                $order['last_up_records'] = '无权限查看';
+                $order['follow_leads_id'] = 0;
+                continue;
+            }
+
+            $latest = $latestMap[$leadsId] ?? null;
+            if (empty($latest)) {
+                $order['follow_status'] = 'empty';
+                $order['last_up_records'] = '暂无跟进记录';
+                $order['follow_leads_id'] = $leadsId;
+                continue;
+            }
+
+            $order['follow_status'] = 'ok';
+            $order['last_up_records'] = (string)($latest['reply_msg'] ?? '');
+            $order['follow_leads_id'] = $leadsId;
+        }
+        unset($order);
+
+        return $orders;
+    }
+
+    /**
+     * 检查订单：按 order_id 获取关联客户最近最多 10 条有效跟进（只读）
+     *
+     * @param int|string $orderId
+     * @param string[] $allowedUsernames
+     * @param string $currentUsername
+     * @param array $operatorInfo
+     * @return array{code:int,msg:string,data:array}
+     */
+    public function getRecentFollowsByOrderId($orderId, array $allowedUsernames, $currentUsername, array $operatorInfo = []): array
+    {
+        $resolved = $this->resolveOrderClientForFollow($orderId, $allowedUsernames, $currentUsername, $operatorInfo);
+        if ((int)($resolved['code'] ?? 1) !== 0) {
+            return [
+                'code' => (int)($resolved['code'] ?? 1),
+                'msg' => (string)($resolved['msg'] ?? '无权查看'),
+                'data' => [],
+            ];
+        }
+
+        $leadsId = (int)($resolved['data']['leads_id'] ?? 0);
+        if ($leadsId <= 0) {
+            return ['code' => 1, 'msg' => '无法定位订单对应客户', 'data' => []];
+        }
+
+        try {
+            $followService = new ClientFollowService();
+            $list = $followService->getRecentValidFollowComments($leadsId, 10);
+        } catch (\Throwable $e) {
+            return ['code' => 1, 'msg' => '获取跟进记录失败，请稍后重试', 'data' => []];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => 'ok',
+            'data' => [
+                'order_id' => (int)$orderId,
+                'leads_id' => $leadsId,
+                'list' => $list,
+            ],
         ];
     }
 

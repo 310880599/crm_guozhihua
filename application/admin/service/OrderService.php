@@ -206,6 +206,141 @@ class OrderService
     }
 
     /**
+     * 按联系方式批量精确解析唯一客户 leads_id（口径与 resolveUniqueLeadsIdByContact 一致）
+     *
+     * - 复用 normalizeContact，不另起清洗规则
+     * - 仅匹配 is_delete=0 的联系人
+     * - 每个联系方式独立统计 distinct leads_id：0 拒绝 / 1 通过 / >1 拒绝
+     * - 禁止 find() 取第一条、禁止名称模糊兜底
+     *
+     * @param string[] $contacts 原始联系方式列表（可含重复）
+     * @return array<string, array{ok:bool,leads_id:int,msg:string,match_count:int}> 以 trim 后的原始联系方式为键
+     */
+    public static function batchResolveUniqueLeadsIdByContacts(array $contacts)
+    {
+        $resultMap = [];
+        $uniqueRaws = [];
+        $normalizedByRaw = [];
+        $allCandidateValues = [];
+        $uniqueNormalized = [];
+
+        foreach ($contacts as $contact) {
+            $raw = trim((string)$contact);
+            if ($raw === '') {
+                continue;
+            }
+            if (isset($normalizedByRaw[$raw])) {
+                continue;
+            }
+            $normalized = self::normalizeContact($raw);
+            $normalizedByRaw[$raw] = $normalized;
+            $uniqueRaws[] = $raw;
+            if ($normalized === '') {
+                $resultMap[$raw] = [
+                    'ok' => false,
+                    'leads_id' => 0,
+                    'msg' => '订单联系方式为空，无法定位客户',
+                    'match_count' => 0,
+                ];
+                continue;
+            }
+            $allCandidateValues[] = $raw;
+            $allCandidateValues[] = $normalized;
+            $uniqueNormalized[$normalized] = true;
+        }
+
+        $allCandidateValues = array_values(array_unique(array_filter($allCandidateValues, function ($v) {
+            return trim((string)$v) !== '';
+        })));
+        $uniqueNormalizedList = array_keys($uniqueNormalized);
+
+        $rows = [];
+        if (!empty($allCandidateValues) || !empty($uniqueNormalizedList)) {
+            $query = Db::name('crm_contacts')->where('is_delete', 0);
+            $query->where(function ($q) use ($allCandidateValues, $uniqueNormalizedList) {
+                $hasCondition = false;
+                if (!empty($allCandidateValues)) {
+                    $q->whereIn('contact_value', $allCandidateValues);
+                    $hasCondition = true;
+                }
+                foreach ($uniqueNormalizedList as $norm) {
+                    $rawSql = "REPLACE(REPLACE(REPLACE(IFNULL(contact_value,''), '+', ''), '-', ''), ' ', '') = '"
+                        . addslashes($norm) . "'";
+                    if ($hasCondition) {
+                        $q->whereOrRaw($rawSql);
+                    } else {
+                        $q->whereRaw($rawSql);
+                        $hasCondition = true;
+                    }
+                }
+            });
+            $rows = $query->field('leads_id, contact_value')->select();
+            if (!is_array($rows)) {
+                $rows = [];
+            }
+        }
+
+        foreach ($uniqueRaws as $raw) {
+            if (isset($resultMap[$raw])) {
+                continue;
+            }
+            $normalized = $normalizedByRaw[$raw] ?? '';
+            if ($normalized === '') {
+                $resultMap[$raw] = [
+                    'ok' => false,
+                    'leads_id' => 0,
+                    'msg' => '订单联系方式为空，无法定位客户',
+                    'match_count' => 0,
+                ];
+                continue;
+            }
+
+            $candidateValues = array_values(array_unique(array_filter([$raw, $normalized])));
+            $leadsIds = [];
+            foreach ($rows as $row) {
+                $rowValue = trim((string)($row['contact_value'] ?? ''));
+                $rowNorm = self::normalizeContact($rowValue);
+                $matched = in_array($rowValue, $candidateValues, true)
+                    || ($rowNorm !== '' && $rowNorm === $normalized);
+                if (!$matched) {
+                    continue;
+                }
+                $lid = (int)($row['leads_id'] ?? 0);
+                if ($lid > 0) {
+                    $leadsIds[$lid] = true;
+                }
+            }
+            $distinctIds = array_keys($leadsIds);
+            $matchCount = count($distinctIds);
+
+            if ($matchCount === 0) {
+                $resultMap[$raw] = [
+                    'ok' => false,
+                    'leads_id' => 0,
+                    'msg' => '无法定位订单对应客户，请先核实客户关联',
+                    'match_count' => 0,
+                ];
+            } elseif ($matchCount > 1) {
+                $resultMap[$raw] = [
+                    'ok' => false,
+                    'leads_id' => 0,
+                    'msg' => '订单联系方式匹配到多个客户，无法安全打开跟进',
+                    'match_count' => $matchCount,
+                ];
+            } else {
+                $resultMap[$raw] = [
+                    'ok' => true,
+                    'leads_id' => (int)$distinctIds[0],
+                    'msg' => '',
+                    'match_count' => 1,
+                ];
+            }
+        }
+
+        return $resultMap;
+    }
+
+    /**
      * 我的订单入口：按 order_id 解析可跟进的唯一客户
      *
      * @param int $orderId
