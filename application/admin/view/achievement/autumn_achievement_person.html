@@ -307,9 +307,10 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
     }
 
     /* ========== KPI ========== */
+    /* 不等宽：人数/状态偏窄，押注总额与真实业绩汇总加宽，避免金额 nowrap 被 overflow 裁切 */
     .jq-dashboard-hero-kpis{
         display:grid;
-        grid-template-columns: repeat(5, minmax(88px, 118px));
+        grid-template-columns: minmax(72px, 88px) minmax(72px, 88px) minmax(172px, 214px) minmax(172px, 214px) minmax(78px, 96px);
         gap: 8px;
         align-items: stretch;
         justify-content: end;
@@ -410,7 +411,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
 
     @media screen and (max-width: 1599px){
         .jq-dashboard-hero-kpis{
-            grid-template-columns: repeat(5, minmax(78px, 104px));
+            grid-template-columns: minmax(66px, 80px) minmax(66px, 80px) minmax(156px, 196px) minmax(156px, 196px) minmax(72px, 88px);
             gap: 6px;
         }
         .jq-kpi-chip{ padding: 7px 8px 6px; min-height: 64px; }
@@ -426,7 +427,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
         .jq-kpi-chip-title{ font-size: 11px; }
         .jq-kpi-chip-value{ font-size: clamp(15px, 1.3vw, 20px); }
         .jq-dashboard-hero-kpis{
-            grid-template-columns: repeat(5, minmax(70px, 96px));
+            grid-template-columns: minmax(58px, 72px) minmax(58px, 72px) minmax(142px, 178px) minmax(142px, 178px) minmax(66px, 82px);
             gap: 5px;
         }
     }
@@ -443,7 +444,8 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
         .jq-dashboard-hero-left{ max-width: none; }
         .jq-dashboard-hero-kpis{
             width: 100%;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
+            /* 窄屏仍保持金额列更宽，避免五列等分把大额裁切 */
+            grid-template-columns: minmax(0, .72fr) minmax(0, .72fr) minmax(0, 1.35fr) minmax(0, 1.35fr) minmax(0, .8fr);
             justify-content: stretch;
         }
         .jq-dashboard-hero::after{ display: none; }
@@ -451,6 +453,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
 
     @media screen and (max-width: 760px){
         .jq-dashboard-container{ padding: 8px 10px 10px; min-height: 100vh; height: 100vh; }
+        /* 两列换行：金额卡占满可用宽度 */
         .jq-dashboard-hero-kpis{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .jq-dashboard-hero-sub{ white-space: normal; }
         .jq-dashboard-hero-main{ padding-right: 0; }
@@ -1108,6 +1111,15 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
         font-size: clamp(26px, 2vw, 34px);
     }
 
+    .jq-dashboard-container.jq-is-fullscreen .jq-dashboard-hero-kpis,
+    .jq-dashboard-container:fullscreen .jq-dashboard-hero-kpis,
+    .jq-dashboard-container:-webkit-full-screen .jq-dashboard-hero-kpis,
+    .jq-dashboard-container:-moz-full-screen .jq-dashboard-hero-kpis,
+    .jq-dashboard-container:-ms-fullscreen .jq-dashboard-hero-kpis{
+        grid-template-columns: minmax(80px, 92px) minmax(80px, 92px) minmax(188px, 230px) minmax(188px, 230px) minmax(84px, 100px);
+        gap: 8px;
+    }
+
     .jq-dashboard-container.jq-is-fullscreen .jq-kpi-chip-value,
     .jq-dashboard-container:fullscreen .jq-kpi-chip-value,
     .jq-dashboard-container:-webkit-full-screen .jq-kpi-chip-value,
@@ -1316,7 +1328,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
                 <div class="layui-card-body jq-card-body" id="jq-right-card-body">
                     <div id="jq-bettor-container"></div>
                 </div>
-                <div class="jq-card-foot" id="jq-right-card-foot">共 — 名押注人 · 手动滚动查看全部</div>
+                <div class="jq-card-foot" id="jq-right-card-foot">活动共 — 名押注人 · 部分人员已隐藏</div>
             </div>
         </div>
     </div>
@@ -1577,7 +1589,7 @@ if (preg_match('/^(.*?)([·•].*)$/u', $dashboardTitle, $jqTitleMatch)) {
             var footL = document.getElementById('jq-left-card-foot');
             var footR = document.getElementById('jq-right-card-foot');
             if (footL) footL.textContent = '共 ' + challengerCount + ' 名挑战者 · 手动滚动查看全部';
-            if (footR) footR.textContent = '共 ' + bettorCount + ' 名押注人 · 手动滚动查看全部';
+            if (footR) footR.textContent = '活动共 ' + bettorCount + ' 名押注人 · 部分人员已隐藏';
         }
 
         /** 完成率：文本可 >100%；进度条宽度上限 100%；≥100% 金色 over class；待配置/待核对时条宽 0 */

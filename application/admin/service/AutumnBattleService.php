@@ -30,20 +30,71 @@ class AutumnBattleService
     {
         $config = $this->configService->getPersonConfig();
         $challengerRankList = $this->buildChallengerRankList($config);
-        $bettorRankList = $this->buildBettorRankList($config, $challengerRankList);
-        $summary = $this->buildSummary($config, $challengerRankList, $bettorRankList);
+        // 完整押注人榜：用于 summary 等原始业务统计（含离职员工）
+        $fullBettorRankList = $this->buildBettorRankList($config, $challengerRankList);
+        $summary = $this->buildSummary($config, $challengerRankList, $fullBettorRankList);
+        // 展示榜：仅页面/Ajax 渲染用，与原始统计隔离
+        $displayBettorRankList = $this->buildDisplayBettorRankList($fullBettorRankList);
         $stamp = $this->getPersonStampByConfig($config);
 
         return [
             'dashboardTitle'      => $config['dashboardTitle'],
             'periodText'          => $config['periodText'],
             'challengerRankList'  => $challengerRankList,
-            'bettorRankList'      => $bettorRankList,
+            'bettorRankList'      => $displayBettorRankList,
             'summary'             => $summary,
             'stamp'               => $stamp,
             'fundStatusRule'      => null,
             'winProbabilityRule'  => null,
         ];
+    }
+
+    /**
+     * 从完整押注人榜生成仅用于页面展示的列表（隐藏指定离职员工，不改原始统计）。
+     *
+     * @param array $fullBettorRankList
+     * @return array
+     */
+    private function buildDisplayBettorRankList(array $fullBettorRankList)
+    {
+        $hiddenAdminId = 400; // 冯婷婷（正式配置已核实）
+        $hiddenExactName = '冯婷婷';
+        $display = [];
+
+        foreach ($fullBettorRankList as $row) {
+            if ($this->shouldHideBettorFromDisplay($row, $hiddenAdminId, $hiddenExactName)) {
+                continue;
+            }
+            $display[] = $row;
+        }
+
+        $rank = 1;
+        foreach ($display as $i => $row) {
+            $display[$i]['rank'] = $rank++;
+        }
+
+        return array_values($display);
+    }
+
+    /**
+     * 优先按 admin_id 精确匹配隐藏；无 admin_id 时才用已核实精确姓名兜底（禁止模糊匹配，避免误伤同名）。
+     *
+     * @param array $row
+     * @param int $hiddenAdminId
+     * @param string $hiddenExactName
+     * @return bool
+     */
+    private function shouldHideBettorFromDisplay(array $row, $hiddenAdminId, $hiddenExactName)
+    {
+        $adminId = array_key_exists('admin_id', $row) ? $row['admin_id'] : null;
+        if ($adminId !== null && $adminId !== '') {
+            return (int)$adminId === (int)$hiddenAdminId;
+        }
+
+        $displayName = isset($row['display_name']) ? trim((string)$row['display_name']) : '';
+        $excelName = isset($row['excel_name']) ? trim((string)$row['excel_name']) : '';
+
+        return $displayName === $hiddenExactName || $excelName === $hiddenExactName;
     }
 
     /**
