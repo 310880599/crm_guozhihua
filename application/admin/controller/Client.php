@@ -5156,6 +5156,13 @@ class Client extends Common
             $keyword = [];
         }
 
+        // 禁止客户端伪造内部成交时间条件；仅允许服务端根据公开参数重新生成
+        unset(
+            $keyword['__deal_month_ranges'],
+            $keyword['__deal_order_time_start'],
+            $keyword['__deal_order_time_end']
+        );
+
         // 创建日期：自定义 at_time 优先于快捷 timebucket；非法自定义日期返回空结果（禁止静默扩大范围）
         if (!empty($keyword['at_time'])) {
             $atTime = $this->normalizeChengjiaoCustomDateForBuildTimeWhere((string)$keyword['at_time']);
@@ -5167,6 +5174,22 @@ class Client extends Common
             $keyword['timebucket'] = $this->buildTimeWhere($keyword['timebucket'], 'at_time');
         }
 
+        // 成交月份快捷 deal_month_keys（与 deal_time / deal_timebucket 互斥）
+        if (isset($keyword['deal_month_keys']) && !is_scalar($keyword['deal_month_keys'])) {
+            return ['code' => 1, 'msg' => '成交月份参数无效', 'data' => [], 'count' => 0, 'rel' => 0];
+        }
+        $dealMonthKeysRaw = isset($keyword['deal_month_keys'])
+            ? trim((string)$keyword['deal_month_keys'])
+            : '';
+        unset($keyword['deal_month_keys']);
+        $dealMonthRanges = [];
+        if ($dealMonthKeysRaw !== '') {
+            $dealMonthRanges = $this->parseChengjiaoDealMonthKeysToRanges($dealMonthKeysRaw);
+            if ($dealMonthRanges === false) {
+                return ['code' => 1, 'msg' => '成交月份参数无效', 'data' => [], 'count' => 0, 'rel' => 0];
+            }
+        }
+
         // 成交日期：自定义 deal_time 优先于快捷 deal_timebucket；转换为起止时间供 Model EXISTS 使用
         $dealTimeWhere = null;
         // 成交日期参数必须是字符串，数组等非法类型明确返回错误（避免 trim() 抛 500）
@@ -5174,19 +5197,30 @@ class Client extends Common
             || (isset($keyword['deal_timebucket']) && !is_scalar($keyword['deal_timebucket']))) {
             return ['code' => 0, 'msg' => '成交日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
         }
-        if (!empty($keyword['deal_time'])) {
-            $dealTime = $this->normalizeChengjiaoCustomDateForBuildTimeWhere((string)$keyword['deal_time']);
-            if ($dealTime === '' || !$this->isValidChengjiaoCustomDate($dealTime)) {
+        $hasDealTime = isset($keyword['deal_time']) && trim((string)$keyword['deal_time']) !== '';
+        $hasDealTimebucket = isset($keyword['deal_timebucket']) && trim((string)$keyword['deal_timebucket']) !== '';
+        if (!empty($dealMonthRanges) && ($hasDealTime || $hasDealTimebucket)) {
+            return ['code' => 1, 'msg' => '成交月份与成交日期不能同时使用', 'data' => [], 'count' => 0, 'rel' => 0];
+        }
+
+        if (!empty($dealMonthRanges)) {
+            $keyword['__deal_month_ranges'] = $dealMonthRanges;
+            unset($keyword['deal_time'], $keyword['deal_timebucket']);
+        } else {
+            if (!empty($keyword['deal_time'])) {
+                $dealTime = $this->normalizeChengjiaoCustomDateForBuildTimeWhere((string)$keyword['deal_time']);
+                if ($dealTime === '' || !$this->isValidChengjiaoCustomDate($dealTime)) {
+                    return ['code' => 0, 'msg' => '成交日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
+                }
+                $dealTimeWhere = $this->buildTimeWhere($dealTime, 'order_time');
+            } elseif (!empty($keyword['deal_timebucket'])) {
+                $dealTimeWhere = $this->buildTimeWhere($keyword['deal_timebucket'], 'order_time');
+            }
+            unset($keyword['deal_time'], $keyword['deal_timebucket']);
+
+            if (is_array($dealTimeWhere) && !$this->applyChengjiaoDealOrderTimeKeyword($keyword, $dealTimeWhere)) {
                 return ['code' => 0, 'msg' => '成交日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
             }
-            $dealTimeWhere = $this->buildTimeWhere($dealTime, 'order_time');
-        } elseif (!empty($keyword['deal_timebucket'])) {
-            $dealTimeWhere = $this->buildTimeWhere($keyword['deal_timebucket'], 'order_time');
-        }
-        unset($keyword['deal_time'], $keyword['deal_timebucket']);
-
-        if (is_array($dealTimeWhere) && !$this->applyChengjiaoDealOrderTimeKeyword($keyword, $dealTimeWhere)) {
-            return ['code' => 0, 'msg' => '成交日期参数无效!', 'data' => [], 'count' => 0, 'rel' => 1];
         }
 
         // 高级查询权限：非超管禁止信任客户端传入的 pr_user（与 Model 强制绑定双保险）
@@ -5238,6 +5272,69 @@ class Client extends Common
         $this->appendSuccessClientOrderSummary($list['data']);
         $this->appendDealTimes($list['data']);
         return ['code' => 0, 'msg' => '获取成功!', 'data' => $list['data'], 'count' => $list['total'], 'rel' => 1];
+    }
+
+    /**
+     * 解析成交客户月份快捷参数 deal_month_keys（如 2026-03,2026-05）
+     * 年份必须等于服务器当前自然年；非法整体拒绝（禁止静默忽略）
+     *
+     * @param string $raw
+     * @return array|false 成功返回 [['start'=>..., 'end'=>...], ...]；失败返回 false
+     */
+    private function parseChengjiaoDealMonthKeysToRanges($raw)
+    {
+        $raw = trim((string)$raw);
+        if ($raw === '') {
+            return [];
+        }
+        $parts = explode(',', $raw);
+        if (count($parts) > 12) {
+            return false;
+        }
+        $currentYear = (int)date('Y');
+        $seen = [];
+        $monthKeys = [];
+        foreach ($parts as $part) {
+            $monthKey = trim((string)$part);
+            if ($monthKey === '') {
+                return false;
+            }
+            if (!preg_match('/^(\d{4})-(0[1-9]|1[0-2])$/', $monthKey, $matches)) {
+                return false;
+            }
+            $year = (int)$matches[1];
+            if ($year !== $currentYear) {
+                return false;
+            }
+            if (isset($seen[$monthKey])) {
+                continue;
+            }
+            $seen[$monthKey] = true;
+            $monthKeys[] = $monthKey;
+        }
+        if (empty($monthKeys)) {
+            return false;
+        }
+        sort($monthKeys, SORT_STRING);
+        $ranges = [];
+        foreach ($monthKeys as $monthKey) {
+            $startTs = strtotime($monthKey . '-01 00:00:00');
+            if ($startTs === false) {
+                return false;
+            }
+            // 半开区间：[月初, 下月初)
+            $start = date('Y-m-01 00:00:00', $startTs);
+            $endTs = strtotime('+1 month', $startTs);
+            if ($endTs === false) {
+                return false;
+            }
+            $end = date('Y-m-01 00:00:00', $endTs);
+            $ranges[] = [
+                'start' => $start,
+                'end' => $end,
+            ];
+        }
+        return $ranges;
     }
 
     /**

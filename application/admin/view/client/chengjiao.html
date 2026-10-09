@@ -71,6 +71,54 @@
             background: #fafafa;
         }
 
+        /* 成交客户页：成交日期下方 1—12 月多选快捷（页面独有类，避免影响其他页） */
+        .chengjiao-deal-month-shortcut {
+            display: block;
+            width: 100%;
+            clear: both;
+            margin: 4px 0 8px;
+            text-align: left;
+        }
+        .chengjiao-deal-month-shortcut .chengjiao-deal-month-label {
+            display: inline-block;
+            vertical-align: middle;
+            width: 90px;
+            padding: 0 8px 0 0;
+            text-align: right;
+            font-size: 14px;
+            color: #333;
+            white-space: nowrap;
+        }
+        .chengjiao-deal-month-buttons {
+            display: inline-flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            vertical-align: middle;
+            max-width: calc(100% - 100px);
+        }
+        .chengjiao-deal-month-btn {
+            margin: 0;
+            padding: 2px 8px;
+            min-width: 28px;
+            border-radius: 4px;
+            font-size: 12px;
+            line-height: 1.4;
+            border: 1px solid #dcdfe6;
+            background: #fff;
+            color: #606266;
+            cursor: pointer;
+        }
+        .chengjiao-deal-month-btn:hover {
+            border-color: #4f7cff;
+            color: #4f7cff;
+        }
+        .chengjiao-deal-month-btn.is-active {
+            background: #4f7cff;
+            color: #fff;
+            border-color: #4f7cff;
+        }
+
         /* 成交时间列：允许多行展开，避免固定行高裁剪 */
         td[data-field="deal_times"] .layui-table-cell {
             height: auto !important;
@@ -501,6 +549,23 @@
                             <input type="text" class="layui-input" id="deal_time" name="deal_time" placeholder="选择日期范围">
                         </div>
                     </div>
+                    <div class="chengjiao-deal-month-shortcut" id="chengjiaoDealMonthShortcut">
+                        <span class="chengjiao-deal-month-label">月份快捷：</span>
+                        <div class="chengjiao-deal-month-buttons">
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="1">1</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="2">2</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="3">3</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="4">4</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="5">5</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="6">6</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="7">7</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="8">8</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="9">9</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="10">10</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="11">11</button>
+                            <button type="button" class="chengjiao-deal-month-btn" data-month="12">12</button>
+                        </div>
+                    </div>
                     {if $Think.session.aid == 1}
                     <div class="layui-inline">
                         <label class="layui-form-label">业务员：</label>
@@ -639,6 +704,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
     var chengjiaoTableConfigSaving = false;
     var chengjiaoCurrentUrl = "{:url('successCliList')}";
     var chengjiaoCurrentWhere = {};
+    // 成交月份快捷：使用服务器当前自然年，禁止依赖客户端电脑时间作为最终依据
+    var chengjiaoDealMonthServerYear = parseInt('{:date("Y")}', 10) || 0;
+    var chengjiaoDealMonthState = { selectedMonths: [] };
     var chengjiaoRenderToken = 0;
     var lastSnapshot = {};
     var resizeSaveTimer = null;
@@ -913,6 +981,76 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
             where.order = chengjiaoSortState.order;
         }
         return where;
+    }
+
+    function syncChengjiaoDealMonthButtons() {
+        var selected = {};
+        $.each(chengjiaoDealMonthState.selectedMonths, function (_, month) {
+            selected[month] = true;
+        });
+        $('#chengjiaoDealMonthShortcut .chengjiao-deal-month-btn').each(function () {
+            var month = parseInt($(this).attr('data-month'), 10);
+            $(this).toggleClass('is-active', !!selected[month]);
+        });
+    }
+
+    function clearChengjiaoDealMonthQuick() {
+        chengjiaoDealMonthState.selectedMonths = [];
+        syncChengjiaoDealMonthButtons();
+    }
+
+    function getChengjiaoDealMonthKeys() {
+        if (!chengjiaoDealMonthState.selectedMonths.length || !chengjiaoDealMonthServerYear) {
+            return '';
+        }
+        var year = chengjiaoDealMonthServerYear;
+        var months = chengjiaoDealMonthState.selectedMonths.slice();
+        months.sort(function (a, b) { return a - b; });
+        var keys = [];
+        var seen = {};
+        for (var i = 0; i < months.length; i++) {
+            var m = parseInt(months[i], 10);
+            if (!m || m < 1 || m > 12 || seen[m]) {
+                continue;
+            }
+            seen[m] = true;
+            keys.push(year + '-' + (m < 10 ? '0' + m : String(m)));
+        }
+        return keys.join(',');
+    }
+
+    function clearChengjiaoDealDateFiltersForMonthQuick() {
+        $('#deal_time').val('');
+        $('#dealDateRange').val('');
+        $('#deal_time').show();
+        form.render('select');
+    }
+
+    function bindChengjiaoDealMonthQuickOnce() {
+        if (bindChengjiaoDealMonthQuickOnce.bound) {
+            return;
+        }
+        bindChengjiaoDealMonthQuickOnce.bound = true;
+        $(document).off('click.chengjiaoDealMonth', '#chengjiaoDealMonthShortcut .chengjiao-deal-month-btn')
+            .on('click.chengjiaoDealMonth', '#chengjiaoDealMonthShortcut .chengjiao-deal-month-btn', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var month = parseInt($(this).attr('data-month'), 10);
+                if (isNaN(month) || month < 1 || month > 12) {
+                    return;
+                }
+                var idx = chengjiaoDealMonthState.selectedMonths.indexOf(month);
+                if (idx > -1) {
+                    chengjiaoDealMonthState.selectedMonths.splice(idx, 1);
+                } else {
+                    chengjiaoDealMonthState.selectedMonths.push(month);
+                }
+                chengjiaoDealMonthState.selectedMonths.sort(function (a, b) { return a - b; });
+                syncChengjiaoDealMonthButtons();
+                if (chengjiaoDealMonthState.selectedMonths.length) {
+                    clearChengjiaoDealDateFiltersForMonthQuick();
+                }
+            });
     }
 
     function chengjiaoInitSortOption(clickedField) {
@@ -1430,6 +1568,10 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                             item.aid = aid;
                         });
                     }
+                    // 业务错误（如非法成交月份）明确提示，避免被当成空列表成功
+                    if (res && parseInt(res.code, 10) !== 0 && res.msg) {
+                        layer.msg(res.msg, { icon: 2 });
+                    }
                     return res;
                 },
                 done: function (res, curr, count) {
@@ -1443,6 +1585,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
                     bindActionIconTips();
                     bindChengjiaoTableHideConfigSave();
                     ensureChengjiaoMainEmptyTip(res, count);
+                    syncChengjiaoDealMonthButtons();
                 }
             });
             window.tableIns = tableIns;
@@ -2801,8 +2944,20 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
         if ($.trim(field.at_time || '') !== '') {
             field.timebucket = '';
         }
-        if ($.trim(field.deal_time || '') !== '') {
+        // 成交月份快捷优先：有选中月份时清空原成交日期参数，避免冲突
+        var dealMonthKeys = getChengjiaoDealMonthKeys();
+        if (dealMonthKeys) {
+            field.deal_month_keys = dealMonthKeys;
+            field.deal_time = '';
             field.deal_timebucket = '';
+            $('#deal_time').val('');
+            $('#dealDateRange').val('');
+            form.render('select');
+        } else {
+            field.deal_month_keys = '';
+            if ($.trim(field.deal_time || '') !== '') {
+                field.deal_timebucket = '';
+            }
         }
         if (!isValidChengjiaoDateRange(field.at_time)) {
             layer.msg('创建日期参数无效');
@@ -2877,7 +3032,25 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
 
     // 日期选择组件初始化（支持范围选择）；创建日期与成交日期独立，不得互相清空
     laydate.render({ elem: '#at_time', range: true, trigger: 'click' });
-    laydate.render({ elem: '#deal_time', range: true, trigger: 'click' });
+    laydate.render({
+        elem: '#deal_time',
+        range: true,
+        trigger: 'click',
+        done: function (value) {
+            // 选择原自定义成交日期范围时，清空月份快捷
+            if ($.trim(value || '') !== '') {
+                clearChengjiaoDealMonthQuick();
+            }
+        }
+    });
+    // 兼容手动输入/粘贴/失焦后的自定义成交日期，自动取消月份快捷
+    $(document)
+        .off('change.chengjiaoDealMonth input.chengjiaoDealMonth blur.chengjiaoDealMonth', '#deal_time')
+        .on('change.chengjiaoDealMonth input.chengjiaoDealMonth blur.chengjiaoDealMonth', '#deal_time', function () {
+            if ($.trim($(this).val() || '') !== '') {
+                clearChengjiaoDealMonthQuick();
+            }
+        });
     laydate.render({
         elem: '#next_up_time',
         type: 'datetime',
@@ -2909,8 +3082,14 @@ layui.use(['table','form','upload','util','laydate','layer'], function(){
     form.on('select(dealDateRange)', function(data) {
         var isCustom = (data.value === '');
         $('#deal_time').toggle(isCustom);
-        if (!isCustom) $('#deal_time').val('');
+        if (!isCustom) {
+            $('#deal_time').val('');
+            // 切换原成交日期快捷下拉时，取消月份快捷
+            clearChengjiaoDealMonthQuick();
+        }
     });
+    bindChengjiaoDealMonthQuickOnce();
+    syncChengjiaoDealMonthButtons();
     // 初始化运营人员下拉（EditableSelect插件）
     const yySelect = new EditableSelect(document.getElementById('oper_user_input'), {$_yyList|raw}, '运营人员', '', 'name');
     // 所属渠道与运营端口联动：选择渠道后异步加载对应端口列表

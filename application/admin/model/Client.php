@@ -1078,9 +1078,35 @@ class Client extends Model
 
         // 成交日期 EXISTS：与 SuccessClientOrderService::getDealTimesByLeadIds 关联口径一致
         // contact 等值匹配，不对索引列包 TRIM；不 JOIN 订单，避免一人多单导致客户行重复；须在 paginate 前生效
-        $dealStart = isset($keyword['__deal_order_time_start']) ? trim((string)$keyword['__deal_order_time_start']) : '';
-        $dealEnd = isset($keyword['__deal_order_time_end']) ? trim((string)$keyword['__deal_order_time_end']) : '';
-        if ($dealStart !== '') {
+        // 月份快捷：同一 EXISTS 内多月 OR（半开区间）；与单段 deal_time 条件互斥（由 Controller 保证）
+        $dealMonthRanges = (isset($keyword['__deal_month_ranges']) && is_array($keyword['__deal_month_ranges']))
+            ? $keyword['__deal_month_ranges']
+            : [];
+        $monthOrParts = [];
+        $monthBind = [];
+        $monthIdx = 0;
+        foreach ($dealMonthRanges as $range) {
+            if (!is_array($range)) {
+                continue;
+            }
+            $rangeStart = isset($range['start']) ? trim((string)$range['start']) : '';
+            $rangeEnd = isset($range['end']) ? trim((string)$range['end']) : '';
+            if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $rangeStart)
+                || !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $rangeEnd)) {
+                continue;
+            }
+            $startKey = 'deal_month_start_' . $monthIdx;
+            $endKey = 'deal_month_end_' . $monthIdx;
+            $monthOrParts[] = '(o.order_time >= :' . $startKey . ' AND o.order_time < :' . $endKey . ')';
+            $monthBind[$startKey] = $rangeStart;
+            $monthBind[$endKey] = $rangeEnd;
+            $monthIdx++;
+            if ($monthIdx >= 12) {
+                break;
+            }
+        }
+
+        if (!empty($monthOrParts)) {
             $existsSql = 'EXISTS (
                 SELECT 1
                 FROM crm_contacts c
@@ -1094,15 +1120,36 @@ class Client extends Model
                   AND o.order_time IS NOT NULL
                   AND o.order_time <> \'0000-00-00 00:00:00\'
                   AND o.order_time <> \'0000-00-00\'
-                  AND o.order_time >= :deal_order_time_start
-            ';
-            $bind = ['deal_order_time_start' => $dealStart];
-            if ($dealEnd !== '') {
-                $existsSql .= ' AND o.order_time <= :deal_order_time_end';
-                $bind['deal_order_time_end'] = $dealEnd;
+                  AND (' . implode(' OR ', $monthOrParts) . ')
+            )';
+            $query->whereRaw($existsSql, $monthBind);
+        } else {
+            $dealStart = isset($keyword['__deal_order_time_start']) ? trim((string)$keyword['__deal_order_time_start']) : '';
+            $dealEnd = isset($keyword['__deal_order_time_end']) ? trim((string)$keyword['__deal_order_time_end']) : '';
+            if ($dealStart !== '') {
+                $existsSql = 'EXISTS (
+                    SELECT 1
+                    FROM crm_contacts c
+                    INNER JOIN crm_client_order o ON o.contact = c.contact_value
+                    WHERE c.leads_id = crm_leads.id
+                      AND c.is_delete = 0
+                      AND c.contact_type IN (1, 3)
+                      AND c.contact_value <> \'\'
+                      AND o.contact <> \'\'
+                      AND o.check_status = 2
+                      AND o.order_time IS NOT NULL
+                      AND o.order_time <> \'0000-00-00 00:00:00\'
+                      AND o.order_time <> \'0000-00-00\'
+                      AND o.order_time >= :deal_order_time_start
+                ';
+                $bind = ['deal_order_time_start' => $dealStart];
+                if ($dealEnd !== '') {
+                    $existsSql .= ' AND o.order_time <= :deal_order_time_end';
+                    $bind['deal_order_time_end'] = $dealEnd;
+                }
+                $existsSql .= ')';
+                $query->whereRaw($existsSql, $bind);
             }
-            $existsSql .= ')';
-            $query->whereRaw($existsSql, $bind);
         }
 
         // 订单利润合计区间（客户级 profit_total）：0 为合法值，禁止 empty/array_filter；Controller 已校验
