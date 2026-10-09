@@ -806,7 +806,7 @@ layui.use(['form', 'layer', 'jquery', 'table', 'util'], function () {
                     width: 200,
                     templet: function (d) {
                         var name = (d.username == null || d.username === '') ? '-' : String(d.username);
-                        var roleText = (d.follow_role_text == null || d.follow_role_text === '') ? '历史身份待确认' : String(d.follow_role_text);
+                        var roleText = (d.follow_role_text == null || d.follow_role_text === '') ? '初始负责人' : String(d.follow_role_text);
                         return escapeFollowText(name) + '【' + escapeFollowText(roleText) + '】';
                     }
                 },

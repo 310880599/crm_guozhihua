@@ -260,7 +260,7 @@ class ClientFollowService
             return '管理员';
         }
         if ($role === '') {
-            return '历史身份待确认';
+            return '初始负责人';
         }
         return '未知身份';
     }

@@ -3971,7 +3971,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         width: 240,
                         templet: function (d) {
                             var name = d.username == null ? '' : String(d.username);
-                            var roleText = d.follow_role_text == null ? '历史身份待确认' : String(d.follow_role_text);
+                            var roleText = d.follow_role_text == null ? '初始负责人' : String(d.follow_role_text);
                             var esc = (typeof layui !== 'undefined' && layui.util && typeof layui.util.escape === 'function')
                                 ? layui.util.escape
                                 : function (t) {
