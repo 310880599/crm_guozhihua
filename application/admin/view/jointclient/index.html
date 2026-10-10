@@ -126,6 +126,148 @@
         .layui-table-fixed-r .layui-table {
             background: #fff !important;
         }
+
+        /* 操作列图标按钮：局部修正，避免全局 .layui-btn 蓝色覆盖 warm/normal */
+        .layui-table-view .layui-table td .action-icon-btn {
+            width: 28px !important;
+            min-width: 28px !important;
+            height: 26px !important;
+            line-height: 26px !important;
+            padding: 0 !important;
+            margin: 0 3px 0 0 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border-radius: 4px !important;
+            vertical-align: middle !important;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+        .layui-table-view .layui-table td .action-icon-btn .layui-icon {
+            margin-right: 0 !important;
+        }
+        .layui-table-view .layui-table td .action-icon-btn.layui-btn-primary {
+            background: #4285f4 !important;
+            border-color: #4285f4 !important;
+            color: #fff !important;
+        }
+        .layui-table-view .layui-table td .action-icon-btn.layui-btn-primary:hover {
+            background: #3367d6 !important;
+            border-color: #3367d6 !important;
+        }
+        .layui-table-view .layui-table td .action-icon-btn.layui-btn-warm {
+            background: #FFB800 !important;
+            border-color: #FFB800 !important;
+            color: #fff !important;
+        }
+        .layui-table-view .layui-table td .action-icon-btn.layui-btn-warm:hover {
+            background: #e6a600 !important;
+            border-color: #e6a600 !important;
+        }
+        .layui-table-view .layui-table td .action-icon-btn.layui-btn-normal {
+            background: #1E9FFF !important;
+            border-color: #1E9FFF !important;
+            color: #fff !important;
+        }
+        .layui-table-view .layui-table td .action-icon-btn.layui-btn-normal:hover {
+            background: #0d8aee !important;
+            border-color: #0d8aee !important;
+        }
+        /*
+         * 右侧固定操作列：仅放开裁切，行高与主表保持 Layui 默认 28px 一致。
+         * 此前 height:auto + padding:4px 6px + line-height:normal 使固定列每行比主表高约 6px，
+         * 导致横向分割线逐行累积错位；上下 padding 必须为 0，与主表 .layui-table-cell 一致。
+         */
+        .layui-table-view[lay-id="table-list"] .layui-table-fixed-r .layui-table td .layui-table-cell {
+            white-space: nowrap !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            height: 28px !important;
+            line-height: 28px !important;
+            padding: 0 6px !important;
+            box-sizing: border-box !important;
+        }
+
+        /* 字段排序弹窗（与我的客户/检查客户一致） */
+        .main-table-col-sort-dialog {
+            padding: 14px 16px;
+            box-sizing: border-box;
+        }
+        .main-table-col-sort-tip {
+            padding: 8px 10px;
+            margin-bottom: 10px;
+            background: #f8fafd;
+            border: 1px solid #eef2f8;
+            border-radius: 4px;
+            color: #666;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .main-table-col-sort-list {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            max-height: 420px;
+            overflow-y: auto;
+        }
+        .main-table-col-sort-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 10px;
+            margin-bottom: 6px;
+            border: 1px solid #e6e8ef;
+            border-radius: 4px;
+            background: #fff;
+            cursor: move;
+            user-select: none;
+        }
+        .main-table-col-sort-item:hover {
+            border-color: #4285f4;
+            background: #f6f9ff;
+        }
+        .main-table-col-sort-item.dragging {
+            opacity: .55;
+            border-color: #4285f4;
+            background: #eef5ff;
+        }
+        .main-table-col-sort-item .drag-handle {
+            color: #999;
+            font-size: 14px;
+        }
+        .main-table-col-sort-item .col-title {
+            flex: 1;
+            color: #333;
+            font-size: 13px;
+        }
+        .main-table-col-sort-item .col-field {
+            color: #999;
+            font-size: 12px;
+        }
+
+        /* 表格工具栏：左侧字段排序，右侧原生 filter */
+        .layui-table-view[lay-id="table-list"] .layui-table-tool {
+            background: #fff !important;
+        }
+        .layui-table-view[lay-id="table-list"] .layui-table-tool .layui-btn {
+            border-radius: 6px !important;
+            vertical-align: middle !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px;
+        }
+        .layui-table-view[lay-id="table-list"] .layui-table-tool .layui-btn-primary {
+            background: #4285f4 !important;
+            border-color: #4285f4 !important;
+            color: #fff !important;
+        }
+        .layui-table-view[lay-id="table-list"] .layui-table-tool .layui-btn-primary:hover {
+            background: #3367d6 !important;
+            border-color: #3367d6 !important;
+        }
+        .layui-table-view[lay-id="table-list"] .layui-table-tool-panel {
+            z-index: 520 !important;
+        }
     </style>
 </head>
 
@@ -244,79 +386,789 @@
         <table class="layui-table" id="table-list" lay-filter="table-list"></table>
     </div>
 
-    <!-- 行内操作模板（可精简/保留一个“写跟进”示例，防止找不到模板报错） -->
-    <!-- <script type="text/html" id="action">
-    <a class="layui-btn layui-btn-primary layui-btn-xs" href="{:url('dialogue')}?id={{d.id}}"><i class="layui-icon">&#xe654;</i>写跟进</a>
-</script> -->
+    {include file="common/client_follow_dialogs"/}
+
+    <script type="text/html" id="jointTopBtn">
+        <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" lay-event="jointColumnSort">
+            <i class="layui-icon layui-icon-cols"></i>字段排序
+        </button>
+    </script>
+
+    <script type="text/html" id="action">
+    <a class="layui-btn layui-btn-primary layui-btn-xs action-icon-btn joint-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="写跟进" lay-offset="0,-8"><i class="layui-icon">&#xe654;</i></a>
+    <a class="layui-btn layui-btn-warm layui-btn-xs action-icon-btn joint-all-follow-btn" href="javascript:void(0);" data-id="{{d.id}}" lay-tips="全部跟进" lay-offset="0,-8"><i class="layui-icon">&#xe60a;</i></a>
+    <a class="layui-btn layui-btn-normal layui-btn-xs action-icon-btn" data-id="{{d.id}}" lay-event="details" lay-tips="客户详情" lay-offset="0,-8"><i class="layui-icon">&#xe60b;</i></a>
+    </script>
 
     {include file="common/foot"/}
+    <script src="/static/admin/js/client_follow_dialogs.js"></script>
     <script>
-        layui.use(['table', 'form', 'laydate'], function () {
-            var table = layui.table, form = layui.form, laydate = layui.laydate, $ = layui.jquery;
+        layui.use(['table', 'form', 'laydate', 'layer'], function () {
+            var table = layui.table, form = layui.form, laydate = layui.laydate, layer = layui.layer, $ = layui.jquery;
             var tableId = "table-list";
 
-            var cols = [[
-                { type: 'checkbox', fixed: true , width: 50},
-                { field: 'id', title: 'ID', hide: true },
-                {
-                    field: 'kh_name', title: '客户名称', sort: true, width: 180, templet: function (res) {
-                        return "<a href='{:url(\"dialogue\")}?id=" + res.id + "'>" + (res.kh_name || '') + "</a>";
-                    }
-                },
-                { field: 'product_name', title: '产品名称' , width: 180}, 
-                { field: 'inquiry_name', title: '所属渠道' , width: 180},   // 【新增】渠道下拉
-                { field: 'port_name',    title: '运营端口' , width: 180},       // 【新增】运营端口下拉
-                { field: 'main_phone', title: '主电话' , width: 180},
-                { field: 'aux_phone', title: '辅助电话', width: 180 },
-                { field: 'joint_person_names', title: '协同人' , width: 180},
-                { field: 'issuccess', title: '成交状态', templet: function (res) { return res.issuccess == 1 ? '已成交' : '未成交'; } , width: 180},
-                { field: 'last_up_records', title: '最新跟进记录', width: 180 },
-                { field: 'pr_user', title: '负责人' , width: 180},
-                { field: 'kh_rank_text', title: '客户级别', width: 120 },
-                { field: 'at_time', title: '创建时间', sort: true , width: 180},
-                { field: 'ut_time', title: '更新时间', sort: true, width: 180 },
-                { field: 'original_creation_time', title: '原来创建时间', width: 180,  hide: false,
-                    templet: function(d){
-                    var v = d.original_creation_time;
-                    if (!v) return '';
-                    // 如果是纯数字（秒级时间戳）
-                    if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
-                    // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
-                    return v;
-                    }
-                },
-                { field: 'original_modification_time', title: '原来修改时间', width: 180,  hide: false,
-                    templet: function(d){
-                    var v = d.original_modification_time;
-                    if (!v) return '';
-                    // 如果是纯数字（秒级时间戳）
-                    if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
-                    // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
-                    return v;
-                    }
-                },
-                { fixed: 'right', width: 160, align: 'center', toolbar: '#action' }
-            ]];
+            // 操作列图标悬停提示（协同人页独立命名空间）
+            var jointActionIconTipIndex = null;
+            function closeJointActionIconTip() {
+                if (jointActionIconTipIndex !== null) {
+                    try { layer.close(jointActionIconTipIndex); } catch (e) {}
+                    jointActionIconTipIndex = null;
+                }
+            }
+            function escapeJointActionIconTipText(text) {
+                return String(text == null ? '' : text)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+            // 客户名称 HTML 文本转义（复用同一套转义规则，先 & 后其余）
+            function escapeJointClientHtmlText(text) {
+                return escapeJointActionIconTipText(text);
+            }
+            function parseJointClientPositiveId(id) {
+                var s = String(id == null ? '' : id).trim();
+                if (!/^[1-9]\d*$/.test(s)) return 0;
+                return parseInt(s, 10);
+            }
+            function bindJointActionIconTips() {
+                var tipSelector = '.layui-table-view .action-icon-btn[lay-tips]';
+                $(document)
+                    .off('mouseenter.jointActionTip mouseleave.jointActionTip click.jointActionTip', tipSelector)
+                    .on('mouseenter.jointActionTip', tipSelector, function () {
+                        var text = $(this).attr('lay-tips');
+                        if (text == null || String(text).trim() === '') return;
+                        closeJointActionIconTip();
+                        jointActionIconTipIndex = layer.tips(escapeJointActionIconTipText(text), this, {
+                            tips: [1, '#393D49'],
+                            time: 0,
+                            tipsMore: false,
+                            maxWidth: 160
+                        });
+                    })
+                    .on('mouseleave.jointActionTip', tipSelector, function () {
+                        closeJointActionIconTip();
+                    })
+                    .on('click.jointActionTip', tipSelector, function () {
+                        closeJointActionIconTip();
+                    });
 
-            // 初次加载用列表接口（你已有的 `joiCliList`）
-            var tableIns = table.render({
-                elem: '#' + tableId,
-                id: tableId,
-                url: "{:url('Client/joiCliList')}",
-                method: 'post',
-                defaultToolbar: ['filter'],
-                page: true,
-                limit: 30,
-                cols: cols,
-                limit: 10,
-                page: { limits: [10, 20, 50, 100, 200, 500,9999999] }
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if ($view.length) {
+                    $view.find('.layui-table-main, .layui-table-fixed-r .layui-table-body, .layui-table-fixed-l .layui-table-body')
+                        .off('scroll.jointActionTip')
+                        .on('scroll.jointActionTip', function () {
+                            closeJointActionIconTip();
+                        });
+                }
+            }
+            $(window).off('resize.jointActionTip').on('resize.jointActionTip', function () {
+                closeJointActionIconTip();
             });
 
-            // 搜索触发：切到 jointPersonClientSearch
+            // Layui 2.4.5：翻页只更新实例 page，不会同步 config.page.curr；以 done(curr) 为准
+            var jointClientTablePageCurr = 1;
+            var jointClientTableInitSort = null;
+            var lastJointClientUrl = "{:url('Client/joiCliList')}";
+            var lastJointClientWhere = {};
+            var tableIns = null;
+
+            // 协同人客户字段显隐/排序配置（与 personclient / checkclient 隔离）
+            var jointTableConfigPageKey = 'jointclient';
+            var jointTableConfigTableKey = 'table-list';
+            var jointTableHideConfig = {};
+            var jointTableColumnOrder = [];
+            var jointTableConfigLoaded = false;
+            var jointTableConfigSaving = false;
+            var jointTableConfigSaveErrorAt = 0;
+
+            function notifyJointTableConfigSaveFail(msg) {
+                var now = Date.now();
+                if (now - jointTableConfigSaveErrorAt < 2000) return;
+                jointTableConfigSaveErrorAt = now;
+                layer.msg(msg || '字段配置保存失败，当前设置未持久化', { icon: 2 });
+            }
+
+            function captureJointTableRuntimeState() {
+                var cfg = null;
+                try {
+                    if (table && table.config && table.config[tableId]) {
+                        cfg = table.config[tableId];
+                    }
+                } catch (e) {}
+                if (!cfg) return;
+                if (cfg.url) lastJointClientUrl = cfg.url;
+                if (cfg.where) lastJointClientWhere = cfg.where;
+            }
+
+            function reloadJointClientTableKeepState() {
+                var curr = parseInt(jointClientTablePageCurr, 10) || 1;
+                if (curr < 1) curr = 1;
+                // 仅 reload，table.reload 会深度合并缓存 config，保留 url / where（含高级查询与成交状态）
+                var reloadOpts = {
+                    page: { curr: curr }
+                };
+                if (jointClientTableInitSort && jointClientTableInitSort.field && jointClientTableInitSort.type) {
+                    reloadOpts.initSort = {
+                        field: jointClientTableInitSort.field,
+                        type: jointClientTableInitSort.type
+                    };
+                }
+                table.reload(tableId, reloadOpts);
+            }
+
+            if (window.ClientFollowUI) {
+                ClientFollowUI.init({
+                    urls: {
+                        detail: "{:url('Client/getClientDetailAndComments')}",
+                        commentsPage: "{:url('Client/getClientCommentsPage')}",
+                        save: "{:url('Client/saveClientFollow')}",
+                        deleteComment: "{:url('Client/deleteFollowComment')}",
+                        rankOptions: "{:url('Client/getFollowRankOptions')}",
+                        updateRank: "{:url('Client/updateClientRankInFollow')}"
+                    },
+                    enableRankEdit: true,
+                    onFollowSaved: function () {
+                        reloadJointClientTableKeepState();
+                    }
+                });
+            }
+
+            function openJointClientDetails(clientId) {
+                clientId = parseInt(clientId, 10) || 0;
+                if (clientId <= 0) {
+                    layer.msg('缺少客户ID', { icon: 2 });
+                    return;
+                }
+                layer.open({
+                    type: 2,
+                    title: '客户详情',
+                    area: ['90%', '90%'],
+                    content: "{:url('Client/details')}?id=" + clientId
+                });
+            }
+
+            // 协同人客户主表基础列（templet / 固定列与改造前保持一致）
+            function buildJointBaseCols() {
+                return [
+                    { type: 'checkbox', fixed: true, width: 50 },
+                    { field: 'id', title: 'ID', hide: true },
+                    {
+                        field: 'kh_name', title: '客户名称', sort: true, width: 180, templet: function (res) {
+                            var name = escapeJointClientHtmlText(res.kh_name);
+                            var clientId = parseJointClientPositiveId(res.id);
+                            if (clientId <= 0) {
+                                return name;
+                            }
+                            return '<a href="javascript:void(0);" class="js-joint-client-detail-link" data-id="' + clientId + '">' + name + '</a>';
+                        }
+                    },
+                    { field: 'product_name', title: '产品名称', width: 180 },
+                    { field: 'inquiry_name', title: '所属渠道', width: 180 },
+                    { field: 'port_name', title: '运营端口', width: 180 },
+                    { field: 'main_phone', title: '主电话', width: 180 },
+                    { field: 'aux_phone', title: '辅助电话', width: 180 },
+                    { field: 'joint_person_names', title: '协同人', width: 180 },
+                    { field: 'issuccess', title: '成交状态', width: 180, templet: function (res) { return res.issuccess == 1 ? '已成交' : '未成交'; } },
+                    { field: 'last_up_records', title: '最新跟进记录', width: 180 },
+                    { field: 'pr_user', title: '负责人', width: 180 },
+                    { field: 'kh_rank_text', title: '客户级别', width: 120 },
+                    { field: 'at_time', title: '创建时间', sort: true, width: 180 },
+                    { field: 'ut_time', title: '更新时间', sort: true, width: 180 },
+                    { field: 'original_creation_time', title: '原来创建时间', width: 180, hide: false,
+                        templet: function (d) {
+                            var v = d.original_creation_time;
+                            if (!v) return '';
+                            if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
+                            return v;
+                        }
+                    },
+                    { field: 'original_modification_time', title: '原来修改时间', width: 180, hide: false,
+                        templet: function (d) {
+                            var v = d.original_modification_time;
+                            if (!v) return '';
+                            if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
+                            return v;
+                        }
+                    },
+                    { fixed: 'right', width: 130, align: 'center', toolbar: '#action' }
+                ];
+            }
+
+            function getJointColField(col) {
+                return col && col.field ? String(col.field) : '';
+            }
+
+            function isJointCheckboxCol(col) {
+                return !!(col && col.type === 'checkbox');
+            }
+
+            function isJointIdCol(col) {
+                return getJointColField(col) === 'id';
+            }
+
+            function isJointActionCol(col) {
+                if (!col) return false;
+                if (col.toolbar === '#action') return true;
+                return col.fixed === 'right' && !col.field;
+            }
+
+            function isJointSortableBusinessCol(col) {
+                var field = getJointColField(col);
+                if (!field || field === 'id') return false;
+                if (isJointCheckboxCol(col) || isJointActionCol(col)) return false;
+                return true;
+            }
+
+            /**
+             * 排序：始终 checkbox → id(隐藏) → 业务字段 → 右侧操作列
+             * 历史 column_order 缺失的新字段追加到末尾，已删除字段忽略
+             */
+            function applyJointColumnOrder(cols) {
+                if (!cols || !cols.length) return cols;
+
+                var checkboxCol = null;
+                var idCol = null;
+                var actionCol = null;
+                var businessCols = [];
+
+                cols.forEach(function (col) {
+                    if (isJointCheckboxCol(col)) {
+                        checkboxCol = col;
+                    } else if (isJointIdCol(col)) {
+                        idCol = col;
+                    } else if (isJointActionCol(col)) {
+                        actionCol = col;
+                    } else if (isJointSortableBusinessCol(col)) {
+                        businessCols.push(col);
+                    } else if (col) {
+                        businessCols.push(col);
+                    }
+                });
+
+                var orderedBusiness = [];
+                if (jointTableColumnOrder && jointTableColumnOrder.length) {
+                    var businessMap = {};
+                    businessCols.forEach(function (col) {
+                        var field = getJointColField(col);
+                        if (field) businessMap[field] = col;
+                    });
+
+                    jointTableColumnOrder.forEach(function (field) {
+                        field = String(field || '');
+                        if (!field || field === 'id') return;
+                        if (businessMap[field]) {
+                            orderedBusiness.push(businessMap[field]);
+                            delete businessMap[field];
+                        }
+                    });
+
+                    businessCols.forEach(function (col) {
+                        var field = getJointColField(col);
+                        if (field && businessMap[field]) {
+                            orderedBusiness.push(businessMap[field]);
+                            delete businessMap[field];
+                        } else if (!field) {
+                            orderedBusiness.push(col);
+                        }
+                    });
+                } else {
+                    orderedBusiness = businessCols.slice();
+                }
+
+                var result = [];
+                if (checkboxCol) result.push(checkboxCol);
+                if (idCol) {
+                    idCol.hide = true;
+                    result.push(idCol);
+                }
+                result = result.concat(orderedBusiness);
+                if (actionCol) result.push(actionCol);
+                return result;
+            }
+
+            function loadJointTableConfig() {
+                var config = {
+                    hide_config: {},
+                    column_order: []
+                };
+
+                $.ajax({
+                    url: "{:url('Client/getQuickFollowTableConfig')}",
+                    type: 'GET',
+                    dataType: 'json',
+                    async: false,
+                    data: {
+                        page_key: jointTableConfigPageKey,
+                        table_key: jointTableConfigTableKey
+                    },
+                    success: function (res) {
+                        if (res && parseInt(res.code, 10) === 0 && res.data) {
+                            if (res.data.hide_config && typeof res.data.hide_config === 'object') {
+                                config.hide_config = res.data.hide_config;
+                            }
+                            if ($.isArray(res.data.column_order)) {
+                                config.column_order = res.data.column_order;
+                            }
+                        }
+                    },
+                    error: function () {
+                        console.warn('读取协同人客户字段配置失败，使用默认顺序/显示');
+                    }
+                });
+
+                jointTableHideConfig = config.hide_config || {};
+                jointTableColumnOrder = config.column_order || [];
+                // id 永不因历史配置显示
+                jointTableHideConfig.id = 1;
+                jointTableConfigLoaded = true;
+            }
+
+            function collectJointTableHideConfig() {
+                var baseCols = buildJointBaseCols();
+                var hideConfig = {};
+                var hasLevel1Value = {};
+                var hasLevel2Value = {};
+                var titleFieldMap = {};
+
+                function toHideValue(hidden) {
+                    return (hidden === true || hidden === 1 || hidden === '1') ? 1 : 0;
+                }
+
+                baseCols.forEach(function (col) {
+                    var field = getJointColField(col);
+                    var title = $.trim(col && col.title ? String(col.title) : '');
+                    if (field) {
+                        hideConfig[field] = toHideValue(col.hide);
+                        hasLevel1Value[field] = false;
+                        hasLevel2Value[field] = false;
+                    }
+                    if (title && field) {
+                        titleFieldMap[title] = field;
+                    }
+                });
+
+                try {
+                    var $view = $('#' + tableId).next('.layui-table-view');
+                    var tableOptions = null;
+
+                    if (table && table.getOptions) {
+                        tableOptions = table.getOptions(tableId);
+                    }
+                    if (!tableOptions && table && table.config && table.config[tableId]) {
+                        tableOptions = table.config[tableId];
+                    }
+
+                    if (tableOptions && $.isArray(tableOptions.cols) && tableOptions.cols.length) {
+                        (tableOptions.cols[0] || []).forEach(function (col) {
+                            var field = getJointColField(col);
+                            if (!field || isJointActionCol(col)) return;
+                            hideConfig[field] = toHideValue(col.hide);
+                            hasLevel1Value[field] = true;
+                        });
+                    }
+
+                    $view.find('.layui-table-tool-panel input[type="checkbox"]').each(function () {
+                        var $checkbox = $(this);
+                        var field = $.trim(
+                            $checkbox.attr('name') ||
+                            $checkbox.attr('data-field') ||
+                            $checkbox.attr('lay-filter') ||
+                            ''
+                        );
+
+                        if (!field) {
+                            var titleText = $.trim(
+                                $checkbox.closest('li').text() ||
+                                $checkbox.next('.layui-form-checkbox').text() ||
+                                $checkbox.parent().text() ||
+                                ''
+                            );
+                            if (titleText && titleFieldMap[titleText]) {
+                                field = titleFieldMap[titleText];
+                            }
+                        }
+
+                        if (field && field !== 'id' && !hasLevel1Value[field]) {
+                            hideConfig[field] = $checkbox.prop('checked') ? 0 : 1;
+                            hasLevel2Value[field] = true;
+                        }
+                    });
+
+                    baseCols.forEach(function (col) {
+                        var field = getJointColField(col);
+                        if (!field || field === 'id') return;
+                        if (hasLevel1Value[field] || hasLevel2Value[field]) return;
+
+                        var $headerCell = $view.find('.layui-table-header th[data-field="' + field + '"]');
+                        if ($headerCell.length && $headerCell.css('display') === 'none') {
+                            hideConfig[field] = 1;
+                        } else if ($headerCell.length) {
+                            hideConfig[field] = 0;
+                        }
+                    });
+                } catch (e) {
+                    console.warn('收集协同人客户字段隐藏配置失败:', e);
+                }
+
+                hideConfig.id = 1;
+                return hideConfig;
+            }
+
+            /**
+             * 后端同一次请求会同时落库 hide_config 与 column_order，
+             * 因此每次保存必须两项一并提交，避免互相清空。
+             */
+            function saveJointTableConfig(options) {
+                options = options || {};
+                if (jointTableConfigSaving) return;
+
+                var order = [];
+                if (jointTableColumnOrder && jointTableColumnOrder.length) {
+                    order = jointTableColumnOrder.slice();
+                } else {
+                    buildJointBaseCols().forEach(function (col) {
+                        if (isJointSortableBusinessCol(col)) {
+                            order.push(getJointColField(col));
+                        }
+                    });
+                }
+
+                var hideConfig = options.hide_config || collectJointTableHideConfig();
+                hideConfig = hideConfig || {};
+                hideConfig.id = 1;
+
+                jointTableConfigSaving = true;
+                $.ajax({
+                    url: "{:url('Client/saveQuickFollowTableConfig')}",
+                    type: 'POST',
+                    dataType: 'json',
+                    data: {
+                        page_key: jointTableConfigPageKey,
+                        table_key: jointTableConfigTableKey,
+                        hide_config: JSON.stringify(hideConfig),
+                        column_order: JSON.stringify(order)
+                    },
+                    complete: function () {
+                        jointTableConfigSaving = false;
+                    },
+                    success: function (res) {
+                        if (!res || parseInt(res.code, 10) !== 0) {
+                            notifyJointTableConfigSaveFail(
+                                (res && res.msg) ? ('字段配置保存失败：' + res.msg) : '字段配置保存失败，当前设置未持久化'
+                            );
+                            if (typeof options.onFail === 'function') options.onFail(res);
+                            return;
+                        }
+                        if (typeof options.onSuccess === 'function') options.onSuccess(res);
+                    },
+                    error: function () {
+                        notifyJointTableConfigSaveFail('字段配置保存请求失败，当前设置未持久化');
+                        if (typeof options.onFail === 'function') options.onFail();
+                    }
+                });
+            }
+
+            function bindJointTableHideConfigSave() {
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if (!$view.length) return;
+                var saveTimer = null;
+
+                function delaySaveHideConfig() {
+                    clearTimeout(saveTimer);
+                    saveTimer = setTimeout(function () {
+                        jointTableHideConfig = collectJointTableHideConfig();
+                        saveJointTableConfig({
+                            hide_config: jointTableHideConfig
+                        });
+                    }, 300);
+                }
+
+                function bindJointHidePanelEvents() {
+                    var $panel = $view.find('.layui-table-tool-panel');
+                    if (!$panel.length) return;
+
+                    $panel
+                        .off('click.jointHidePanelItemSave')
+                        .on('click.jointHidePanelItemSave', 'li,input,.layui-form-checkbox', function () {
+                            delaySaveHideConfig();
+                        })
+                        .off('change.jointHidePanelItemSave')
+                        .on('change.jointHidePanelItemSave', 'input[type="checkbox"]', function () {
+                            delaySaveHideConfig();
+                        });
+                }
+
+                $view.off('click.jointHidePanelSave');
+                $view.on('click.jointHidePanelSave', '.layui-table-tool-self', function () {
+                    setTimeout(function () {
+                        bindJointHidePanelEvents();
+                    }, 120);
+                });
+
+                $view.off('click.jointHidePanelBodySave');
+                $view.on('click.jointHidePanelBodySave', '.layui-table-tool-panel', function () {
+                    delaySaveHideConfig();
+                });
+
+                bindJointHidePanelEvents();
+                setTimeout(function () {
+                    bindJointHidePanelEvents();
+                }, 80);
+                setTimeout(function () {
+                    bindJointHidePanelEvents();
+                }, 220);
+                $view.off('mouseleave.jointHidePanelSave').on('mouseleave.jointHidePanelSave', '.layui-table-tool-panel', function () {
+                    clearTimeout(saveTimer);
+                    saveTimer = setTimeout(function () {
+                        setTimeout(function () {
+                            jointTableHideConfig = collectJointTableHideConfig();
+                            saveJointTableConfig({
+                                hide_config: jointTableHideConfig
+                            });
+                        }, 80);
+                    }, 220);
+                });
+            }
+
+            function bindJointColumnDragSort() {
+                var draggedEl = null;
+
+                $('#jointTableColumnSortList')
+                    .off('dragstart.jointColSort dragover.jointColSort drop.jointColSort dragend.jointColSort')
+                    .on('dragstart.jointColSort', '.main-table-col-sort-item', function (e) {
+                        draggedEl = this;
+                        $(this).addClass('dragging');
+                        if (e.originalEvent && e.originalEvent.dataTransfer) {
+                            e.originalEvent.dataTransfer.effectAllowed = 'move';
+                            e.originalEvent.dataTransfer.setData('text/plain', $(this).attr('data-field') || '');
+                        }
+                    })
+                    .on('dragover.jointColSort', '.main-table-col-sort-item', function (e) {
+                        e.preventDefault();
+                        if (!draggedEl || draggedEl === this) return;
+
+                        var rect = this.getBoundingClientRect();
+                        var offsetY = e.originalEvent.clientY - rect.top;
+                        if (offsetY > rect.height / 2) {
+                            $(this).after(draggedEl);
+                        } else {
+                            $(this).before(draggedEl);
+                        }
+                    })
+                    .on('drop.jointColSort', '.main-table-col-sort-item', function (e) {
+                        e.preventDefault();
+                    })
+                    .on('dragend.jointColSort', '.main-table-col-sort-item', function () {
+                        $(this).removeClass('dragging');
+                        draggedEl = null;
+                    });
+            }
+
+            function openJointColumnSortDialog() {
+                var cols = buildJointBaseCols();
+                cols = applyJointColumnOrder(cols);
+
+                var html = [
+                    '<div class="main-table-col-sort-dialog">',
+                    '<div class="main-table-col-sort-tip">按住字段行上下拖动，调整后点击“应用排序”，排序将自动保存。复选框、ID、操作列不参与排序。</div>',
+                    '<ul id="jointTableColumnSortList" class="main-table-col-sort-list">'
+                ];
+
+                cols.forEach(function (col) {
+                    if (!isJointSortableBusinessCol(col)) return;
+                    var field = getJointColField(col);
+                    html.push(
+                        '<li class="main-table-col-sort-item" draggable="true" data-field="' + escapeJointClientHtmlText(field) + '">' +
+                            '<span class="drag-handle">☰</span>' +
+                            '<span class="col-title">' + escapeJointClientHtmlText(col.title || field) + '</span>' +
+                            '<span class="col-field">' + escapeJointClientHtmlText(field) + '</span>' +
+                        '</li>'
+                    );
+                });
+
+                html.push('</ul></div>');
+
+                var sortIndex = layer.open({
+                    type: 1,
+                    title: '协同人客户 - 字段排序',
+                    area: ['420px', '560px'],
+                    shadeClose: true,
+                    content: html.join(''),
+                    btn: ['应用排序', '恢复默认顺序', '取消'],
+                    success: function () {
+                        bindJointColumnDragSort();
+                    },
+                    yes: function () {
+                        var order = [];
+                        $('#jointTableColumnSortList .main-table-col-sort-item').each(function () {
+                            var field = $.trim($(this).attr('data-field') || '');
+                            if (field) order.push(field);
+                        });
+                        jointTableColumnOrder = order;
+                        jointTableHideConfig = collectJointTableHideConfig();
+                        saveJointTableConfig({
+                            hide_config: jointTableHideConfig
+                        });
+                        layer.close(sortIndex);
+                        renderJointTable();
+                    },
+                    btn2: function () {
+                        jointTableColumnOrder = [];
+                        jointTableHideConfig = { id: 1 };
+                        saveJointTableConfig({
+                            hide_config: jointTableHideConfig
+                        });
+                        layer.close(sortIndex);
+                        renderJointTable();
+                        return false;
+                    }
+                });
+            }
+
+            function forceJointIdColumnHidden() {
+                var $view = $('#' + tableId).next('.layui-table-view');
+                if ($view.length) {
+                    $view.find('th[data-field="id"], td[data-field="id"]').css('display', 'none');
+                }
+                try {
+                    var cfg = table.config && table.config[tableId];
+                    if (cfg && $.isArray(cfg.cols) && cfg.cols[0]) {
+                        cfg.cols[0].forEach(function (col) {
+                            if (col && col.field === 'id') col.hide = true;
+                        });
+                    }
+                } catch (e) {}
+            }
+
+            function renderJointTable() {
+                if (!jointTableConfigLoaded) {
+                    loadJointTableConfig();
+                }
+
+                captureJointTableRuntimeState();
+
+                var colList = buildJointBaseCols();
+                colList = applyJointColumnOrder(colList);
+
+                colList.forEach(function (col) {
+                    var field = getJointColField(col);
+                    if (isJointIdCol(col) || field === 'id') {
+                        col.hide = true;
+                        return;
+                    }
+                    if (isJointActionCol(col) || isJointCheckboxCol(col)) return;
+                    if (field && Object.prototype.hasOwnProperty.call(jointTableHideConfig, field)) {
+                        col.hide = parseInt(jointTableHideConfig[field], 10) === 1;
+                    }
+                });
+
+                var curr = parseInt(jointClientTablePageCurr, 10) || 1;
+                if (curr < 1) curr = 1;
+
+                var renderOpts = {
+                    elem: '#' + tableId,
+                    id: tableId,
+                    url: lastJointClientUrl,
+                    method: 'post',
+                    toolbar: '#jointTopBtn',
+                    defaultToolbar: ['filter'],
+                    cols: [colList],
+                    limit: 10,
+                    page: {
+                        curr: curr,
+                        limits: [10, 20, 50, 100, 200, 500, 9999999]
+                    },
+                    where: lastJointClientWhere,
+                    done: function (res, currPage) {
+                        jointClientTablePageCurr = parseInt(currPage, 10) || 1;
+                        forceJointIdColumnHidden();
+                        bindJointActionIconTips();
+                        bindJointTableHideConfigSave();
+                    }
+                };
+
+                if (jointClientTableInitSort && jointClientTableInitSort.field && jointClientTableInitSort.type) {
+                    renderOpts.initSort = {
+                        field: jointClientTableInitSort.field,
+                        type: jointClientTableInitSort.type
+                    };
+                }
+
+                tableIns = table.render(renderOpts);
+            }
+
+            // 先读配置再渲染，避免首屏闪回默认列序
+            renderJointTable();
+
+            // 记录用户真实点击的排序（autoSort 客户端排序；reload 时通过 initSort 恢复）
+            table.on('sort(table-list)', function (obj) {
+                if (obj && obj.field && obj.type) {
+                    jointClientTableInitSort = { field: obj.field, type: obj.type };
+                } else {
+                    jointClientTableInitSort = null;
+                }
+            });
+
+            table.on('toolbar(table-list)', function (obj) {
+                if (obj && obj.event === 'jointColumnSort') {
+                    openJointColumnSortDialog();
+                }
+            });
+
+            // 写跟进 / 全部跟进（直接使用行内 crm_leads.id，不做订单客户解析）
+            $(document)
+                .off('click.jointClientFollow', '.joint-follow-btn')
+                .on('click.jointClientFollow', '.joint-follow-btn', function () {
+                    var leadsId = parseInt($(this).attr('data-id'), 10) || 0;
+                    if (leadsId <= 0) {
+                        layer.msg('缺少客户ID', { icon: 2 });
+                        return;
+                    }
+                    if (window.ClientFollowUI) {
+                        ClientFollowUI.openFollowDialog(leadsId);
+                    } else {
+                        layer.msg('跟进组件未加载', { icon: 2 });
+                    }
+                });
+            $(document)
+                .off('click.jointClientFollow', '.joint-all-follow-btn')
+                .on('click.jointClientFollow', '.joint-all-follow-btn', function () {
+                    var leadsId = parseInt($(this).attr('data-id'), 10) || 0;
+                    if (leadsId <= 0) {
+                        layer.msg('缺少客户ID', { icon: 2 });
+                        return;
+                    }
+                    if (window.ClientFollowUI) {
+                        ClientFollowUI.openAllFollowDialog(leadsId);
+                    } else {
+                        layer.msg('跟进组件未加载', { icon: 2 });
+                    }
+                });
+
+            // 客户名称 → 客户详情（与操作列详情按钮共用打开函数）
+            $(document)
+                .off('click.jointClientDetail', '.js-joint-client-detail-link')
+                .on('click.jointClientDetail', '.js-joint-client-detail-link', function (e) {
+                    e.preventDefault();
+                    openJointClientDetails($(this).attr('data-id'));
+                });
+
+            table.on('tool(table-list)', function (obj) {
+                if (obj.event === 'details') {
+                    openJointClientDetails(obj.data && obj.data.id);
+                }
+            });
+
+            // 搜索触发：切到 jointPersonClientSearch（同步记忆 url/where，供字段排序后全量重渲染）
             form.on('submit(LAY-app-contlist-search)', function (data) {
+                lastJointClientUrl = "{:url('Client/jointPersonClientSearch')}";
+                lastJointClientWhere = { keyword: data.field };
+                jointClientTablePageCurr = 1;
                 table.reload(tableId, {
-                    url: "{:url('Client/jointPersonClientSearch')}",
-                    where: { keyword: data.field },
+                    url: lastJointClientUrl,
+                    where: lastJointClientWhere,
                     page: { curr: 1 }
                 });
                 return false;
