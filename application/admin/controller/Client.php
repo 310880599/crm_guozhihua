@@ -1083,9 +1083,10 @@ class Client extends Common
             $adminId  = Session::get('aid');          // 当前登录用户 admin_id
             $username = Session::get('username');     // 当前登录用户名
 
-            // 查询当前用户作为协同人的客户列表
+            // 查询当前用户作为协同人的客户列表（含已成交/未成交）
             $list = Db::table('crm_leads')
-                ->where(['status' => 1, 'issuccess' => -1])           // 仅有效客户（未成交）
+                ->where('status', 1)
+                ->whereIn('issuccess', [1, -1])
                 ->where('pr_user', '<>', $username)                   // 排除当前用户自己负责的客户
                 ->where(function ($query) use ($adminId) {
                     // joint_person 字段包含当前用户ID

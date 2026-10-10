@@ -543,7 +543,12 @@ class Client extends Model
         $currentUsername = session('username');
         $currentAdminId  = session('aid');
 
-        $result = Db::table('crm_leads')
+        // 成交状态筛选：空=全部(1/-1)；'1'=已成交；'-1'=未成交；非法参数构造不匹配结果
+        $successFilter = isset($keyword['issuccess'])
+            ? trim((string)$keyword['issuccess'])
+            : '';
+
+        $query = Db::table('crm_leads')
             ->where($mapPhone)
             ->where($mapKhName)
             ->where($mapInquiry)      // **新增：按所属渠道筛选**  
@@ -552,11 +557,24 @@ class Client extends Model
             ->where($mapPort)         // **新增：按运营端口筛选**  
             ->where($mapAtTime)
             ->where($where)
-            ->where(['status' => 1, 'issuccess' => -1])                  // 仅有效客户且未成交
+            ->where('status', 1)
             ->where('pr_user', '<>', $currentUsername)                    // 负责人不是我
             ->where(function ($query) use ($currentAdminId) {
                 $query->whereRaw("FIND_IN_SET('{$currentAdminId}', joint_person)");
-            })
+            });
+
+        if ($successFilter === '') {
+            $query->whereIn('issuccess', [1, -1]);
+        } elseif ($successFilter === '1') {
+            $query->where('issuccess', 1);
+        } elseif ($successFilter === '-1') {
+            $query->where('issuccess', -1);
+        } else {
+            // 非法参数：构造必不成立条件，避免扩大查询范围或 SQL 错误
+            $query->where('id', -1);
+        }
+
+        $result = $query
             ->order('at_time desc')
             ->paginate(['list_rows' => $limit, 'page' => $page])
             ->toArray();

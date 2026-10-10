@@ -199,6 +199,17 @@
                         </div>
 
                         <div class="layui-inline">
+                            <label class="layui-form-label">成交状态：</label>
+                            <div class="layui-input-inline">
+                                <select name="issuccess" id="issuccess">
+                                    <option value="" selected>全部</option>
+                                    <option value="1">已成交</option>
+                                    <option value="-1">未成交</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="layui-inline">
                             <label class="layui-form-label">日期查询：</label>
                             <div class="layui-input-inline">
                                 <select id="dateRange" lay-filter="dateRange" name="timebucket" class="layui-select">
