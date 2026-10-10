@@ -160,6 +160,8 @@ return [
         ]
     ],
     'pageSize' => 15,
+    // 检查订单性能诊断（默认关闭；开启后写入 runtime/log/check_order_perf/；也可用环境变量 CHECK_ORDER_PERF_DIAG=true）
+    'check_order_perf_diag' => false,
     //自定义配置
     'sys_name' => 'CRM系统',
     //文件上传

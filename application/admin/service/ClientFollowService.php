@@ -21,6 +21,12 @@ class ClientFollowService
     private $followRoleColumnExists = null;
 
     /**
+     * 同一请求内权限上下文缓存（不改变规则，仅避免重复查库）
+     * @var array<string, mixed>
+     */
+    private $requestPermissionCache = [];
+
+    /**
      * 保存客户跟进记录，并同步更新 crm_leads 跟进字段
      *
      * @param int|string $leadsId
@@ -286,7 +292,7 @@ class ClientFollowService
             'username' => $operatorName,
             'group_id' => (int)($adminContext['group_id'] ?? 0),
         ];
-        if (OrderService::canManageAllOrders($adminInfo)) {
+        if ($this->cachedCanManageAllOrders($adminInfo)) {
             return true;
         }
 
@@ -302,12 +308,12 @@ class ClientFollowService
             return true;
         }
 
-        $visibleUsers = $this->resolveCheckClientVisibleUsernames($adminContext);
+        $visibleUsers = $this->cachedCheckClientVisibleUsernames($adminContext);
         $currentAdmin = [
             'admin_id' => $operatorId,
             'group_id' => (int)($adminContext['group_id'] ?? 0),
             'username' => $operatorName,
-            'is_super_admin' => $this->isCheckClientFullViewer($adminContext) ? 1 : 0,
+            'is_super_admin' => $this->cachedIsCheckClientFullViewer($adminContext) ? 1 : 0,
         ];
         $built = model('Client')->buildCheckClientQuery(
             ['__id_in' => [$clientId]],
@@ -341,8 +347,7 @@ class ClientFollowService
             return false;
         }
 
-        $checkOrderService = new CheckOrderService();
-        $allowedUsernames = $checkOrderService->getAllowedUsernames($adminContext);
+        $allowedUsernames = $this->cachedCheckOrderAllowedUsernames($adminContext);
         $allowedUsernames = array_values(array_unique(array_filter(array_map('trim', (array)$allowedUsernames))));
         if (empty($allowedUsernames)) {
             return false;
@@ -356,8 +361,9 @@ class ClientFollowService
             return false;
         }
 
-        $uniqueRaw = [];
-        $uniqueNormalized = [];
+        // 先去重候选联系方式，再批量唯一解析（口径与逐条 resolveUniqueLeadsIdByContact 一致）
+        $candidateRaws = [];
+        $normByRaw = [];
         $seen = [];
         foreach ($contactRows as $raw) {
             $raw = trim((string)$raw);
@@ -370,12 +376,24 @@ class ClientFollowService
                 continue;
             }
             $seen[$seenKey] = true;
+            $candidateRaws[] = $raw;
+            $normByRaw[$raw] = $norm;
+        }
 
-            $match = OrderService::resolveUniqueLeadsIdByContact($raw);
-            if (empty($match['ok']) || (int)$match['leads_id'] !== $clientId) {
+        if (empty($candidateRaws)) {
+            return false;
+        }
+
+        $matchMap = OrderService::batchResolveUniqueLeadsIdByContacts($candidateRaws);
+        $uniqueRaw = [];
+        $uniqueNormalized = [];
+        foreach ($candidateRaws as $raw) {
+            $match = $matchMap[$raw] ?? null;
+            if (empty($match['ok']) || (int)($match['leads_id'] ?? 0) !== $clientId) {
                 continue;
             }
             $uniqueRaw[] = $raw;
+            $norm = $normByRaw[$raw] ?? '';
             if ($norm !== '') {
                 $uniqueNormalized[] = $norm;
             }
@@ -404,6 +422,68 @@ class ClientFollowService
             ->value('id');
 
         return !empty($orderId);
+    }
+
+    /**
+     * 请求内缓存：订单全量管理权限（纯计算，结果恒等）
+     */
+    private function cachedCanManageAllOrders(array $adminInfo): bool
+    {
+        $key = 'manage_all|' . (int)($adminInfo['admin_id'] ?? 0)
+            . '|' . trim((string)($adminInfo['username'] ?? ''))
+            . '|' . (int)($adminInfo['group_id'] ?? 0);
+        if (!array_key_exists($key, $this->requestPermissionCache)) {
+            $this->requestPermissionCache[$key] = (bool)OrderService::canManageAllOrders($adminInfo);
+        }
+        return (bool)$this->requestPermissionCache[$key];
+    }
+
+    /**
+     * 请求内缓存：检查客户全员查看识别
+     */
+    private function cachedIsCheckClientFullViewer(array $adminContext): bool
+    {
+        $key = 'check_client_full|' . (int)($adminContext['admin_id'] ?? 0)
+            . '|' . (int)($adminContext['group_id'] ?? 0);
+        if (!array_key_exists($key, $this->requestPermissionCache)) {
+            $this->requestPermissionCache[$key] = (bool)$this->isCheckClientFullViewer($adminContext);
+        }
+        return (bool)$this->requestPermissionCache[$key];
+    }
+
+    /**
+     * 请求内缓存：检查客户可见业务员用户名（避免每个客户重复查 admin）
+     *
+     * @return string[]
+     */
+    private function cachedCheckClientVisibleUsernames(array $adminContext): array
+    {
+        $key = 'check_client_users|' . (int)($adminContext['admin_id'] ?? 0)
+            . '|' . trim((string)($adminContext['username'] ?? ''))
+            . '|' . (int)($adminContext['group_id'] ?? 0)
+            . '|' . trim((string)($adminContext['team_name'] ?? ''));
+        if (!array_key_exists($key, $this->requestPermissionCache)) {
+            $this->requestPermissionCache[$key] = $this->resolveCheckClientVisibleUsernames($adminContext);
+        }
+        return (array)$this->requestPermissionCache[$key];
+    }
+
+    /**
+     * 请求内缓存：检查订单可见业务员用户名（桥接规则不变）
+     *
+     * @return string[]
+     */
+    private function cachedCheckOrderAllowedUsernames(array $adminContext): array
+    {
+        $key = 'check_order_users|' . (int)($adminContext['admin_id'] ?? 0)
+            . '|' . trim((string)($adminContext['username'] ?? ''))
+            . '|' . (int)($adminContext['group_id'] ?? 0)
+            . '|' . trim((string)($adminContext['team_name'] ?? ''));
+        if (!array_key_exists($key, $this->requestPermissionCache)) {
+            $checkOrderService = new CheckOrderService();
+            $this->requestPermissionCache[$key] = $checkOrderService->getAllowedUsernames($adminContext);
+        }
+        return (array)$this->requestPermissionCache[$key];
     }
 
     /**
