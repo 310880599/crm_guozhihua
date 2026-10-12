@@ -5869,6 +5869,53 @@ class Client extends Common
     }
 
     /**
+     * 修改历史跟进记录（更新原 crm_comment，不新增）
+     */
+    public function updateFollowComment()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 1, 'msg' => '请求方式错误']);
+        }
+
+        $commentId = (int)Request::param('comment_id', 0);
+        $replyMsg = (string)Request::param('reply_msg', '');
+        $originalReplyMsg = (string)Request::param('original_reply_msg', '');
+
+        if ($commentId <= 0) {
+            return json(['code' => 1, 'msg' => '缺少跟进记录ID']);
+        }
+        if (trim($replyMsg) === '') {
+            return json(['code' => 1, 'msg' => '请输入跟进内容']);
+        }
+
+        $operatorInfo = [
+            'admin_id' => (int)Session::get('aid'),
+            'username' => trim((string)Session::get('username')),
+        ];
+        if ($operatorInfo['admin_id'] <= 0) {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录']);
+        }
+
+        $adminContext = [
+            'admin_id' => $operatorInfo['admin_id'],
+            'username' => $operatorInfo['username'],
+            'group_id' => (int)Session::get('group_id'),
+            'team_name' => (string)(Session::get('team_name') ?? ''),
+        ];
+
+        $service = new ClientFollowService();
+        $result = $service->updateFollowComment(
+            $commentId,
+            $replyMsg,
+            $originalReplyMsg,
+            $operatorInfo,
+            $adminContext
+        );
+
+        return json($result);
+    }
+
+    /**
      * 跟进弹窗 - 获取客户级别下拉候选项（AJAX）
      * 复用 getClientRankOptionsForEdit，兼容已删除级别
      */
@@ -6019,28 +6066,66 @@ class Client extends Common
             }
         }
 
-        // 查询总数
-        $count = Db::table('crm_comment')
-            ->alias('com')
-            ->join('admin adm', 'com.user_id = adm.admin_id')
-            ->where($where)
-            ->count();
+        $followService = new ClientFollowService();
+        $hasAuditColumns = $followService->hasCommentAuditColumns();
+        $operatorId = (int)Session::get('aid');
 
-        // 分页查询
-        $list = Db::table('crm_comment')
+        // LEFT JOIN：停用/缺失管理员不导致历史跟进被过滤；修改人单独 LEFT JOIN 避免 N+1
+        $countQuery = Db::table('crm_comment')
             ->alias('com')
-            ->join('admin adm', 'com.user_id = adm.admin_id')
-            ->where($where)
-            ->field('com.*, adm.username, adm.avatar')
-            ->order('com.create_date desc')
+            ->leftJoin('admin adm', 'com.user_id = adm.admin_id')
+            ->where($where);
+        $listQuery = Db::table('crm_comment')
+            ->alias('com')
+            ->leftJoin('admin adm', 'com.user_id = adm.admin_id')
+            ->where($where);
+
+        if ($hasAuditColumns) {
+            $countQuery->leftJoin('admin upd', 'com.updated_by = upd.admin_id');
+            $listQuery->leftJoin('admin upd', 'com.updated_by = upd.admin_id')
+                ->field('com.*, adm.username, adm.avatar, upd.username AS updated_by_name');
+        } else {
+            $listQuery->field('com.*, adm.username, adm.avatar');
+        }
+
+        $count = $countQuery->count();
+        $list = $listQuery
+            ->order('com.create_date desc, com.id desc')
             ->page($page, $limit)
             ->select();
 
-        $followService = new ClientFollowService();
         // 格式化时间：Y-m-d H:i（列表用紧凑格式）
         foreach ($list as &$item) {
-            $item['create_date'] = date('Y-m-d H:i', $item['create_date']);
+            $item['create_date'] = date('Y-m-d H:i', (int)$item['create_date']);
             $item = $followService->appendFollowRoleDisplay($item);
+
+            $userId = (int)($item['user_id'] ?? 0);
+            $username = trim((string)($item['username'] ?? ''));
+            if ($username === '' && $userId > 0) {
+                $item['username'] = (string)$userId;
+            }
+
+            if ($hasAuditColumns) {
+                $updatedAtRaw = $item['updated_at'] ?? null;
+                if ($updatedAtRaw !== null && $updatedAtRaw !== '' && (int)$updatedAtRaw > 0) {
+                    $item['updated_at'] = date('Y-m-d H:i', (int)$updatedAtRaw);
+                    $updatedBy = (int)($item['updated_by'] ?? 0);
+                    $updatedByName = trim((string)($item['updated_by_name'] ?? ''));
+                    if ($updatedByName === '') {
+                        $item['updated_by_name'] = $updatedBy > 0 ? (string)$updatedBy : '';
+                    }
+                } else {
+                    $item['updated_at'] = null;
+                    $item['updated_by'] = null;
+                    $item['updated_by_name'] = '';
+                }
+            } else {
+                $item['updated_at'] = null;
+                $item['updated_by'] = null;
+                $item['updated_by_name'] = '';
+            }
+
+            $item['can_edit'] = $followService->canEditFollowCommentRow($item, $operatorId) ? 1 : 0;
         }
         unset($item);
 

@@ -20,6 +20,9 @@ class ClientFollowService
     /** @var bool|null */
     private $followRoleColumnExists = null;
 
+    /** @var bool|null */
+    private $commentAuditColumnsExist = null;
+
     /**
      * 同一请求内权限上下文缓存（不改变规则，仅避免重复查库）
      * @var array<string, mixed>
@@ -157,7 +160,7 @@ class ClientFollowService
             ]);
 
             Db::table('crm_leads')->where('id', $leadsId)->update([
-                'last_up_records' => $content,
+                'last_up_records' => $this->truncateLastUpRecords($content),
                 'last_up_time' => $nowDateTime,
                 'next_up_time' => $nextUpValue,
                 'ut_time' => $nowDateTime,
@@ -1078,6 +1081,24 @@ class ClientFollowService
 
         Db::startTrans();
         try {
+            // 锁顺序与 saveFollow / updateFollowComment 一致：先 crm_leads，再 crm_comment，避免死锁
+            $lockedClient = Db::table('crm_leads')
+                ->where('id', $leadsId)
+                ->lock(true)
+                ->find();
+            if (!$lockedClient) {
+                throw new \RuntimeException('客户不存在');
+            }
+
+            $lockedComment = Db::table('crm_comment')
+                ->where('id', $commentId)
+                ->where('is_deleted', 0)
+                ->lock(true)
+                ->find();
+            if (!$lockedComment) {
+                throw new \RuntimeException('跟进记录已被删除，请刷新后重试');
+            }
+
             $affectedRows = Db::table('crm_comment')
                 ->where('id', $commentId)
                 ->where('is_deleted', 0)
@@ -1100,7 +1121,7 @@ class ClientFollowService
                 'ut_time' => $nowDateTime,
             ];
             if ($latestComment) {
-                $leadUpdate['last_up_records'] = (string)$latestComment['reply_msg'];
+                $leadUpdate['last_up_records'] = $this->truncateLastUpRecords((string)$latestComment['reply_msg']);
                 $leadUpdate['last_up_time'] = date('Y-m-d H:i:s', (int)$latestComment['create_date']);
             } else {
                 $leadUpdate['last_up_records'] = '';
@@ -1113,8 +1134,258 @@ class ClientFollowService
             return ['code' => 0, 'msg' => '删除成功', 'data' => []];
         } catch (Throwable $e) {
             Db::rollback();
-            return $this->fail('删除失败：' . $e->getMessage());
+            $msg = $e->getMessage();
+            if (in_array($msg, ['客户不存在', '跟进记录已被删除，请刷新后重试'], true)) {
+                return $this->fail($msg);
+            }
+            return $this->fail('删除失败：' . $msg);
         }
+    }
+
+    /**
+     * 修改历史跟进记录（更新原 crm_comment，不新增）。
+     *
+     * @param int|string $commentId
+     * @param string $content 新内容
+     * @param string $originalContent 打开编辑时的原始内容（并发冲突检测）
+     * @param array $operatorInfo ['admin_id' => int, 'username' => string]
+     * @param array $adminContext 只读权限上下文（group_id / team_name 等）
+     * @return array
+     */
+    public function updateFollowComment($commentId, $content, $originalContent, $operatorInfo = [], $adminContext = [])
+    {
+        $commentId = (int)$commentId;
+        $content = trim((string)$content);
+        $originalContent = (string)$originalContent;
+        $operatorId = (int)($operatorInfo['admin_id'] ?? 0);
+        $operatorName = trim((string)($operatorInfo['username'] ?? ''));
+
+        if ($commentId <= 0) {
+            return $this->fail('缺少跟进记录ID');
+        }
+        if ($operatorId <= 0) {
+            return $this->fail('登录状态已失效，请重新登录');
+        }
+        if ($content === '') {
+            return $this->fail('请输入跟进内容');
+        }
+        if (!$this->hasCommentAuditColumns()) {
+            return $this->fail('数据库字段尚未迁移');
+        }
+
+        $comment = Db::table('crm_comment')->where('id', $commentId)->find();
+        if (!$comment) {
+            return $this->fail('跟进记录不存在或已删除');
+        }
+        if ((int)($comment['is_deleted'] ?? 0) !== 0) {
+            return $this->fail('跟进记录不存在或已删除');
+        }
+
+        if (!$this->canEditFollowCommentRow($comment, $operatorId)) {
+            return $this->fail('您无权修改该跟进记录');
+        }
+
+        $leadsId = (int)($comment['leads_id'] ?? 0);
+        $client = Db::table('crm_leads')->where('id', $leadsId)->find();
+        if (!$client) {
+            return $this->fail('客户不存在');
+        }
+
+        $adminContext = array_merge([
+            'admin_id' => $operatorId,
+            'username' => $operatorName,
+            'group_id' => (int)($adminContext['group_id'] ?? 0),
+            'team_name' => (string)($adminContext['team_name'] ?? ''),
+        ], is_array($adminContext) ? $adminContext : []);
+
+        if (!$this->canReadClientFollow($client, $operatorId, $operatorName, $adminContext)) {
+            return $this->fail('您没有权限查看该客户跟进');
+        }
+
+        $currentMsg = (string)($comment['reply_msg'] ?? '');
+        // 兼容 Controller TrimStrings：原始内容可能被 trim，冲突比较按 trim 后语义一致
+        if (trim($currentMsg) !== trim($originalContent)) {
+            return $this->fail('记录已被其他人修改，请重新打开后编辑');
+        }
+        if ($content === trim($currentMsg)) {
+            return [
+                'code' => 0,
+                'msg' => '内容未变化',
+                'data' => [
+                    'comment_id' => $commentId,
+                    'leads_id' => $leadsId,
+                    'unchanged' => 1,
+                ],
+            ];
+        }
+
+        $nowTimestamp = time();
+
+        Db::startTrans();
+        try {
+            // 锁顺序与 saveFollow 一致：先 crm_leads，再 crm_comment，避免死锁
+            $lockedClient = Db::table('crm_leads')
+                ->where('id', $leadsId)
+                ->lock(true)
+                ->find();
+            if (!$lockedClient) {
+                throw new \RuntimeException('客户不存在');
+            }
+
+            $lockedComment = Db::table('crm_comment')
+                ->where('id', $commentId)
+                ->lock(true)
+                ->find();
+            if (!$lockedComment || (int)($lockedComment['is_deleted'] ?? 0) !== 0) {
+                throw new \RuntimeException('跟进记录不存在或已删除');
+            }
+            if (!$this->canEditFollowCommentRow($lockedComment, $operatorId)) {
+                throw new \RuntimeException('您无权修改该跟进记录');
+            }
+            if (!$this->canReadClientFollow($lockedClient, $operatorId, $operatorName, $adminContext)) {
+                throw new \RuntimeException('您没有权限查看该客户跟进');
+            }
+
+            $lockedMsg = (string)($lockedComment['reply_msg'] ?? '');
+            if (trim($lockedMsg) !== trim($originalContent)) {
+                throw new \RuntimeException('记录已被其他人修改，请重新打开后编辑');
+            }
+            if ($content === trim($lockedMsg)) {
+                Db::commit();
+                return [
+                    'code' => 0,
+                    'msg' => '内容未变化',
+                    'data' => [
+                        'comment_id' => $commentId,
+                        'leads_id' => $leadsId,
+                        'unchanged' => 1,
+                    ],
+                ];
+            }
+
+            $affectedRows = Db::table('crm_comment')
+                ->where('id', $commentId)
+                ->where('is_deleted', 0)
+                ->where('reply_msg', $lockedMsg)
+                ->update([
+                    'reply_msg' => $content,
+                    'updated_at' => $nowTimestamp,
+                    'updated_by' => $operatorId,
+                ]);
+            if ((int)$affectedRows <= 0) {
+                throw new \RuntimeException('记录已被其他人修改，请重新打开后编辑');
+            }
+
+            $latestComment = Db::table('crm_comment')
+                ->where('leads_id', $leadsId)
+                ->where('is_deleted', 0)
+                ->order('create_date desc,id desc')
+                ->find();
+
+            $syncedLatest = 0;
+            if ($latestComment && (int)($latestComment['id'] ?? 0) === $commentId) {
+                // 仅同步摘要，不改 last_up_time / next_up_time / ut_time
+                Db::table('crm_leads')->where('id', $leadsId)->update([
+                    'last_up_records' => $this->truncateLastUpRecords($content),
+                ]);
+                $syncedLatest = 1;
+            }
+
+            Db::commit();
+            return [
+                'code' => 0,
+                'msg' => '修改成功',
+                'data' => [
+                    'comment_id' => $commentId,
+                    'leads_id' => $leadsId,
+                    'updated_at' => $nowTimestamp,
+                    'updated_by' => $operatorId,
+                    'synced_latest' => $syncedLatest,
+                ],
+            ];
+        } catch (Throwable $e) {
+            Db::rollback();
+            $msg = $e->getMessage();
+            if (in_array($msg, [
+                '跟进记录不存在或已删除',
+                '您无权修改该跟进记录',
+                '您没有权限查看该客户跟进',
+                '记录已被其他人修改，请重新打开后编辑',
+                '客户不存在',
+            ], true)) {
+                return $this->fail($msg);
+            }
+            return $this->fail('修改失败：' . $msg);
+        }
+    }
+
+    /**
+     * 当前操作人是否可修改该跟进行（作者或超管；不含客户读权限）
+     */
+    public function canEditFollowCommentRow(array $comment, $operatorId)
+    {
+        $operatorId = (int)$operatorId;
+        if ($operatorId <= 0) {
+            return false;
+        }
+        if ((int)($comment['is_deleted'] ?? 0) !== 0) {
+            return false;
+        }
+        if ($operatorId === 1) {
+            return true;
+        }
+        return (int)($comment['user_id'] ?? 0) === $operatorId;
+    }
+
+    /**
+     * crm_leads.last_up_records 为 varchar(200)，按 UTF-8 字符（非字节）截取后写入
+     */
+    private function truncateLastUpRecords($content)
+    {
+        $content = (string)$content;
+        if ($content === '') {
+            return '';
+        }
+        if (function_exists('mb_substr')) {
+            return (string)mb_substr($content, 0, 200, 'UTF-8');
+        }
+
+        // mbstring 不可用：按 Unicode 字符边界截取，避免 substr 切断多字节中文/emoji
+        $chars = @preg_split('//u', $content, -1, PREG_SPLIT_NO_EMPTY);
+        if (is_array($chars)) {
+            if (count($chars) <= 200) {
+                return $content;
+            }
+            return implode('', array_slice($chars, 0, 200));
+        }
+
+        // PCRE Unicode 失败时按 UTF-8 字节序列逐字截取，不切断多字节字符
+        $result = '';
+        $count = 0;
+        $len = strlen($content);
+        $i = 0;
+        while ($i < $len && $count < 200) {
+            $byte = ord($content[$i]);
+            if ($byte < 0x80) {
+                $charLen = 1;
+            } elseif (($byte & 0xE0) === 0xC0) {
+                $charLen = 2;
+            } elseif (($byte & 0xF0) === 0xE0) {
+                $charLen = 3;
+            } elseif (($byte & 0xF8) === 0xF0) {
+                $charLen = 4;
+            } else {
+                $i++;
+                continue;
+            }
+            if ($i + $charLen > $len) {
+                break;
+            }
+            $result .= substr($content, $i, $charLen);
+            $i += $charLen;
+            $count++;
+        }
+        return $result;
     }
 
     /**
@@ -1659,6 +1930,26 @@ class ClientFollowService
         }
 
         return $this->followRoleColumnExists;
+    }
+
+    /**
+     * crm_comment.updated_at / updated_by 是否已就绪（带进程内缓存）
+     */
+    public function hasCommentAuditColumns()
+    {
+        if ($this->commentAuditColumnsExist !== null) {
+            return $this->commentAuditColumnsExist;
+        }
+
+        try {
+            $updatedAt = Db::query("SHOW COLUMNS FROM `crm_comment` LIKE 'updated_at'");
+            $updatedBy = Db::query("SHOW COLUMNS FROM `crm_comment` LIKE 'updated_by'");
+            $this->commentAuditColumnsExist = !empty($updatedAt) && !empty($updatedBy);
+        } catch (Throwable $e) {
+            $this->commentAuditColumnsExist = false;
+        }
+
+        return $this->commentAuditColumnsExist;
     }
 
     /**
