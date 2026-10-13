@@ -525,10 +525,12 @@
                         commentsPage: "{:url('Client/getClientCommentsPage')}",
                         save: "{:url('Client/saveClientFollow')}",
                         deleteComment: "{:url('Client/deleteFollowComment')}",
+                        updateComment: "{:url('Client/updateFollowComment')}",
                         rankOptions: "{:url('Client/getFollowRankOptions')}",
                         updateRank: "{:url('Client/updateClientRankInFollow')}"
                     },
                     enableRankEdit: true,
+                    enableEdit: true,
                     onFollowSaved: function () {
                         reloadJointClientTableKeepState();
                     }

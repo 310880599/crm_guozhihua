@@ -1205,6 +1205,20 @@
         overflow-wrap: anywhere !important;
         line-height: 22px !important;
     }
+    #all-follow-dialog .layui-table-view .af-reply-updated-meta {
+        margin-top: 6px;
+        color: #999;
+        font-size: 12px;
+        line-height: 18px;
+        white-space: normal !important;
+    }
+    #all-follow-dialog .layui-table-view td[data-field="operate"] .layui-table-cell {
+        white-space: nowrap !important;
+        overflow: visible !important;
+    }
+    #all-follow-dialog .layui-table-view .edit-follow-btn {
+        margin-right: 6px;
+    }
 
     /* 批量快速跟进弹窗 */
     .quick-follow-dialog {
@@ -3989,19 +4003,42 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                         title: '跟进内容',
                         minWidth: 420,
                         templet: function (d) {
+                            var escFn = (typeof layui !== 'undefined' && layui.util && typeof layui.util.escape === 'function')
+                                ? layui.util.escape
+                                : function (t) {
+                                    return String(t == null ? '' : t)
+                                        .replace(/&/g, '&amp;')
+                                        .replace(/</g, '&lt;')
+                                        .replace(/>/g, '&gt;')
+                                        .replace(/"/g, '&quot;');
+                                };
                             var txt = d.reply_msg == null ? '' : String(d.reply_msg);
-                            var esc = (typeof layui !== 'undefined' && layui.util && typeof layui.util.escape === 'function')
-                                ? layui.util.escape(txt)
-                                : txt.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-                            return '<div class="af-reply-msg-cell">' + esc + '</div>';
+                            var html = '<div class="af-reply-msg-cell">' + escFn(txt) + '</div>';
+                            var updatedAt = d.updated_at == null || d.updated_at === '' ? '' : String(d.updated_at);
+                            if (updatedAt) {
+                                var updatedByName = d.updated_by_name == null || d.updated_by_name === ''
+                                    ? (d.updated_by == null || d.updated_by === '' ? '' : String(d.updated_by))
+                                    : String(d.updated_by_name);
+                                html += '<div class="af-reply-updated-meta">最后修改：'
+                                    + escFn(updatedAt)
+                                    + '，修改人：'
+                                    + escFn(updatedByName)
+                                    + '</div>';
+                            }
+                            return html;
                         }
                     },
                     {
                         field: 'operate',
                         title: '操作',
-                        width: 100,
-                        templet: function(d){
-                            return '<button class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + d.id + '">删除</button>';
+                        width: 160,
+                        templet: function (d) {
+                            var html = '';
+                            if (parseInt(d.can_edit, 10) === 1) {
+                                html += '<button type="button" class="layui-btn layui-btn-normal layui-btn-xs edit-follow-btn" data-id="' + d.id + '">修改</button>';
+                            }
+                            html += '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + d.id + '">删除</button>';
+                            return html;
                         }
                     }
                 ]],
@@ -4019,6 +4056,119 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             });
         }, 100);
     }
+
+    function parseAllFollowDateRange() {
+        var dateRange = $.trim($('#af-date-range').val() || '');
+        var startDate = '';
+        var endDate = '';
+        if (dateRange) {
+            var parts = dateRange.split(' - ');
+            if (parts.length === 2) {
+                startDate = $.trim(parts[0]);
+                endDate = $.trim(parts[1]);
+            }
+        }
+        return { startDate: startDate, endDate: endDate };
+    }
+
+    function reloadAllFollowTableKeepPage() {
+        if (!afTableIns || !currentLeadsId) {
+            return;
+        }
+        var range = parseAllFollowDateRange();
+        table.reload('af-table', {
+            where: {
+                leads_id: currentLeadsId,
+                keyword: $.trim($('#af-keyword').val() || ''),
+                start_date: range.startDate,
+                end_date: range.endDate
+            },
+            done: function () {
+                syncAllFollowTableRowHeights();
+                setTimeout(syncAllFollowTableRowHeights, 0);
+                setTimeout(syncAllFollowTableRowHeights, 50);
+            }
+        });
+    }
+
+    function findAllFollowRowById(commentId) {
+        var cache = table.cache['af-table'] || [];
+        var idStr = String(commentId);
+        for (var i = 0; i < cache.length; i++) {
+            if (cache[i] && String(cache[i].id) === idStr) {
+                return cache[i];
+            }
+        }
+        return null;
+    }
+
+    $(document)
+        .off('click.personclientEditFollow', '.edit-follow-btn')
+        .on('click.personclientEditFollow', '.edit-follow-btn', function () {
+            var commentId = $(this).data('id');
+            if (!commentId) {
+                layer.msg('参数错误', {icon: 2});
+                return;
+            }
+            var row = findAllFollowRowById(commentId);
+            if (!row) {
+                layer.msg('未找到跟进记录，请刷新后重试', {icon: 2});
+                return;
+            }
+            if (parseInt(row.can_edit, 10) !== 1) {
+                layer.msg('无权修改该跟进记录', {icon: 2});
+                return;
+            }
+            var originalReplyMsg = row.reply_msg == null ? '' : String(row.reply_msg);
+            var saving = false;
+            layer.open({
+                type: 1,
+                title: '修改跟进记录',
+                area: ['560px', '420px'],
+                btn: ['保存修改', '取消'],
+                zIndex: layer.zIndex + 100,
+                content: '<div style="padding:16px 20px 0;">'
+                    + '<textarea id="af-edit-follow-msg" class="layui-textarea" style="min-height:260px;resize:vertical;"></textarea>'
+                    + '</div>',
+                success: function (layero) {
+                    layer.setTop(layero);
+                    layero.find('#af-edit-follow-msg').val(originalReplyMsg);
+                },
+                yes: function (index, layero) {
+                    if (saving) {
+                        return false;
+                    }
+                    var content = $.trim(layero.find('#af-edit-follow-msg').val() || '');
+                    if (!content) {
+                        layer.msg('请输入跟进内容', {icon: 0});
+                        return false;
+                    }
+                    saving = true;
+                    var $yesBtn = layero.find('.layui-layer-btn0');
+                    $yesBtn.addClass('layui-btn-disabled').css('pointer-events', 'none');
+                    $.post("{:url('Client/updateFollowComment')}", {
+                        comment_id: commentId,
+                        reply_msg: content,
+                        original_reply_msg: originalReplyMsg
+                    }, function (res) {
+                        if (res && res.code === 0) {
+                            layer.close(index);
+                            layer.msg(res.msg || '修改成功', {icon: 1});
+                            reloadAllFollowTableKeepPage();
+                        } else {
+                            saving = false;
+                            $yesBtn.removeClass('layui-btn-disabled').css('pointer-events', '');
+                            layer.msg((res && res.msg) ? res.msg : '修改失败', {icon: 2});
+                        }
+                    }).fail(function () {
+                        saving = false;
+                        $yesBtn.removeClass('layui-btn-disabled').css('pointer-events', '');
+                        layer.msg('网络错误，修改失败', {icon: 2});
+                    });
+                    return false;
+                }
+            });
+        });
 
     // ✅新增：全部跟进搜索按钮（使用事件委托）
     $(document).on('click', '#af-search-btn', function() {
@@ -4077,29 +4227,7 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
             }, function(res){
                 if(res.code === 0){
                     layer.msg(res.msg || '删除成功', {icon:1});
-                    table.reload('af-table', {
-                        where: {
-                            leads_id: currentLeadsId,
-                            keyword: $('#af-keyword').val().trim(),
-                            start_date: (function(){
-                                var dateRange = $('#af-date-range').val().trim();
-                                if (!dateRange) return '';
-                                var parts = dateRange.split(' - ');
-                                return parts.length === 2 ? parts[0].trim() : '';
-                            })(),
-                            end_date: (function(){
-                                var dateRange = $('#af-date-range').val().trim();
-                                if (!dateRange) return '';
-                                var parts = dateRange.split(' - ');
-                                return parts.length === 2 ? parts[1].trim() : '';
-                            })()
-                        },
-                        done: function () {
-                            syncAllFollowTableRowHeights();
-                            setTimeout(syncAllFollowTableRowHeights, 0);
-                            setTimeout(syncAllFollowTableRowHeights, 50);
-                        }
-                    });
+                    reloadAllFollowTableKeepPage();
                 }else{
                     layer.msg(res.msg || '删除失败', {icon:2});
                 }

@@ -25,6 +25,7 @@
         onFollowSaved: null,
         enableRankEdit: true,
         enableDelete: true,
+        enableEdit: false,
         followIndex: null,
         allFollowIndex: null,
         afTableIns: null,
@@ -32,7 +33,8 @@
         followSubmitting: false,
         followSubmitDefaultText: '保存跟进',
         nextUpLaydateInited: false,
-        resizeTimer: null
+        resizeTimer: null,
+        editStylesReady: false
     };
 
     function getLayer() {
@@ -402,6 +404,131 @@
         };
     }
 
+    function ensureEditStyles() {
+        if (state.editStylesReady) {
+            return;
+        }
+        if (!$('#client-follow-ui-edit-style').length) {
+            $('head').append(
+                '<style id="client-follow-ui-edit-style">'
+                + '#all-follow-dialog .layui-table-view .af-reply-updated-meta{'
+                + 'margin-top:6px;color:#999;font-size:12px;line-height:18px;white-space:normal!important;'
+                + '}'
+                + '#all-follow-dialog .layui-table-view td[data-field="operate"] .layui-table-cell{'
+                + 'white-space:nowrap!important;overflow:visible!important;'
+                + '}'
+                + '#all-follow-dialog .layui-table-view .edit-follow-btn{margin-right:6px;}'
+                + '</style>'
+            );
+        }
+        state.editStylesReady = true;
+    }
+
+    function findAllFollowRowById(commentId) {
+        var table = getTable();
+        if (!table || !table.cache) {
+            return null;
+        }
+        var cache = table.cache['af-table'] || [];
+        var idStr = String(commentId);
+        for (var i = 0; i < cache.length; i++) {
+            if (cache[i] && String(cache[i].id) === idStr) {
+                return cache[i];
+            }
+        }
+        return null;
+    }
+
+    function buildReplyMsgCellHtml(d) {
+        var txt = d.reply_msg == null ? '' : String(d.reply_msg);
+        var html = '<div class="af-reply-msg-cell">' + escapeHtml(txt) + '</div>';
+        var updatedAt = d.updated_at == null || d.updated_at === '' ? '' : String(d.updated_at);
+        if (updatedAt) {
+            var updatedByName = d.updated_by_name == null || d.updated_by_name === ''
+                ? (d.updated_by == null || d.updated_by === '' ? '' : String(d.updated_by))
+                : String(d.updated_by_name);
+            html += '<div class="af-reply-updated-meta">最后修改：'
+                + escapeHtml(updatedAt)
+                + '，修改人：'
+                + escapeHtml(updatedByName)
+                + '</div>';
+        }
+        return html;
+    }
+
+    function buildAllFollowOperateHtml(d) {
+        var html = '';
+        if (state.enableEdit === true && parseInt(d.can_edit, 10) === 1) {
+            html += '<button type="button" class="layui-btn layui-btn-normal layui-btn-xs edit-follow-btn" data-id="'
+                + escapeHtml(d.id) + '">修改</button>';
+        }
+        if (state.enableDelete !== false) {
+            html += '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="'
+                + escapeHtml(d.id) + '">删除</button>';
+        }
+        return html;
+    }
+
+    function openEditFollowDialog(commentId, originalReplyMsg) {
+        var layer = getLayer();
+        if (!layer) {
+            return;
+        }
+        if (!state.urls.updateComment) {
+            layer.msg('未配置修改接口', { icon: 2 });
+            return;
+        }
+
+        var saving = false;
+        layer.open({
+            type: 1,
+            title: '修改跟进记录',
+            area: ['560px', '420px'],
+            btn: ['保存修改', '取消'],
+            zIndex: layer.zIndex + 100,
+            content: '<div style="padding:16px 20px 0;">'
+                + '<textarea id="cfui-edit-follow-msg" class="layui-textarea" style="min-height:260px;resize:vertical;"></textarea>'
+                + '</div>',
+            success: function (layero) {
+                layer.setTop(layero);
+                layero.find('#cfui-edit-follow-msg').val(originalReplyMsg);
+            },
+            yes: function (index, layero) {
+                if (saving) {
+                    return false;
+                }
+                var content = $.trim(layero.find('#cfui-edit-follow-msg').val() || '');
+                if (!content) {
+                    layer.msg('请输入跟进内容', { icon: 0 });
+                    return false;
+                }
+                saving = true;
+                var $yesBtn = layero.find('.layui-layer-btn0');
+                $yesBtn.addClass('layui-btn-disabled').css('pointer-events', 'none');
+                $.post(state.urls.updateComment, {
+                    comment_id: commentId,
+                    reply_msg: content,
+                    original_reply_msg: originalReplyMsg
+                }, function (res) {
+                    if (res && res.code === 0) {
+                        layer.close(index);
+                        layer.msg(res.msg || '修改成功', { icon: 1 });
+                        reloadAfTable();
+                    } else {
+                        saving = false;
+                        $yesBtn.removeClass('layui-btn-disabled').css('pointer-events', '');
+                        layer.msg((res && res.msg) ? res.msg : '修改失败', { icon: 2 });
+                    }
+                }).fail(function () {
+                    saving = false;
+                    $yesBtn.removeClass('layui-btn-disabled').css('pointer-events', '');
+                    layer.msg('网络错误，修改失败', { icon: 2 });
+                });
+                return false;
+            }
+        });
+    }
+
     function setFollowSubmitState(isSubmitting) {
         state.followSubmitting = !!isSubmitting;
         $('#submit-comment')
@@ -558,6 +685,10 @@
                 state.afTableIns = null;
             }
 
+            var showEditCol = state.enableEdit === true;
+            var showDeleteCol = state.enableDelete !== false;
+            var operateWidth = (showEditCol && showDeleteCol) ? 160 : 100;
+
             var allFollowCols = [
                 { field: 'create_date', title: '跟进时间', width: 180, sort: true },
                 {
@@ -575,20 +706,18 @@
                     title: '跟进内容',
                     minWidth: 420,
                     templet: function (d) {
-                        var txt = d.reply_msg == null ? '' : String(d.reply_msg);
-                        var esc = escapeHtml(txt);
-                        return '<div class="af-reply-msg-cell">' + esc + '</div>';
+                        return buildReplyMsgCellHtml(d);
                     }
                 }
             ];
 
-            if (state.enableDelete !== false) {
+            if (showEditCol || showDeleteCol) {
                 allFollowCols.push({
                     field: 'operate',
                     title: '操作',
-                    width: 100,
+                    width: operateWidth,
                     templet: function (d) {
-                        return '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + escapeHtml(d.id) + '">删除</button>';
+                        return buildAllFollowOperateHtml(d);
                     }
                 });
             }
@@ -775,36 +904,66 @@
             reloadAfTable({ page: { curr: 1 } });
         });
 
-        $(document).on('click' + NS, '.delete-follow-btn', function () {
-            var layer = getLayer();
-            var commentId = $(this).data('id');
-            if (!commentId) {
-                if (layer) {
-                    layer.msg('参数错误', { icon: 2 });
-                }
-                return;
-            }
-
-            layer.confirm('确定删除这条跟进记录吗？删除后不可恢复！', {
-                title: '信息',
-                zIndex: layer.zIndex + 100,
-                success: function (layero) {
-                    layer.setTop(layero);
-                }
-            }, function (index) {
-                $.post(state.urls.deleteComment, {
-                    comment_id: commentId
-                }, function (res) {
-                    if (res.code === 0) {
-                        layer.msg(res.msg || '删除成功', { icon: 1 });
-                        reloadAfTable();
-                    } else {
-                        layer.msg(res.msg || '删除失败', { icon: 2 });
+        if (state.enableDelete !== false) {
+            $(document).on('click' + NS, '.delete-follow-btn', function () {
+                var layer = getLayer();
+                var commentId = $(this).data('id');
+                if (!commentId) {
+                    if (layer) {
+                        layer.msg('参数错误', { icon: 2 });
                     }
+                    return;
+                }
+
+                layer.confirm('确定删除这条跟进记录吗？删除后不可恢复！', {
+                    title: '信息',
+                    zIndex: layer.zIndex + 100,
+                    success: function (layero) {
+                        layer.setTop(layero);
+                    }
+                }, function (index) {
+                    $.post(state.urls.deleteComment, {
+                        comment_id: commentId
+                    }, function (res) {
+                        if (res.code === 0) {
+                            layer.msg(res.msg || '删除成功', { icon: 1 });
+                            reloadAfTable();
+                        } else {
+                            layer.msg(res.msg || '删除失败', { icon: 2 });
+                        }
+                    });
+                    layer.close(index);
                 });
-                layer.close(index);
             });
-        });
+        }
+
+        if (state.enableEdit === true) {
+            $(document).on('click' + NS, '.edit-follow-btn', function () {
+                var layer = getLayer();
+                var commentId = $(this).data('id');
+                if (!commentId) {
+                    if (layer) {
+                        layer.msg('参数错误', { icon: 2 });
+                    }
+                    return;
+                }
+                var row = findAllFollowRowById(commentId);
+                if (!row) {
+                    if (layer) {
+                        layer.msg('未找到跟进记录，请刷新后重试', { icon: 2 });
+                    }
+                    return;
+                }
+                if (parseInt(row.can_edit, 10) !== 1) {
+                    if (layer) {
+                        layer.msg('无权修改该跟进记录', { icon: 2 });
+                    }
+                    return;
+                }
+                var originalReplyMsg = row.reply_msg == null ? '' : String(row.reply_msg);
+                openEditFollowDialog(commentId, originalReplyMsg);
+            });
+        }
 
         if (state.enableRankEdit) {
             $(document).on('click' + NS, '#follow-rank-edit-btn', function () {
@@ -1082,8 +1241,11 @@
         state.onFollowSaved = typeof options.onFollowSaved === 'function' ? options.onFollowSaved : null;
         state.enableRankEdit = options.enableRankEdit !== false;
         state.enableDelete = options.enableDelete !== false;
+        state.enableEdit = options.enableEdit === true;
 
         state.followSubmitDefaultText = $.trim($('#submit-comment').text()) || '保存跟进';
+
+        ensureEditStyles();
 
         initNextUpTimeLaydate();
         bindEvents();
