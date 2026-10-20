@@ -8,6 +8,7 @@ use think\facade\Session;
 use think\Container;
 use app\admin\service\OrderImageService;
 use app\admin\service\OrderService;
+use app\admin\service\OrderContractAttachmentService;
 use app\admin\service\ClientOrderService;
 
 class Order extends Common
@@ -49,6 +50,70 @@ class Order extends Common
     private function isVoucherRequired($profit)
     {
         return floatval($profit) >= 2000;
+    }
+
+    /**
+     * 合同附件：读取请求并解析写入结果（不信任前端 profit）
+     *
+     * @param array $profitCalcParams
+     * @param array $existingOrder
+     * @param bool $requireIfNeeded 正式提交/提审时 true；草稿 false
+     * @param int $orderId
+     * @return array{ok:bool,message:string,should_write:bool,encoded:?string,list:array}
+     */
+    private function resolveContractAttachmentsForSave(array $profitCalcParams, array $existingOrder, $requireIfNeeded, $orderId = 0)
+    {
+        $sentinel = '__FIELD_NOT_EXISTS__';
+        $raw = Request::param('contract_attachments', $sentinel);
+        $hasInput = ($raw !== $sentinel);
+        $clearFlag = (int)Request::param('clear_contract_attachments', 0);
+        $uploaderId = (int)Session::get('aid');
+
+        return OrderContractAttachmentService::resolveFromSubmission(
+            $profitCalcParams,
+            $existingOrder,
+            $hasInput ? $raw : null,
+            $clearFlag,
+            (bool)$requireIfNeeded,
+            $uploaderId,
+            (int)$orderId
+        );
+    }
+
+    /**
+     * 订单落库后，将临时合同附件提升到正式目录并回写 JSON。
+     * 任一项失败抛异常以触发 DB 回滚；文件仅 copy 不删 tmp，成功后再 cleanup。
+     *
+     * @param int $orderId
+     * @param array $list
+     * @return array 提升后的列表（供提交成功后 cleanupTempSources 使用原始 list）
+     * @throws \Exception
+     */
+    private function bindContractAttachmentsAfterInsert($orderId, array $list)
+    {
+        $orderId = (int)$orderId;
+        if ($orderId <= 0 || empty($list)) {
+            return [];
+        }
+        $promoted = OrderContractAttachmentService::promoteListToOrder($list, $orderId, false);
+        if (empty($promoted['ok'])) {
+            throw new \Exception($promoted['message'] ?: '合同附件绑定订单失败');
+        }
+        $bound = $promoted['list'];
+        if (count($bound) !== count($list)) {
+            throw new \Exception('合同附件绑定不完整，已中止提交');
+        }
+        $encoded = OrderContractAttachmentService::encodeList($bound);
+        if ($encoded === null || OrderContractAttachmentService::listHasTempStorage($encoded)) {
+            throw new \Exception('合同附件仍处于临时目录，已中止提交');
+        }
+        $res = Db::name('crm_client_order')->where('id', $orderId)->update([
+            'contract_attachments' => $encoded,
+        ]);
+        if ($res === false) {
+            throw new \Exception('合同附件写入失败');
+        }
+        return $bound;
     }
 
     /**
@@ -1100,9 +1165,34 @@ class Order extends Common
             ];
 
             // ✅草稿：可不传凭证；正式提交必须通过统一凭证校验
+            // 合同附件：草稿允许为空但仍可写入；正式提交按利润>=3000 强制校验
+            $contractAttachPendingList = [];
+            $contractExistingOrder = [];
+            $contractOrderIdHint = 0;
+            $draftIdForContract = (int)Request::param('draft_id', 0);
+            if ($draftIdForContract > 0) {
+                $draftRowForContract = Db::name('crm_client_order')->where('id', $draftIdForContract)->find();
+                if ($draftRowForContract && (int)$draftRowForContract['check_status'] === 0) {
+                    $uname = Session::get('username') ?? '';
+                    if ($uname && ($draftRowForContract['at_user'] === $uname || $draftRowForContract['pr_user'] === $uname)) {
+                        $contractExistingOrder = $draftRowForContract;
+                        $contractOrderIdHint = $draftIdForContract;
+                    }
+                }
+            }
             if ($isDraft) {
                 $data['wechat_receipt_image'] = '';
                 $data['inquiry_assign_image'] = '';
+                // 与两类凭证草稿清空策略不同：合同附件按提交值写入（不校验必填），避免首次草稿丢失已传文件
+                $contractResolve = $this->resolveContractAttachmentsForSave($profitCalcParams, $contractExistingOrder, false, $contractOrderIdHint);
+                if (empty($contractResolve['ok'])) {
+                    $this->redisUnLock();
+                    return json(['code' => 0, 'msg' => $contractResolve['message']]);
+                }
+                if (!empty($contractResolve['should_write'])) {
+                    $data['contract_attachments'] = $contractResolve['encoded'];
+                    $contractAttachPendingList = $contractResolve['list'];
+                }
             } else {
                 $MAX_WECHAT_RECEIPT_IMAGES = 10;
                 $MAX_INQUIRY_ASSIGN_IMAGES = 10;
@@ -1135,6 +1225,15 @@ class Order extends Common
 
                 $data['wechat_receipt_image'] = json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 $data['inquiry_assign_image'] = json_encode($inquiryAssignUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+                $contractResolve = $this->resolveContractAttachmentsForSave($profitCalcParams, $contractExistingOrder, true, $contractOrderIdHint);
+                if (empty($contractResolve['ok'])) {
+                    $this->redisUnLock();
+                    return json(['code' => 0, 'msg' => $contractResolve['message']]);
+                }
+                // 正式提交：始终写入解析后的最终列表（可为空 JSON→null），保证与校验一致
+                $data['contract_attachments'] = $contractResolve['encoded'];
+                $contractAttachPendingList = $contractResolve['list'];
             }
             $managerIds   = Request::param('product_manager/a'); // ★ 产品经理（管理员）ID 数组
             // ✅文本状态（如表里有 status 字段则同步）
@@ -1395,7 +1494,18 @@ class Order extends Common
                         if (!empty($leadsId)) {
                             Db::name('crm_leads')->where('id', $leadsId)->update(['issuccess' => 1]);
                         }
+                        if (!empty($contractAttachPendingList)) {
+                            $this->bindContractAttachmentsAfterInsert($draftId, $contractAttachPendingList);
+                        }
                         Db::commit();
+                        // DB 成功后再删 tmp / 清 Session（文件系统无法回滚）
+                        if (!empty($contractAttachPendingList)) {
+                            try {
+                                OrderContractAttachmentService::cleanupTempSources($contractAttachPendingList, $draftId);
+                            } catch (\Exception $cleanupEx) {
+                                // 订单已提交；清理失败只保留 tmp，不影响本次成功结果
+                            }
+                        }
                         return json(['code' => 0, 'msg' => '添加成功！', 'data' => ['id' => $draftId, 'from_draft' => 1]]);
                     }
                 }
@@ -1404,6 +1514,9 @@ class Order extends Common
                 $orderId = Db::name('crm_client_order')->insertGetId($data);
                 if (!$orderId) {
                     throw new \Exception('主订单插入失败');
+                }
+                if (!empty($contractAttachPendingList)) {
+                    $this->bindContractAttachmentsAfterInsert($orderId, $contractAttachPendingList);
                 }
                 // 插入明细行
                 if (!empty($itemsData)) {
@@ -1425,6 +1538,13 @@ class Order extends Common
                 }
                 
                 Db::commit();
+                if (!empty($contractAttachPendingList)) {
+                    try {
+                        OrderContractAttachmentService::cleanupTempSources($contractAttachPendingList, (int)$orderId);
+                    } catch (\Exception $cleanupEx) {
+                        // 订单已提交；清理失败只保留 tmp，不影响本次成功结果
+                    }
+                }
                 if ($isDraft) {
                     return json(['code' => 0, 'msg' => '草稿保存成功', 'draft_id' => $orderId, 'data' => ['id' => $orderId]]);
                 }
@@ -1436,6 +1556,7 @@ class Order extends Common
                     OrderService::releaseSubmitLock($submitLockKey);
                 }
                 // ===== 防重复提交：END =====
+                // 注意：若已 copy 出正式文件，DB 回滚不会撤销文件；tmp+Session 仍保留，允许安全重试
                 return json(['code' => -200, 'msg' => '添加失败！' . $e->getMessage()]);
             }
         }
@@ -2316,6 +2437,21 @@ class Order extends Common
             if (empty($voucherValidation['ok'])) {
                 return json(['code' => -200, 'msg' => $voucherValidation['message']]);
             }
+
+            // 合同附件：编辑保存等同正式提交校验；未传字段保留历史，禁止无意清空
+            // 此处只解析校验，文件提升与 Session 清理放到事务内/提交后，避免 DB 失败丢附件
+            $contractResolve = $this->resolveContractAttachmentsForSave($profitCalcParams, $originalOrder, true, (int)$id);
+            if (empty($contractResolve['ok'])) {
+                return json(['code' => -200, 'msg' => $contractResolve['message']]);
+            }
+            $contractAttachPendingList = [];
+            $contractAttachShouldWrite = !empty($contractResolve['should_write']);
+            if ($contractAttachShouldWrite) {
+                $contractAttachPendingList = $contractResolve['list'];
+                // 先写入解析后的列表（可能仍含 tmp）；事务内再 promote 回写正式路径
+                $data['contract_attachments'] = $contractResolve['encoded'];
+            }
+
             $data['ut_time']          = date("Y-m-d H:i:s");              // 更新操作时间
 
             // 解析协同人 joint_person 字段（支持空字符串/单值/数组/JSON 数组/逗号分隔字符串）
@@ -2487,13 +2623,64 @@ class Order extends Common
             $submitLockKey = (string)($lockResult['key'] ?? '');
             // ===== 防重复提交：END =====
 
+            // ====== 草稿来源自动提审：校验提前到事务外，写入与保存合并进同一事务 ======
+            $from = Request::param('from', '');
+            $autoSubmitFromDraft = false;
+            if ($from === 'draft' && !empty($originalOrder) && (int)($originalOrder['check_status'] ?? -1) === 0) {
+                $orderTime = trim((string)($data['order_time'] ?? ''));
+                $cname = trim((string)($data['cname'] ?? ''));
+                $money = isset($data['money']) ? (float)$data['money'] : 0;
+                $hasProduct = !empty($productIds) && is_array($productIds) && count(array_filter($productIds, function ($pid) { return (int)$pid > 0; })) > 0;
+                if ($orderTime === '' || $cname === '' || $money <= 0 || !$hasProduct) {
+                    if ($submitLockKey !== '') {
+                        OrderService::releaseSubmitLock($submitLockKey);
+                    }
+                    return json(['code' => -200, 'msg' => '请先完善必填项后再提交审核']);
+                }
+                $autoSubmitFromDraft = true;
+                $data['check_status'] = 1;
+                $data['status'] = '待审核';
+            }
+
+            // 编辑页未重传附件、但库里仍是历史 tmp 路径时，提审前必须正式绑定
+            if ($autoSubmitFromDraft && !$contractAttachShouldWrite
+                && OrderContractAttachmentService::listHasTempStorage($originalOrder['contract_attachments'] ?? null)
+            ) {
+                $contractAttachShouldWrite = true;
+                $contractAttachPendingList = OrderContractAttachmentService::parseList($originalOrder['contract_attachments'] ?? null);
+            }
+
             // ====== 写入数据库（使用事务处理） ======
             Db::startTrans();
             try {
-                // 更新订单主表数据
-                $resMain = Db::name('crm_client_order')->where('id', $id)->update($data);
-                if ($resMain === false) {
-                    throw new \Exception('主订单更新失败');
+                // 合同附件：事务内 promote（仅 copy），失败则整单回滚
+                if ($contractAttachShouldWrite) {
+                    if (!empty($contractAttachPendingList)) {
+                        $promoted = OrderContractAttachmentService::promoteListToOrder($contractAttachPendingList, (int)$id, false);
+                        if (empty($promoted['ok'])) {
+                            throw new \Exception($promoted['message'] ?: '合同附件绑定订单失败');
+                        }
+                        if (count($promoted['list']) !== count($contractAttachPendingList)) {
+                            throw new \Exception('合同附件绑定不完整，已中止提交');
+                        }
+                        $encodedAttachments = OrderContractAttachmentService::encodeList($promoted['list']);
+                        if ($encodedAttachments === null || OrderContractAttachmentService::listHasTempStorage($encodedAttachments)) {
+                            throw new \Exception('合同附件仍处于临时目录，已中止提交');
+                        }
+                        $data['contract_attachments'] = $encodedAttachments;
+                    } else {
+                        $data['contract_attachments'] = null;
+                    }
+                }
+
+                // 更新订单主表数据（含 from=draft 时的 check_status 提审字段）
+                $mainUpdate = Db::name('crm_client_order')->where('id', $id);
+                if ($autoSubmitFromDraft) {
+                    $mainUpdate->where('check_status', 0);
+                }
+                $resMain = $mainUpdate->update($data);
+                if ($resMain === false || ($autoSubmitFromDraft && (int)$resMain < 1)) {
+                    throw new \Exception($autoSubmitFromDraft ? '提交审核失败，草稿保持原状态' : '主订单更新失败');
                 }
                 // 清除旧的明细行记录
                 Db::name('crm_order_item')->where('order_id', $id)->delete();
@@ -2506,26 +2693,16 @@ class Order extends Common
                 }
                 Db::commit();
 
-                // ====== 草稿来源：保存成功后自动提交审核（check_status=1） ======
-                $from = Request::param('from', '');
-                if ($from === 'draft') {
-                    $orderRow = Db::name('crm_client_order')->where('id', $id)->field('check_status')->find();
-                    if ($orderRow && (int)$orderRow['check_status'] === 0) {
-                        // 最小兜底校验：成交时间/客户/产品/金额
-                        $orderTime = trim((string)($data['order_time'] ?? ''));
-                        $cname = trim((string)($data['cname'] ?? ''));
-                        $money = isset($data['money']) ? (float)$data['money'] : 0;
-                        $hasProduct = !empty($productIds) && is_array($productIds) && count(array_filter($productIds, function ($pid) { return (int)$pid > 0; })) > 0;
-                        if ($orderTime === '' || $cname === '' || $money <= 0 || !$hasProduct) {
-                            return json(['code' => -200, 'msg' => '请先完善必填项后再提交审核']);
-                        }
-                        Db::name('crm_client_order')->where('id', $id)->update([
-                            'check_status' => 1,
-                            'status'       => '待审核',
-                            'ut_time'      => date('Y-m-d H:i:s'),
-                        ]);
-                        return json(['code' => 0, 'msg' => '保存成功，已提交审核']);
+                if ($contractAttachShouldWrite && !empty($contractAttachPendingList)) {
+                    try {
+                        OrderContractAttachmentService::cleanupTempSources($contractAttachPendingList, (int)$id);
+                    } catch (\Exception $cleanupEx) {
+                        // 订单已保存；清理失败只保留 tmp，不影响本次成功结果
                     }
+                }
+
+                if ($autoSubmitFromDraft) {
+                    return json(['code' => 0, 'msg' => '保存成功，已提交审核']);
                 }
 
                 return json(['code' => 0, 'msg' => '编辑成功！']);
@@ -2556,6 +2733,10 @@ class Order extends Common
         if (!array_key_exists('joint_person', $order) || $order['joint_person'] === null) {
             $order['joint_person'] = '';
         }
+        $order['contract_attachment_list'] = OrderContractAttachmentService::enrichForView(
+            $order['contract_attachments'] ?? null,
+            (int)$orderId
+        );
         // 读取该订单的所有产品明细行
         $items = Db::name('crm_order_item')->where('order_id', $orderId)->select();
 
@@ -2918,6 +3099,10 @@ class Order extends Common
         }
 
         $order = OrderImageService::enrichOrderForEditView($order);
+        $order['contract_attachment_list'] = OrderContractAttachmentService::enrichForView(
+            $order['contract_attachments'] ?? null,
+            (int)$orderId
+        );
 
         // 读取该订单的所有产品明细行
         $items = Db::name('crm_order_item')->where('order_id', $orderId)->select();
@@ -4470,10 +4655,72 @@ class Order extends Common
             ]);
         }
 
-        Db::table('crm_client_order')->where('id', $id)->update([
-            'check_status' => 1,
-            'status'       => '待审核',
-        ]);
+        // 历史草稿可能只存了 tmp 路径。提审前先 copy 到正式目录；失败则不改 check_status。
+        // 复制发生在事务外（文件系统无法回滚）；仅在提交成功后才清理 tmp 与 Session。
+        $originalAttachmentList = OrderContractAttachmentService::parseList($order['contract_attachments'] ?? null);
+        $formalEncoded = null;
+        if (!empty($originalAttachmentList)) {
+            $promoted = OrderContractAttachmentService::promoteListToOrder($originalAttachmentList, $id, false);
+            if (empty($promoted['ok'])) {
+                return json(['code' => 2, 'msg' => $promoted['message'] ?: '合同附件绑定订单失败，草稿未提交']);
+            }
+            if (count($promoted['list']) !== count($originalAttachmentList)) {
+                return json(['code' => 2, 'msg' => '合同附件绑定不完整，草稿未提交']);
+            }
+            $formalEncoded = OrderContractAttachmentService::encodeList($promoted['list']);
+            if ($formalEncoded === null || OrderContractAttachmentService::listHasTempStorage($formalEncoded)) {
+                return json(['code' => 2, 'msg' => '合同附件仍处于临时目录，草稿未提交']);
+            }
+        }
+
+        Db::startTrans();
+        try {
+            $fresh = Db::table('crm_client_order')->where('id', $id)->where('check_status', 0)->lock(true)->find();
+            if (!$fresh) {
+                throw new \Exception('提交审核失败，草稿保持原状态');
+            }
+            $freshEncoded = OrderContractAttachmentService::encodeList(
+                OrderContractAttachmentService::parseList($fresh['contract_attachments'] ?? null)
+            );
+            $loadedEncoded = OrderContractAttachmentService::encodeList($originalAttachmentList);
+            if ((string)$freshEncoded !== (string)$loadedEncoded) {
+                throw new \Exception('草稿附件已变化，请重新提交审核');
+            }
+            $update = [
+                'check_status' => 1,
+                'status'       => '待审核',
+            ];
+            if ($formalEncoded !== null) {
+                $update['contract_attachments'] = $formalEncoded;
+            }
+            $affected = Db::table('crm_client_order')
+                ->where('id', $id)
+                ->where('check_status', 0)
+                ->update($update);
+            if ($affected === false || (int)$affected < 1) {
+                throw new \Exception('提交审核失败，草稿保持原状态');
+            }
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            $msg = (string)$e->getMessage();
+            $safeMessages = [
+                '提交审核失败，草稿保持原状态',
+                '草稿附件已变化，请重新提交审核',
+            ];
+            if (!in_array($msg, $safeMessages, true)) {
+                $msg = '提交审核失败，草稿保持原状态';
+            }
+            return json(['code' => 2, 'msg' => $msg]);
+        }
+
+        if (!empty($originalAttachmentList)) {
+            try {
+                OrderContractAttachmentService::cleanupTempSources($originalAttachmentList, $id);
+            } catch (\Exception $e) {
+                // 正式 JSON 已提交成功；tmp 清理失败只保留临时文件，允许之后重试
+            }
+        }
         return json(['code' => 0, 'msg' => '已提交审核']);
     }
 
@@ -4588,6 +4835,12 @@ class Order extends Common
                 $missing[] = '询盘来源凭证';
             }
         }
+        // 利润>=3000 时，合同附件至少 1 个且文件真实存在（与两类凭证阈值独立）
+        if (OrderContractAttachmentService::isRequiredByProfit($profit)) {
+            if (OrderContractAttachmentService::countExistingValid($order['contract_attachments'] ?? null) < 1) {
+                $missing[] = '合同附件';
+            }
+        }
 
         // 产品明细：至少 1 行，每行含 product_name / product_manager(manager_id) / unit / qty / unit_price / purchase_price
         $items = Db::table('crm_order_item')->where('order_id', $orderId)->order('line_no asc, id asc')->select();
@@ -4693,6 +4946,11 @@ class Order extends Common
             'remark'            => $order['remark'] ?? '',
             'wechat_receipt_image' => $order['wechat_receipt_image'] ?? '',
             'inquiry_assign_image' => $order['inquiry_assign_image'] ?? '',
+            'contract_attachments' => $order['contract_attachments'] ?? '',
+            'contract_attachment_list' => OrderContractAttachmentService::enrichForView(
+                $order['contract_attachments'] ?? null,
+                $id
+            ),
         ];
         // joint_person：库中可能是逗号分隔或 JSON，统一转为数组供前端 xmSelect
         $jp = $order['joint_person'] ?? '';
@@ -4946,6 +5204,32 @@ class Order extends Common
                 ? json_encode($wechatReceiptUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
                 : '';
         }
+        // 合同附件：草稿允许为空，写入但不做 >=3000 必填拦截
+        $draftProfitParams = [
+            'qty' => Request::param('qty/a'),
+            'unit_price' => Request::param('unit_price/a'),
+            'purchase_price' => Request::param('purchase_price/a'),
+            'shipping_cost' => $data['shipping_cost'] ?? 0,
+            'tax_amount' => $data['tax_amount'] ?? 0,
+            'debugging_cost' => $data['debugging_cost'] ?? 0,
+            'sales_commission' => $data['sales_commission'] ?? 0,
+        ];
+        $draftOrderForContract = Db::table('crm_client_order')->where('id', $draftId)->find();
+        if (!$draftOrderForContract || (int)$draftOrderForContract['check_status'] !== 0) {
+            return json(['code' => 1, 'msg' => '草稿不存在']);
+        }
+        $contractResolve = $this->resolveContractAttachmentsForSave(
+            $draftProfitParams,
+            $draftOrderForContract,
+            false,
+            (int)$draftId
+        );
+        if (empty($contractResolve['ok'])) {
+            return json(['code' => 1, 'msg' => $contractResolve['message']]);
+        }
+        if (!empty($contractResolve['should_write'])) {
+            $data['contract_attachments'] = $contractResolve['encoded'];
+        }
         $jpRaw = Request::param('joint_person');
         $jpIds = [];
         if (is_array($jpRaw)) {
@@ -5035,10 +5319,20 @@ class Order extends Common
         $data['ut_time'] = $now;
         $data['oper_user'] = Session::get('username');
         $data['status'] = '草稿';
-        // 严禁修改 check_status，不写入 $data
+        // 严禁修改 check_status，不写入 $data。更新必须仍是草稿，避免覆盖刚刚提审成功的正式 JSON。
         Db::startTrans();
         try {
-            Db::name('crm_client_order')->where('id', $draftId)->update($data);
+            $affected = Db::name('crm_client_order')
+                ->where('id', $draftId)
+                ->where('check_status', 0)
+                ->update($data);
+            if ($affected === false) {
+                throw new \Exception('autosave_failed');
+            }
+            $stillDraft = (int)Db::name('crm_client_order')->where('id', $draftId)->where('check_status', 0)->value('id');
+            if ($stillDraft !== (int)$draftId) {
+                throw new \Exception('draft_already_submitted');
+            }
             Db::name('crm_order_item')->where('order_id', $draftId)->delete();
             if (!empty($itemsData)) {
                 Db::name('crm_order_item')->insertAll($itemsData);
@@ -5869,5 +6163,87 @@ class Order extends Common
         }
     }
 
-    
+    /**
+     * 合同附件独立上传（不走 UpFiles/upload 图片白名单）
+     * 文件落入 runtime 私有目录，元数据登记到 Session，保存订单时再绑定。
+     */
+    public function uploadContractAttachment()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 0, 'msg' => '请求方式错误']);
+        }
+        $aid = (int)Session::get('aid');
+        if ($aid <= 0) {
+            return json(['code' => 0, 'msg' => '未登录']);
+        }
+        $orderId = (int)Request::param('order_id', 0);
+        if ($orderId > 0) {
+            $order = Db::name('crm_client_order')->where('id', $orderId)->find();
+            if (!$order) {
+                return json(['code' => 0, 'msg' => '订单不存在']);
+            }
+            // 上传需编辑权限；同团队只读可预览但不可上传
+            if (!OrderContractAttachmentService::canEditOrder($order)) {
+                return json(['code' => 0, 'msg' => '无权限上传该订单合同附件']);
+            }
+        }
+
+        $file = request()->file('file');
+        if (!$file) {
+            $files = request()->file();
+            if (is_array($files) && !empty($files)) {
+                $keys = array_keys($files);
+                $file = request()->file($keys[0]);
+            }
+        }
+        $result = OrderContractAttachmentService::storeUploadedFile($file, $aid, $orderId);
+        if (empty($result['ok'])) {
+            return json(['code' => 0, 'msg' => $result['message'] ?? '上传失败']);
+        }
+        $item = $result['item'];
+        return json([
+            'code' => 1,
+            'msg'  => '上传成功',
+            'data' => [
+                'id'           => $item['id'],
+                'name'         => $item['name'],
+                'ext'          => $item['ext'],
+                'size'         => $item['size'],
+                'mime'         => $item['mime'],
+                'uploaded_at'  => $item['uploaded_at'],
+                'preview_url'  => $result['preview_url'],
+                'download_url' => $result['download_url'],
+                'is_image'     => in_array($item['ext'], ['jpg', 'jpeg', 'png'], true),
+                'is_pdf'       => $item['ext'] === 'pdf',
+                'is_office'    => in_array($item['ext'], ['doc', 'docx'], true),
+            ],
+        ]);
+    }
+
+    /**
+     * 合同附件受控预览/下载（校验登录 + 订单权限或临时上传归属）
+     */
+    public function serveContractAttachment()
+    {
+        $aid = (int)Session::get('aid');
+        if ($aid <= 0) {
+            return json(['code' => 0, 'msg' => '未登录']);
+        }
+        $fileId = (string)Request::param('file_id', '');
+        $orderId = (int)Request::param('order_id', 0);
+        $disposition = (string)Request::param('disposition', 'inline');
+        $order = null;
+        if ($orderId > 0) {
+            $order = Db::name('crm_client_order')->where('id', $orderId)->find();
+        }
+        $resolved = OrderContractAttachmentService::resolveAccessibleFile($fileId, $orderId, $order, $aid);
+        if (empty($resolved['ok'])) {
+            return json(['code' => 0, 'msg' => $resolved['message'] ?? '无权访问']);
+        }
+        OrderContractAttachmentService::outputFile(
+            $resolved['path'],
+            $resolved['item'],
+            $disposition
+        );
+    }
 }

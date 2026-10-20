@@ -63,6 +63,45 @@
             object-fit: cover;
             cursor: zoom-in;
         }
+        .contract-preview-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .contract-preview-item {
+            position: relative;
+            width: 140px;
+            min-height: 120px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            background: #f7f7f7;
+            padding: 6px;
+            box-sizing: border-box;
+        }
+        .contract-preview-item img {
+            width: 100%;
+            height: 90px;
+            object-fit: cover;
+            display: block;
+        }
+        .contract-preview-item .contract-file-icon {
+            height: 90px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            color: #1E9FFF;
+            background: #fff;
+        }
+        .contract-preview-item .contract-file-name {
+            font-size: 12px;
+            line-height: 1.3;
+            margin-top: 4px;
+            word-break: break-all;
+            color: #333;
+        }
         .label-long {
             width: 200px !important;   /* 或 220px，看你整体布局 */
         }
@@ -611,6 +650,16 @@
                 </div>
             </div>
             {/if}
+            <!-- 合同附件（有历史附件即显示，与当前利润是否>=3000无关） -->
+            {if condition="!empty($orderInfo.contract_attachment_list)"}
+            <div class="layui-form-item" id="contract_attachment_item">
+                <label class="layui-form-label label-long">合同附件</label>
+                <div class="layui-input-4">
+                    <div id="contract_attachment_preview_list" class="contract-preview-list"
+                         data-raw='{:htmlentities(json_encode($orderInfo.contract_attachment_list, JSON_UNESCAPED_UNICODE))}'></div>
+                </div>
+            </div>
+            {/if}
             <!-- 创建人 -->
             <div class="layui-form-item">
                 <label class="layui-form-label">创建人</label>
@@ -868,6 +917,107 @@
             }
 
             renderInquiryAssignPreviewsForDetails();
+
+            // ===== 合同附件只读预览（单文件直接展示；多文件左右切换）=====
+            function escapeHtml(str) {
+                return String(str || '').replace(/[&<>"']/g, function (ch) {
+                    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+                });
+            }
+
+            function renderContractAttachmentCards() {
+                var $list = $('#contract_attachment_preview_list');
+                if (!$list.length) return;
+                var rawJson = $list.attr('data-raw') || '[]';
+                var list = [];
+                try {
+                    list = JSON.parse(rawJson);
+                } catch (e) {
+                    list = [];
+                }
+                if (!Array.isArray(list) || !list.length) {
+                    $list.closest('.layui-form-item').hide();
+                    return;
+                }
+                window.__CONTRACT_ATTACHMENTS__ = list;
+                $list.empty();
+                list.forEach(function (item, idx) {
+                    var name = escapeHtml(item.name || ('附件' + (idx + 1)));
+                    var $card = $('<div class="contract-preview-item" data-index="' + idx + '" style="cursor:pointer;"></div>');
+                    if (item.is_image && item.preview_url) {
+                        $card.append('<img src="' + escapeHtml(item.preview_url) + '" alt="' + name + '">');
+                    } else if (item.is_pdf) {
+                        $card.append('<div class="contract-file-icon">PDF</div>');
+                    } else {
+                        $card.append('<div class="contract-file-icon">DOC</div>');
+                    }
+                    $card.append('<div class="contract-file-name" title="' + name + '">' + name + '</div>');
+                    $list.append($card);
+                });
+            }
+
+            function openContractAttachmentViewer(startIndex) {
+                var list = window.__CONTRACT_ATTACHMENTS__ || [];
+                if (!list.length) return;
+                var idx = parseInt(startIndex, 10) || 0;
+                if (idx < 0) idx = 0;
+                if (idx >= list.length) idx = list.length - 1;
+                var multi = list.length > 1;
+
+                function buildBody(i) {
+                    var item = list[i] || {};
+                    var html = '<div class="contract-viewer-wrap" style="position:relative;min-height:360px;background:#111;color:#fff;">';
+                    if (multi) {
+                        html += '<div style="position:absolute;left:12px;top:12px;z-index:3;background:rgba(0,0,0,.55);padding:4px 10px;border-radius:12px;">'
+                            + (i + 1) + '/' + list.length + '</div>';
+                        html += '<button type="button" class="layui-btn layui-btn-primary layui-btn-sm js-contract-prev" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:3;">‹</button>';
+                        html += '<button type="button" class="layui-btn layui-btn-primary layui-btn-sm js-contract-next" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:3;">›</button>';
+                    }
+                    html += '<div class="js-contract-body" style="padding:48px 56px 24px;text-align:center;">';
+                    if (item.is_image && item.preview_url) {
+                        html += '<img class="js-img-preview" data-full="' + escapeHtml(item.preview_url) + '" src="' + escapeHtml(item.preview_url) + '" style="max-width:100%;max-height:70vh;cursor:zoom-in;">';
+                    } else if (item.is_pdf && item.preview_url) {
+                        html += '<iframe src="' + escapeHtml(item.preview_url) + '" style="width:100%;height:70vh;border:0;background:#fff;"></iframe>';
+                    } else {
+                        html += '<div style="padding:80px 20px;"><div style="font-size:42px;margin-bottom:16px;">DOC</div>'
+                            + '<div style="margin-bottom:12px;">' + escapeHtml(item.name || '') + '</div>'
+                            + '<a class="layui-btn" href="' + escapeHtml(item.download_url || item.preview_url || '#') + '" target="_blank" rel="noopener">下载附件</a></div>';
+                    }
+                    html += '</div></div>';
+                    return html;
+                }
+
+                var layerIndex = layer.open({
+                    type: 1,
+                    title: '合同附件预览',
+                    area: multi ? ['860px', '80%'] : ['780px', '78%'],
+                    shadeClose: true,
+                    content: buildBody(idx),
+                    success: function (layero) {
+                        function renderAt(i) {
+                            idx = i;
+                            layero.find('.layui-layer-content').html(buildBody(idx));
+                            bindNav();
+                        }
+                        function bindNav() {
+                            layero.find('.js-contract-prev').off('click').on('click', function () {
+                                renderAt((idx - 1 + list.length) % list.length);
+                            });
+                            layero.find('.js-contract-next').off('click').on('click', function () {
+                                renderAt((idx + 1) % list.length);
+                            });
+                        }
+                        bindNav();
+                    }
+                });
+                return layerIndex;
+            }
+
+            renderContractAttachmentCards();
+            $(document).off('click.contractPreview', '#contract_attachment_preview_list .contract-preview-item')
+                .on('click.contractPreview', '#contract_attachment_preview_list .contract-preview-item', function () {
+                    openContractAttachmentViewer($(this).attr('data-index'));
+                });
 
             // 判断是否满足凭证豁免条件（仅利润<2000）
             function isVoucherExempt() {

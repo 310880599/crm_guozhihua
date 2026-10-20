@@ -108,6 +108,56 @@
             background: #ff5722;
             color: #fff;
         }
+        .contract-preview-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .contract-preview-item {
+            position: relative;
+            width: 140px;
+            min-height: 120px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            background: #f7f7f7;
+            padding: 6px;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+        .contract-preview-item img {
+            width: 100%;
+            height: 90px;
+            object-fit: cover;
+            cursor: zoom-in;
+            display: block;
+        }
+        .contract-preview-item .contract-file-icon {
+            height: 90px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            color: #1E9FFF;
+            background: #fff;
+        }
+        .contract-preview-item .contract-file-name {
+            font-size: 12px;
+            line-height: 1.3;
+            margin-top: 4px;
+            word-break: break-all;
+            color: #333;
+        }
+        .contract-preview-item .btn-remove {
+            z-index: 2;
+        }
+        .contract-preview-item .contract-preview-failed {
+            color: #ff5722;
+            font-size: 14px;
+            text-align: center;
+            padding: 8px;
+        }
         .label-long {
             width: 200px !important;   /* 或 220px，看你整体布局 */
         }
@@ -1317,6 +1367,24 @@
                     </div>
                 </div>
             </div>
+            <!-- 合同附件（利润>=3000 显示且必填；降低利润时隐藏但保留数据） -->
+            <div class="layui-form-item" id="contract_attachment_item" style="display:none;">
+                <label class="layui-form-label label-long"><span style="color:red;" class="contract-required-star">*</span>合同附件</label>
+                <div class="layui-input-4">
+                    <div class="layui-upload">
+                        <button type="button" class="layui-btn" id="upload_contract_attachment">
+                            <i class="layui-icon">&#xe67c;</i>上传合同附件
+                        </button>
+                        <div class="layui-upload-list">
+                            <div id="contract_attachment_preview_list" class="contract-preview-list"></div>
+                            <p style="color: #999; margin: 6px 0 0;">支持 JPG/JPEG/PNG/PDF/DOC/DOCX，最多10个，单个不超过20MB</p>
+                            <p id="contract_attachment_text"></p>
+                            <input type="hidden" name="contract_attachments" id="contract_attachments" value="">
+                            <input type="hidden" name="clear_contract_attachments" id="clear_contract_attachments" value="0">
+                        </div>
+                    </div>
+                </div>
+            </div>
             <!-- 备注 -->
             <!-- <div class="layui-form-item">
                 <label class="layui-form-label">备注</label>
@@ -1994,6 +2062,158 @@
             // 只重渲染 select，避免 form.render() 无参数时重新初始化
             // .layui-upload 容器，导致上传按钮/容器 DOM 被清除
             form.render('select');
+            if (typeof updateContractAttachmentUI === 'function') {
+                updateContractAttachmentUI(forceRender);
+            }
+        }
+
+        // 合同附件：与添加页规则一致（>=3000 显示必填；隐藏时保留数据）
+        var MAX_CONTRACT_ATTACHMENTS = 10;
+        var MAX_CONTRACT_ATTACHMENT_SIZE = 20 * 1024 * 1024;
+        var CONTRACT_ALLOW_EXT = ['jpg', 'jpeg', 'png', 'pdf', 'doc', 'docx'];
+        var contractAttachmentList = [];
+        // 异步上传未完成时禁止正式提交
+        var contractUploadPending = 0;
+        var __EDIT_ORDER_ID__ = (orderInfo && orderInfo.id) ? parseInt(orderInfo.id, 10) : 0;
+
+        function isContractAttachmentRequired() {
+            var profit = parseFloat($('#profit').val()) || 0;
+            return Math.round(profit * 100) / 100 >= 3000;
+        }
+
+        function syncContractAttachmentHidden() {
+            var payload = (contractAttachmentList || []).map(function (item) {
+                return { id: item.id };
+            });
+            $('#contract_attachments').val(JSON.stringify(payload));
+            $('#clear_contract_attachments').val(payload.length > 0 ? '0' : '1');
+        }
+
+        function updateContractAttachmentText() {
+            var n = Array.isArray(contractAttachmentList) ? contractAttachmentList.length : 0;
+            $('#contract_attachment_text').html('已上传 ' + n + '/' + MAX_CONTRACT_ATTACHMENTS);
+        }
+
+        function escapeContractHtml(str) {
+            return String(str || '').replace(/[&<>"']/g, function (ch) {
+                return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+            });
+        }
+
+        function contractAttachmentKind(item) {
+            var ext = String((item && item.ext) || '').toLowerCase();
+            if ((item && item.is_image) || ext === 'jpg' || ext === 'jpeg' || ext === 'png') {
+                return 'image';
+            }
+            if ((item && item.is_pdf) || ext === 'pdf') {
+                return 'pdf';
+            }
+            return 'office';
+        }
+
+        function markContractImageFailed($img) {
+            $img.replaceWith(
+                $('<div class="contract-file-icon contract-preview-failed"></div>')
+                    .attr('title', '图片预览失败，请重新上传')
+                    .text('预览失败')
+            );
+        }
+
+        function openContractInstantPreview(kind, previewUrl, downloadUrl, fileName) {
+            previewUrl = previewUrl || '';
+            downloadUrl = downloadUrl || previewUrl;
+            fileName = fileName || '合同附件';
+            if (kind === 'pdf') {
+                if (!previewUrl) {
+                    layer.msg('PDF 预览地址无效，请重新上传', { icon: 2 });
+                    return;
+                }
+                layer.open({
+                    type: 1,
+                    title: 'PDF预览',
+                    shadeClose: true,
+                    area: ['860px', '80%'],
+                    content: '<div style="height:70vh;background:#fff;">'
+                        + '<iframe src="' + escapeContractHtml(previewUrl) + '" title="PDF预览" style="width:100%;height:100%;border:0;background:#fff;"></iframe>'
+                        + '</div>'
+                });
+                return;
+            }
+            if (!downloadUrl) {
+                layer.msg('附件下载地址无效，请重新上传', { icon: 2 });
+                return;
+            }
+            layer.open({
+                type: 1,
+                title: '合同附件',
+                shadeClose: true,
+                area: ['420px', '260px'],
+                content: '<div style="padding:28px 24px;text-align:center;">'
+                    + '<div style="font-size:42px;color:#1E9FFF;margin-bottom:12px;">DOC</div>'
+                    + '<div style="margin-bottom:16px;word-break:break-all;">' + escapeContractHtml(fileName) + '</div>'
+                    + '<a class="layui-btn" href="' + escapeContractHtml(downloadUrl) + '" target="_blank" rel="noopener">下载查看</a>'
+                    + '</div>'
+            });
+        }
+
+        function renderContractAttachmentPreviews() {
+            var $list = $('#contract_attachment_preview_list');
+            $list.empty();
+            (contractAttachmentList || []).forEach(function (item, index) {
+                var kind = contractAttachmentKind(item);
+                var name = (item && (item.name || item.id)) || '合同附件';
+                var preview = (item && item.preview_url) || '';
+                var download = (item && (item.download_url || item.preview_url)) || '';
+                var $item = $('<div class="contract-preview-item"></div>');
+                $item.attr({
+                    'data-kind': kind,
+                    'data-preview-url': preview,
+                    'data-download-url': download,
+                    'data-name': name
+                });
+                if (kind === 'image' && preview) {
+                    var $img = $('<img class="js-img-preview" alt="合同附件">');
+                    $img.attr('src', preview).attr('data-full', preview);
+                    $img.on('error', function () {
+                        markContractImageFailed($(this));
+                    });
+                    $item.append($img);
+                } else if (kind === 'image') {
+                    $item.append(
+                        $('<div class="contract-file-icon contract-preview-failed"></div>')
+                            .attr('title', '图片预览失败，请重新上传')
+                            .text('预览失败')
+                    );
+                } else if (kind === 'pdf') {
+                    $item.append($('<div class="contract-file-icon"></div>').text('PDF'));
+                } else {
+                    $item.append($('<div class="contract-file-icon"></div>').text('DOC'));
+                }
+                $item.append($('<div class="contract-file-name"></div>').attr('title', name).text(name));
+                $item.append($('<span class="btn-remove"></span>').attr('data-index', String(index)).text('×'));
+                $list.append($item);
+            });
+            updateContractAttachmentText();
+        }
+
+        function updateContractAttachmentUI(forceRender) {
+            var required = isContractAttachmentRequired();
+            var stateKey = required ? '1' : '0';
+            if (!forceRender && window.__contractUiState === stateKey) {
+                return;
+            }
+            window.__contractUiState = stateKey;
+            if (required) {
+                $('#contract_attachment_item').show();
+                $('#contract_attachments').attr('lay-verify', 'required');
+                $('.contract-required-star').show();
+            } else {
+                $('#contract_attachment_item').hide();
+                $('#contract_attachments').removeAttr('lay-verify');
+                $('.contract-required-star').hide();
+            }
+            syncContractAttachmentHidden();
+            renderContractAttachmentPreviews();
         }
         
         // 客户类别(customer_type_flag)显隐与校验：统一函数，避免 val 回填但 UI 不动
@@ -2488,6 +2708,9 @@
             
             // 利润更新后，检查是否需要更新凭证上传块的显示/隐藏
             updateVoucherUI();
+            if (typeof updateContractAttachmentUI === 'function') {
+                updateContractAttachmentUI();
+            }
         }
 
 
@@ -3028,6 +3251,144 @@
                 }
             });
             updateInquiryAssignText();
+
+            // ===== 合同附件上传 =====
+            var contractAttachmentInput = $('<input type="file" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx,image/jpeg,image/png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple style="display:none;" id="contract_attachment_input">');
+            $('body').append(contractAttachmentInput);
+
+            $('#upload_contract_attachment').on('click', function () {
+                if (window.__ORDER_SUBMITTING__ === true) {
+                    layer.msg('订单正在提交中，请稍候', { icon: 0, time: 1500 });
+                    return;
+                }
+                if (contractUploadPending > 0) {
+                    layer.msg('合同附件正在上传中，请稍候', { icon: 0, time: 1500 });
+                    return;
+                }
+                if (!Array.isArray(contractAttachmentList)) contractAttachmentList = [];
+                if (contractAttachmentList.length >= MAX_CONTRACT_ATTACHMENTS) {
+                    layer.msg('最多只能上传 ' + MAX_CONTRACT_ATTACHMENTS + ' 个合同附件', { icon: 2 });
+                    return;
+                }
+                contractAttachmentInput.val('');
+                contractAttachmentInput.click();
+            });
+
+            contractAttachmentInput.on('change', function () {
+                var files = this.files;
+                if (!files || !files.length) return;
+                if (!Array.isArray(contractAttachmentList)) contractAttachmentList = [];
+                var remain = MAX_CONTRACT_ATTACHMENTS - contractAttachmentList.length;
+                if (remain <= 0) {
+                    layer.msg('最多只能上传 ' + MAX_CONTRACT_ATTACHMENTS + ' 个合同附件', { icon: 2 });
+                    return;
+                }
+                var queue = [];
+                for (var i = 0; i < files.length && queue.length < remain; i++) {
+                    var f = files[i];
+                    var ext = (f.name.split('.').pop() || '').toLowerCase();
+                    if (CONTRACT_ALLOW_EXT.indexOf(ext) < 0) {
+                        layer.msg('文件 "' + f.name + '" 类型不支持', { icon: 2 });
+                        continue;
+                    }
+                    if (f.size > MAX_CONTRACT_ATTACHMENT_SIZE) {
+                        layer.msg('文件 "' + f.name + '" 超过 20MB', { icon: 2 });
+                        continue;
+                    }
+                    queue.push(f);
+                }
+                if (!queue.length) {
+                    contractAttachmentInput.val('');
+                    return;
+                }
+                var loadingIdx = layer.load(1, { shade: [0.15, '#fff'] });
+                var done = 0, ok = 0;
+                contractUploadPending += queue.length;
+                queue.forEach(function (file) {
+                    var fd = new FormData();
+                    fd.append('file', file);
+                    if (__EDIT_ORDER_ID__ > 0) fd.append('order_id', __EDIT_ORDER_ID__);
+                    $.ajax({
+                        url: "{:url('Order/uploadContractAttachment')}",
+                        type: 'POST',
+                        data: fd,
+                        processData: false,
+                        contentType: false,
+                        dataType: 'json',
+                        success: function (res) {
+                            if (res && res.code === 1 && res.data && res.data.id) {
+                                contractAttachmentList.push(res.data);
+                                ok++;
+                                syncContractAttachmentHidden();
+                                renderContractAttachmentPreviews();
+                            } else {
+                                layer.msg((res && res.msg) ? res.msg : ('上传失败：' + file.name), { icon: 2 });
+                            }
+                        },
+                        error: function () {
+                            layer.msg('上传失败：' + file.name, { icon: 2 });
+                        },
+                        complete: function () {
+                            done++;
+                            contractUploadPending = Math.max(0, contractUploadPending - 1);
+                            if (done >= queue.length) {
+                                layer.close(loadingIdx);
+                                contractAttachmentInput.val('');
+                                if (ok > 0) {
+                                    layer.msg('已上传 ' + ok + ' 个合同附件', { icon: 1, time: 1500 });
+                                }
+                            }
+                        }
+                    });
+                });
+            });
+
+            $(document).on('click', '#contract_attachment_preview_list .btn-remove', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var index = parseInt($(this).attr('data-index'), 10);
+                if (isNaN(index) || index < 0) return;
+                contractAttachmentList.splice(index, 1);
+                syncContractAttachmentHidden();
+                renderContractAttachmentPreviews();
+            });
+
+            $(document).off('click.contractInstant', '#contract_attachment_preview_list .contract-preview-item')
+                .on('click.contractInstant', '#contract_attachment_preview_list .contract-preview-item', function (e) {
+                    if ($(e.target).closest('.btn-remove').length) {
+                        return;
+                    }
+                    if ($(e.target).closest('.js-img-preview').length) {
+                        return;
+                    }
+                    var $card = $(this);
+                    var kind = $card.attr('data-kind') || '';
+                    var preview = $card.attr('data-preview-url') || '';
+                    var download = $card.attr('data-download-url') || '';
+                    var name = $card.attr('data-name') || '合同附件';
+                    if (kind === 'image') {
+                        var $img = $card.find('img.js-img-preview').first();
+                        if (!$img.length) {
+                            layer.msg('图片预览失败，请重新上传', { icon: 2 });
+                            return;
+                        }
+                        if (window.__CONTRACT_IMG_OPENING__) {
+                            return;
+                        }
+                        window.__CONTRACT_IMG_OPENING__ = true;
+                        $img.trigger('click');
+                        window.__CONTRACT_IMG_OPENING__ = false;
+                        return;
+                    }
+                    openContractInstantPreview(kind, preview, download, name);
+                });
+
+            if (orderInfo && Array.isArray(orderInfo.contract_attachment_list)) {
+                contractAttachmentList = orderInfo.contract_attachment_list.slice();
+            } else {
+                contractAttachmentList = [];
+            }
+            updateContractAttachmentUI(true);
             
             // 回填图片预览（多图），并同步隐藏域
             // 必须放在多图变量和函数初始化完成后，避免被后续 var 赋值覆盖
@@ -3415,6 +3776,25 @@
                     return false;
                 }
             }
+
+            if (contractUploadPending > 0) {
+                layer.msg('合同附件正在上传中，请待全部上传完成后再提交', { icon: 0, time: 2200 });
+                return false;
+            }
+            syncContractAttachmentHidden();
+            if (isContractAttachmentRequired()) {
+                if (!Array.isArray(contractAttachmentList) || contractAttachmentList.length < 1) {
+                    $('#contract_attachment_item').show();
+                    layer.msg('利润达到3000元及以上，必须上传合同附件', { icon: 2, time: 2200 });
+                    return false;
+                }
+                if (contractAttachmentList.length > MAX_CONTRACT_ATTACHMENTS) {
+                    layer.msg('合同附件不能超过 ' + MAX_CONTRACT_ATTACHMENTS + ' 个', { icon: 2, time: 2000 });
+                    return false;
+                }
+            }
+            data.field.contract_attachments = $('#contract_attachments').val();
+            data.field.clear_contract_attachments = $('#clear_contract_attachments').val();
 
             // 同步删除标记，删除旧图后利润>=2000时会强制重新上传
             $('#clear_wechat_receipt_image').val(wechatReceiptUrls.length > 0 ? '0' : '1');
