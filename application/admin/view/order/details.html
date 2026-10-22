@@ -102,6 +102,67 @@
             word-break: break-all;
             color: #333;
         }
+        /* 合同附件预览：隐藏最小化；PDF 贴满内容区。样式挂在页面上，切换附件时不随 innerHTML 丢失 */
+        .crm-contract-viewer-layer .layui-layer-min {
+            display: none !important;
+        }
+        .crm-contract-viewer-layer .layui-layer-content {
+            padding: 0 !important;
+            overflow: hidden !important;
+        }
+        .crm-contract-viewer-layer .contract-viewer-wrap {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            background: #111;
+            color: #fff;
+            overflow: hidden;
+        }
+        .crm-contract-viewer-layer .contract-viewer-pdf,
+        .crm-contract-viewer-layer .contract-viewer-media,
+        .crm-contract-viewer-layer .contract-viewer-office {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            z-index: 1;
+            box-sizing: border-box;
+        }
+        .crm-contract-viewer-layer .contract-viewer-pdf {
+            background: #fff;
+            overflow: hidden;
+        }
+        .crm-contract-viewer-layer .contract-viewer-pdf iframe {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: #fff;
+        }
+        .crm-contract-viewer-layer .contract-viewer-media {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 48px 56px 24px;
+            text-align: center;
+            overflow: hidden;
+        }
+        .crm-contract-viewer-layer .contract-viewer-media img {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            min-width: 0;
+            min-height: 0;
+            cursor: zoom-in;
+        }
+        .crm-contract-viewer-layer .contract-viewer-office {
+            overflow: auto;
+            text-align: center;
+        }
         .label-long {
             width: 200px !important;   /* 或 220px，看你整体布局 */
         }
@@ -956,6 +1017,44 @@
                 });
             }
 
+            var contractViewerIndex = null;
+
+            // Layui 2.4.5 无按钮栏时，layer.style 会把内容高度算成 NaN，最大化/还原不会带动阅读区。
+            function syncContractViewerBox(layero) {
+                if (!layero || !layero.length) return;
+                var titleH = layero.children('.layui-layer-title').outerHeight() || 0;
+                var btnH = layero.children('.layui-layer-btn').outerHeight() || 0;
+                var h = layero.innerHeight() - titleH - btnH;
+                if (h < 0) h = 0;
+                layero.children('.layui-layer-content').css('height', h);
+            }
+
+            function bindContractViewerBox(layero) {
+                var timer = null;
+                function schedule() {
+                    if (timer) clearTimeout(timer);
+                    timer = setTimeout(function () {
+                        syncContractViewerBox(layero);
+                    }, 120);
+                }
+                syncContractViewerBox(layero);
+                layero.children('.layui-layer-setwin').find('.layui-layer-max').off('click.contractViewerBox').on('click.contractViewerBox', schedule);
+                var observer = null;
+                if (window.ResizeObserver && layero[0]) {
+                    observer = new ResizeObserver(function () {
+                        syncContractViewerBox(layero);
+                    });
+                    observer.observe(layero[0]);
+                }
+                return function unbindContractViewerBox() {
+                    if (timer) clearTimeout(timer);
+                    if (observer) observer.disconnect();
+                    if (layero && layero.length) {
+                        layero.children('.layui-layer-setwin').find('.layui-layer-max').off('click.contractViewerBox');
+                    }
+                };
+            }
+
             function openContractAttachmentViewer(startIndex) {
                 var list = window.__CONTRACT_ATTACHMENTS__ || [];
                 if (!list.length) return;
@@ -966,19 +1065,21 @@
 
                 function buildBody(i) {
                     var item = list[i] || {};
-                    var html = '<div class="contract-viewer-wrap" style="position:relative;min-height:360px;background:#111;color:#fff;">';
+                    var html = '<div class="contract-viewer-wrap">';
                     if (multi) {
                         html += '<div style="position:absolute;left:12px;top:12px;z-index:3;background:rgba(0,0,0,.55);padding:4px 10px;border-radius:12px;">'
                             + (i + 1) + '/' + list.length + '</div>';
                         html += '<button type="button" class="layui-btn layui-btn-primary layui-btn-sm js-contract-prev" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);z-index:3;">‹</button>';
                         html += '<button type="button" class="layui-btn layui-btn-primary layui-btn-sm js-contract-next" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:3;">›</button>';
                     }
-                    html += '<div class="js-contract-body" style="padding:48px 56px 24px;text-align:center;">';
                     if (item.is_image && item.preview_url) {
-                        html += '<img class="js-img-preview" data-full="' + escapeHtml(item.preview_url) + '" src="' + escapeHtml(item.preview_url) + '" style="max-width:100%;max-height:70vh;cursor:zoom-in;">';
+                        html += '<div class="js-contract-body contract-viewer-media">';
+                        html += '<img class="js-img-preview" data-full="' + escapeHtml(item.preview_url) + '" src="' + escapeHtml(item.preview_url) + '" alt="' + escapeHtml(item.name || '') + '">';
                     } else if (item.is_pdf && item.preview_url) {
-                        html += '<iframe src="' + escapeHtml(item.preview_url) + '" style="width:100%;height:70vh;border:0;background:#fff;"></iframe>';
+                        html += '<div class="js-contract-body contract-viewer-pdf">';
+                        html += '<iframe src="' + escapeHtml(item.preview_url) + '" title="PDF预览"></iframe>';
                     } else {
+                        html += '<div class="js-contract-body contract-viewer-office">';
                         html += '<div style="padding:80px 20px;"><div style="font-size:42px;margin-bottom:16px;">DOC</div>'
                             + '<div style="margin-bottom:12px;">' + escapeHtml(item.name || '') + '</div>'
                             + '<a class="layui-btn" href="' + escapeHtml(item.download_url || item.preview_url || '#') + '" target="_blank" rel="noopener">下载附件</a></div>';
@@ -987,13 +1088,18 @@
                     return html;
                 }
 
+                var unbindViewerBox = null;
                 var layerIndex = layer.open({
                     type: 1,
                     title: '合同附件预览',
                     area: multi ? ['860px', '80%'] : ['780px', '78%'],
                     shadeClose: true,
+                    maxmin: true,
+                    skin: 'crm-contract-viewer-layer',
                     content: buildBody(idx),
-                    success: function (layero) {
+                    success: function (layero, index) {
+                        contractViewerIndex = index;
+                        unbindViewerBox = bindContractViewerBox(layero);
                         function renderAt(i) {
                             idx = i;
                             layero.find('.layui-layer-content').html(buildBody(idx));
@@ -1008,6 +1114,15 @@
                             });
                         }
                         bindNav();
+                    },
+                    end: function () {
+                        if (unbindViewerBox) {
+                            unbindViewerBox();
+                            unbindViewerBox = null;
+                        }
+                        if (contractViewerIndex === layerIndex) {
+                            contractViewerIndex = null;
+                        }
                     }
                 });
                 return layerIndex;
@@ -1290,10 +1405,12 @@
             })();
 
             // ====================== 订单详情 ESC 关闭逻辑 ======================
-            // 1）未打开图片预览时，ESC 直接关闭当前订单详情弹窗
-            // 2）打开图片预览后，第一次 ESC 只关闭图片预览；第二次 ESC 再关闭订单详情
-            // 3）当仍存在图片预览层时，ESC 不允许把订单详情 iframe 一起关掉
-            // 4）用命名空间绑定，防止重复绑定和内存泄漏
+            // 1）未打开图片预览、合同附件预览时，ESC 直接关闭当前订单详情弹窗
+            // 2）打开图片预览后，第一次 ESC 只关闭图片预览
+            // 3）合同附件预览打开时，ESC 只关闭该预览，不关闭订单详情
+            // 4）当仍存在图片预览层时，ESC 不允许把订单详情 iframe 一起关掉
+            // 5）用命名空间绑定，防止重复绑定和内存泄漏
+            // 焦点在 Chrome PDF 阅读器内部时，页面收不到 ESC，不拦截阅读器内部按键
             $(document).off('keydown.detailsEsc').on('keydown.detailsEsc', function (e) {
                 e = e || window.event;
                 var key = e.key || e.keyCode;
@@ -1316,6 +1433,21 @@
 
                     // 兜底：如果当前页面仍存在预览容器节点，也视为预览打开，防止误关详情弹窗
                     if (document.getElementById('previewWrap') || document.getElementById('previewZoomImg')) {
+                        return;
+                    }
+
+                    // 合同附件预览仍打开时，只关这一层，不关外层订单详情
+                    if (contractViewerIndex != null && document.getElementById('layui-layer' + contractViewerIndex)) {
+                        if (e.preventDefault) e.preventDefault();
+                        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+                        if (e.stopPropagation) e.stopPropagation();
+                        try {
+                            if (typeof layer !== 'undefined' && layer && layer.close) {
+                                layer.close(contractViewerIndex);
+                            }
+                        } catch (errContract) {
+                            // 忽略关闭合同预览时的异常
+                        }
                         return;
                     }
 

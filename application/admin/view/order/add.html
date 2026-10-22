@@ -159,6 +159,30 @@
             text-align: center;
             padding: 8px;
         }
+        /* 合同 PDF 预览：隐藏最小化；阅读区贴合 Layui 内容区，随最大化/还原变化 */
+        .crm-contract-pdf-layer .layui-layer-min {
+            display: none !important;
+        }
+        .crm-contract-pdf-layer .layui-layer-content {
+            padding: 0 !important;
+            overflow: hidden !important;
+        }
+        .crm-contract-pdf-layer .contract-pdf-fill {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            background: #fff;
+            overflow: hidden;
+        }
+        .crm-contract-pdf-layer .contract-pdf-fill iframe {
+            display: block;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: #fff;
+        }
         .label-long {
             width: 200px !important;   /* 或 220px，看你整体布局 */
         }
@@ -2276,6 +2300,42 @@
             );
         }
 
+        // Layui 2.4.5 无按钮栏时，layer.style 会把内容高度算成 NaN，最大化/还原不会带动阅读区。
+        function syncContractPdfLayerBox(layero) {
+            if (!layero || !layero.length) return;
+            var titleH = layero.children('.layui-layer-title').outerHeight() || 0;
+            var btnH = layero.children('.layui-layer-btn').outerHeight() || 0;
+            var h = layero.innerHeight() - titleH - btnH;
+            if (h < 0) h = 0;
+            layero.children('.layui-layer-content').css('height', h);
+        }
+
+        function bindContractPdfLayerBox(layero) {
+            var timer = null;
+            function schedule() {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(function () {
+                    syncContractPdfLayerBox(layero);
+                }, 120);
+            }
+            syncContractPdfLayerBox(layero);
+            layero.children('.layui-layer-setwin').find('.layui-layer-max').off('click.contractPdfBox').on('click.contractPdfBox', schedule);
+            var observer = null;
+            if (window.ResizeObserver && layero[0]) {
+                observer = new ResizeObserver(function () {
+                    syncContractPdfLayerBox(layero);
+                });
+                observer.observe(layero[0]);
+            }
+            return function unbindContractPdfLayerBox() {
+                if (timer) clearTimeout(timer);
+                if (observer) observer.disconnect();
+                if (layero && layero.length) {
+                    layero.children('.layui-layer-setwin').find('.layui-layer-max').off('click.contractPdfBox');
+                }
+            };
+        }
+
         function openContractInstantPreview(kind, previewUrl, downloadUrl, fileName) {
             previewUrl = previewUrl || '';
             downloadUrl = downloadUrl || previewUrl;
@@ -2285,14 +2345,26 @@
                     layer.msg('PDF 预览地址无效，请重新上传', { icon: 2 });
                     return;
                 }
+                var unbindPdfBox = null;
                 layer.open({
                     type: 1,
                     title: 'PDF预览',
                     shadeClose: true,
+                    maxmin: true,
+                    skin: 'crm-contract-pdf-layer',
                     area: ['860px', '80%'],
-                    content: '<div style="height:70vh;background:#fff;">'
-                        + '<iframe src="' + escapeContractHtml(previewUrl) + '" title="PDF预览" style="width:100%;height:100%;border:0;background:#fff;"></iframe>'
-                        + '</div>'
+                    content: '<div class="contract-pdf-fill">'
+                        + '<iframe src="' + escapeContractHtml(previewUrl) + '" title="PDF预览"></iframe>'
+                        + '</div>',
+                    success: function (layero) {
+                        unbindPdfBox = bindContractPdfLayerBox(layero);
+                    },
+                    end: function () {
+                        if (unbindPdfBox) {
+                            unbindPdfBox();
+                            unbindPdfBox = null;
+                        }
+                    }
                 });
                 return;
             }
