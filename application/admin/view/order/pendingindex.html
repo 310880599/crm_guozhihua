@@ -667,6 +667,59 @@
 </script>
 
 
+    <style>
+        /* 只作用于本页「填写拒绝理由」弹窗，不影响其他 Layui 下拉框 */
+        .layui-layer-order-reject.layui-layer-page .layui-layer-content {
+            overflow: auto;
+        }
+        .layui-layer-order-reject .order-reject-dialog {
+            box-sizing: border-box;
+            padding: 15px 15px 236px;
+        }
+        .layui-layer-order-reject .order-reject-remark {
+            box-sizing: border-box;
+            height: 100px;
+            min-height: 100px;
+            resize: none;
+        }
+        .layui-layer-order-reject .order-reject-history-label {
+            margin: 10px 0 8px;
+            height: 22px;
+            line-height: 22px;
+            font-size: 14px;
+            color: #333;
+        }
+        .layui-layer-order-reject .order-reject-history-status {
+            line-height: 22px;
+            font-size: 13px;
+            color: #999;
+        }
+        .layui-layer-order-reject .order-reject-dialog .layui-form-select .layui-input {
+            box-sizing: border-box;
+            height: 38px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        /*
+         * Layui 2.4.5：dd 行高 36px，dl 为 border-box，上下 padding 各 5px，上下边框各 1px。
+         * 下拉含 1 条「请选择」占位 + 最多 5 条有效理由 = 6 行。
+         * max-height = 6*36 + 10 + 2 = 228px。第 7 行（第 6 条有效理由）起出现纵向滚动条。
+         * 弹窗底部预留 236px：下拉 top 为 42px，选择框高 38px，228px 列表落在预留区内，避免被按钮挡住。
+         */
+        .layui-layer-order-reject .order-reject-dialog .layui-form-select dl {
+            box-sizing: border-box;
+            max-height: 228px;
+            overflow-y: auto;
+        }
+        .layui-layer-order-reject .order-reject-dialog .layui-form-select dl dd {
+            line-height: 36px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+    </style>
+
     {include file="common/foot"/}
     <script src="/static/admin/js/sortable.min.js"></script>
     <script src="/static/admin/js/client_follow_dialogs.js"></script>
@@ -674,6 +727,27 @@
         layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element', 'layer'], function () {
             const { table, form, laydate, $, upload, util, element } = layui;
             var layer = layui.layer;
+            var activeRejectDialogSeq = 0;
+            var rejectSubmittingLayerIndex = 0;
+
+            if (!form.__orderRejectReasonBound) {
+                form.__orderRejectReasonBound = true;
+                form.on('select(orderRejectReasonHistory)', function (data) {
+                    var $dialog = $(data.elem).closest('.order-reject-dialog');
+                    if (!$dialog.length) {
+                        return;
+                    }
+                    var key = data.value == null ? '' : String(data.value);
+                    if (key === '') {
+                        return;
+                    }
+                    var reasonMap = $dialog.data('rejectReasonMap') || {};
+                    if (!Object.prototype.hasOwnProperty.call(reasonMap, key)) {
+                        return;
+                    }
+                    $dialog.find('#audit_remark_input').val(reasonMap[key]);
+                });
+            }
 
             // 操作列图标悬浮提示（待审核页独立 namespace，与我的订单行为一致）
             var pendingActionIconTipIndex = null;
@@ -1826,39 +1900,145 @@
 
                 // 审核拒绝
                 else if (obj.event === 'reject') {
+                    activeRejectDialogSeq += 1;
+                    var requestSeq = activeRejectDialogSeq;
+                    var rejectOrderId = data.id;
+                    var viewHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+                    var layerHeight = viewHeight < 580 ? Math.max(360, viewHeight - 24) : 540;
                     layer.open({
                         type: 1,
                         title: '填写拒绝理由',
-                        area: ['500px', '260px'],
+                        skin: 'layui-layer-order-reject',
+                        area: ['500px', layerHeight + 'px'],
                         btn: ['确定', '取消'],
-                        content: '<div style="padding:15px;">'
-                            + '<textarea id="audit_remark_input" '
-                            + 'class="layui-textarea" '
+                        content: '<div class="order-reject-dialog" id="order-reject-dialog-' + requestSeq + '">'
+                            + '<textarea id="audit_remark_input" class="layui-textarea order-reject-remark" '
                             + 'placeholder="请输入审核不通过的理由，必填"></textarea>'
+                            + '<div class="order-reject-history-label">历史拒绝理由（最近10条）</div>'
+                            + '<div class="order-reject-history-status">正在加载历史拒绝理由...</div>'
+                            + '<form class="layui-form order-reject-history-form" lay-filter="order-reject-history-form" style="display:none;" onsubmit="return false;">'
+                            + '<select lay-filter="orderRejectReasonHistory">'
+                            + '<option value="">请选择历史拒绝理由</option>'
+                            + '</select>'
+                            + '</form>'
                             + '</div>',
+                        success: function (layero) {
+                            var $content = layero.find('.layui-layer-content');
+                            var $dialog = layero.find('.order-reject-dialog');
+                            if ($dialog.outerHeight() <= $content.height() + 2) {
+                                $content.css('overflow', 'visible');
+                            }
+                            $.ajax({
+                                url: "{:url('Order/rejectReasonOptions')}",
+                                type: 'post',
+                                dataType: 'json',
+                                timeout: 15000,
+                                success: function (res) {
+                                    if (requestSeq !== activeRejectDialogSeq) {
+                                        return;
+                                    }
+                                    var $current = $('#order-reject-dialog-' + requestSeq);
+                                    if (!$current.length) {
+                                        return;
+                                    }
+                                    var $status = $current.find('.order-reject-history-status');
+                                    if (!res || res.code !== 1 || !$.isArray(res.data)) {
+                                        $status.text('历史理由暂时无法加载，请直接填写');
+                                        return;
+                                    }
+                                    if (!res.data.length) {
+                                        $status.text('暂无历史拒绝理由，请手动填写');
+                                        return;
+                                    }
+                                    var $select = $current.find('select');
+                                    $select.empty();
+                                    $select.append($('<option>').val('').text('请选择历史拒绝理由'));
+                                    var reasonMap = {};
+                                    var count = 0;
+                                    $.each(res.data, function (_, item) {
+                                        if (count >= 10) {
+                                            return false;
+                                        }
+                                        var text = $.trim(item == null ? '' : String(item));
+                                        if (!text) {
+                                            return;
+                                        }
+                                        count += 1;
+                                        var key = String(count);
+                                        reasonMap[key] = text;
+                                        $select.append($('<option>').val(key).text(text));
+                                    });
+                                    if (count === 0) {
+                                        $status.text('暂无历史拒绝理由，请手动填写');
+                                        return;
+                                    }
+                                    $current.data('rejectReasonMap', reasonMap);
+                                    $status.hide();
+                                    $current.find('.order-reject-history-form').show();
+                                    form.render('select', 'order-reject-history-form');
+                                },
+                                error: function () {
+                                    if (requestSeq !== activeRejectDialogSeq) {
+                                        return;
+                                    }
+                                    var $current = $('#order-reject-dialog-' + requestSeq);
+                                    if (!$current.length) {
+                                        return;
+                                    }
+                                    $current.find('.order-reject-history-status').text('历史理由暂时无法加载，请直接填写');
+                                }
+                            });
+                        },
+                        end: function () {
+                            if (activeRejectDialogSeq === requestSeq) {
+                                activeRejectDialogSeq = 0;
+                            }
+                            if (rejectSubmittingLayerIndex === requestSeq) {
+                                rejectSubmittingLayerIndex = 0;
+                            }
+                        },
                         yes: function (index) {
-                            var reason = $('#audit_remark_input').val().trim();
+                            if (rejectSubmittingLayerIndex === requestSeq) {
+                                return;
+                            }
+                            var $dialog = $('#order-reject-dialog-' + requestSeq);
+                            var reason = $.trim($dialog.find('#audit_remark_input').val() || '');
                             if (!reason) {
                                 layer.msg('请先填写拒绝理由', { icon: 5 });
                                 return;
                             }
 
+                            rejectSubmittingLayerIndex = requestSeq;
+                            var $yesBtn = $('#layui-layer' + index).find('.layui-layer-btn0');
+                            $yesBtn.css('pointer-events', 'none');
                             var loading = layer.load(1, { shade: [0.1, '#fff'] });
 
-                            // 新增一个后端接口：Order/reject （你可以根据习惯改成别的）
-                            $.post("{:url('Order/rejectIndex')}", {
-                                id: data.id,
-                                audit_remark: reason
-                            }, function (res) {
-                                layer.close(loading);
-                                if (res.code === 0 || res.code === 1) {
-                                    layer.msg(res.msg || '已拒绝该订单', { time: 1000, icon: 1 });
-                                    layer.close(index);
-                                    // ====== BEGIN 修改：reject 后在保留当前排序状态的前提下，从数据库恢复列宽/列配置/列顺序 ======
-                                    reloadTableKeepSort();
-                                    // ====== END 修改：reject 后在保留当前排序状态的前提下，从数据库恢复列宽/列配置/列顺序 ======
-                                } else {
-                                    layer.msg(res.msg || '操作失败', { time: 2000, icon: 2 });
+                            $.ajax({
+                                url: "{:url('Order/rejectIndex')}",
+                                type: 'post',
+                                dataType: 'json',
+                                timeout: 30000,
+                                data: {
+                                    id: rejectOrderId,
+                                    audit_remark: reason
+                                },
+                                success: function (res) {
+                                    layer.close(loading);
+                                    if (res && res.code === 1) {
+                                        layer.msg(res.msg || '已拒绝该订单', { time: 1000, icon: 1 });
+                                        layer.close(index);
+                                        reloadTableKeepSort();
+                                        return;
+                                    }
+                                    rejectSubmittingLayerIndex = 0;
+                                    $yesBtn.css('pointer-events', '');
+                                    layer.msg((res && res.msg) ? res.msg : '操作失败', { time: 2000, icon: 2 });
+                                },
+                                error: function () {
+                                    layer.close(loading);
+                                    rejectSubmittingLayerIndex = 0;
+                                    $yesBtn.css('pointer-events', '');
+                                    layer.msg('网络或请求失败，请稍后重试', { time: 2000, icon: 2 });
                                 }
                             });
                         }

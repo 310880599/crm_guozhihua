@@ -3569,57 +3569,90 @@ class Order extends Common
         return ['success' => true, 'msg' => '订单通过成功', 'data' => []];
     }
 
+    /**
+     * 审核拒绝接口的登录与角色校验。
+     * 与待审核页拒绝按钮一致：超级管理员，或产品总监、财务专员。
+     * 身份只取服务端会话，不读取前端传入的审核人。
+     *
+     * @return \think\response\Json|null 通过时返回 null
+     */
+    private function rejectAuditorDeniedResponse()
+    {
+        $aid = (int)session('aid');
+        if ($aid <= 0) {
+            return json(['code' => 0, 'msg' => '请先登录']);
+        }
+        if (!OrderService::canAuditRejectOrder()) {
+            return json(['code' => 0, 'msg' => '您没有审核拒绝权限']);
+        }
+        return null;
+    }
+
     //订单审核拒绝的处理
     public function rejectIndex()
     {
+        if (!request()->isPost()) {
+            return json(['code' => 0, 'msg' => '非法请求']);
+        }
+
+        $denied = $this->rejectAuditorDeniedResponse();
+        if ($denied !== null) {
+            return $denied;
+        }
+
         $id = input('post.id/d', 0);
-        $reason = input('post.audit_remark/s', '');
-
-        if (!$id || $reason === '') {
-            return json(['code' => 0, 'msg' => '参数错误']);
+        $rawReason = input('post.audit_remark', '');
+        if (!is_scalar($rawReason)) {
+            return json(['code' => 0, 'msg' => '拒绝理由格式不正确']);
         }
 
-        $adminId = session('aid');
-
-        // 先查询订单信息，获取联系方式
-        $orderinfo = Db::name('crm_client_order')->where('id', $id)->find();
-        if (!$orderinfo) {
-            return json(['code' => 0, 'msg' => '订单不存在']);
+        $result = OrderService::rejectPendingOrder($id, (string)$rawReason, (int)session('aid'));
+        if (empty($result['success'])) {
+            return json(['code' => 0, 'msg' => isset($result['msg']) ? (string)$result['msg'] : '操作失败，请重试']);
         }
 
-        $res = Db::name('crm_client_order')
-            ->where('id', $id)
-            ->update([
-                'check_status'  => 3,
-                'audit_user_id' => $adminId,
-                'audit_time'    => date('Y-m-d H:i:s'),
-                'audit_remark'  => $reason,
+        // 通知修剪放在拒绝事务提交之后，修剪失败不能把已成功的拒绝报成失败
+        $targetUser = isset($result['target_user']) ? (string)$result['target_user'] : '';
+        try {
+            $this->autoTrimNotifications($targetUser);
+        } catch (\Throwable $e) {
+            try {
+                \think\facade\Log::write('[OrderReject] 通知修剪失败：' . $e->getMessage(), 'error');
+            } catch (\Throwable $logError) {
+            }
+        }
+
+        return json(['code' => 1, 'msg' => '已拒绝该订单']);
+    }
+
+    /**
+     * 拒绝弹窗：最近 10 条不重复的历史拒绝理由（只读）
+     */
+    public function rejectReasonOptions()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => 0, 'msg' => '非法请求', 'data' => []]);
+        }
+
+        $denied = $this->rejectAuditorDeniedResponse();
+        if ($denied !== null) {
+            return $denied;
+        }
+
+        $result = OrderService::listRecentRejectReasons();
+        if (empty($result['success'])) {
+            return json([
+                'code' => 0,
+                'msg'  => isset($result['msg']) ? (string)$result['msg'] : '历史理由暂时无法加载',
+                'data' => [],
             ]);
-
-        if ($res !== false) {
-
-            // ★ 新增：插入审核拒绝通知
-            Db::name('crm_order_notifications')->insert([
-                'order_id' => $id,
-                'order_no' => $orderinfo['order_no'], 
-                'contact' => $orderinfo['contact'],
-                'type' => 2, // 2=审核拒绝
-                'message' => '订单编号为' . $orderinfo['order_no'] . '的订单审核被拒绝',
-                'target_user' => $orderinfo['pr_user'], // 订单负责人
-                'is_read' => 0,
-                'create_time' => date('Y-m-d H:i:s')
-            ]);
-
-            // ★ 插入通知后，立即执行自动归档/软删除处理
-            $this->autoTrimNotifications($orderinfo['pr_user']);
-        
-
-
-            return json(['code' => 1, 'msg' => '已拒绝该订单']);
-        } else {
-            return json(['code' => 0, 'msg' => '操作失败，请重试']);
         }
-       
+
+        return json([
+            'code' => 1,
+            'msg'  => '获取成功',
+            'data' => isset($result['data']) && is_array($result['data']) ? $result['data'] : [],
+        ]);
     }
 
     

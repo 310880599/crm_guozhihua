@@ -2011,4 +2011,198 @@ class OrderService
         }
     }
     // ===== 防重复提交：END =====
+
+    /**
+     * 是否允许审核拒绝订单，以及查看历史拒绝理由。
+     * 仅超级管理员（admin_id=1）、产品总监（group_id=13）、财务专员（group_id=15）。
+     * 不包含“用户名是 admin”等更宽的订单管理权限。
+     *
+     * @return bool
+     */
+    public static function canAuditRejectOrder()
+    {
+        $aid = (int)session('aid');
+        $gid = (int)session('gid');
+        return $aid === 1 || in_array($gid, [13, 15], true);
+    }
+
+    /**
+     * 拒绝一条待审核订单。
+     * 同一事务内更新订单、写入永久历史、写入拒绝通知。任一写入失败则整单回滚。
+     *
+     * @param int $orderId
+     * @param string $reason 原始理由，方法内去掉首尾空格
+     * @param int $auditUserId 当前登录审核人，来自服务端会话
+     * @return array{success:bool,msg:string,target_user?:string}
+     */
+    public static function rejectPendingOrder($orderId, $reason, $auditUserId)
+    {
+        $orderId = (int)$orderId;
+        $auditUserId = (int)$auditUserId;
+        $reason = trim((string)$reason);
+
+        if ($orderId <= 0 || $auditUserId <= 0) {
+            return ['success' => false, 'msg' => '参数错误'];
+        }
+        if ($reason === '') {
+            return ['success' => false, 'msg' => '拒绝理由不能为空'];
+        }
+        if (self::utf8Length($reason) > 500) {
+            return ['success' => false, 'msg' => '拒绝理由不能超过500个字符'];
+        }
+
+        try {
+            $order = Db::name('crm_client_order')->where('id', $orderId)->find();
+        } catch (\Throwable $e) {
+            self::logOrderReject('查询待拒绝订单失败：' . $e->getMessage());
+            return ['success' => false, 'msg' => '审核拒绝失败，请稍后重试'];
+        }
+        if (empty($order)) {
+            return ['success' => false, 'msg' => '订单不存在'];
+        }
+        if ((int)($order['check_status'] ?? 0) !== 1) {
+            return ['success' => false, 'msg' => '只有待审核订单才能拒绝'];
+        }
+
+        $now = date('Y-m-d H:i:s');
+        Db::startTrans();
+        try {
+            $affected = Db::name('crm_client_order')
+                ->where('id', $orderId)
+                ->where('check_status', 1)
+                ->update([
+                    'check_status'  => 3,
+                    'audit_remark'  => $reason,
+                    'audit_user_id' => $auditUserId,
+                    'audit_time'    => $now,
+                ]);
+            if ((int)$affected !== 1) {
+                try {
+                    Db::rollback();
+                } catch (\Throwable $rollbackError) {
+                }
+                return ['success' => false, 'msg' => '订单状态已变化，拒绝未生效'];
+            }
+
+            $historyId = Db::name('crm_order_reject_history')->insertGetId([
+                'order_id'       => $orderId,
+                'reject_reason'  => $reason,
+                'audit_user_id'  => $auditUserId,
+                'audit_time'     => $now,
+            ]);
+            if (empty($historyId)) {
+                throw new \RuntimeException('审核拒绝历史写入失败');
+            }
+
+            $noticeId = Db::name('crm_order_notifications')->insertGetId([
+                'order_id'     => $orderId,
+                'order_no'     => $order['order_no'],
+                'contact'      => $order['contact'],
+                'type'         => 2,
+                'message'      => '订单编号为' . $order['order_no'] . '的订单审核被拒绝',
+                'target_user'  => $order['pr_user'],
+                'is_read'      => 0,
+                'create_time'  => $now,
+            ]);
+            if (empty($noticeId)) {
+                throw new \RuntimeException('审核拒绝通知写入失败');
+            }
+
+            Db::commit();
+        } catch (\Throwable $e) {
+            try {
+                Db::rollback();
+            } catch (\Throwable $rollbackError) {
+            }
+            self::logOrderReject('审核拒绝事务失败：' . $e->getMessage());
+            return ['success' => false, 'msg' => '审核拒绝失败，请稍后重试'];
+        }
+
+        return [
+            'success'     => true,
+            'msg'         => '已拒绝该订单',
+            'target_user' => (string)($order['pr_user'] ?? ''),
+        ];
+    }
+
+    /**
+     * 最近 10 条不重复拒绝理由。
+     * 先按去掉首尾空格后的完整文本分组，再按该理由最近使用时间倒序取 10 条。
+     * 不读取 crm_client_order.audit_remark，也不把全表载入 PHP。
+     *
+     * @return array{success:bool,msg:string,data:array}
+     */
+    public static function listRecentRejectReasons()
+    {
+        $sql = "SELECT t.reject_reason
+FROM (
+    SELECT MAX(TRIM(`reject_reason`)) AS reject_reason,
+           MAX(`audit_time`) AS last_audit_time,
+           MAX(`id`) AS last_id
+    FROM `crm_order_reject_history`
+    WHERE `reject_reason` IS NOT NULL
+      AND CHAR_LENGTH(TRIM(`reject_reason`)) > 0
+    GROUP BY BINARY TRIM(`reject_reason`)
+) t
+ORDER BY t.last_audit_time DESC, t.last_id DESC
+LIMIT 10";
+
+        try {
+            $rows = Db::query($sql);
+        } catch (\Throwable $e) {
+            self::logOrderReject('查询历史拒绝理由失败：' . $e->getMessage());
+            return ['success' => false, 'msg' => '历史理由暂时无法加载', 'data' => []];
+        }
+
+        if (!is_array($rows)) {
+            return ['success' => false, 'msg' => '历史理由暂时无法加载', 'data' => []];
+        }
+
+        $list = [];
+        foreach ($rows as $row) {
+            $text = trim((string)($row['reject_reason'] ?? ''));
+            if ($text === '' || self::utf8Length($text) > 500) {
+                continue;
+            }
+            if (in_array($text, $list, true)) {
+                continue;
+            }
+            $list[] = $text;
+            if (count($list) >= 10) {
+                break;
+            }
+        }
+
+        return ['success' => true, 'msg' => '获取成功', 'data' => $list];
+    }
+
+    /**
+     * UTF-8 字符数。mbstring 不可用时按 Unicode 码点计数，不按字节截断。
+     *
+     * @param string $text
+     * @return int
+     */
+    private static function utf8Length($text)
+    {
+        $text = (string)$text;
+        if (function_exists('mb_strlen')) {
+            return (int)mb_strlen($text, 'UTF-8');
+        }
+        if (preg_match_all('/./u', $text, $matches)) {
+            return count($matches[0]);
+        }
+        return 0;
+    }
+
+    /**
+     * @param string $message
+     * @return void
+     */
+    private static function logOrderReject($message)
+    {
+        try {
+            \think\facade\Log::write('[OrderReject] ' . (string)$message, 'error');
+        } catch (\Throwable $e) {
+        }
+    }
 }
