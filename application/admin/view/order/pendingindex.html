@@ -668,13 +668,16 @@
 
 
     <style>
-        /* 只作用于本页「填写拒绝理由」弹窗，不影响其他 Layui 下拉框 */
+        /* 只作用于本页「填写拒绝理由」弹窗，不影响页面其他 Layui 组件 */
         .layui-layer-order-reject.layui-layer-page .layui-layer-content {
             overflow: auto;
+            overscroll-behavior: contain;
         }
         .layui-layer-order-reject .order-reject-dialog {
             box-sizing: border-box;
-            padding: 15px 15px 236px;
+            max-width: 100%;
+            padding: 15px;
+            overflow-x: hidden;
         }
         .layui-layer-order-reject .order-reject-remark {
             box-sizing: border-box;
@@ -694,29 +697,66 @@
             font-size: 13px;
             color: #999;
         }
-        .layui-layer-order-reject .order-reject-dialog .layui-form-select .layui-input {
+        /*
+         * 固定可见 5 条：每行 38px（含行间分隔线，border-box），列表上下边框各 1px。
+         * max-height = 5*38 + 2 = 192px。不足 5 条时随内容变矮；第 6 条起出现纵向滚动条。
+         */
+        .layui-layer-order-reject .order-reject-history-list {
+            box-sizing: border-box;
+            max-height: 192px;
+            max-height: calc(38px * 5 + 2px);
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            border: 1px solid #e6e6e6;
+            border-radius: 2px;
+            background: #fff;
+        }
+        .layui-layer-order-reject .order-reject-history-item {
+            display: flex;
+            align-items: center;
             box-sizing: border-box;
             height: 38px;
+            margin: 0;
+            padding: 0 12px;
+            overflow: hidden;
+            cursor: pointer;
+            background: #fff;
+            font-weight: 400;
+            color: #333;
+        }
+        .layui-layer-order-reject .order-reject-history-item + .order-reject-history-item {
+            border-top: 1px solid #f2f2f2;
+        }
+        .layui-layer-order-reject .order-reject-history-item:hover {
+            background: #f8f8f8;
+        }
+        .layui-layer-order-reject .order-reject-history-item.is-selected,
+        .layui-layer-order-reject .order-reject-history-item.is-selected:hover {
+            background: #e8f3ff;
+            box-shadow: inset 3px 0 0 #1E9FFF;
+        }
+        .layui-layer-order-reject .order-reject-history-item input[type="radio"] {
+            flex: 0 0 16px;
+            width: 16px;
+            height: 16px;
+            margin: 0 8px 0 0;
+            accent-color: #1E9FFF;
+        }
+        .layui-layer-order-reject .order-reject-history-item input[type="radio"]:focus {
+            outline: 2px solid #1E9FFF;
+            outline-offset: 1px;
+        }
+        .layui-layer-order-reject .order-reject-history-text {
+            flex: 1 1 auto;
+            min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-        }
-        /*
-         * Layui 2.4.5：dd 行高 36px，dl 为 border-box，上下 padding 各 5px，上下边框各 1px。
-         * 下拉含 1 条「请选择」占位 + 最多 5 条有效理由 = 6 行。
-         * max-height = 6*36 + 10 + 2 = 228px。第 7 行（第 6 条有效理由）起出现纵向滚动条。
-         * 弹窗底部预留 236px：下拉 top 为 42px，选择框高 38px，228px 列表落在预留区内，避免被按钮挡住。
-         */
-        .layui-layer-order-reject .order-reject-dialog .layui-form-select dl {
-            box-sizing: border-box;
-            max-height: 228px;
-            overflow-y: auto;
-        }
-        .layui-layer-order-reject .order-reject-dialog .layui-form-select dl dd {
-            line-height: 36px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            font-size: 14px;
+            line-height: 38px;
         }
     </style>
 
@@ -730,14 +770,15 @@
             var activeRejectDialogSeq = 0;
             var rejectSubmittingLayerIndex = 0;
 
-            if (!form.__orderRejectReasonBound) {
-                form.__orderRejectReasonBound = true;
-                form.on('select(orderRejectReasonHistory)', function (data) {
-                    var $dialog = $(data.elem).closest('.order-reject-dialog');
+            if (!form.__orderRejectHistoryListBound) {
+                form.__orderRejectHistoryListBound = true;
+                $(document).on('change.orderRejectHistoryList', '.layui-layer-order-reject .order-reject-history-list input[type="radio"]', function () {
+                    var $radio = $(this);
+                    var $dialog = $radio.closest('.order-reject-dialog');
                     if (!$dialog.length) {
                         return;
                     }
-                    var key = data.value == null ? '' : String(data.value);
+                    var key = $radio.val() == null ? '' : String($radio.val());
                     if (key === '') {
                         return;
                     }
@@ -745,7 +786,40 @@
                     if (!Object.prototype.hasOwnProperty.call(reasonMap, key)) {
                         return;
                     }
+                    $dialog.find('.order-reject-history-item').removeClass('is-selected');
+                    $radio.closest('.order-reject-history-item').addClass('is-selected');
                     $dialog.find('#audit_remark_input').val(reasonMap[key]);
+                });
+            }
+
+            function adjustOrderRejectLayer(layerIndex) {
+                var layero = $('#layui-layer' + layerIndex);
+                if (!layero.length || !layero.find('.order-reject-dialog').length) {
+                    return;
+                }
+                var $content = layero.find('.layui-layer-content');
+                $content.css({ height: 'auto', overflow: 'visible' });
+                layero.css({ height: 'auto', overflow: 'visible' });
+                var viewHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+                var maxLayerHeight = Math.min(viewHeight - 16, Math.max(120, viewHeight - 24));
+                var naturalHeight = layero.outerHeight();
+                var fittedHeight = Math.min(naturalHeight, maxLayerHeight);
+                var top = Math.max(8, Math.round((viewHeight - fittedHeight) / 2));
+                if (naturalHeight <= maxLayerHeight) {
+                    layero.css('top', top + 'px');
+                    return;
+                }
+                var titleH = layero.find('.layui-layer-title').outerHeight() || 0;
+                var btnH = layero.find('.layui-layer-btn').outerHeight() || 0;
+                var contentPad = (parseFloat($content.css('padding-top')) || 0) + (parseFloat($content.css('padding-bottom')) || 0);
+                layero.css({
+                    height: maxLayerHeight + 'px',
+                    top: top + 'px',
+                    overflow: 'hidden'
+                });
+                $content.css({
+                    height: Math.max(40, maxLayerHeight - titleH - btnH - contentPad) + 'px',
+                    overflow: 'auto'
                 });
             }
 
@@ -1903,31 +1977,21 @@
                     activeRejectDialogSeq += 1;
                     var requestSeq = activeRejectDialogSeq;
                     var rejectOrderId = data.id;
-                    var viewHeight = window.innerHeight || document.documentElement.clientHeight || 800;
-                    var layerHeight = viewHeight < 580 ? Math.max(360, viewHeight - 24) : 540;
                     layer.open({
                         type: 1,
                         title: '填写拒绝理由',
                         skin: 'layui-layer-order-reject',
-                        area: ['500px', layerHeight + 'px'],
+                        area: ['500px', ''],
                         btn: ['确定', '取消'],
-                        content: '<div class="order-reject-dialog" id="order-reject-dialog-' + requestSeq + '">'
+                        content: '<div class="order-reject-dialog" id="order-reject-dialog-' + requestSeq + '" data-reject-seq="' + requestSeq + '">'
                             + '<textarea id="audit_remark_input" class="layui-textarea order-reject-remark" '
                             + 'placeholder="请输入审核不通过的理由，必填"></textarea>'
                             + '<div class="order-reject-history-label">历史拒绝理由（最近10条）</div>'
                             + '<div class="order-reject-history-status">正在加载历史拒绝理由...</div>'
-                            + '<form class="layui-form order-reject-history-form" lay-filter="order-reject-history-form" style="display:none;" onsubmit="return false;">'
-                            + '<select lay-filter="orderRejectReasonHistory">'
-                            + '<option value="">请选择历史拒绝理由</option>'
-                            + '</select>'
-                            + '</form>'
+                            + '<div class="order-reject-history-list" role="radiogroup" aria-label="历史拒绝理由" style="display:none;"></div>'
                             + '</div>',
-                        success: function (layero) {
-                            var $content = layero.find('.layui-layer-content');
-                            var $dialog = layero.find('.order-reject-dialog');
-                            if ($dialog.outerHeight() <= $content.height() + 2) {
-                                $content.css('overflow', 'visible');
-                            }
+                        success: function (layero, index) {
+                            adjustOrderRejectLayer(index);
                             $.ajax({
                                 url: "{:url('Order/rejectReasonOptions')}",
                                 type: 'post',
@@ -1942,19 +2006,23 @@
                                         return;
                                     }
                                     var $status = $current.find('.order-reject-history-status');
+                                    var $list = $current.find('.order-reject-history-list');
                                     if (!res || res.code !== 1 || !$.isArray(res.data)) {
                                         $status.text('历史理由暂时无法加载，请直接填写');
+                                        $list.hide().empty();
+                                        adjustOrderRejectLayer(index);
                                         return;
                                     }
                                     if (!res.data.length) {
                                         $status.text('暂无历史拒绝理由，请手动填写');
+                                        $list.hide().empty();
+                                        adjustOrderRejectLayer(index);
                                         return;
                                     }
-                                    var $select = $current.find('select');
-                                    $select.empty();
-                                    $select.append($('<option>').val('').text('请选择历史拒绝理由'));
+                                    $list.empty();
                                     var reasonMap = {};
                                     var count = 0;
+                                    var radioName = 'order_reject_reason_' + requestSeq;
                                     $.each(res.data, function (_, item) {
                                         if (count >= 10) {
                                             return false;
@@ -1966,16 +2034,26 @@
                                         count += 1;
                                         var key = String(count);
                                         reasonMap[key] = text;
-                                        $select.append($('<option>').val(key).text(text));
+                                        var $item = $('<label class="order-reject-history-item"></label>').attr('title', text);
+                                        var $radio = $('<input type="radio">').attr({
+                                            name: radioName,
+                                            value: key
+                                        });
+                                        var $text = $('<span class="order-reject-history-text"></span>').text(text);
+                                        $item.append($radio, $text);
+                                        $list.append($item);
                                     });
                                     if (count === 0) {
                                         $status.text('暂无历史拒绝理由，请手动填写');
+                                        $list.hide().empty();
+                                        $current.removeData('rejectReasonMap');
+                                        adjustOrderRejectLayer(index);
                                         return;
                                     }
                                     $current.data('rejectReasonMap', reasonMap);
                                     $status.hide();
-                                    $current.find('.order-reject-history-form').show();
-                                    form.render('select', 'order-reject-history-form');
+                                    $list.show();
+                                    adjustOrderRejectLayer(index);
                                 },
                                 error: function () {
                                     if (requestSeq !== activeRejectDialogSeq) {
@@ -1986,6 +2064,8 @@
                                         return;
                                     }
                                     $current.find('.order-reject-history-status').text('历史理由暂时无法加载，请直接填写');
+                                    $current.find('.order-reject-history-list').hide().empty();
+                                    adjustOrderRejectLayer(index);
                                 }
                             });
                         },
