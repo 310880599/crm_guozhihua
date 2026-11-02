@@ -485,6 +485,10 @@
                 layer.close(loading);
                 if(res.code == 1){
                     layer.msg(res.msg, {icon: 1, time: 1000}, function(){
+                        try {
+                            var freshLoginNonce = String(Date.now()) + Math.random().toString(36).slice(2);
+                            sessionStorage.setItem('crm_failed_order_reminder_fresh_login', freshLoginNonce);
+                        } catch (ignoreFreshLogin) {}
                         // 登录成功后，根据复选框状态保存登录信息
                         if ($('#remember').prop('checked')) {
                             localStorage.setItem('remembered_username', data.field.username);

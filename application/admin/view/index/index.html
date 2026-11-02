@@ -3,7 +3,49 @@
     var ADMIN = '/static/admin';
     var navs = {$menus| raw};
     var organizations = {$organizations| raw};
+    var CRM_ADMIN_ID = {:intval($admin_id)};
+    var CRM_FAILED_REMINDER_URL = '{:url("index/failedOrderReminderSummary")}';
 </script>
+<style>
+    .crm-failed-order-bell.crm-failed-order-hidden { display: none !important; }
+    .crm-failed-order-bell > a { padding: 0 16px; }
+    .crm-failed-order-bell .layui-icon { font-size: 18px; vertical-align: middle; }
+    .crm-failed-order-bell .layui-badge { margin-left: 4px; vertical-align: middle; }
+    .crm-failed-order-badge {
+        display: inline-block;
+        min-width: 16px;
+        margin-left: 4px;
+        padding: 0 4px;
+        height: 16px;
+        line-height: 16px;
+        border-radius: 8px;
+        background: #ff5722;
+        color: #fff !important;
+        font-size: 12px;
+        font-style: normal;
+        text-align: center;
+        vertical-align: middle;
+        flex: 0 0 auto;
+    }
+    .crm-failed-order-badge.crm-failed-order-hidden { display: none !important; }
+    /* 仅审核失败订单：收紧该项内边距，避免 200px 侧栏里被省略 */
+    .layui-nav-tree .layui-nav-item a.crm-failed-order-menu-item {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        padding-right: 8px;
+        overflow: hidden;
+        text-overflow: clip;
+        white-space: nowrap;
+    }
+    .layui-nav-tree .layui-nav-item a.crm-failed-order-menu-item > cite {
+        flex: 0 0 auto;
+        padding: 0 0 0 10px;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: nowrap;
+    }
+</style>
 <div class="layui-layout layui-layout-admin">
     <div class="layui-header header">
         <div class="layui-main">
@@ -28,6 +70,12 @@
                 <li class="layui-nav-item">
                     <a href="{:url(config('app.default_module').'/index/index')}">控制面板</a>
                 </li>
+                <li class="layui-nav-item crm-failed-order-bell crm-failed-order-hidden" id="crm-failed-order-bell">
+                    <a href="javascript:;" id="crm-failed-order-bell-link" title="审核失败订单待处理">
+                        <i class="layui-icon layui-icon-notice"></i>
+                        <span class="layui-badge crm-failed-order-bell-count">0</span>
+                    </a>
+                </li>
                
                 <li class="layui-nav-item">
                     <a href="javascript:;" class="admin-header-user">
@@ -44,6 +92,12 @@
                 </li>
             </ul>
             <ul class="layui-nav admin-header-item-mobile">
+                <li class="layui-nav-item crm-failed-order-bell crm-failed-order-hidden" id="crm-failed-order-bell-mobile">
+                    <a href="javascript:;" title="审核失败订单待处理">
+                        <i class="layui-icon layui-icon-notice"></i>
+                        <span class="layui-badge crm-failed-order-bell-count">0</span>
+                    </a>
+                </li>
                 <li class="layui-nav-item">
                     <a href="{:url(config('app.default_module').'/index/index')}" target="_blank">{:lang('home')}</a>
                 </li>
@@ -89,7 +143,8 @@
     <div class="site-mobile-shade"></div>
 </div>
 {include file="common/foot"/}
-<script src="/static/admin/js/index.js"></script>
+<script src="/static/admin/js/failed_order_reminder.js?v=20261102-1"></script>
+<script src="/static/admin/js/index.js?v=20261102-1"></script>
 <script>
     layui.use('layer', function () {
         var $ = layui.jquery, layer = layui.layer;

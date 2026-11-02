@@ -372,7 +372,7 @@
                                         <option value="yesterday">昨天</option>
                                         <option value="week">本周</option>
                                         <option value="last week">上周</option>
-                                        <option value="month" selected>本月</option>
+                                        <option value="month">本月</option>
                                         <option value="last month">上月</option>
                                         <option value="year">今年</option>
                                         <option value="last year">去年</option>
@@ -518,6 +518,15 @@
 
     {include file="common/foot"/}
     <script>
+        function escapeHtml(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         layui.use(['table', 'form', 'upload', 'util', 'laydate', 'element'], function () {
             const { table, form, laydate, $, upload, util, element } = layui;
             // 根据超级管理员权限设置工具栏按钮
@@ -536,6 +545,18 @@
                 cols: [[
                     { field: 'id', title: 'ID', width: 180, fixed: true, hide: true },
                     { field: 'order_no', title: '订单编号', totalRowText: '合计：', width: 180 },
+                    { field: 'latest_reject_time_text', title: '最近拒绝时间', width: 180, templet: function (res) {
+                            var text = res.latest_reject_time_text ? res.latest_reject_time_text : '未知';
+                            return escapeHtml(text);
+                        }
+                    },
+                    { field: 'failed_handle_text', title: '处理状态', width: 140, templet: function (res) {
+                            if (parseInt(res.is_overdue, 10) === 1) {
+                                return '<span class="layui-badge">超时未处理</span>';
+                            }
+                            return '审核失败';
+                        }
+                    },
                     { field: 'cname', title: '客户名称' , width: 180},
                     { field: 'contact', title: '联系方式' , width: 180},
                     { field: 'customer_type_flag', title: '用户属性' , width: 180, templet: function (res) {
@@ -617,28 +638,28 @@
                                 + '  <div class="layui-form-item">'
                                 + '    <label class="layui-form-label">审核状态：</label>'
                                 + '    <div class="layui-input-block" style="line-height:36px;">'
-                                + (d.check_status_text || '审核失败')
+                                + escapeHtml(d.check_status_text || '审核失败')
                                 + '    </div>'
                                 + '  </div>'
 
                                 + '  <div class="layui-form-item">'
                                 + '    <label class="layui-form-label">失败原因：</label>'
                                 + '    <div class="layui-input-block" style="line-height:24px;white-space:pre-wrap;">'
-                                + (d.audit_remark || '未填写')
+                                + escapeHtml(d.audit_remark || '未填写')
                                 + '    </div>'
                                 + '  </div>'
 
                                 + '  <div class="layui-form-item">'
                                 + '    <label class="layui-form-label">审核人：</label>'
                                 + '    <div class="layui-input-block" style="line-height:36px;">'
-                                + (d.audit_user_name || '')
+                                + escapeHtml(d.audit_user_name || '')
                                 + '    </div>'
                                 + '  </div>'
 
                                 + '  <div class="layui-form-item">'
                                 + '    <label class="layui-form-label">审核时间：</label>'
                                 + '    <div class="layui-input-block" style="line-height:36px;">'
-                                + (d.audit_time || '')
+                                + escapeHtml(d.audit_time || '')
                                 + '    </div>'
                                 + '  </div>'
                                 + '</div>';
@@ -676,6 +697,11 @@
                                 if (res.code === 1) {
                                     layer.msg(res.msg || '重新提交成功', {time: 1000, icon: 1});
                                     tableIn.reload();
+                                    try {
+                                        if (window.parent && window.parent !== window && typeof window.parent.crmRefreshFailedOrderReminder === 'function') {
+                                            window.parent.crmRefreshFailedOrderReminder();
+                                        }
+                                    } catch (ignoreParentRefresh) {}
                                 } else {
                                     layer.msg(res.msg || '操作失败', {time: 2000, icon: 2});
                                 }

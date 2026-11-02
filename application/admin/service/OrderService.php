@@ -7,6 +7,12 @@ use think\facade\Log;
 
 class OrderService
 {
+    /** 审核失败未处理达到或超过该秒数，视为超时。 */
+    const FAILED_ORDER_OVERDUE_SECONDS = 86400;
+
+    /** 提醒接口返回的订单摘要条数上限。事件标识仍按全部待处理订单计算。 */
+    const FAILED_ORDER_REMINDER_LIMIT = 20;
+
     /**
      * 是否具备订单全量管理权限（查看/编辑/删除/跳过归属拦截）
      *
@@ -2174,6 +2180,361 @@ LIMIT 10";
         }
 
         return ['success' => true, 'msg' => '获取成功', 'data' => $list];
+    }
+
+    /**
+     * 当前登录用户本人的审核失败待办摘要。只读，不写通知、不改已读。
+     * 身份只使用调用方从 Session 取出的用户名，不读取请求里的用户参数。
+     * 管理员也不统计全公司订单，只统计 pr_user 或 at_user 与本人完全相等的订单。
+     *
+     * active_reject_events 与 event_token 一样覆盖全部待办，不受 orders 的 20 条上限影响。
+     *
+     * @param string $username
+     * @return array
+     */
+    public static function getFailedOrderReminderSummary($username)
+    {
+        $username = (string)$username;
+        $now = time();
+        $emptyToken = self::buildFailedEventIdentity([]);
+        $result = [
+            'total' => 0,
+            'overdue_total' => 0,
+            'event_token' => $emptyToken['event_token'],
+            'latest_reject_event' => $emptyToken['latest_reject_event'],
+            'active_reject_events' => $emptyToken['active_reject_events'],
+            'server_time' => $now,
+            'orders' => [],
+        ];
+        if ($username === '') {
+            return $result;
+        }
+
+        $rows = Db::name('crm_client_order')
+            ->where('check_status', 3)
+            ->where(function ($query) use ($username) {
+                $query->where('pr_user', '=', $username)
+                    ->whereOr('at_user', '=', $username);
+            })
+            ->field('id,order_no,audit_time,audit_remark')
+            ->select();
+        $rows = self::toArrayRows($rows);
+        $snapshots = self::buildSortedRejectSnapshots($rows, $now);
+        $identity = self::buildFailedEventIdentity($snapshots);
+
+        $orderNoMap = [];
+        foreach ($rows as $row) {
+            $orderNoMap[(int)$row['id']] = (string)($row['order_no'] ?? '');
+        }
+
+        $overdueTotal = 0;
+        foreach ($snapshots as $snapshot) {
+            if (!empty($snapshot['is_overdue'])) {
+                $overdueTotal++;
+            }
+        }
+
+        $orders = [];
+        foreach (array_slice($snapshots, 0, self::FAILED_ORDER_REMINDER_LIMIT) as $snapshot) {
+            $orderId = (int)$snapshot['order_id'];
+            $orders[] = [
+                'order_id' => $orderId,
+                'order_no' => isset($orderNoMap[$orderId]) ? $orderNoMap[$orderId] : '',
+                'reject_time' => (int)$snapshot['reject_ts'],
+                'reject_time_text' => $snapshot['reject_time_text'] !== '' ? $snapshot['reject_time_text'] : '未知',
+                'reject_reason' => (string)$snapshot['reject_reason'],
+                'is_overdue' => !empty($snapshot['is_overdue']),
+                'reject_time_known' => !empty($snapshot['reject_known']),
+                'event_key' => (string)$snapshot['event_key'],
+            ];
+        }
+
+        $result['total'] = count($snapshots);
+        $result['overdue_total'] = $overdueTotal;
+        $result['event_token'] = $identity['event_token'];
+        $result['latest_reject_event'] = $identity['latest_reject_event'];
+        $result['active_reject_events'] = $identity['active_reject_events'];
+        $result['orders'] = $orders;
+        return $result;
+    }
+
+    /**
+     * 是否允许查看这张订单的审核失败原因。
+     * 全量订单管理员保持可查看；其他人仅限负责人或创建人与当前用户名完全一致。
+     *
+     * @param array $order 至少包含 pr_user、at_user
+     * @param string $username
+     * @return bool
+     */
+    public static function canViewFailedOrderAudit(array $order, $username)
+    {
+        if (self::canManageAllOrders()) {
+            return true;
+        }
+        $username = (string)$username;
+        if ($username === '') {
+            return false;
+        }
+        if ((string)($order['pr_user'] ?? '') === $username) {
+            return true;
+        }
+        return (string)($order['at_user'] ?? '') === $username;
+    }
+
+    /**
+     * 按订单批量取最近一次拒绝历史。最近一次以该订单历史 id 最大值判定。
+     * 查询失败时返回空映射，调用方改用订单上的审核时间，不丢弃订单。
+     *
+     * @param array $orderIds
+     * @return array<int,array>
+     */
+    public static function loadLatestRejectHistoryMap(array $orderIds)
+    {
+        $ids = [];
+        foreach ($orderIds as $orderId) {
+            $orderId = (int)$orderId;
+            if ($orderId > 0) {
+                $ids[$orderId] = $orderId;
+            }
+        }
+        if (!$ids) {
+            return [];
+        }
+
+        $map = [];
+        try {
+            foreach (array_chunk(array_values($ids), 500) as $chunk) {
+                $maxRows = Db::name('crm_order_reject_history')
+                    ->whereIn('order_id', $chunk)
+                    ->field('order_id, MAX(`id`) AS max_id')
+                    ->group('order_id')
+                    ->select();
+                $maxIds = [];
+                foreach (self::toArrayRows($maxRows) as $maxRow) {
+                    $maxId = (int)($maxRow['max_id'] ?? 0);
+                    if ($maxId > 0) {
+                        $maxIds[] = $maxId;
+                    }
+                }
+                if (!$maxIds) {
+                    continue;
+                }
+                $histories = Db::name('crm_order_reject_history')
+                    ->whereIn('id', $maxIds)
+                    ->field('id,order_id,reject_reason,audit_time')
+                    ->select();
+                foreach (self::toArrayRows($histories) as $history) {
+                    $orderId = (int)($history['order_id'] ?? 0);
+                    if ($orderId > 0) {
+                        $map[$orderId] = $history;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            self::logOrderReject('查询最近拒绝历史失败：' . $e->getMessage());
+            return [];
+        }
+        return $map;
+    }
+
+    /**
+     * 为审核失败列表生成排序后的拒绝快照。排序在分页之前完成。
+     *
+     * @param array $orders 每行至少含 id，以及可选 audit_time、audit_remark
+     * @param int|null $now
+     * @return array
+     */
+    public static function buildSortedRejectSnapshots(array $orders, $now = null)
+    {
+        $now = $now === null ? time() : (int)$now;
+        $orders = self::toArrayRows($orders);
+        $historyMap = self::loadLatestRejectHistoryMap(array_column($orders, 'id'));
+        $snapshots = [];
+        foreach ($orders as $order) {
+            $orderId = (int)($order['id'] ?? 0);
+            $history = isset($historyMap[$orderId]) ? $historyMap[$orderId] : null;
+            $snapshots[] = self::buildRejectSnapshot($order, $history, $now);
+        }
+        return self::sortRejectSnapshots($snapshots);
+    }
+
+    /**
+     * 单笔订单的最近拒绝快照。
+     * 有历史记录时以最大历史 id 为准；没有历史时才回退到订单 audit_time / audit_remark。
+     *
+     * @param array $order
+     * @param array|null $history
+     * @param int $now
+     * @return array
+     */
+    public static function buildRejectSnapshot(array $order, $history, $now)
+    {
+        $orderId = (int)($order['id'] ?? ($order['order_id'] ?? 0));
+        $historyId = 0;
+        $reason = '';
+        $timestamp = null;
+        $useHistory = is_array($history) && (int)($history['id'] ?? 0) > 0;
+
+        if ($useHistory) {
+            $historyId = (int)$history['id'];
+            $reason = (string)($history['reject_reason'] ?? '');
+            $timestamp = self::parseRejectTimestamp($history['audit_time'] ?? null);
+        } else {
+            $timestamp = self::parseRejectTimestamp($order['audit_time'] ?? null);
+            if ($timestamp !== null) {
+                $reason = (string)($order['audit_remark'] ?? '');
+            }
+        }
+
+        $known = $timestamp !== null;
+        if ($historyId > 0) {
+            $eventKey = 'h' . $historyId;
+        } elseif ($known) {
+            $eventKey = 't' . $timestamp;
+        } else {
+            $eventKey = 'u';
+        }
+
+        return [
+            'order_id' => $orderId,
+            'history_id' => $historyId,
+            'reject_ts' => $known ? (int)$timestamp : 0,
+            'reject_known' => $known,
+            'is_overdue' => $known && (((int)$now - (int)$timestamp) >= self::FAILED_ORDER_OVERDUE_SECONDS),
+            'reject_reason' => $reason,
+            'event_key' => $eventKey,
+            'reject_time_text' => $known ? date('Y-m-d H:i:s', (int)$timestamp) : '',
+        ];
+    }
+
+    /**
+     * 超时订单在前，其余已知时间在中，未知时间在后。同级按拒绝时间从早到晚，再按订单 id。
+     *
+     * @param array $snapshots
+     * @return array
+     */
+    public static function sortRejectSnapshots(array $snapshots)
+    {
+        usort($snapshots, function ($left, $right) {
+            $rank = function ($row) {
+                if (empty($row['reject_known'])) {
+                    return 2;
+                }
+                return !empty($row['is_overdue']) ? 0 : 1;
+            };
+            $leftRank = $rank($left);
+            $rightRank = $rank($right);
+            if ($leftRank !== $rightRank) {
+                return $leftRank <=> $rightRank;
+            }
+            if ($leftRank !== 2 && (int)$left['reject_ts'] !== (int)$right['reject_ts']) {
+                return (int)$left['reject_ts'] <=> (int)$right['reject_ts'];
+            }
+            return (int)$left['order_id'] <=> (int)$right['order_id'];
+        });
+        return $snapshots;
+    }
+
+    /**
+     * 事件标识覆盖当前用户全部待处理订单，不受摘要 20 条和分页影响。
+     * event_token：全部「订单 id + 事件键」排序后的 md5。含义不变。
+     * latest_reject_event：当前集合中最大的拒绝历史 id；没有历史时用回退时间；都没有则为 none。含义不变。
+     *
+     * active_reject_events：当前用户全部待办的轻量事件快照，供下一阶段对比前后两次结果。
+     * 结构固定为 JSON 对象，不是数组。键是订单 ID 的十进制字符串，值是该订单 event_key 字符串。
+     * event_key 与单笔快照相同，只有三种：h{拒绝历史id}、t{可靠审核时间的 Unix 秒}、u（没有可靠时间）。
+     * 键按订单 ID 数值升序。不包含金额、联系方式、客户名、拒绝原因，也不包含是否超时。
+     * 不使用当前请求时间或随机数。空集合也保持对象 {}，避免 PHP 把空数组编码成 []。
+     * 只由本次已经算好的快照生成，不再查询订单或审核历史。
+     *
+     * 前端对比规则：新增键或同一键的值变化，才是新的审核失败事件；
+     * 只减少键表示订单退出待办；快照相同则没有新拒绝。是否超时不进入本快照。
+     *
+     * @param array $snapshots
+     * @return array{event_token:string,latest_reject_event:string,active_reject_events:\stdClass}
+     */
+    public static function buildFailedEventIdentity(array $snapshots)
+    {
+        $parts = [];
+        $activeRejectEvents = [];
+        $latestHistoryId = 0;
+        $fallback = null;
+        foreach ($snapshots as $snapshot) {
+            $orderId = (int)($snapshot['order_id'] ?? 0);
+            $eventKey = (string)($snapshot['event_key'] ?? 'u');
+            $parts[] = $orderId . ':' . $eventKey;
+            if ($orderId > 0) {
+                $activeRejectEvents[$orderId] = $eventKey;
+            }
+            $historyId = (int)($snapshot['history_id'] ?? 0);
+            if ($historyId > $latestHistoryId) {
+                $latestHistoryId = $historyId;
+            }
+            if ($historyId <= 0 && !empty($snapshot['reject_known'])) {
+                $timestamp = (int)$snapshot['reject_ts'];
+                if ($fallback === null
+                    || $timestamp > (int)$fallback['ts']
+                    || ($timestamp === (int)$fallback['ts'] && $orderId > (int)$fallback['order_id'])
+                ) {
+                    $fallback = ['order_id' => $orderId, 'ts' => $timestamp];
+                }
+            }
+        }
+        ksort($activeRejectEvents, SORT_NUMERIC);
+        sort($parts, SORT_STRING);
+        if ($latestHistoryId > 0) {
+            $latestRejectEvent = 'h:' . $latestHistoryId;
+        } elseif ($fallback !== null) {
+            $latestRejectEvent = 'o:' . $fallback['order_id'] . ':t:' . $fallback['ts'];
+        } else {
+            $latestRejectEvent = 'none';
+        }
+        return [
+            'event_token' => md5('failed-v1|' . implode('|', $parts)),
+            'latest_reject_event' => $latestRejectEvent,
+            'active_reject_events' => (object)$activeRejectEvents,
+        ];
+    }
+
+    /**
+     * 拒绝时间只接受可解析的 DATETIME 或秒级 Unix 时间戳。无法解析时返回 null。
+     *
+     * @param mixed $value
+     * @return int|null
+     */
+    public static function parseRejectTimestamp($value)
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (is_int($value) || (is_string($value) && ctype_digit($value))) {
+            $timestamp = (int)$value;
+            if ($timestamp >= 946684800 && $timestamp <= 4102444800) {
+                return $timestamp;
+            }
+            return null;
+        }
+        $text = trim((string)$value);
+        if ($text === '' || $text === '0000-00-00 00:00:00' || $text === '0000-00-00') {
+            return null;
+        }
+        $timestamp = strtotime($text);
+        if ($timestamp === false || $timestamp <= 0) {
+            return null;
+        }
+        return (int)$timestamp;
+    }
+
+    /**
+     * @param mixed $rows
+     * @return array
+     */
+    private static function toArrayRows($rows)
+    {
+        if ($rows instanceof \think\Collection) {
+            return $rows->toArray();
+        }
+        return is_array($rows) ? $rows : [];
     }
 
     /**

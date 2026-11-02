@@ -3,6 +3,7 @@
 namespace app\admin\controller;
 
 use app\admin\model\Admin;
+use app\admin\service\OrderService;
 use think\Db;
 use think\facade\Env;
 use think\facade\Request;
@@ -551,7 +552,64 @@ class Index extends Common
             return json(['code' => 0, 'msg' => '查询失败：' . $e->getMessage(), 'data' => []]);
         }
     }
-    
+
+    /**
+     * 当前登录用户的审核失败订单提醒摘要。只读，不修改通知已读状态。
+     * 访问路径：/admin/index/failedOrderReminderSummary
+     * 用户身份只取 Session，忽略请求中的 username、admin_id、pr_user、at_user。
+     *
+     * 本接口单独约定：code=0 表示查询成功（包含待办为 0）；code=1 表示未登录、身份不完整或查询失败。
+     * 不改动本控制器其他通知接口的返回码。
+     * Session 中没有 aid 时，公共控制器会先跳转登录页，请求到不了这里；能进入本方法时必须返回 JSON。
+     * data.admin_id 只取本次请求的 session('aid')，不接受请求参数，也不额外查询管理员表。
+     */
+    public function failedOrderReminderSummary()
+    {
+        $adminId = $this->currentReminderAdminId();
+        if ($adminId < 1) {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+        $username = (string)Session::get('username');
+        if ($username === '') {
+            return json(['code' => 1, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+
+        try {
+            $data = OrderService::getFailedOrderReminderSummary($username);
+            if (!is_array($data)) {
+                return json(['code' => 1, 'msg' => '获取审核失败订单提醒失败', 'data' => []]);
+            }
+            $data = ['admin_id' => $adminId] + $data;
+            return json(['code' => 0, 'msg' => '获取成功', 'data' => $data]);
+        } catch (\Throwable $e) {
+            try {
+                \think\facade\Log::write('[OrderReject] 获取审核失败订单提醒失败：' . $e->getMessage(), 'error');
+            } catch (\Throwable $ignored) {
+            }
+            return json(['code' => 1, 'msg' => '获取审核失败订单提醒失败', 'data' => []]);
+        }
+    }
+
+    /**
+     * 审核失败提醒使用的当前登录管理员 ID。
+     * 只接受 session('aid') 的正整数；字符串必须全为数字且不能有前导零。
+     * 不合法时返回 0，调用方直接失败，不再查询订单。
+     */
+    private function currentReminderAdminId()
+    {
+        $raw = session('aid');
+        if (is_int($raw)) {
+            return $raw > 0 ? $raw : 0;
+        }
+        if (is_string($raw) && preg_match('/\A[1-9]\d*\z/', $raw) === 1) {
+            $adminId = (int)$raw;
+            if ($adminId > 0 && (string)$adminId === $raw) {
+                return $adminId;
+            }
+        }
+        return 0;
+    }
+
 
     public function navbar()
     {

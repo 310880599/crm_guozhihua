@@ -874,12 +874,6 @@ class Order extends Common
     {
 
         if (request()->isPost()) {
-            $params = Request::param();
-            if (!isset($params['keyword'])) {
-                $params['keyword'] = [];
-            }
-            $params['keyword']['timebucket'] = 'month';
-            Request::merge($params);
             return $this->failedClientSearch();
             // $key = input('post.key');
             // $page = input('page') ? input('page') : 1;
@@ -3785,17 +3779,34 @@ class Order extends Common
             return json(['code' => 0, 'msg' => '参数错误']);
         }
 
-        // 关联 admin 表，取审核人名字
+        $currentUsername = (string)Session::get('username');
+        // 关联 admin 表，取审核人名字。同时取出归属字段，只用于服务端权限判断。
         $info = Db::name('crm_client_order')
             ->alias('o')
             ->leftJoin('admin a', 'a.admin_id = o.audit_user_id')
-            ->field('o.check_status,o.audit_remark,o.audit_time,a.username as audit_user_name')
+            ->field('o.id,o.check_status,o.pr_user,o.at_user,o.audit_remark,o.audit_time,a.username as audit_user_name')
             ->where('o.id', $id)
             ->find();
 
         if (!$info) {
             return json(['code' => 0, 'msg' => '订单不存在或已删除']);
         }
+        if (!OrderService::canViewFailedOrderAudit($info, $currentUsername)) {
+            return json(['code' => 0, 'msg' => '您没有查看该订单审核信息的权限']);
+        }
+
+        $historyMap = OrderService::loadLatestRejectHistoryMap([$id]);
+        $snapshot = OrderService::buildRejectSnapshot($info, isset($historyMap[$id]) ? $historyMap[$id] : null, time());
+        if ((int)$snapshot['history_id'] > 0) {
+            $info['audit_remark'] = (string)$snapshot['reject_reason'];
+            if ($snapshot['reject_time_text'] !== '') {
+                $info['audit_time'] = $snapshot['reject_time_text'];
+            }
+        } elseif (!empty($snapshot['reject_known'])) {
+            $info['audit_remark'] = (string)$snapshot['reject_reason'];
+            $info['audit_time'] = $snapshot['reject_time_text'];
+        }
+        unset($info['pr_user'], $info['at_user']);
 
         // 状态文字
         $statusMap = [
@@ -5862,14 +5873,59 @@ class Order extends Common
             $kh_source = strtolower($keyword['source']);
             $client_where[] = ['kh_status', 'like', "%$kh_source%"];
         }
-        $list = Db::table('crm_client_order')
+        $metaRows = Db::table('crm_client_order')
             ->where($where)
-            ->order('order_time desc')
-            ->paginate([
-                'list_rows' => $limit,
-                'page' => $page
-            ])
-            ->toArray();
+            ->field('id,audit_time,audit_remark')
+            ->select();
+        if ($metaRows instanceof \think\Collection) {
+            $metaRows = $metaRows->toArray();
+        }
+        $snapshots = OrderService::buildSortedRejectSnapshots(is_array($metaRows) ? $metaRows : []);
+        $page = max(1, (int)$page);
+        $limit = (int)$limit;
+        if ($limit < 1) {
+            $limit = (int)config('pageSize');
+            if ($limit < 1) {
+                $limit = 10;
+            }
+        }
+        $pageSnapshots = array_slice($snapshots, ($page - 1) * $limit, $limit);
+        $orderedIds = [];
+        $snapshotMap = [];
+        foreach ($pageSnapshots as $snapshot) {
+            $orderId = (int)$snapshot['order_id'];
+            $orderedIds[] = $orderId;
+            $snapshotMap[$orderId] = $snapshot;
+        }
+        $fullMap = [];
+        if ($orderedIds) {
+            $fullRows = Db::table('crm_client_order')->whereIn('id', $orderedIds)->select();
+            if ($fullRows instanceof \think\Collection) {
+                $fullRows = $fullRows->toArray();
+            }
+            foreach (is_array($fullRows) ? $fullRows : [] as $fullRow) {
+                $fullMap[(int)$fullRow['id']] = $fullRow;
+            }
+        }
+        $pageData = [];
+        foreach ($orderedIds as $orderId) {
+            if (!isset($fullMap[$orderId], $snapshotMap[$orderId])) {
+                continue;
+            }
+            $orderRow = $fullMap[$orderId];
+            $snapshot = $snapshotMap[$orderId];
+            $orderRow['latest_reject_time'] = (int)$snapshot['reject_ts'];
+            $orderRow['latest_reject_time_text'] = $snapshot['reject_time_text'] !== '' ? $snapshot['reject_time_text'] : '未知';
+            $orderRow['is_overdue'] = !empty($snapshot['is_overdue']) ? 1 : 0;
+            $orderRow['failed_handle_text'] = !empty($snapshot['is_overdue']) ? '超时未处理' : '审核失败';
+            $orderRow['latest_reject_reason'] = (string)$snapshot['reject_reason'];
+            $orderRow['reject_event_key'] = (string)$snapshot['event_key'];
+            $pageData[] = $orderRow;
+        }
+        $list = [
+            'data' => $pageData,
+            'total' => count($snapshots),
+        ];
         
         // 如果订单主表的 product_name 为空，尝试从订单明细表中获取产品名称
         // 这样可以确保即使产品被删除，订单的产品名称仍然可以显示

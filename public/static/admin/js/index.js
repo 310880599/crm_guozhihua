@@ -58,6 +58,16 @@ layui.config({
     navbar.on('click(side)', function (data) {
         tab.tabAdd(data.field);
     });
+    if (window.CrmFailedOrderReminder && typeof window.CrmFailedOrderReminder.start === 'function') {
+        window.CrmFailedOrderReminder.start({
+            adminId: (typeof CRM_ADMIN_ID !== 'undefined') ? CRM_ADMIN_ID : 0,
+            url: (typeof CRM_FAILED_REMINDER_URL !== 'undefined') ? CRM_FAILED_REMINDER_URL : '',
+            tabApi: tab,
+            element: element,
+            jquery: $,
+            layer: layer
+        });
+    }
     //清除缓存
     $('#clearCached').on('click', function () {
         navbar.cleanCached();
