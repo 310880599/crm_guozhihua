@@ -1066,8 +1066,9 @@ class ClientFollowService
             return $this->fail('跟进记录不存在或已删除');
         }
 
-        if ($operatorId !== 1 && (int)$comment['user_id'] !== $operatorId) {
-            return $this->fail('您无权删除该跟进记录');
+        $deletePermission = $this->resolveDeleteFollowCommentPermission($comment, $operatorId);
+        if (empty($deletePermission['allowed'])) {
+            return $this->fail((string)($deletePermission['msg'] ?? '您无权删除该跟进记录'));
         }
 
         $leadsId = (int)$comment['leads_id'];
@@ -1097,6 +1098,12 @@ class ClientFollowService
                 ->find();
             if (!$lockedComment) {
                 throw new \RuntimeException('跟进记录已被删除，请刷新后重试');
+            }
+
+            // 加锁后再校验作者权限与7天限制，防止并发窗口绕过
+            $lockedPermission = $this->resolveDeleteFollowCommentPermission($lockedComment, $operatorId);
+            if (empty($lockedPermission['allowed'])) {
+                throw new \RuntimeException((string)($lockedPermission['msg'] ?? '您无权删除该跟进记录'));
             }
 
             $affectedRows = Db::table('crm_comment')
@@ -1135,7 +1142,13 @@ class ClientFollowService
         } catch (Throwable $e) {
             Db::rollback();
             $msg = $e->getMessage();
-            if (in_array($msg, ['客户不存在', '跟进记录已被删除，请刷新后重试'], true)) {
+            if (in_array($msg, [
+                '客户不存在',
+                '跟进记录已被删除，请刷新后重试',
+                '您无权删除该跟进记录',
+                '该跟进记录已满7天，禁止删除',
+                '该跟进记录创建时间异常，无法删除',
+            ], true)) {
                 return $this->fail($msg);
             }
             return $this->fail('删除失败：' . $msg);
@@ -1335,6 +1348,62 @@ class ClientFollowService
             return true;
         }
         return (int)($comment['user_id'] ?? 0) === $operatorId;
+    }
+
+    /**
+     * 当前操作人是否可删除该跟进行（作者或超管；非超管另受 create_date 168 小时限制）
+     *
+     * @param array $comment 须含 user_id / is_deleted / create_date（Unix 秒级时间戳）
+     * @param int|string $operatorId Session 中的 admin_id，勿信任前端传入
+     * @return bool
+     */
+    public function canDeleteFollowCommentRow(array $comment, $operatorId)
+    {
+        $result = $this->resolveDeleteFollowCommentPermission($comment, $operatorId);
+        return !empty($result['allowed']);
+    }
+
+    /**
+     * 删除权限统一判定（列表 can_delete 与 deleteFollowComment 共用，口径一致）
+     *
+     * 规则：
+     * - 操作人非法 / 已删除 / 非作者且非超管 → 无权
+     * - admin_id=1 豁免 7 天时间限制
+     * - 非超管：create_date<=0 或 create_date>time() → 时间异常
+     * - 非超管：time()-create_date >= 604800 → 已满7天禁止删除
+     *
+     * @param array $comment
+     * @param int|string $operatorId
+     * @return array{allowed:bool, msg:string}
+     */
+    public function resolveDeleteFollowCommentPermission(array $comment, $operatorId)
+    {
+        $operatorId = (int)$operatorId;
+        if ($operatorId <= 0) {
+            return ['allowed' => false, 'msg' => '您无权删除该跟进记录'];
+        }
+        if ((int)($comment['is_deleted'] ?? 0) !== 0) {
+            return ['allowed' => false, 'msg' => '您无权删除该跟进记录'];
+        }
+        // 保留原有作者或超级管理员权限，不扩大删除范围
+        if ($operatorId !== 1 && (int)($comment['user_id'] ?? 0) !== $operatorId) {
+            return ['allowed' => false, 'msg' => '您无权删除该跟进记录'];
+        }
+        // 超级管理员不受 7 天限制
+        if ($operatorId === 1) {
+            return ['allowed' => true, 'msg' => ''];
+        }
+
+        $createDate = (int)($comment['create_date'] ?? 0);
+        $now = time();
+        if ($createDate <= 0 || $createDate > $now) {
+            return ['allowed' => false, 'msg' => '该跟进记录创建时间异常，无法删除'];
+        }
+        if (($now - $createDate) >= 604800) {
+            return ['allowed' => false, 'msg' => '该跟进记录已满7天，禁止删除'];
+        }
+
+        return ['allowed' => true, 'msg' => ''];
     }
 
     /**

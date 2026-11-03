@@ -6095,8 +6095,14 @@ class Client extends Common
             ->select();
 
         // 格式化时间：Y-m-d H:i（列表用紧凑格式）
+        // 注意：can_delete 必须在 create_date 格式化之前，基于原始 Unix 秒级时间戳计算
         foreach ($list as &$item) {
-            $item['create_date'] = date('Y-m-d H:i', (int)$item['create_date']);
+            $createDateRaw = (int)($item['create_date'] ?? 0);
+            $permissionRow = $item;
+            $permissionRow['create_date'] = $createDateRaw;
+            $item['can_delete'] = $followService->canDeleteFollowCommentRow($permissionRow, $operatorId) ? 1 : 0;
+
+            $item['create_date'] = date('Y-m-d H:i', $createDateRaw);
             $item = $followService->appendFollowRoleDisplay($item);
 
             $userId = (int)($item['user_id'] ?? 0);

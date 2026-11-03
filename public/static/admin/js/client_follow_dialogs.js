@@ -462,7 +462,8 @@
             html += '<button type="button" class="layui-btn layui-btn-normal layui-btn-xs edit-follow-btn" data-id="'
                 + escapeHtml(d.id) + '">修改</button>';
         }
-        if (state.enableDelete !== false) {
+        // 删除按钮：开关开启且后端 can_delete===1；未提供或无效时默认不显示
+        if (state.enableDelete !== false && parseInt(d.can_delete, 10) === 1) {
             html += '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="'
                 + escapeHtml(d.id) + '">删除</button>';
         }
@@ -929,7 +930,12 @@
                             layer.msg(res.msg || '删除成功', { icon: 1 });
                             reloadAfTable();
                         } else {
-                            layer.msg(res.msg || '删除失败', { icon: 2 });
+                            var failMsg = res.msg || '删除失败';
+                            layer.msg(failMsg, { icon: 2 });
+                            // 7天到期拒绝：轻量刷新列表，同步删除按钮显隐
+                            if (String(failMsg).indexOf('已满7天') !== -1) {
+                                reloadAfTable();
+                            }
                         }
                     });
                     layer.close(index);

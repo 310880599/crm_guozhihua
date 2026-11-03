@@ -4037,7 +4037,9 @@ layui.use(['table','form','upload','util','laydate','layer'], function () {
                             if (parseInt(d.can_edit, 10) === 1) {
                                 html += '<button type="button" class="layui-btn layui-btn-normal layui-btn-xs edit-follow-btn" data-id="' + d.id + '">修改</button>';
                             }
-                            html += '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + d.id + '">删除</button>';
+                            if (parseInt(d.can_delete, 10) === 1) {
+                                html += '<button type="button" class="layui-btn layui-btn-danger layui-btn-xs delete-follow-btn" data-id="' + d.id + '">删除</button>';
+                            }
                             return html;
                         }
                     }
