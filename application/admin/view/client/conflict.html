@@ -274,108 +274,211 @@
         }
       });
 
-        
-        
-   
-    /* ===== ② 表单提交：发起查重任务 ===== */
+    /* ===== ② 查重轮询状态（串行 setTimeout，避免并发重叠） ===== */
+      var pollState = {
+        timer: null,
+        activeTaskId: null,
+        startedAt: 0,
+        searching: false,
+        loadingIdx: null,
+        httpFailCount: 0
+      };
+      var POLL_INTERVAL_MS = 1000;
+      var POLL_TIMEOUT_MS = 30000; // 总超时 30 秒
+      var HTTP_RETRY_MAX = 3;
+      var $searchBtn = $('button[lay-filter="search"]');
+
+      function setSearchingUI(on) {
+        pollState.searching = !!on;
+        if (on) {
+          $searchBtn.addClass('layui-btn-disabled').prop('disabled', true);
+        } else {
+          $searchBtn.removeClass('layui-btn-disabled').prop('disabled', false);
+        }
+      }
+
+      function stopPolling() {
+        if (pollState.timer) {
+          clearTimeout(pollState.timer);
+          pollState.timer = null;
+        }
+      }
+
+      function closeLoading() {
+        if (pollState.loadingIdx != null) {
+          layer.close(pollState.loadingIdx);
+          pollState.loadingIdx = null;
+        }
+      }
+
+      function finishPolling() {
+        stopPolling();
+        closeLoading();
+        setSearchingUI(false);
+      }
+
+      function applyResultData(list) {
+        tableIns.reload({
+          url: '',
+          data: list || [],
+          page: { curr: 1 },
+          done: function (res) {
+            renderMobileList(res.data || []);
+          }
+        });
+      }
+
+      // 查询失败 / 超时 / 提交失败时清空展示，避免用户把旧成功结果当成本次结果
+      function clearResultData() {
+        applyResultData([]);
+      }
+
+      function scheduleNextPoll(taskId) {
+        stopPolling();
+        pollState.timer = setTimeout(function () {
+          pollOnce(taskId);
+        }, POLL_INTERVAL_MS);
+      }
+
+      function pollOnce(taskId) {
+        // 旧任务回调不得覆盖当前新任务
+        if (taskId !== pollState.activeTaskId) {
+          return;
+        }
+        if (Date.now() - pollState.startedAt >= POLL_TIMEOUT_MS) {
+          finishPolling();
+          clearResultData();
+          layer.msg('查询超时，请稍后重试', { icon: 5 });
+          return;
+        }
+
+        $.ajax({
+          url: "{:url('admin/client/getConflictResult')}",
+          type: 'POST',
+          data: { task_id: taskId },
+          dataType: 'json',
+          timeout: 8000,
+          success: function (res2) {
+            if (taskId !== pollState.activeTaskId) {
+              return;
+            }
+            pollState.httpFailCount = 0;
+
+            // pending / processing
+            if (res2 && res2.code === 202) {
+              scheduleNextPoll(taskId);
+              return;
+            }
+
+            finishPolling();
+
+            if (res2 && res2.code === 0) {
+              applyResultData(res2.data || []);
+              return;
+            }
+
+            // 业务失败与 HTTP 异常区分：此处为业务失败，清空旧数据
+            clearResultData();
+
+            if (res2 && res2.code === 500) {
+              layer.msg((res2 && res2.msg) || '查重查询失败，请稍后重试', { icon: 5 });
+              return;
+            }
+
+            if (res2 && res2.code === 404) {
+              layer.msg((res2 && res2.msg) || '查重任务不存在或已过期，请重新查询', { icon: 5 });
+              return;
+            }
+
+            layer.msg((res2 && res2.msg) || '查重失败', { icon: 5 });
+          },
+          error: function () {
+            if (taskId !== pollState.activeTaskId) {
+              return;
+            }
+            pollState.httpFailCount += 1;
+            if (pollState.httpFailCount >= HTTP_RETRY_MAX) {
+              finishPolling();
+              clearResultData();
+              layer.msg('网络异常，请稍后重试', { icon: 5 });
+              return;
+            }
+            // 有限重试，仍受总超时约束
+            scheduleNextPoll(taskId);
+          }
+        });
+      }
+
+      /* ===== ③ 表单提交：发起查重任务 ===== */
       form.on('submit(search)', function (data) {
         var keyword = data.field.keyword.trim();
         if (!keyword) {
           layer.msg('请输入搜索关键词', { icon: 5 });
           return false;
         }
-    
-        // 创建查重任务
-        $.post("{:url('admin/client/conflict')}", { keyword: keyword }, function (res) {
-          if (res.code !== 0) {
-            layer.msg(res.msg || '提交查重任务失败', { icon: 5 });
-            return;
-          }
-    
-          var taskId      = res.task_id;
-          var loadingIdx  = layer.msg('正在查重，请稍候…', {
-                            icon: 16, shade: 0.3, time: false });
-    
-        //   var timer = setInterval(function () {
-        //     $.post("{:url('admin/client/getConflictResult')}", { task_id: taskId }, function (res2) {
-    
-        //       if (res2.code === 202) return;               // 仍在处理 → 继续轮询
-    
-        //       clearInterval(timer);                        // 不管成功失败都停轮询
-        //       layer.close(loadingIdx);
-    
-        //       if (res2.code !== 0) {                       // 失败
-        //         layer.msg(res2.msg || '查重失败', { icon: 5 });
-        //         return;
-        //       }
-    
-        //       /* ===== ③ 结果到手：切换到本地数据模式并刷新 ===== */
-        //       tableIns.reload({
-        //         url  : '',           // ***关键：清空 url，保持本地模式***
-        //         data : res2.data,    // 直接塞入返回数组
-        //         page : { curr: 1 }   // 回第一页
-        //       });
-        //     });
-        //   }, 1000);
-        
-        var timer = setInterval(function () {
-          $.post("{:url('admin/client/getConflictResult')}", { task_id: taskId }, function (res2) {
-        
-            if (res2.code === 202) return; // 正在处理 → 继续轮询
-        
-            clearInterval(timer);          // 停止轮询
-            layer.close(loadingIdx);       // 关闭加载提示
-        
-            if (res2.code === 404) {
-              layer.msg(res2.msg || '查重失败，请再次尝试搜索', { icon: 5 });
-              tableIns.reload({
-                url  : '',
-                data : [],
-                page : { curr: 1 },
-                done: function(res, curr, count) {
-                  // 渲染手机端卡片列表
-                  renderMobileList([]);
-                }
-              });
+
+        // 正在查询时避免重复点击入队
+        if (pollState.searching) {
+          layer.msg('正在查重，请稍候…', { icon: 0 });
+          return false;
+        }
+
+        // 新任务启动前停止旧轮询，并立刻清空旧结果，避免误判为本轮数据
+        stopPolling();
+        closeLoading();
+        pollState.activeTaskId = null;
+        pollState.httpFailCount = 0;
+        clearResultData();
+        setSearchingUI(true);
+
+        $.ajax({
+          url: "{:url('admin/client/conflict')}",
+          type: 'POST',
+          data: { keyword: keyword },
+          dataType: 'json',
+          timeout: 10000,
+          success: function (res) {
+            if (!res || res.code !== 0 || !res.task_id) {
+              setSearchingUI(false);
+              // 提交失败时保持空表，不回填旧数据
+              layer.msg((res && res.msg) || '提交查重任务失败', { icon: 5 });
               return;
             }
-        
-            if (res2.code !== 0) {
-              layer.msg(res2.msg || '查重失败', { icon: 5 });
-              return;
-            }
-        
-            // 查重成功，加载结果数据
-            tableIns.reload({
-              url  : '',
-              data : res2.data || [],
-              page : { curr: 1 },
-              done: function(res, curr, count) {
-                // 渲染手机端卡片列表
-                renderMobileList(res.data || []);
-              }
+
+            var taskId = res.task_id;
+            pollState.activeTaskId = taskId;
+            pollState.startedAt = Date.now();
+            pollState.httpFailCount = 0;
+            pollState.loadingIdx = layer.msg('正在查重，请稍候…', {
+              icon: 16, shade: 0.3, time: false
             });
-          });
-        }, 1000);
 
-        
-        
-          
+            // 仅任务提交成功后启动串行轮询
+            pollOnce(taskId);
+          },
+          error: function () {
+            setSearchingUI(false);
+            // HTTP 提交失败：与业务失败一样保持空表
+            layer.msg('提交查重任务失败，请稍后重试', { icon: 5 });
+          }
         });
-    
-        return false; // 禁止表单默认提交
-      });      
-            
 
-        setTimeout(function () {
-            var params = new URLSearchParams(window.location.search);
-            var keyword = params.get('keyword');
-            if (keyword) {
-                $('input[name="keyword"]').val(keyword); // 自动填充
-                $('button[lay-filter="search"]').trigger('click'); // 模拟点击触发查重
-            }
-        }, 100);        
-            
+        return false; // 禁止表单默认提交
+      });
+
+      // 页面离开时清理轮询，避免残留无效请求
+      $(window).on('beforeunload', function () {
+        stopPolling();
+      });
+
+      setTimeout(function () {
+        var params = new URLSearchParams(window.location.search);
+        var keyword = params.get('keyword');
+        if (keyword) {
+          $('input[name="keyword"]').val(keyword); // 自动填充
+          $('button[lay-filter="search"]').trigger('click'); // 模拟点击触发查重
+        }
+      }, 100);
 
       $('#keyword').on('keypress', function (e) {
         if (e.keyCode === 13) { // 回车键的 keyCode 是 13

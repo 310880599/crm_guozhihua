@@ -7386,25 +7386,125 @@ class Client extends Common
                 // 关键词为空，直接返回空结果
                 return json(['code' => 0, 'msg' => '', 'data' => []]);
             }
+
             // 生成唯一任务ID，用于关联查重结果
-            $taskId = uniqid('', true);  // 例如：生成类似 5f2e5c7fbd98e 的唯一ID
-            // 准备任务数据，包含任务ID和原始关键词
+            $taskId = uniqid('', true);
             $jobData = [
                 'id'      => $taskId,
-                'keyword' => $_keyword  // 保留原始关键词，后端队列处理时再做trim处理
+                'keyword' => $_keyword  // 保留原始关键词，后端队列处理时再做 trim 处理
             ];
-            // 将任务数据推送到Redis队列
-            $redis = new \Redis();
-            $redis->connect('127.0.0.1', 26739);
-            // 若Redis设置了密码，可使用 
-            $redis->auth('csE88ifakDGC8PfH');
-            $redis->rPush('waimao_conflict_queue', json_encode($jobData));  // 推送任务到外贸专用队列
-            // 返回任务已创建的响应，携带任务ID
-            return json([
-                'code'    => 0,
-                'msg'     => '查重任务已提交',
-                'task_id' => $taskId   // 前端据此轮询结果
-            ]);
+            $jobJson   = json_encode($jobData, JSON_UNESCAPED_UNICODE);
+            $queueKey  = 'waimao_conflict_queue';
+            $statusKey = 'waimao_conflict_status:' . $taskId;
+            $ttl       = 300; // 状态 TTL：覆盖等待、处理与结果读取窗口
+            $failResp  = ['code' => 500, 'msg' => '查重任务提交失败，请稍后重试', 'data' => []];
+
+            try {
+                $redis = new \Redis();
+                if (!$redis->connect('127.0.0.1', 26739, 2.0)) {
+                    try {
+                        Log::error('[Client.conflict] redis_connect_failed', ['task_id' => $taskId]);
+                    } catch (\Throwable $ignore) {
+                    }
+                    return json($failResp);
+                }
+                // 认证失败不得继续 EVAL；不记录密码。
+                // 注意：部分环境未设置 requirepass 时 AUTH 可能返回 false，但命令仍可用，需再用 PING 确认。
+                try {
+                    $authOk = $redis->auth('csE88ifakDGC8PfH');
+                } catch (\Throwable $authEx) {
+                    try {
+                        Log::error('[Client.conflict] redis_auth_failed', ['task_id' => $taskId]);
+                    } catch (\Throwable $ignore) {
+                    }
+                    return json($failResp);
+                }
+                if ($authOk === false) {
+                    try {
+                        if ($redis->ping() === false) {
+                            try {
+                                Log::error('[Client.conflict] redis_auth_failed', ['task_id' => $taskId]);
+                            } catch (\Throwable $ignore) {
+                            }
+                            return json($failResp);
+                        }
+                    } catch (\Throwable $pingEx) {
+                        try {
+                            Log::error('[Client.conflict] redis_auth_failed', ['task_id' => $taskId]);
+                        } catch (\Throwable $ignore) {
+                        }
+                        return json($failResp);
+                    }
+                }
+
+                // Lua 为唯一入队实现（禁止 SET+RPUSH 降级，避免 EVAL 结果不确定时重复入队）。
+                // 顺序：拒绝已有状态 → pending → RPUSH；任一已存在状态（含 pending/processing/done/failed）均不覆盖。
+                // Redis 7.x 脚本中途报错会丢弃副作用；PHP 侧若收不到明确成功响应，则视为不确定，不清理 pending（依赖 TTL）。
+                $lua = <<<'LUA'
+local st = redis.call('GET', KEYS[1])
+if st then
+  return -1
+end
+redis.call('SET', KEYS[1], 'pending', 'EX', tonumber(ARGV[1]))
+local n = redis.call('RPUSH', KEYS[2], ARGV[2])
+if (not n) or (tonumber(n) < 1) then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+return n
+LUA;
+
+                if (!method_exists($redis, 'eval')) {
+                    try {
+                        Log::error('[Client.conflict] redis_eval_unavailable', ['task_id' => $taskId]);
+                    } catch (\Throwable $ignore) {
+                    }
+                    return json($failResp);
+                }
+
+                $luaRet = $redis->eval($lua, [$statusKey, $queueKey, (string)$ttl, $jobJson], 2);
+
+                // 明确失败：状态已存在 / RPUSH 未入队（Lua 内已条件删除本次 pending）
+                if ($luaRet === -1 || $luaRet === '-1' || $luaRet === 0 || $luaRet === '0') {
+                    try {
+                        Log::error('[Client.conflict] lua_enqueue_rejected', [
+                            'task_id' => $taskId,
+                            'lua_ret' => is_scalar($luaRet) ? $luaRet : gettype($luaRet),
+                        ]);
+                    } catch (\Throwable $ignore) {
+                    }
+                    return json($failResp);
+                }
+
+                // 仅确认收到有效正整数入队长度时返回成功
+                if (is_numeric($luaRet) && (int)$luaRet > 0) {
+                    return json([
+                        'code'    => 0,
+                        'msg'     => '查重任务已提交',
+                        'task_id' => $taskId
+                    ]);
+                }
+
+                // false/null/非预期返回：执行结果不确定，禁止降级入队，禁止删除 pending
+                try {
+                    Log::error('[Client.conflict] lua_enqueue_uncertain', [
+                        'task_id'      => $taskId,
+                        'lua_ret_type' => gettype($luaRet),
+                    ]);
+                } catch (\Throwable $ignore) {
+                }
+                return json($failResp);
+            } catch (\Throwable $e) {
+                // 连接/认证/EVAL 抛错：可能已入队但客户端未收到响应，禁止 GET+DEL 清理 pending
+                try {
+                    Log::error('[Client.conflict] enqueue_exception', [
+                        'task_id' => $taskId,
+                        'error'   => $e->getMessage(),
+                    ]);
+                } catch (\Throwable $ignore) {
+                }
+                return json($failResp);
+            }
         }
         // 非Ajax请求，渲染页面（保留原有逻辑）
         $this->assign('keyword', $_keyword);
@@ -7419,29 +7519,50 @@ class Client extends Common
             return json(['code' => 500, 'msg' => '缺少任务ID', 'data' => []]);
         }
 
-        $redis = new \Redis();
-        $redis->connect('127.0.0.1', 26739);
-        $redis->auth('csE88ifakDGC8PfH'); // 如有密码请取消注释
+        try {
+            $redis = new \Redis();
+            if (!$redis->connect('127.0.0.1', 26739, 2.0)) {
+                return json(['code' => 500, 'msg' => '查重服务暂不可用，请稍后重试', 'data' => []]);
+            }
+            $redis->auth('csE88ifakDGC8PfH');
 
-        $statusKey = 'waimao_conflict_status:' . $taskId;
-        $resultKey = 'waimao_conflict_result:' . $taskId;
+            $statusKey = 'waimao_conflict_status:' . $taskId;
+            $resultKey = 'waimao_conflict_result:' . $taskId;
+            $status    = $redis->get($statusKey);
 
-        $status = $redis->get($statusKey);
+            // pending / processing：继续等待（兼容旧 Worker 未写 processing、仅有 pending 的场景）
+            if ($status === 'pending' || $status === 'processing') {
+                return json(['code' => 202, 'msg' => '查重处理中，请稍后...', 'data' => []]);
+            }
 
-        if ($status === 'done') {
-            $resultData = $redis->get($resultKey);
-            $resultList = json_decode($resultData, true);
-            // 注意：不在这里删除 Redis key，依靠 expire 自动过期（5分钟）
-            return json([
-                'code'  => 0,
-                'msg'   => '获取成功',
-                'data'  => $resultList ?: [],
-                'count' => count($resultList ?: [])
-            ]);
-        } elseif ($status === 'processing') {
-            return json(['code' => 202, 'msg' => '查重处理中，请稍后...', 'data' => []]);
-        } else {
-            return json(['code' => 404, 'msg' => '查重失败，请再次尝试搜索', 'data' => []]);
+            if ($status === 'done') {
+                $resultData = $redis->get($resultKey);
+                // done 但结果缺失：不能当成“无重复客户”
+                if ($resultData === false || $resultData === null) {
+                    return json(['code' => 500, 'msg' => '查重结果已失效，请重新查询', 'data' => []]);
+                }
+                $resultList = json_decode($resultData, true);
+                if (!is_array($resultList)) {
+                    return json(['code' => 500, 'msg' => '查重结果异常，请重新查询', 'data' => []]);
+                }
+                // 注意：不在这里删除 Redis key，依靠 expire 自动过期（5分钟）
+                return json([
+                    'code'  => 0,
+                    'msg'   => '获取成功',
+                    'data'  => $resultList,
+                    'count' => count($resultList)
+                ]);
+            }
+
+            if ($status === 'failed') {
+                // 不向前端回传内部错误细节，避免泄漏 SQL/客户资料
+                return json(['code' => 500, 'msg' => '查重查询失败，请稍后重试', 'data' => []]);
+            }
+
+            // 状态缺失：任务不存在或已过期（不无限返回 202）
+            return json(['code' => 404, 'msg' => '查重任务不存在或已过期，请重新查询', 'data' => []]);
+        } catch (\Throwable $e) {
+            return json(['code' => 500, 'msg' => '查重服务暂不可用，请稍后重试', 'data' => []]);
         }
     }
 
