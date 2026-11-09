@@ -237,16 +237,21 @@ LUA;
             $perf['sql_name_ms'] = conflict_perf_ms($perfSqlStageStart);
 
             // 4-2 联系方式匹配（参数绑定，防 SQL 注入）
+            // TP5.1 闭包 where 会 newQuery()；whereOrRaw(?, [$bind]) 的 bindParams 落在临时
+            // newQuery，占位符写入 Expression 后进入父 SQL，绑定值却随 newQuery 丢弃 → HY093。
+            // 父查询预绑定唯一命名参数，闭包内 whereOrRaw 只引用该名、不传 bind 数组。
             $contactsQuery = \think\Db::name('crm_contacts')
                 ->alias('c')
                 ->leftJoin('crm_leads l', 'l.id = c.leads_id')
                 ->where('c.is_delete', 0)
+                ->bind([
+                    'cf_concat_like' => [$likeKeyword, \PDO::PARAM_STR],
+                ])
                 ->where(function ($q) use ($likeKeyword, $likeOrigin, $keyword, $keywordOrigin) {
                     $q->whereLike('c.contact_value', $likeKeyword)
                       ->whereOr('c.vdigits', 'like', $likeKeyword)
                       ->whereOrRaw(
-                          "CONCAT(c.contact_extra, c.contact_value) LIKE ?",
-                          [$likeKeyword]
+                          'CONCAT(c.contact_extra, c.contact_value) LIKE :cf_concat_like'
                       );
                     if ($keywordOrigin !== $keyword) {
                         // 原串（含空格 / + -）再查一次，避免漏匹配
@@ -336,7 +341,8 @@ LUA;
                         }
                     }
                 }
-                $dbgTaskId = (is_string($taskId) && preg_match('/^[A-Za-z0-9_\-]{1,128}$/', $taskId))
+                // uniqid('', true) 含小数点，白名单纳入 `.` 仅用于安全关联日志
+                $dbgTaskId = (is_string($taskId) && preg_match('/^[A-Za-z0-9_\-.]{1,128}$/', $taskId))
                     ? $taskId : 'unknown';
                 echo '[conflict_db_debug] task_id=' . $dbgTaskId
                     . ' stage=' . $dbgStage
