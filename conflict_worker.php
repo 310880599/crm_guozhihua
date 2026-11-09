@@ -61,6 +61,62 @@ LUA;
     }
 }
 
+/**
+ * 计算自 $start 起的毫秒耗时（PHP 7.4 兼容）
+ */
+function conflict_perf_ms($start)
+{
+    return round((microtime(true) - (float)$start) * 1000, 2);
+}
+
+/**
+ * 是否输出性能摘要：失败全量 / 慢任务(>1000ms)全量 / 快速成功约 10% 抽样
+ * 抽样仅影响日志，不影响任务结果与 Redis 状态
+ */
+function conflict_perf_should_log($workerTotalMs, $isFailed)
+{
+    if ($isFailed) {
+        return true;
+    }
+    if ((float)$workerTotalMs > 1000) {
+        return true;
+    }
+    try {
+        return mt_rand(1, 100) <= 10;
+    } catch (\Throwable $e) {
+        return false;
+    }
+}
+
+/**
+ * 单行结构化性能日志；输出失败不得影响业务
+ * 严禁写入手机号/客户名/联系方式/密码/payload/SQL 参数
+ */
+function conflict_perf_log($taskId, array $metrics)
+{
+    try {
+        $line = '[conflict_perf]'
+            . ' task_id=' . (string)$taskId
+            . ' sql_name_ms=' . round((float)($metrics['sql_name_ms'] ?? 0), 2)
+            . ' sql_contact_ms=' . round((float)($metrics['sql_contact_ms'] ?? 0), 2)
+            . ' sql_map_ms=' . round((float)($metrics['sql_map_ms'] ?? 0), 2)
+            . ' aggregate_ms=' . round((float)($metrics['aggregate_ms'] ?? 0), 2)
+            . ' redis_save_ms=' . round((float)($metrics['redis_save_ms'] ?? 0), 2)
+            . ' worker_total_ms=' . round((float)($metrics['worker_total_ms'] ?? 0), 2)
+            . ' hit_count=' . (int)($metrics['hit_count'] ?? 0)
+            . ' status=' . (string)($metrics['status'] ?? '');
+        if (!empty($metrics['fail_code'])) {
+            $line .= ' fail_code=' . (string)$metrics['fail_code'];
+        }
+        if (array_key_exists('fail_saved', $metrics)) {
+            $line .= ' fail_saved=' . (!empty($metrics['fail_saved']) ? '1' : '0');
+        }
+        echo $line . "\n";
+    } catch (\Throwable $e) {
+        // ignore log errors
+    }
+}
+
 // ===== 1. 连接 Redis 队列 =====
 $redis = null;
 $reconnectAttempts = 0;
@@ -127,10 +183,31 @@ LUA;
             continue;
         }
 
+        // 性能监控：自领取成功后开始计时（不含队列等待）
+        $workerStart = microtime(true);
+        $perf = [
+            'sql_name_ms' => 0.0,
+            'sql_contact_ms' => 0.0,
+            'sql_map_ms' => 0.0,
+            'aggregate_ms' => 0.0,
+            'redis_save_ms' => 0.0,
+            'worker_total_ms' => 0.0,
+            'hit_count' => 0,
+            'status' => '',
+            'fail_code' => '',
+        ];
+
         /* ---------- 3. 清洗关键词 ---------- */
         $keyword = trim(preg_replace('/[+\-\s]/', '', $keywordOrigin));
         if ($keyword === '') {
-            conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'empty_keyword');
+            $failSaved = conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'empty_keyword');
+            $perf['worker_total_ms'] = conflict_perf_ms($workerStart);
+            $perf['status'] = 'failed';
+            $perf['fail_code'] = 'empty_keyword';
+            $perf['fail_saved'] = $failSaved;
+            if (conflict_perf_should_log($perf['worker_total_ms'], true)) {
+                conflict_perf_log($taskId, $perf);
+            }
             continue;
         }
         $likeKeyword = '%' . conflict_escape_like($keyword) . '%';
@@ -140,6 +217,8 @@ LUA;
         $rawList = [];
         $leadsIds = []; // 收集所有匹配的客户ID
         $queryFailed = false;
+        $perfSqlStage = '';
+        $perfSqlStageStart = 0.0;
 
         try {
             // 4-1 客户名称匹配
@@ -152,7 +231,10 @@ LUA;
                     \think\Db::raw('NULL AS contact_value')
                 ])
                 ->whereLike('l.kh_name', $likeKeyword);
+            $perfSqlStage = 'name';
+            $perfSqlStageStart = microtime(true);
             $leadsList = $leadsQuery->select();
+            $perf['sql_name_ms'] = conflict_perf_ms($perfSqlStageStart);
 
             // 4-2 联系方式匹配（参数绑定，防 SQL 注入）
             $contactsQuery = \think\Db::name('crm_contacts')
@@ -176,9 +258,13 @@ LUA;
                     'l.at_user', 'l.at_time', 'l.pr_gh_type', 'l.pr_user',
                     'c.contact_type', 'c.contact_value', 'c.vdigits', 'c.id AS contact_id'
                 ]);
+            $perfSqlStage = 'contact';
+            $perfSqlStageStart = microtime(true);
             $contactsList = $contactsQuery->select();
+            $perf['sql_contact_ms'] = conflict_perf_ms($perfSqlStageStart);
 
-            // 合并结果
+            // 合并结果（计入后续 aggregate_ms）
+            $perfAggMergeStart = microtime(true);
             foreach ($leadsList as $row) {
                 $rawList[] = $row;
                 $leadsIds[$row['id']] = $row['id'];
@@ -192,9 +278,16 @@ LUA;
                     $rawList[] = $row;
                 }
             }
+            $perf['aggregate_ms'] = conflict_perf_ms($perfAggMergeStart);
 
         } catch (\Throwable $e) {
             // SQL / Error 异常不得伪装成“查重成功无数据”
+            // 保留已完成阶段耗时；对当前失败阶段补记耗时
+            if ($perfSqlStage === 'name' && $perfSqlStageStart > 0) {
+                $perf['sql_name_ms'] = conflict_perf_ms($perfSqlStageStart);
+            } elseif ($perfSqlStage === 'contact' && $perfSqlStageStart > 0) {
+                $perf['sql_contact_ms'] = conflict_perf_ms($perfSqlStageStart);
+            }
             $queryFailed = true;
             $rawList = [];
             $leadsIds = [];
@@ -202,13 +295,21 @@ LUA;
         }
 
         if ($queryFailed) {
-            conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'db_query_exception');
+            $failSaved = conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'db_query_exception');
+            $perf['worker_total_ms'] = conflict_perf_ms($workerStart);
+            $perf['status'] = 'failed';
+            $perf['fail_code'] = 'db_query_exception';
+            $perf['fail_saved'] = $failSaved;
+            if (conflict_perf_should_log($perf['worker_total_ms'], true)) {
+                conflict_perf_log($taskId, $perf);
+            }
             continue;
         }
 
         /* ---------- 5~8. 聚合 / 映射 / 排序（捕获 Throwable，避免单任务打崩 Worker） ---------- */
         $finalList = [];
         try {
+            $perfAggStart = microtime(true);
             $leadsMap = [];
             $contactMap = [];
 
@@ -326,10 +427,14 @@ LUA;
 
             $inquiryMap = [];
             $portMap = [];
+            $mapSqlPendingStart = null;
             try {
                 $inquiryIds = array_filter(array_unique(array_column($leadsMap, 'inquiry_id')));
                 if (!empty($inquiryIds)) {
+                    $mapSqlPendingStart = microtime(true);
                     $inquiryList = \think\Db::table('crm_inquiry')->whereIn('id', $inquiryIds)->select();
+                    $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
+                    $mapSqlPendingStart = null;
                     foreach ($inquiryList as $inq) {
                         $inquiryMap[$inq['id']] = $inq['inquiry_name'] ?? '';
                     }
@@ -349,14 +454,22 @@ LUA;
                 }
                 $portIds = array_unique($portIds);
                 if (!empty($portIds)) {
+                    $mapSqlPendingStart = microtime(true);
                     $portList = \think\Db::table('crm_inquiry_port')->whereIn('id', $portIds)->select();
+                    $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
+                    $mapSqlPendingStart = null;
                     foreach ($portList as $port) {
                         $portMap[$port['id']] = $port['port_name'] ?? '';
                     }
                 }
             } catch (\Throwable $e) {
                 // 映射失败不阻断主流程，渠道/端口显示为空
+                if ($mapSqlPendingStart !== null) {
+                    $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
+                    $mapSqlPendingStart = null;
+                }
             }
+            $perf['sql_map_ms'] = round((float)$perf['sql_map_ms'], 2);
 
             foreach ($leadsMap as $lead) {
                 $lead['channel_name'] = '';
@@ -384,9 +497,24 @@ LUA;
             usort($finalList, function ($a, $b) {
                 return strtotime($b['at_time']) <=> strtotime($a['at_time']);
             });
+
+            // aggregate_ms = 前置合并 + 本段总耗时 - 内部映射 SQL 耗时（保证非负）
+            $aggBlockMs = conflict_perf_ms($perfAggStart);
+            $perf['aggregate_ms'] = round(max(0, (float)$perf['aggregate_ms'] + $aggBlockMs - (float)$perf['sql_map_ms']), 2);
         } catch (\Throwable $e) {
             echo '[' . date('Y-m-d H:i:s') . "] task={$taskId} aggregate_exception\n";
-            conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'aggregate_exception');
+            if (isset($perfAggStart)) {
+                $aggBlockMs = conflict_perf_ms($perfAggStart);
+                $perf['aggregate_ms'] = round(max(0, (float)$perf['aggregate_ms'] + $aggBlockMs - (float)$perf['sql_map_ms']), 2);
+            }
+            $failSaved = conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'aggregate_exception');
+            $perf['worker_total_ms'] = conflict_perf_ms($workerStart);
+            $perf['status'] = 'failed';
+            $perf['fail_code'] = 'aggregate_exception';
+            $perf['fail_saved'] = $failSaved;
+            if (conflict_perf_should_log($perf['worker_total_ms'], true)) {
+                conflict_perf_log($taskId, $perf);
+            }
             continue;
         }
 
@@ -395,7 +523,15 @@ LUA;
         $resultJson = json_encode($finalList, JSON_UNESCAPED_UNICODE);
         if ($resultJson === false) {
             echo '[' . date('Y-m-d H:i:s') . "] task={$taskId} json_encode_failed\n";
-            conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'json_encode_failed');
+            $failSaved = conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'json_encode_failed');
+            $perf['hit_count'] = is_array($finalList) ? count($finalList) : 0;
+            $perf['worker_total_ms'] = conflict_perf_ms($workerStart);
+            $perf['status'] = 'failed';
+            $perf['fail_code'] = 'json_encode_failed';
+            $perf['fail_saved'] = $failSaved;
+            if (conflict_perf_should_log($perf['worker_total_ms'], true)) {
+                conflict_perf_log($taskId, $perf);
+            }
             continue;
         }
 
@@ -410,6 +546,7 @@ redis.call('SET', KEYS[2], 'done', 'EX', tonumber(ARGV[2]))
 return 1
 LUA;
         $saved = false;
+        $tRedisSave = microtime(true);
         try {
             if (method_exists($redis, 'eval')) {
                 $ret = $redis->eval($markDoneLua, [$resultKey, $statusKey, $resultJson, (string)$ttl], 2);
@@ -426,10 +563,26 @@ LUA;
             $saved = false;
             echo '[' . date('Y-m-d H:i:s') . "] task={$taskId} save_result_exception\n";
         }
+        $perf['redis_save_ms'] = conflict_perf_ms($tRedisSave);
+        $perf['hit_count'] = is_array($finalList) ? count($finalList) : 0;
+        $perf['worker_total_ms'] = conflict_perf_ms($workerStart);
 
         if (!$saved) {
             // 结果保存失败：仅在仍为 processing/pending 时标记 failed
-            conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'save_result_failed');
+            $failSaved = conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'save_result_failed');
+            $perf['status'] = 'failed';
+            $perf['fail_code'] = 'save_result_failed';
+            $perf['fail_saved'] = $failSaved;
+            // 失败写入后刷新总耗时（含 mark_failed）
+            $perf['worker_total_ms'] = conflict_perf_ms($workerStart);
+            if (conflict_perf_should_log($perf['worker_total_ms'], true)) {
+                conflict_perf_log($taskId, $perf);
+            }
+        } else {
+            $perf['status'] = 'done';
+            if (conflict_perf_should_log($perf['worker_total_ms'], false)) {
+                conflict_perf_log($taskId, $perf);
+            }
         }
 
         $reconnectAttempts = 0;
