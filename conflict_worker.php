@@ -292,6 +292,62 @@ LUA;
             $rawList = [];
             $leadsIds = [];
             echo '[' . date('Y-m-d H:i:s') . "] task={$taskId} db_query_exception\n";
+
+            // 临时诊断：仅记录异常类型与安全错误码（不输出 message/SQL/参数/用户输入）
+            try {
+                $dbgStage = ($perfSqlStage === 'name' || $perfSqlStage === 'contact') ? $perfSqlStage : 'unknown';
+                $dbgClass = get_class($e);
+                if (!is_string($dbgClass) || !preg_match('/^[A-Za-z0-9_\\\\]+$/', $dbgClass)) {
+                    $dbgClass = 'unknown';
+                }
+                $dbgCode = 'unknown';
+                $dbgCodeRaw = $e->getCode();
+                if (is_int($dbgCodeRaw)) {
+                    $dbgCode = (string)$dbgCodeRaw;
+                } elseif (is_string($dbgCodeRaw) && preg_match('/^[A-Za-z0-9_\-]{1,32}$/', $dbgCodeRaw)) {
+                    $dbgCode = $dbgCodeRaw;
+                }
+                $dbgSqlState = 'unknown';
+                $dbgDriver = 'unknown';
+                if ($e instanceof \PDOException && isset($e->errorInfo) && is_array($e->errorInfo)) {
+                    if (isset($e->errorInfo[0]) && is_string($e->errorInfo[0])
+                        && preg_match('/^[A-Za-z0-9]{1,8}$/', $e->errorInfo[0])) {
+                        $dbgSqlState = $e->errorInfo[0];
+                    }
+                    if (isset($e->errorInfo[1]) && (is_int($e->errorInfo[1])
+                        || (is_string($e->errorInfo[1]) && preg_match('/^-?[0-9]{1,10}$/', $e->errorInfo[1])))) {
+                        $dbgDriver = (string)$e->errorInfo[1];
+                    }
+                }
+                if (method_exists($e, 'getData')) {
+                    $dbgData = $e->getData();
+                    if (is_array($dbgData) && isset($dbgData['PDO Error Info']) && is_array($dbgData['PDO Error Info'])) {
+                        $pdoInfo = $dbgData['PDO Error Info'];
+                        if ($dbgSqlState === 'unknown' && isset($pdoInfo['SQLSTATE'])
+                            && is_string($pdoInfo['SQLSTATE'])
+                            && preg_match('/^[A-Za-z0-9]{1,8}$/', $pdoInfo['SQLSTATE'])) {
+                            $dbgSqlState = $pdoInfo['SQLSTATE'];
+                        }
+                        if ($dbgDriver === 'unknown' && isset($pdoInfo['Driver Error Code'])) {
+                            $drv = $pdoInfo['Driver Error Code'];
+                            if (is_int($drv) || (is_string($drv) && preg_match('/^-?[0-9]{1,10}$/', $drv))) {
+                                $dbgDriver = (string)$drv;
+                            }
+                        }
+                    }
+                }
+                $dbgTaskId = (is_string($taskId) && preg_match('/^[A-Za-z0-9_\-]{1,128}$/', $taskId))
+                    ? $taskId : 'unknown';
+                echo '[conflict_db_debug] task_id=' . $dbgTaskId
+                    . ' stage=' . $dbgStage
+                    . ' exception_class=' . $dbgClass
+                    . ' exception_code=' . $dbgCode
+                    . ' sqlstate=' . $dbgSqlState
+                    . ' driver_code=' . $dbgDriver
+                    . "\n";
+            } catch (\Throwable $dbgIgnore) {
+                // 诊断失败不得影响原有 failed 处理
+            }
         }
 
         if ($queryFailed) {
