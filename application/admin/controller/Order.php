@@ -848,9 +848,6 @@ class Order extends Common
             if (!isset($params['keyword']) || !is_array($params['keyword'])) {
                 $params['keyword'] = [];
             }
-            if (!isset($params['keyword']['timebucket']) || $params['keyword']['timebucket'] === '') {
-                $params['keyword']['timebucket'] = 'month';
-            }
             Request::merge($params);
             return $this->pendingClientSearch();
             // $key = input('post.key');
