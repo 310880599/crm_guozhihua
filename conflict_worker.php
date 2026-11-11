@@ -117,6 +117,165 @@ function conflict_perf_log($taskId, array $metrics)
     }
 }
 
+/**
+ * 安全提取 SQLSTATE / 驱动错误码（不读 message/SQL/参数）
+ * @return array{sqlstate:string,driver_code:string,exception_code:string,exception_class:string}
+ */
+function conflict_db_extract_codes(\Throwable $e)
+{
+    $out = [
+        'sqlstate' => '',
+        'driver_code' => '',
+        'exception_code' => '',
+        'exception_class' => '',
+    ];
+    try {
+        $cls = get_class($e);
+        if (is_string($cls) && preg_match('/^[A-Za-z0-9_\\\\]+$/', $cls)) {
+            $out['exception_class'] = $cls;
+        }
+        $codeRaw = $e->getCode();
+        if (is_int($codeRaw)) {
+            $out['exception_code'] = (string)$codeRaw;
+        } elseif (is_string($codeRaw) && preg_match('/^[A-Za-z0-9_\-]{1,32}$/', $codeRaw)) {
+            $out['exception_code'] = $codeRaw;
+        }
+        if ($e instanceof \PDOException && isset($e->errorInfo) && is_array($e->errorInfo)) {
+            if (isset($e->errorInfo[0]) && is_string($e->errorInfo[0])
+                && preg_match('/^[A-Za-z0-9]{1,8}$/', $e->errorInfo[0])) {
+                $out['sqlstate'] = $e->errorInfo[0];
+            }
+            if (isset($e->errorInfo[1]) && (is_int($e->errorInfo[1])
+                || (is_string($e->errorInfo[1]) && preg_match('/^-?[0-9]{1,10}$/', $e->errorInfo[1])))) {
+                $out['driver_code'] = (string)$e->errorInfo[1];
+            }
+        }
+        if (method_exists($e, 'getData')) {
+            $data = $e->getData();
+            if (is_array($data) && isset($data['PDO Error Info']) && is_array($data['PDO Error Info'])) {
+                $pdoInfo = $data['PDO Error Info'];
+                if ($out['sqlstate'] === '' && isset($pdoInfo['SQLSTATE'])
+                    && is_string($pdoInfo['SQLSTATE'])
+                    && preg_match('/^[A-Za-z0-9]{1,8}$/', $pdoInfo['SQLSTATE'])) {
+                    $out['sqlstate'] = $pdoInfo['SQLSTATE'];
+                }
+                if ($out['driver_code'] === '' && isset($pdoInfo['Driver Error Code'])) {
+                    $drv = $pdoInfo['Driver Error Code'];
+                    if (is_int($drv) || (is_string($drv) && preg_match('/^-?[0-9]{1,10}$/', $drv))) {
+                        $out['driver_code'] = (string)$drv;
+                    }
+                }
+            }
+        }
+    } catch (\Throwable $ignore) {
+        // ignore
+    }
+    return $out;
+}
+
+/**
+ * 是否明确的 MySQL 连接失效。
+ * 仅认驱动码 2006/2013 或 SQLSTATE 08S01；不得仅凭 HY000 / 10501 / HY093 判定。
+ */
+function conflict_db_is_connection_lost(\Throwable $e)
+{
+    $codes = conflict_db_extract_codes($e);
+    if ($codes['driver_code'] === '2006' || $codes['driver_code'] === '2013') {
+        return true;
+    }
+    if ($codes['sqlstate'] === '08S01') {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 脱敏重连日志；输出失败不得影响业务
+ */
+function conflict_db_reconnect_log($taskId, $stage, $attempt, $status, $driverCode = '')
+{
+    try {
+        $safeTask = (is_string($taskId) && preg_match('/^[A-Za-z0-9_\-.]{1,128}$/', $taskId))
+            ? $taskId : 'unknown';
+        $safeStage = (is_string($stage) && preg_match('/^[a-z_]{1,32}$/', $stage)) ? $stage : 'unknown';
+        $safeAttempt = (is_int($attempt) || (is_string($attempt) && preg_match('/^[0-9]{1,3}$/', $attempt)))
+            ? (string)(int)$attempt : '0';
+        $safeStatus = (is_string($status) && preg_match('/^[a-z_]{1,32}$/', $status)) ? $status : 'unknown';
+        $line = '[conflict_db_reconnect] task_id=' . $safeTask
+            . ' stage=' . $safeStage
+            . ' attempt=' . $safeAttempt
+            . ' status=' . $safeStatus;
+        if ($driverCode !== '' && $driverCode !== null
+            && (is_int($driverCode) || (is_string($driverCode) && preg_match('/^-?[0-9]{1,10}$/', $driverCode)))) {
+            $line .= ' driver_code=' . (string)$driverCode;
+        }
+        echo $line . "\n";
+    } catch (\Throwable $ignore) {
+        // ignore
+    }
+}
+
+/**
+ * 关闭失效 PDO，强制重建 ThinkPHP5.1 Connection 实例并用 SELECT 1 校验。
+ * 不开启框架 break_reconnect（其 query/execute 递归重试无上限）。
+ * @return bool
+ */
+function conflict_db_force_reconnect($taskId, $stage, $attempt, $driverCode = '')
+{
+    conflict_db_reconnect_log($taskId, $stage, $attempt, 'start', $driverCode);
+    try {
+        try {
+            $q = \think\Db::connect();
+            if ($q && method_exists($q, 'getConnection')) {
+                $conn = $q->getConnection();
+                if ($conn && method_exists($conn, 'close')) {
+                    $conn->close();
+                }
+            }
+        } catch (\Throwable $closeIgnore) {
+            // 旧连接可能已不可用，继续强制重建
+        }
+
+        // TP5.1: name=true 强制新建 Connection 并覆盖静态缓存
+        \think\Db::connect([], true);
+
+        // 校验新连接可用；失败不得假装恢复成功
+        \think\Db::query('SELECT 1');
+
+        conflict_db_reconnect_log($taskId, $stage, $attempt, 'success', $driverCode);
+        return true;
+    } catch (\Throwable $re) {
+        conflict_db_reconnect_log($taskId, $stage, $attempt, 'failed', $driverCode);
+        return false;
+    }
+}
+
+/**
+ * 临时诊断日志（脱敏）；失败不影响业务
+ */
+function conflict_db_debug_log($taskId, $stage, \Throwable $e)
+{
+    try {
+        $codes = conflict_db_extract_codes($e);
+        $dbgTaskId = (is_string($taskId) && preg_match('/^[A-Za-z0-9_\-.]{1,128}$/', $taskId))
+            ? $taskId : 'unknown';
+        $dbgStage = ($stage === 'name' || $stage === 'contact' || $stage === 'map') ? $stage : 'unknown';
+        $dbgClass = $codes['exception_class'] !== '' ? $codes['exception_class'] : 'unknown';
+        $dbgCode = $codes['exception_code'] !== '' ? $codes['exception_code'] : 'unknown';
+        $dbgSqlState = $codes['sqlstate'] !== '' ? $codes['sqlstate'] : 'unknown';
+        $dbgDriver = $codes['driver_code'] !== '' ? $codes['driver_code'] : 'unknown';
+        echo '[conflict_db_debug] task_id=' . $dbgTaskId
+            . ' stage=' . $dbgStage
+            . ' exception_class=' . $dbgClass
+            . ' exception_code=' . $dbgCode
+            . ' sqlstate=' . $dbgSqlState
+            . ' driver_code=' . $dbgDriver
+            . "\n";
+    } catch (\Throwable $dbgIgnore) {
+        // ignore
+    }
+}
+
 // ===== 1. 连接 Redis 队列 =====
 $redis = null;
 $reconnectAttempts = 0;
@@ -213,149 +372,131 @@ LUA;
         $likeKeyword = '%' . conflict_escape_like($keyword) . '%';
         $likeOrigin  = '%' . conflict_escape_like($keywordOrigin) . '%';
 
-        /* ---------- 4. 查询数据库 ---------- */
+        /* ---------- 4. 查询数据库（断线最多额外重试一次整段只读查询） ---------- */
         $rawList = [];
         $leadsIds = []; // 收集所有匹配的客户ID
         $queryFailed = false;
         $perfSqlStage = '';
         $perfSqlStageStart = 0.0;
+        // 单任务主查询：首次执行 + 断线恢复后整段重跑 1 次；禁止无限重试 / 禁止 RPUSH
+        $dbQueryMaxRounds = 2;
+        $dbReconnectUsed = false;
 
-        try {
-            // 4-1 客户名称匹配
-            $leadsQuery = \think\Db::name('crm_leads')
-                ->alias('l')
-                ->field([
-                    'l.id', 'l.kh_name', 'l.kh_status', 'l.inquiry_id', 'l.port_id',
-                    'l.at_user', 'l.at_time', 'l.pr_gh_type', 'l.pr_user',
-                    \think\Db::raw('NULL AS contact_type'),
-                    \think\Db::raw('NULL AS contact_value')
-                ])
-                ->whereLike('l.kh_name', $likeKeyword);
-            $perfSqlStage = 'name';
-            $perfSqlStageStart = microtime(true);
-            $leadsList = $leadsQuery->select();
-            $perf['sql_name_ms'] = conflict_perf_ms($perfSqlStageStart);
-
-            // 4-2 联系方式匹配（参数绑定，防 SQL 注入）
-            // TP5.1 闭包 where 会 newQuery()；whereOrRaw(?, [$bind]) 的 bindParams 落在临时
-            // newQuery，占位符写入 Expression 后进入父 SQL，绑定值却随 newQuery 丢弃 → HY093。
-            // 父查询预绑定唯一命名参数，闭包内 whereOrRaw 只引用该名、不传 bind 数组。
-            $contactsQuery = \think\Db::name('crm_contacts')
-                ->alias('c')
-                ->leftJoin('crm_leads l', 'l.id = c.leads_id')
-                ->where('c.is_delete', 0)
-                ->bind([
-                    'cf_concat_like' => [$likeKeyword, \PDO::PARAM_STR],
-                ])
-                ->where(function ($q) use ($likeKeyword, $likeOrigin, $keyword, $keywordOrigin) {
-                    $q->whereLike('c.contact_value', $likeKeyword)
-                      ->whereOr('c.vdigits', 'like', $likeKeyword)
-                      ->whereOrRaw(
-                          'CONCAT(c.contact_extra, c.contact_value) LIKE :cf_concat_like'
-                      );
-                    if ($keywordOrigin !== $keyword) {
-                        // 原串（含空格 / + -）再查一次，避免漏匹配
-                        $q->whereOr('c.contact_value', 'like', $likeOrigin);
-                    }
-                })
-                ->field([
-                    'l.id', 'l.kh_name', 'l.kh_status', 'l.inquiry_id', 'l.port_id',
-                    'l.at_user', 'l.at_time', 'l.pr_gh_type', 'l.pr_user',
-                    'c.contact_type', 'c.contact_value', 'c.vdigits', 'c.id AS contact_id'
-                ]);
-            $perfSqlStage = 'contact';
-            $perfSqlStageStart = microtime(true);
-            $contactsList = $contactsQuery->select();
-            $perf['sql_contact_ms'] = conflict_perf_ms($perfSqlStageStart);
-
-            // 合并结果（计入后续 aggregate_ms）
-            $perfAggMergeStart = microtime(true);
-            foreach ($leadsList as $row) {
-                $rawList[] = $row;
-                $leadsIds[$row['id']] = $row['id'];
-            }
-            foreach ($contactsList as $row) {
-                if (!isset($leadsIds[$row['id']])) {
-                    $rawList[] = $row;
-                    $leadsIds[$row['id']] = $row['id'];
-                } else {
-                    // 如果客户已存在，添加联系方式信息以便后续匹配
-                    $rawList[] = $row;
-                }
-            }
-            $perf['aggregate_ms'] = conflict_perf_ms($perfAggMergeStart);
-
-        } catch (\Throwable $e) {
-            // SQL / Error 异常不得伪装成“查重成功无数据”
-            // 保留已完成阶段耗时；对当前失败阶段补记耗时
-            if ($perfSqlStage === 'name' && $perfSqlStageStart > 0) {
-                $perf['sql_name_ms'] = conflict_perf_ms($perfSqlStageStart);
-            } elseif ($perfSqlStage === 'contact' && $perfSqlStageStart > 0) {
-                $perf['sql_contact_ms'] = conflict_perf_ms($perfSqlStageStart);
-            }
-            $queryFailed = true;
+        for ($dbRound = 1; $dbRound <= $dbQueryMaxRounds; $dbRound++) {
             $rawList = [];
             $leadsIds = [];
-            echo '[' . date('Y-m-d H:i:s') . "] task={$taskId} db_query_exception\n";
+            $queryFailed = false;
+            $perfSqlStage = '';
+            $perfSqlStageStart = 0.0;
+            // 重试前清空聚合，避免与第一次半成品合并
+            if ($dbRound > 1) {
+                $perf['sql_name_ms'] = 0.0;
+                $perf['sql_contact_ms'] = 0.0;
+                $perf['aggregate_ms'] = 0.0;
+            }
 
-            // 临时诊断：仅记录异常类型与安全错误码（不输出 message/SQL/参数/用户输入）
             try {
-                $dbgStage = ($perfSqlStage === 'name' || $perfSqlStage === 'contact') ? $perfSqlStage : 'unknown';
-                $dbgClass = get_class($e);
-                if (!is_string($dbgClass) || !preg_match('/^[A-Za-z0-9_\\\\]+$/', $dbgClass)) {
-                    $dbgClass = 'unknown';
-                }
-                $dbgCode = 'unknown';
-                $dbgCodeRaw = $e->getCode();
-                if (is_int($dbgCodeRaw)) {
-                    $dbgCode = (string)$dbgCodeRaw;
-                } elseif (is_string($dbgCodeRaw) && preg_match('/^[A-Za-z0-9_\-]{1,32}$/', $dbgCodeRaw)) {
-                    $dbgCode = $dbgCodeRaw;
-                }
-                $dbgSqlState = 'unknown';
-                $dbgDriver = 'unknown';
-                if ($e instanceof \PDOException && isset($e->errorInfo) && is_array($e->errorInfo)) {
-                    if (isset($e->errorInfo[0]) && is_string($e->errorInfo[0])
-                        && preg_match('/^[A-Za-z0-9]{1,8}$/', $e->errorInfo[0])) {
-                        $dbgSqlState = $e->errorInfo[0];
-                    }
-                    if (isset($e->errorInfo[1]) && (is_int($e->errorInfo[1])
-                        || (is_string($e->errorInfo[1]) && preg_match('/^-?[0-9]{1,10}$/', $e->errorInfo[1])))) {
-                        $dbgDriver = (string)$e->errorInfo[1];
-                    }
-                }
-                if (method_exists($e, 'getData')) {
-                    $dbgData = $e->getData();
-                    if (is_array($dbgData) && isset($dbgData['PDO Error Info']) && is_array($dbgData['PDO Error Info'])) {
-                        $pdoInfo = $dbgData['PDO Error Info'];
-                        if ($dbgSqlState === 'unknown' && isset($pdoInfo['SQLSTATE'])
-                            && is_string($pdoInfo['SQLSTATE'])
-                            && preg_match('/^[A-Za-z0-9]{1,8}$/', $pdoInfo['SQLSTATE'])) {
-                            $dbgSqlState = $pdoInfo['SQLSTATE'];
+                // 4-1 客户名称匹配
+                $leadsQuery = \think\Db::name('crm_leads')
+                    ->alias('l')
+                    ->field([
+                        'l.id', 'l.kh_name', 'l.kh_status', 'l.inquiry_id', 'l.port_id',
+                        'l.at_user', 'l.at_time', 'l.pr_gh_type', 'l.pr_user',
+                        \think\Db::raw('NULL AS contact_type'),
+                        \think\Db::raw('NULL AS contact_value')
+                    ])
+                    ->whereLike('l.kh_name', $likeKeyword);
+                $perfSqlStage = 'name';
+                $perfSqlStageStart = microtime(true);
+                $leadsList = $leadsQuery->select();
+                $perf['sql_name_ms'] = conflict_perf_ms($perfSqlStageStart);
+
+                // 4-2 联系方式匹配（参数绑定，防 SQL 注入）
+                // TP5.1 闭包 where 会 newQuery()；whereOrRaw(?, [$bind]) 的 bindParams 落在临时
+                // newQuery，占位符写入 Expression 后进入父 SQL，绑定值却随 newQuery 丢弃 → HY093。
+                // 父查询预绑定唯一命名参数，闭包内 whereOrRaw 只引用该名、不传 bind 数组。
+                $contactsQuery = \think\Db::name('crm_contacts')
+                    ->alias('c')
+                    ->leftJoin('crm_leads l', 'l.id = c.leads_id')
+                    ->where('c.is_delete', 0)
+                    ->bind([
+                        'cf_concat_like' => [$likeKeyword, \PDO::PARAM_STR],
+                    ])
+                    ->where(function ($q) use ($likeKeyword, $likeOrigin, $keyword, $keywordOrigin) {
+                        $q->whereLike('c.contact_value', $likeKeyword)
+                          ->whereOr('c.vdigits', 'like', $likeKeyword)
+                          ->whereOrRaw(
+                              'CONCAT(c.contact_extra, c.contact_value) LIKE :cf_concat_like'
+                          );
+                        if ($keywordOrigin !== $keyword) {
+                            // 原串（含空格 / + -）再查一次，避免漏匹配
+                            $q->whereOr('c.contact_value', 'like', $likeOrigin);
                         }
-                        if ($dbgDriver === 'unknown' && isset($pdoInfo['Driver Error Code'])) {
-                            $drv = $pdoInfo['Driver Error Code'];
-                            if (is_int($drv) || (is_string($drv) && preg_match('/^-?[0-9]{1,10}$/', $drv))) {
-                                $dbgDriver = (string)$drv;
-                            }
-                        }
+                    })
+                    ->field([
+                        'l.id', 'l.kh_name', 'l.kh_status', 'l.inquiry_id', 'l.port_id',
+                        'l.at_user', 'l.at_time', 'l.pr_gh_type', 'l.pr_user',
+                        'c.contact_type', 'c.contact_value', 'c.vdigits', 'c.id AS contact_id'
+                    ]);
+                $perfSqlStage = 'contact';
+                $perfSqlStageStart = microtime(true);
+                $contactsList = $contactsQuery->select();
+                $perf['sql_contact_ms'] = conflict_perf_ms($perfSqlStageStart);
+
+                // 合并结果（计入后续 aggregate_ms）
+                $perfAggMergeStart = microtime(true);
+                foreach ($leadsList as $row) {
+                    $rawList[] = $row;
+                    $leadsIds[$row['id']] = $row['id'];
+                }
+                foreach ($contactsList as $row) {
+                    if (!isset($leadsIds[$row['id']])) {
+                        $rawList[] = $row;
+                        $leadsIds[$row['id']] = $row['id'];
+                    } else {
+                        // 如果客户已存在，添加联系方式信息以便后续匹配
+                        $rawList[] = $row;
                     }
                 }
-                // uniqid('', true) 含小数点，白名单纳入 `.` 仅用于安全关联日志
-                $dbgTaskId = (is_string($taskId) && preg_match('/^[A-Za-z0-9_\-.]{1,128}$/', $taskId))
-                    ? $taskId : 'unknown';
-                echo '[conflict_db_debug] task_id=' . $dbgTaskId
-                    . ' stage=' . $dbgStage
-                    . ' exception_class=' . $dbgClass
-                    . ' exception_code=' . $dbgCode
-                    . ' sqlstate=' . $dbgSqlState
-                    . ' driver_code=' . $dbgDriver
-                    . "\n";
-            } catch (\Throwable $dbgIgnore) {
-                // 诊断失败不得影响原有 failed 处理
+                $perf['aggregate_ms'] = conflict_perf_ms($perfAggMergeStart);
+                break; // 本轮成功
+
+            } catch (\Throwable $e) {
+                // SQL / Error 异常不得伪装成“查重成功无数据”
+                // 保留已完成阶段耗时；对当前失败阶段补记耗时
+                if ($perfSqlStage === 'name' && $perfSqlStageStart > 0) {
+                    $perf['sql_name_ms'] = conflict_perf_ms($perfSqlStageStart);
+                } elseif ($perfSqlStage === 'contact' && $perfSqlStageStart > 0) {
+                    $perf['sql_contact_ms'] = conflict_perf_ms($perfSqlStageStart);
+                }
+                $rawList = [];
+                $leadsIds = [];
+                echo '[' . date('Y-m-d H:i:s') . "] task={$taskId} db_query_exception\n";
+                conflict_db_debug_log($taskId, $perfSqlStage, $e);
+
+                $codes = conflict_db_extract_codes($e);
+                $canRetry = (!$dbReconnectUsed)
+                    && ($dbRound < $dbQueryMaxRounds)
+                    && conflict_db_is_connection_lost($e);
+
+                if ($canRetry) {
+                    $dbReconnectUsed = true;
+                    $reOk = conflict_db_force_reconnect(
+                        $taskId,
+                        ($perfSqlStage === 'name' || $perfSqlStage === 'contact') ? $perfSqlStage : 'unknown',
+                        1,
+                        $codes['driver_code']
+                    );
+                    if ($reOk) {
+                        // 整段只读查询重跑：重建 Query，不复用旧 bind / 半成品结果
+                        continue;
+                    }
+                }
+
+                $queryFailed = true;
+                break;
             }
         }
-
         if ($queryFailed) {
             $failSaved = conflict_mark_failed($redis, $statusKey, $errorKey, $ttl, 'db_query_exception');
             $perf['worker_total_ms'] = conflict_perf_ms($workerStart);
@@ -490,45 +631,73 @@ LUA;
             $inquiryMap = [];
             $portMap = [];
             $mapSqlPendingStart = null;
-            try {
-                $inquiryIds = array_filter(array_unique(array_column($leadsMap, 'inquiry_id')));
-                if (!empty($inquiryIds)) {
-                    $mapSqlPendingStart = microtime(true);
-                    $inquiryList = \think\Db::table('crm_inquiry')->whereIn('id', $inquiryIds)->select();
-                    $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
-                    $mapSqlPendingStart = null;
-                    foreach ($inquiryList as $inq) {
-                        $inquiryMap[$inq['id']] = $inq['inquiry_name'] ?? '';
-                    }
+            // 映射阶段：断线可恢复一次；仍失败则保持原规则（渠道/端口为空，不阻断主流程）
+            $mapMaxRounds = 2;
+            $mapReconnectUsed = false;
+            for ($mapRound = 1; $mapRound <= $mapMaxRounds; $mapRound++) {
+                $inquiryMap = [];
+                $portMap = [];
+                $mapSqlPendingStart = null;
+                if ($mapRound > 1) {
+                    // 重试时重新累计本段映射耗时（外层 aggregate 仍按最终 sql_map_ms 扣除）
+                    $perf['sql_map_ms'] = 0.0;
                 }
+                try {
+                    $inquiryIds = array_filter(array_unique(array_column($leadsMap, 'inquiry_id')));
+                    if (!empty($inquiryIds)) {
+                        $mapSqlPendingStart = microtime(true);
+                        $inquiryList = \think\Db::table('crm_inquiry')->whereIn('id', $inquiryIds)->select();
+                        $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
+                        $mapSqlPendingStart = null;
+                        foreach ($inquiryList as $inq) {
+                            $inquiryMap[$inq['id']] = $inq['inquiry_name'] ?? '';
+                        }
+                    }
 
-                $portIds = [];
-                foreach ($leadsMap as $lead) {
-                    if (!empty($lead['port_id'])) {
-                        $ports = explode(',', $lead['port_id']);
-                        foreach ($ports as $pid) {
-                            $pid = trim($pid);
-                            if ($pid && is_numeric($pid)) {
-                                $portIds[] = (int)$pid;
+                    $portIds = [];
+                    foreach ($leadsMap as $lead) {
+                        if (!empty($lead['port_id'])) {
+                            $ports = explode(',', $lead['port_id']);
+                            foreach ($ports as $pid) {
+                                $pid = trim($pid);
+                                if ($pid && is_numeric($pid)) {
+                                    $portIds[] = (int)$pid;
+                                }
                             }
                         }
                     }
-                }
-                $portIds = array_unique($portIds);
-                if (!empty($portIds)) {
-                    $mapSqlPendingStart = microtime(true);
-                    $portList = \think\Db::table('crm_inquiry_port')->whereIn('id', $portIds)->select();
-                    $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
-                    $mapSqlPendingStart = null;
-                    foreach ($portList as $port) {
-                        $portMap[$port['id']] = $port['port_name'] ?? '';
+                    $portIds = array_unique($portIds);
+                    if (!empty($portIds)) {
+                        $mapSqlPendingStart = microtime(true);
+                        $portList = \think\Db::table('crm_inquiry_port')->whereIn('id', $portIds)->select();
+                        $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
+                        $mapSqlPendingStart = null;
+                        foreach ($portList as $port) {
+                            $portMap[$port['id']] = $port['port_name'] ?? '';
+                        }
                     }
-                }
-            } catch (\Throwable $e) {
-                // 映射失败不阻断主流程，渠道/端口显示为空
-                if ($mapSqlPendingStart !== null) {
-                    $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
-                    $mapSqlPendingStart = null;
+                    break; // 映射成功
+                } catch (\Throwable $e) {
+                    // 映射失败不阻断主流程，渠道/端口显示为空
+                    if ($mapSqlPendingStart !== null) {
+                        $perf['sql_map_ms'] += conflict_perf_ms($mapSqlPendingStart);
+                        $mapSqlPendingStart = null;
+                    }
+                    conflict_db_debug_log($taskId, 'map', $e);
+                    $codes = conflict_db_extract_codes($e);
+                    $canMapRetry = (!$mapReconnectUsed)
+                        && ($mapRound < $mapMaxRounds)
+                        && conflict_db_is_connection_lost($e);
+                    if ($canMapRetry) {
+                        $mapReconnectUsed = true;
+                        $reOk = conflict_db_force_reconnect($taskId, 'map', 1, $codes['driver_code']);
+                        if ($reOk) {
+                            continue;
+                        }
+                    }
+                    $inquiryMap = [];
+                    $portMap = [];
+                    break;
                 }
             }
             $perf['sql_map_ms'] = round((float)$perf['sql_map_ms'], 2);
