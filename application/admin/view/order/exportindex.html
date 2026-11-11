@@ -818,6 +818,68 @@
                 return num.toString().replace(/\.00$/, '') + '%';
             }
 
+            // Excel 导出：区分 null/undefined/'' 与数字 0，避免 0 被当成空
+            function isEmptyExportValue(value) {
+                return value === null || value === undefined || value === '';
+            }
+
+            // Excel 导出：安全取字段值，保留数字 0
+            function getExportFieldValue(source, field) {
+                if (!source || typeof source !== 'object') {
+                    return null;
+                }
+                var value = source[field];
+                return isEmptyExportValue(value) ? null : value;
+            }
+
+            /**
+             * Excel 导出：解析金额/数量为真正数值。
+             * - 空值 → empty
+             * - 可识别数字（含千分位 1,200.00）→ ok + num
+             * - 无法识别的非空文本 → raw（不得静默转 0）
+             */
+            function parseExportNumber(value) {
+                if (isEmptyExportValue(value)) {
+                    return { ok: false, empty: true };
+                }
+                if (typeof value === 'number') {
+                    if (isNaN(value)) {
+                        return { ok: false, empty: true };
+                    }
+                    return { ok: true, num: value };
+                }
+                var text = String(value).trim();
+                if (text === '') {
+                    return { ok: false, empty: true };
+                }
+                // 去掉千分位逗号与首尾空格，避免 parseFloat('1,200.00') === 1
+                var cleaned = text.replace(/,/g, '').replace(/\s/g, '');
+                if (!/^[-+]?\d+(\.\d+)?$/.test(cleaned)) {
+                    return { ok: false, empty: false, raw: value };
+                }
+                var num = parseFloat(cleaned);
+                if (isNaN(num)) {
+                    return { ok: false, empty: false, raw: value };
+                }
+                return { ok: true, num: num };
+            }
+
+            // Excel 导出：占比存库为百分数口径（100=100%），写数值并带字面量 % 显示
+            function toExportPercentNumber(value, defaultValue) {
+                var raw = value;
+                if (isEmptyExportValue(raw)) {
+                    raw = defaultValue;
+                }
+                if (typeof raw === 'string') {
+                    raw = raw.replace(/%/g, '').trim();
+                }
+                var num = parseFloat(raw);
+                if (isNaN(num)) {
+                    num = defaultValue;
+                }
+                return num;
+            }
+
             function bindProductDetailPopup(res) {
                 var dataMap = {};
                 if (res && Array.isArray(res.data)) {
@@ -1066,49 +1128,55 @@
                         // 如果有产品明细，每个明细一行
                         orderItems.forEach((itemDetail, index) => {
                             const row = columns.map(col => {
-                                let value = '';
+                                let value = null;
                                 let preserveEmpty = false;
                                 
                                 // 订单主表字段 - 只在第一个产品行显示
                                 if (index === 0) {
-                                    // 第一行：显示订单信息
+                                    // 第一行：显示订单信息（保留数字 0，空值用 null）
                                     if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
                                          'owner_profit_rate', 'collaborator_profit_rate',
                                          'source_port', 'amount_received', 'profit',
                                          'margin_rate', 'client_company'].includes(col.field)) {
-                                        value = item[col.field] || '';
+                                        value = getExportFieldValue(item, col.field);
                                     }
                                     else if (col.field === 'invoice_type') {
-                                        value = item['invoice_type'] || '';
+                                        value = getExportFieldValue(item, 'invoice_type');
                                     }
                                     else if (col.field === 'bank_account') {
-                                        value = item['bank_account_name'] || item['bank_account'] || '';
+                                        value = getExportFieldValue(item, 'bank_account_name');
+                                        if (value === null) {
+                                            value = getExportFieldValue(item, 'bank_account');
+                                        }
                                     }
                                     else if (col.field === 'joint_person') {
-                                        value = item['joint_person_names'] || item['joint_person'] || '';
+                                        value = getExportFieldValue(item, 'joint_person_names');
+                                        if (value === null) {
+                                            value = getExportFieldValue(item, 'joint_person');
+                                        }
                                     }
                                     else if (col.field === 'product_name_summary') {
-                                        value = item['product_name'] || '';
+                                        value = getExportFieldValue(item, 'product_name');
                                     }
                                     else if (col.field === 'create_time_original') {
-                                        value = item['original_creation_time'] || '';
+                                        value = getExportFieldValue(item, 'original_creation_time');
                                     }
                                     else if (col.field === 'ut_time_original') {
-                                        value = item['original_modification_time'] || '';
+                                        value = getExportFieldValue(item, 'original_modification_time');
                                     }
                                     else if (col.field === 'old_crm_data') {
-                                        value = item['old_crm_data'] || '';
+                                        value = getExportFieldValue(item, 'old_crm_data');
                                     }
                                     else if (col.field === 'create_time') {
-                                        value = item['create_time'] || '';
+                                        value = getExportFieldValue(item, 'create_time');
                                     }
                                     else if (col.field === 'ut_time') {
-                                        value = item['ut_time'] || '';
+                                        value = getExportFieldValue(item, 'ut_time');
                                     }
                                 } else {
-                                    // 第二行及以后：订单信息留空，只显示产品信息
+                                    // 第二行及以后：合并区内订单字段写真正空白（null），不写空字符串
                                     if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                          'shipping_cost', 'invoice_amount', 'tax_amount', 
                                          'debugging_cost', 'sales_commission', 'split_remarks', 
@@ -1118,48 +1186,63 @@
                                          'bank_account', 'joint_person', 'product_name_summary',
                                          'create_time_original', 'ut_time_original', 'old_crm_data',
                                          'create_time', 'ut_time'].includes(col.field)) {
-                                        value = ''; // 订单信息留空
+                                        value = null;
                                         preserveEmpty = true;
                                     }
                                 }
                                 
-                                // 产品明细字段 - 所有行都显示
+                                // 产品明细字段 - 所有行都显示（金额/数量保留 0，空值不默认填 0）
                                 if (col.field === 'product_manager') {
-                                    value = itemDetail.manager_name || '';
+                                    value = getExportFieldValue(itemDetail, 'manager_name');
                                 }
                                 else if (col.field === 'product_name') {
-                                    value = itemDetail.product_name || '';
+                                    value = getExportFieldValue(itemDetail, 'product_name');
                                 }
                                 else if (col.field === 'spec_model') {
-                                    value = itemDetail.spec_model || '';
+                                    value = getExportFieldValue(itemDetail, 'spec_model');
                                 }
                                 else if (col.field === 'supplier') {
-                                    value = itemDetail.supplier || '';
+                                    value = getExportFieldValue(itemDetail, 'supplier');
                                 }
                                 else if (col.field === 'unit') {
-                                    value = itemDetail.unit || '';
+                                    value = getExportFieldValue(itemDetail, 'unit');
                                 }
                                 else if (col.field === 'qty') {
-                                    value = itemDetail.qty || 0;
+                                    value = getExportFieldValue(itemDetail, 'qty');
                                 }
                                 else if (col.field === 'unit_price') {
-                                    value = itemDetail.unit_price || 0;
+                                    value = getExportFieldValue(itemDetail, 'unit_price');
                                 }
                                 else if (col.field === 'total_price') {
-                                    value = itemDetail.total_price || 0;
+                                    value = getExportFieldValue(itemDetail, 'total_price');
                                 }
                                 else if (col.field === 'purchase_price') {
-                                    value = itemDetail.purchase_price || 0;
+                                    value = getExportFieldValue(itemDetail, 'purchase_price');
                                 }
                                 
-                                // 格式化数字
-                                if (col.type === 'number' && value !== '') {
-                                    value = parseFloat(value) || 0;
+                                // 格式化数字：可解析→数值；空→真正空白；非法非空文本原样保留
+                                if (col.type === 'number') {
+                                    if (preserveEmpty) {
+                                        value = null;
+                                    } else {
+                                        const parsed = parseExportNumber(value);
+                                        if (parsed.ok) {
+                                            value = parsed.num;
+                                        } else if (parsed.empty) {
+                                            value = null;
+                                        } else {
+                                            value = parsed.raw;
+                                        }
+                                    }
                                 }
-                                // 格式化占比
-                                if (col.type === 'percent' && !preserveEmpty) {
-                                    const defaultPercent = col.field === 'owner_profit_rate' ? 100 : 0;
-                                    value = formatPercentValue(value, defaultPercent);
+                                // 格式化占比：库内存 100=100%，写数值 + 字面量%格式，避免 10000%
+                                if (col.type === 'percent') {
+                                    if (preserveEmpty) {
+                                        value = null;
+                                    } else {
+                                        const defaultPercent = col.field === 'owner_profit_rate' ? 100 : 0;
+                                        value = toExportPercentNumber(value, defaultPercent);
+                                    }
                                 }
                                 // 格式化日期
                                 if (col.type === 'date' && value) {
@@ -1179,54 +1262,67 @@
                     } else {
                         // 如果没有产品明细，只导出订单主表数据，产品相关字段为空
                         const row = columns.map(col => {
-                            let value = '';
+                            let value = null;
                             
-                            // 订单主表字段
+                            // 订单主表字段（保留数字 0）
                             if (['order_no', 'team_name', 'at_user', 'order_time', 'country', 'cname', 'contact',
                                  'shipping_cost', 'invoice_amount', 'tax_amount', 
                                  'debugging_cost', 'sales_commission', 'split_remarks', 
                                  'owner_profit_rate', 'collaborator_profit_rate',
                                  'source_port', 'amount_received', 'profit',
                                  'margin_rate', 'client_company'].includes(col.field)) {
-                                value = item[col.field] || '';
+                                value = getExportFieldValue(item, col.field);
                             }
                             else if (col.field === 'invoice_type') {
-                                value = item['invoice_type'] || '';
+                                value = getExportFieldValue(item, 'invoice_type');
                             }
                             else if (col.field === 'bank_account') {
-                                value = item['bank_account_name'] || item['bank_account'] || '';
+                                value = getExportFieldValue(item, 'bank_account_name');
+                                if (value === null) {
+                                    value = getExportFieldValue(item, 'bank_account');
+                                }
                             }
                             else if (col.field === 'joint_person') {
-                                value = item['joint_person_names'] || item['joint_person'] || '';
+                                value = getExportFieldValue(item, 'joint_person_names');
+                                if (value === null) {
+                                    value = getExportFieldValue(item, 'joint_person');
+                                }
                             }
                             else if (col.field === 'product_name_summary') {
-                                value = item['product_name'] || '';
+                                value = getExportFieldValue(item, 'product_name');
                             }
                             else if (col.field === 'create_time_original') {
-                                value = item['original_creation_time'] || '';
+                                value = getExportFieldValue(item, 'original_creation_time');
                             }
                             else if (col.field === 'ut_time_original') {
-                                value = item['original_modification_time'] || '';
+                                value = getExportFieldValue(item, 'original_modification_time');
                             }
                             else if (col.field === 'old_crm_data') {
-                                value = item['old_crm_data'] || '';
+                                value = getExportFieldValue(item, 'old_crm_data');
                             }
                             else if (col.field === 'create_time') {
-                                value = item['create_time'] || '';
+                                value = getExportFieldValue(item, 'create_time');
                             }
                             else if (col.field === 'ut_time') {
-                                value = item['ut_time'] || '';
+                                value = getExportFieldValue(item, 'ut_time');
                             }
-                            // 产品明细字段留空（没有产品）
+                            // 产品明细字段留空（没有产品）→ null 真正空白
                             
-                            // 格式化数字
-                            if (col.type === 'number' && value !== '') {
-                                value = parseFloat(value) || 0;
+                            // 格式化数字：可解析→数值；空→真正空白；非法非空文本原样保留
+                            if (col.type === 'number') {
+                                const parsed = parseExportNumber(value);
+                                if (parsed.ok) {
+                                    value = parsed.num;
+                                } else if (parsed.empty) {
+                                    value = null;
+                                } else {
+                                    value = parsed.raw;
+                                }
                             }
-                            // 格式化占比
+                            // 格式化占比：库内存 100=100%，写数值
                             if (col.type === 'percent') {
                                 const defaultPercent = col.field === 'owner_profit_rate' ? 100 : 0;
-                                value = formatPercentValue(value, defaultPercent);
+                                value = toExportPercentNumber(value, defaultPercent);
                             }
                             // 格式化日期
                             if (col.type === 'date' && value) {
@@ -1300,24 +1396,44 @@
                     }
                 }
                 
-                // 设置数据行样式和格式
+                // 设置数据行样式和格式；清扫空字符串文本格（避免公式 #VALUE!）
                 for (let row = 1; row <= rows.length; row++) {
                     for (let col = 0; col < columns.length; col++) {
                         const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
                         if (!ws[cellAddress]) continue;
+
+                        // 双保险：删除空字符串单元格，改为真正空白
+                        if (ws[cellAddress].t === 's' && ws[cellAddress].v === '') {
+                            delete ws[cellAddress];
+                            continue;
+                        }
                         
                         const colConfig = columns[col];
                         
-                        // 设置数字格式
+                        // 设置数字格式（含千分位字符串安全解析）
                         if (colConfig.type === 'number') {
                             ws[cellAddress].z = '#,##0.00';
-                            // 确保数字类型
-                            if (typeof ws[cellAddress].v === 'string') {
-                                const numVal = parseFloat(ws[cellAddress].v);
-                                if (!isNaN(numVal)) {
-                                    ws[cellAddress].v = numVal;
+                            if (typeof ws[cellAddress].v === 'number' && !isNaN(ws[cellAddress].v)) {
+                                ws[cellAddress].t = 'n';
+                            } else if (typeof ws[cellAddress].v === 'string') {
+                                const parsed = parseExportNumber(ws[cellAddress].v);
+                                if (parsed.ok) {
+                                    ws[cellAddress].v = parsed.num;
                                     ws[cellAddress].t = 'n';
                                 }
+                                // 无法识别的非空文本保持原样，不得转 0
+                            }
+                        }
+
+                        // 占比：数值型 + 字面量 % 显示（库内 100 → 显示 100%，不会变成 10000%）
+                        if (colConfig.type === 'percent') {
+                            ws[cellAddress].z = '0"%"';
+                            if (typeof ws[cellAddress].v === 'number' && !isNaN(ws[cellAddress].v)) {
+                                ws[cellAddress].t = 'n';
+                            } else if (typeof ws[cellAddress].v === 'string') {
+                                const percentNum = toExportPercentNumber(ws[cellAddress].v, 0);
+                                ws[cellAddress].v = percentNum;
+                                ws[cellAddress].t = 'n';
                             }
                         }
                         
@@ -1325,11 +1441,13 @@
                         if (ws[cellAddress].s === undefined) {
                             ws[cellAddress].s = {};
                         }
+
+                        const alignRight = (colConfig.type === 'number' || colConfig.type === 'percent');
                         
                         try {
                             ws[cellAddress].s = {
                                 alignment: { 
-                                    horizontal: colConfig.type === 'number' ? 'right' : 'left', 
+                                    horizontal: alignRight ? 'right' : 'left', 
                                     vertical: 'center',
                                     wrapText: true
                                 },
@@ -1343,7 +1461,7 @@
                         } catch (e) {
                             // 如果不支持样式，至少设置对齐
                             ws[cellAddress].s = {
-                                alignment: { horizontal: colConfig.type === 'number' ? 'right' : 'left' }
+                                alignment: { horizontal: alignRight ? 'right' : 'left' }
                             };
                         }
                     }
