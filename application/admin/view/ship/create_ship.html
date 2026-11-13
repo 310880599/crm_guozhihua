@@ -158,11 +158,41 @@
     .line-action-btns .layui-btn {
         margin: 2px 0;
     }
+    /* 页头：标题与「返回草稿箱」左右排列，窄屏可换行，避免遮挡下方内容 */
+    .ship-create-page-head > legend {
+        width: calc(100% - 24px);
+        margin-left: 12px;
+        padding: 0 8px;
+        box-sizing: border-box;
+    }
+    .ship-create-head-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    .ship-create-head-bar .ship-page-mode-title {
+        font-size: inherit;
+        font-weight: inherit;
+        color: inherit;
+        line-height: 1.4;
+    }
+    .ship-create-head-bar #btn-back-to-draft {
+        flex: 0 0 auto;
+    }
 </style>
 
 <div class="ship-create-container">
-    <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
-        <legend>新建发货申请</legend>
+    <fieldset class="layui-elem-field ship-create-page-head" style="margin-bottom: 12px;">
+        <legend>
+            <div class="ship-create-head-bar">
+                <span class="ship-page-mode-title" id="page-mode-title">新建发货申请</span>
+                <button type="button" class="layui-btn layui-btn-primary layui-btn-sm" id="btn-back-to-draft" style="display:none;">← 返回草稿箱</button>
+            </div>
+        </legend>
     </fieldset>
 
     <div class="ship-warn-banner" id="ship-warn-banner"></div>
@@ -378,6 +408,9 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var orderAmountConfirmed = false;
     var confirmedOrderAmount = null;
     var draftEditUrl = '';
+    var draftBoxUrl = '{:url("Ship/draftShip")}';
+    var isLegitimateDraftEdit = false;
+    var draftBaselineSnapshot = null;
 
     laydate.render({
         elem: '#shipping_date',
@@ -1339,6 +1372,10 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         }
     });
 
+    $('#btn-back-to-draft').on('click', function () {
+        goBackToDraftBox();
+    });
+
     $('#btn-reopen-draft').on('click', function () {
         if (!draftEditUrl) {
             var applyId = parseInt($('#apply_id').val(), 10) || 0;
@@ -1355,10 +1392,157 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         return false;
     });
 
-    function applyDraftData(draftData) {
-        if (!draftData || !draftData.order_id) {
+    function normalizeSnapshotText(v) {
+        return String(v == null ? '' : v).trim();
+    }
+
+    function normalizeSnapshotFactoryId(v) {
+        if (v === null || v === undefined || v === '') {
+            return null;
+        }
+        var n = parseInt(v, 10);
+        if (!isFinite(n) || n <= 0) {
+            return null;
+        }
+        return n;
+    }
+
+    /** 空/未填 → null；已填（含 0 / 0.00）保留 trim 后字符串，不与 null 合并 */
+    function normalizeSnapshotMoney(v) {
+        if (v === null || v === undefined || String(v).trim() === '') {
+            return null;
+        }
+        return String(v).trim();
+    }
+
+    function moneySnapshotEqual(a, b) {
+        if (a === null && b === null) {
+            return true;
+        }
+        if (a === null || b === null) {
+            return false;
+        }
+        if (a === b) {
+            return true;
+        }
+        var na = Number(a);
+        var nb = Number(b);
+        return isFinite(na) && isFinite(nb) && na === nb;
+    }
+
+    function buildEditableSnapshot() {
+        var lines = [];
+        for (var i = 0; i < shippingLines.length; i++) {
+            var line = shippingLines[i];
+            lines.push({
+                order_item_id: parseInt(line.order_item_id, 10) || 0,
+                apply_product_name: normalizeSnapshotText(line.apply_product_name),
+                apply_spec_model: normalizeSnapshotText(line.apply_spec_model),
+                apply_qty: normalizeSnapshotText(line.apply_qty),
+                apply_unit_price: normalizeSnapshotMoney(line.apply_unit_price),
+                apply_purchase_unit_price: normalizeSnapshotMoney(line.apply_purchase_unit_price),
+                factory_id: normalizeSnapshotFactoryId(line.factory_id),
+                remark: normalizeSnapshotText(line.remark),
+                line_order: i
+            });
+        }
+        return {
+            apply_id: parseInt($('#apply_id').val(), 10) || 0,
+            order_id: parseInt($('#order_id').val(), 10) || 0,
+            shipping_date: normalizeSnapshotText($('#shipping_date').val()),
+            receiver_name: normalizeSnapshotText($('#receiver_name').val()),
+            receiver_phone: normalizeSnapshotText($('#receiver_phone').val()),
+            receiver_address: normalizeSnapshotText($('#receiver_address').val()),
+            shipping_method: normalizeSnapshotText($('#shipping_method').val()),
+            shipping_remark: normalizeSnapshotText($('#shipping_remark').val()),
+            lines: lines
+        };
+    }
+
+    function captureDraftBaseline() {
+        draftBaselineSnapshot = buildEditableSnapshot();
+    }
+
+    function snapshotsEqual(a, b) {
+        if (!a || !b) {
+            return false;
+        }
+        if (a.apply_id !== b.apply_id
+            || a.order_id !== b.order_id
+            || a.shipping_date !== b.shipping_date
+            || a.receiver_name !== b.receiver_name
+            || a.receiver_phone !== b.receiver_phone
+            || a.receiver_address !== b.receiver_address
+            || a.shipping_method !== b.shipping_method
+            || a.shipping_remark !== b.shipping_remark) {
+            return false;
+        }
+        if (a.lines.length !== b.lines.length) {
+            return false;
+        }
+        for (var i = 0; i < a.lines.length; i++) {
+            var x = a.lines[i];
+            var y = b.lines[i];
+            if (x.order_item_id !== y.order_item_id
+                || x.apply_product_name !== y.apply_product_name
+                || x.apply_spec_model !== y.apply_spec_model
+                || x.apply_qty !== y.apply_qty
+                || x.factory_id !== y.factory_id
+                || x.remark !== y.remark
+                || x.line_order !== y.line_order) {
+                return false;
+            }
+            if (!moneySnapshotEqual(x.apply_unit_price, y.apply_unit_price)
+                || !moneySnapshotEqual(x.apply_purchase_unit_price, y.apply_purchase_unit_price)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function hasUnsavedChanges() {
+        if (!isLegitimateDraftEdit || !draftBaselineSnapshot) {
+            return false;
+        }
+        // 仅 DOM→内存同步；不重绘表格，不覆盖用户输入
+        syncLineInputsFromDom();
+        return !snapshotsEqual(draftBaselineSnapshot, buildEditableSnapshot());
+    }
+
+    function enableLegitimateDraftEditMode() {
+        isLegitimateDraftEdit = true;
+        $('#page-mode-title').text('编辑发货申请');
+        $('#btn-back-to-draft').show();
+    }
+
+    function goBackToDraftBox() {
+        if (savingDraft) {
+            layer.msg('正在保存草稿，请稍候。', { icon: 0 });
             return;
         }
+        if (!hasUnsavedChanges()) {
+            window.location.href = draftBoxUrl;
+            return;
+        }
+        layer.confirm('当前有尚未保存的修改，确定放弃修改并返回草稿箱吗？', {
+            icon: 0,
+            title: '提示',
+            btn: ['继续编辑', '放弃修改并返回']
+        }, function (index) {
+            // 按钮1：继续编辑
+            layer.close(index);
+        }, function (index) {
+            // 按钮2：放弃修改并返回
+            layer.close(index);
+            window.location.href = draftBoxUrl;
+        });
+    }
+
+    function applyDraftData(draftData) {
+        if (!draftData || !draftData.order_id) {
+            return false;
+        }
+        var applyIdNum = parseInt(draftData.apply_id, 10) || 0;
         $('#apply_id').val(draftData.apply_id || '');
         if (draftData.apply_no) {
             $('#apply_no_display').text(draftData.apply_no);
@@ -1441,10 +1625,7 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             $('#btn-reopen-draft').show();
         }
 
-        ensureFactories(function () {
-            renderShippingLineTable();
-        });
-
+        // 收货等信息须在厂家加载与表格渲染完成前写好，避免基准快照读到空表单
         $('#shipping_date').val(draftData.shipping_date || '');
         $('#receiver_name').val(draftData.receiver_name || '');
         $('#receiver_phone').val(draftData.receiver_phone || '');
@@ -1453,6 +1634,20 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         $('#shipping_remark').val(draftData.shipping_remark || '');
         $('#selected-order-tip').text('已选择订单：' + ((draftData.order && draftData.order.order_no) || ''));
         $('#btn-select-order').addClass('layui-btn-disabled').prop('disabled', true);
+
+        ensureFactories(function (factoriesOk) {
+            renderShippingLineTable();
+            // 合法编辑态：草稿已回填且 apply_id 为正整数（不单凭 URL draftId）
+            if (applyIdNum > 0) {
+                enableLegitimateDraftEditMode();
+                // 基准快照须在厂家选项就绪、行上厂家可选中、表格已渲染后建立
+                if (factoriesOk) {
+                    syncLineInputsFromDom();
+                    captureDraftBaseline();
+                }
+            }
+        });
+        return applyIdNum > 0;
     }
 
     // 草稿编辑初始化

@@ -99,4 +99,21 @@ class Ship extends Common
 
         return $this->fetch('ship/create_ship');
     }
+
+    /**
+     * 草稿箱
+     * GET：列表页
+     * POST：分页查询草稿（status=0）
+     */
+    public function draftShip()
+    {
+        $service = $this->getShippingApplyService();
+
+        if (request()->isPost()) {
+            $params = Request::param();
+            return json($service->listDrafts(is_array($params) ? $params : []));
+        }
+
+        return $this->fetch('ship/draft_ship');
+    }
 }

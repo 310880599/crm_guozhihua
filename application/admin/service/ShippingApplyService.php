@@ -854,6 +854,191 @@ class ShippingApplyService
     }
 
     /**
+     * 草稿箱列表（仅 status=0）
+     *
+     * @param array $params
+     * @return array
+     */
+    public function listDrafts($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'count' => 0, 'data' => []];
+        }
+
+        $page = (int)($params['page'] ?? 1);
+        if ($page < 1) {
+            $page = 1;
+        }
+        $limit = (int)($params['limit'] ?? 10);
+        if ($limit < 1) {
+            $limit = 10;
+        }
+        if ($limit > 100) {
+            $limit = 100;
+        }
+
+        $keyword = trim((string)($params['keyword'] ?? ''));
+
+        $query = Db::name('crm_shipping_apply')->where('status', 0);
+
+        // 数据权限：普通业务员仅本人草稿；超管沿用 isShippingApplySuperAdmin
+        if (!$this->isShippingApplySuperAdmin($adminId)) {
+            $query->where('applicant_id', $adminId);
+        }
+
+        if ($keyword !== '') {
+            $query->where(function ($q) use ($keyword) {
+                $q->whereLike('apply_no', '%' . $keyword . '%')
+                    ->whereOr('order_no', 'like', '%' . $keyword . '%')
+                    ->whereOr('customer_name', 'like', '%' . $keyword . '%');
+            });
+        }
+
+        $count = (int)(clone $query)->count('id');
+        if ($count <= 0) {
+            return [
+                'code' => 0,
+                'msg' => '获取成功',
+                'count' => 0,
+                'data' => [],
+            ];
+        }
+
+        $rows = (clone $query)
+            ->field('id,apply_no,order_no,customer_name,applicant_name,order_amount,create_time,update_time,status')
+            ->order('update_time', 'desc')
+            ->order('id', 'desc')
+            ->page($page, $limit)
+            ->select();
+
+        $rows = (array)$rows;
+        $applyIds = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) {
+                $applyIds[] = $id;
+            }
+        }
+
+        $summaryMap = $this->buildDraftProductSummaries($applyIds);
+
+        $data = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            $data[] = [
+                'id' => $id,
+                'apply_no' => trim((string)($row['apply_no'] ?? '')),
+                'order_no' => trim((string)($row['order_no'] ?? '')),
+                'customer_name' => trim((string)($row['customer_name'] ?? '')),
+                'applicant_name' => trim((string)($row['applicant_name'] ?? '')),
+                'order_amount' => round((float)($row['order_amount'] ?? 0), 2),
+                'create_time' => trim((string)($row['create_time'] ?? '')),
+                'update_time' => trim((string)($row['update_time'] ?? '')),
+                'status' => (int)($row['status'] ?? 0),
+                'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
+            ];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功',
+            'count' => $count,
+            'data' => $data,
+        ];
+    }
+
+    /**
+     * 批量组装本页草稿的发货产品摘要（避免 N+1）
+     *
+     * @param int[] $applyIds
+     * @return array<int,string>
+     */
+    protected function buildDraftProductSummaries(array $applyIds)
+    {
+        $applyIds = array_values(array_unique(array_filter(array_map('intval', $applyIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($applyIds)) {
+            return [];
+        }
+
+        $items = Db::name('crm_shipping_apply_item')
+            ->whereIn('shipping_apply_id', $applyIds)
+            ->field('id,shipping_apply_id,apply_line_no,order_item_id,apply_product_name,product_name,apply_qty')
+            ->order('apply_line_no', 'asc')
+            ->order('id', 'asc')
+            ->select();
+
+        /** @var array<int,array<int,string>> $partsByApply */
+        $partsByApply = [];
+        /** @var array<int,int> $totalByApply */
+        $totalByApply = [];
+
+        foreach ((array)$items as $item) {
+            $applyId = (int)($item['shipping_apply_id'] ?? 0);
+            if ($applyId <= 0) {
+                continue;
+            }
+
+            $name = trim((string)($item['apply_product_name'] ?? ''));
+            if ($name === '') {
+                $name = trim((string)($item['product_name'] ?? ''));
+            }
+            if ($name === '') {
+                $name = '未命名产品';
+            }
+
+            $qty = (int)($item['apply_qty'] ?? 0);
+            if (!isset($partsByApply[$applyId])) {
+                $partsByApply[$applyId] = [];
+                $totalByApply[$applyId] = 0;
+            }
+            // 按明细行追加，禁止用 order_item_id 覆盖同产品多行
+            $partsByApply[$applyId][] = $name . '×' . $qty;
+            $totalByApply[$applyId]++;
+        }
+
+        $maxShow = 4;
+        $maxLen = 80;
+        $result = [];
+        foreach ($applyIds as $applyId) {
+            $parts = isset($partsByApply[$applyId]) ? $partsByApply[$applyId] : [];
+            $total = (int)($totalByApply[$applyId] ?? 0);
+            if ($total <= 0 || empty($parts)) {
+                $result[$applyId] = '';
+                continue;
+            }
+
+            $shown = [];
+            $shownCount = 0;
+            foreach ($parts as $part) {
+                if ($shownCount >= $maxShow) {
+                    break;
+                }
+                $candidate = empty($shown) ? $part : (implode('，', $shown) . '，' . $part);
+                if ($shownCount > 0 && mb_strlen($candidate, 'UTF-8') > $maxLen) {
+                    break;
+                }
+                $shown[] = $part;
+                $shownCount++;
+            }
+
+            $summary = implode('，', $shown);
+            $remain = $total - $shownCount;
+            if ($remain > 0) {
+                $summary .= '，还有' . $remain . '行';
+            }
+            $result[$applyId] = $summary;
+        }
+
+        return $result;
+    }
+
+    /**
      * 校验订单可访问并返回订单行
      *
      * @param int $orderId
