@@ -64,7 +64,7 @@ class Ship extends Common
     /**
      * 新建发货申请
      * GET：展示页面
-     * POST：op 分发 AJAX（search_orders / get_order_detail / save_draft）
+     * POST：op 分发 AJAX（search_orders / get_order_detail / save_draft / list_factories）
      */
     public function createShip()
     {
@@ -81,6 +81,8 @@ class Ship extends Common
                     return json($service->getOrderDetailForApply((int)Request::param('order_id', 0)));
                 case 'save_draft':
                     return json($service->saveDraft(is_array($params) ? $params : []));
+                case 'list_factories':
+                    return json($service->listFactories(is_array($params) ? $params : []));
                 default:
                     return json(['code' => -200, 'msg' => '无效的操作', 'data' => []]);
             }

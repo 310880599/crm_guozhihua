@@ -54,9 +54,64 @@
     .toolbar-row {
         margin-bottom: 12px;
     }
-    #product-table-wrap .layui-input {
+    #product-table-wrap .layui-input,
+    #shipping-line-table-wrap .layui-input {
         height: 32px;
         line-height: 32px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+    /* 仅作用于本次发货行表格：解除 Layui 单元格固定高度/nowrap/overflow 裁切 */
+    #shipping-line-table-wrap {
+        overflow-x: auto;
+        padding-bottom: 6px;
+    }
+    #shipping-line-table-wrap .layui-table-body td .layui-table-cell {
+        height: auto !important;
+        min-height: 38px;
+        max-height: none;
+        line-height: 1.45;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        padding: 8px 10px;
+        word-break: break-word;
+    }
+    #shipping-line-table-wrap .layui-table-header .layui-table-cell {
+        height: 38px;
+        line-height: 28px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    #shipping-line-table-wrap .ship-amount-preview,
+    #shipping-line-table-wrap .ship-suggest-tip,
+    #shipping-line-table-wrap .ship-invalid-tip {
+        white-space: normal;
+        word-break: break-word;
+        display: block;
+    }
+    #shipping-line-table-wrap .ship-amount-preview {
+        padding: 2px 0;
+    }
+    #shipping-line-table-wrap .line-factory-select {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        height: 32px;
+        line-height: 32px;
+        padding: 0 8px;
+        border: 1px solid #e6e6e6;
+        border-radius: 2px;
+        background-color: #fff;
+        box-sizing: border-box;
+    }
+    #shipping-line-table-wrap .line-action-btns {
+        white-space: normal;
+        line-height: 1.6;
+    }
+    #shipping-line-table-wrap .line-action-btns .layui-btn {
+        margin: 2px 2px 2px 0;
     }
     .order-select-bar {
         display: flex;
@@ -67,12 +122,50 @@
     .order-select-bar .readonly-text {
         line-height: 32px;
     }
+    .ship-warn-banner {
+        display: none;
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border: 1px solid #FFB800;
+        background: #fff8e6;
+        color: #a66b00;
+        border-radius: 4px;
+        line-height: 1.6;
+    }
+    .ship-invalid-tip {
+        color: #FF5722;
+        font-size: 12px;
+        line-height: 1.4;
+    }
+    .ship-suggest-tip {
+        color: #999;
+        font-size: 12px;
+        line-height: 1.4;
+        margin-top: 2px;
+    }
+    .ship-suggest-tip a.ship-adopt-suggest {
+        color: #1E9FFF;
+        margin-left: 4px;
+    }
+    .ship-amount-preview {
+        color: #666;
+        font-size: 12px;
+        line-height: 1.5;
+    }
+    .ship-amount-preview .ship-preview-only {
+        color: #999;
+    }
+    .line-action-btns .layui-btn {
+        margin: 2px 0;
+    }
 </style>
 
 <div class="ship-create-container">
     <fieldset class="layui-elem-field" style="margin-bottom: 12px;">
         <legend>新建发货申请</legend>
     </fieldset>
+
+    <div class="ship-warn-banner" id="ship-warn-banner"></div>
 
     <form class="layui-form create-form" lay-filter="ship-create-form" id="ship-create-form">
         <input type="hidden" name="order_id" id="order_id" value="">
@@ -151,12 +244,24 @@
             </div>
         </div>
 
-        <!-- 区域二：订单产品 -->
+        <!-- 区域二：订单产品（只读源） -->
         <div class="create-card">
-            <h3 class="create-card-title">订单产品</h3>
+            <h3 class="create-card-title">订单产品（只读，用于添加发货行）</h3>
             <div id="product-table-wrap">
                 <div class="empty-tip" id="product-empty-tip">选择订单后显示产品明细</div>
                 <table class="layui-hide" id="product-table" lay-filter="product-table"></table>
+            </div>
+        </div>
+
+        <!-- 区域二B：本次发货行 -->
+        <div class="create-card">
+            <h3 class="create-card-title">本次发货行</h3>
+            <div class="toolbar-row">
+                <span class="unit-text" style="margin-left:0;">可对同一原订单产品添加多行并分别指定厂家；零数量行保存时不会落库。</span>
+            </div>
+            <div id="shipping-line-table-wrap">
+                <div class="empty-tip" id="shipping-empty-tip">请从上方订单产品添加发货行</div>
+                <table class="layui-hide" id="shipping-line-table" lay-filter="shipping-line-table"></table>
             </div>
         </div>
 
@@ -216,7 +321,8 @@
         <div class="create-card" style="padding-bottom: 18px;">
             <div class="layui-form-item" style="margin-bottom: 0;">
                 <div class="layui-input-block">
-                    <button type="button" class="layui-btn" lay-submit lay-filter="ship-save-draft">保存草稿</button>
+                    <button type="button" class="layui-btn" id="btn-save-draft" lay-submit lay-filter="ship-save-draft">保存草稿</button>
+                    <button type="button" class="layui-btn layui-btn-primary" id="btn-reopen-draft" style="display:none;">重新打开本草稿</button>
                     <button type="button" class="layui-btn layui-btn-primary" id="btn-back">返回</button>
                 </div>
             </div>
@@ -240,18 +346,8 @@
     </div>
 </script>
 
-<script type="text/html" id="productApplyQtyTpl">
-    <input type="number" min="0" step="1" class="layui-input apply-qty-input"
-           data-order-item-id="{{ d.order_item_id }}"
-           data-remaining="{{ d.remaining_qty }}"
-           value="{{ d.apply_qty !== undefined ? d.apply_qty : 0 }}">
-</script>
-
-<script type="text/html" id="productRemarkTpl">
-    <input type="text" class="layui-input item-remark-input"
-           data-order-item-id="{{ d.order_item_id }}"
-           value="{{ d.remark !== undefined ? d.remark : '' }}"
-           placeholder="行备注">
+<script type="text/html" id="orderSourceActionTpl">
+    <a class="layui-btn layui-btn-xs layui-btn-normal" lay-event="add_line">添加发货行</a>
 </script>
 
 <script type="text/html" id="orderSelectBarTpl">
@@ -268,8 +364,20 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var $ = layui.$;
 
     var apiUrl = '{:url("Ship/createShip")}';
-    var productItems = [];
+    var orderSourceItems = [];
+    var shippingLines = [];
+    var factoryOptions = [];
+    var factoriesLoaded = false;
     var productTableRendered = false;
+    var shippingTableRendered = false;
+    var rowKeySeq = 1;
+    var savingDraft = false;
+    var currentOrderMoney = null;
+    var draftOrderAmount = null;
+    var orderAmountChanged = false;
+    var orderAmountConfirmed = false;
+    var confirmedOrderAmount = null;
+    var draftEditUrl = '';
 
     laydate.render({
         elem: '#shipping_date',
@@ -278,34 +386,253 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     });
 
     function escapeHtml(str) {
-        return String(str || '')
+        return String(str == null ? '' : str)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
-    function fillOrderDisplay(order) {
+    function escapeAttr(str) {
+        return escapeHtml(str);
+    }
+
+    function nextClientRowKey() {
+        return 'tmp_' + Date.now() + '_' + (rowKeySeq++);
+    }
+
+    /** 已确认的本次金额（非空字符串）；空/null 表示未填写，不得用建议值冒充 */
+    function hasConfirmedMoney(v) {
+        return v !== null && v !== undefined && String(v).trim() !== '';
+    }
+
+    function moneyPreview(qty, unitPrice) {
+        if (!isStrictNonNegIntString(String(qty)) || parseInt(String(qty), 10) <= 0) {
+            return '';
+        }
+        if (unitPrice === null || unitPrice === undefined || String(unitPrice).trim() === '') {
+            return '';
+        }
+        if (!isStrictMoneyString(String(unitPrice).trim())) {
+            return '金额格式错误';
+        }
+        // 仅前端预览；落库以服务端 BCMath 为准
+        var q = parseInt(String(qty), 10);
+        var parts = String(unitPrice).trim().split('.');
+        var yuan = parseInt(parts[0], 10) || 0;
+        var fen = parts[1] ? (parts[1] + '00').slice(0, 2) : '00';
+        var totalFen = q * (yuan * 100 + parseInt(fen, 10));
+        var sign = totalFen < 0 ? '-' : '';
+        totalFen = Math.abs(totalFen);
+        var fenStr = String(totalFen % 100);
+        if (fenStr.length < 2) {
+            fenStr = '0' + fenStr;
+        }
+        return sign + Math.floor(totalFen / 100) + '.' + fenStr;
+    }
+
+    function isStrictNonNegIntString(raw) {
+        return /^(?:0|[1-9]\d*)$/.test(String(raw == null ? '' : raw).trim());
+    }
+
+    function isStrictMoneyString(raw) {
+        return /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(String(raw == null ? '' : raw).trim());
+    }
+
+    function parseStrictNonNegInt(raw, fieldLabel) {
+        var text = String(raw == null ? '' : raw).trim();
+        if (text === '') {
+            return { ok: true, value: 0 };
+        }
+        if (!isStrictNonNegIntString(text)) {
+            return { ok: false, msg: fieldLabel + '必须是大于等于0的整数，不能是小数、科学计数法或混合字符。' };
+        }
+        var n = parseInt(text, 10);
+        if (!isFinite(n) || n < 0) {
+            return { ok: false, msg: fieldLabel + '必须是大于等于0的整数。' };
+        }
+        return { ok: true, value: n };
+    }
+
+    function parseStrictOptionalMoney(raw, fieldLabel) {
+        var text = String(raw == null ? '' : raw).trim();
+        if (text === '') {
+            return { ok: true, value: null };
+        }
+        if (!isStrictMoneyString(text)) {
+            return { ok: false, msg: fieldLabel + '格式不正确（非负，最多两位小数）。' };
+        }
+        return { ok: true, value: text };
+    }
+
+    function showWarnBanner(messages) {
+        var list = [];
+        if (Object.prototype.toString.call(messages) === '[object Array]') {
+            list = messages;
+        } else if (messages) {
+            list = [String(messages)];
+        }
+        if (!list.length) {
+            $('#ship-warn-banner').hide().html('');
+            return;
+        }
+        var html = list.map(function (m) {
+            return '<div>' + escapeHtml(m) + '</div>';
+        }).join('');
+        $('#ship-warn-banner').html(html).show();
+    }
+
+    function fillOrderDisplay(order, fillReceiverIfEmpty) {
         order = order || {};
         $('#display_order_no').val(order.order_no || '');
         $('#display_cname').val(order.cname || '');
         $('#display_pr_user').val(order.pr_user || '');
         $('#display_team_name').val(order.team_name || '');
         $('#display_order_time').val(order.order_time || '');
-        $('#display_money').val(order.money !== undefined ? order.money : '');
+        $('#display_money').val(order.money !== undefined && order.money !== null ? order.money : '');
         $('#display_amount_received').val(order.amount_received || '');
-        if ($('#receiver_phone').val() === '' && order.default_receiver_phone) {
-            $('#receiver_phone').val(order.default_receiver_phone);
-        }
-        if ($('#receiver_address').val() === '' && order.default_receiver_address) {
-            $('#receiver_address').val(order.default_receiver_address);
+        currentOrderMoney = order.money !== undefined && order.money !== null ? String(order.money) : null;
+        if (fillReceiverIfEmpty !== false) {
+            if ($('#receiver_phone').val() === '' && order.default_receiver_phone) {
+                $('#receiver_phone').val(order.default_receiver_phone);
+            }
+            if ($('#receiver_address').val() === '' && order.default_receiver_address) {
+                $('#receiver_address').val(order.default_receiver_address);
+            }
         }
         $('#selected-order-tip').text('已选择订单：' + (order.order_no || ''));
     }
 
+    function findOrderSourceItem(orderItemId) {
+        orderItemId = parseInt(orderItemId, 10) || 0;
+        for (var i = 0; i < orderSourceItems.length; i++) {
+            if (parseInt(orderSourceItems[i].order_item_id, 10) === orderItemId) {
+                return orderSourceItems[i];
+            }
+        }
+        return null;
+    }
+
+    function buildFactorySelectHtml(selectedId) {
+        // lay-ignore：保留原生 select，避免表格内 Layui 自定义下拉被单元格 overflow 裁切
+        var html = '<select class="layui-input line-factory-select" lay-ignore>';
+        html += '<option value="">请选择厂家（草稿可空）</option>';
+        for (var i = 0; i < factoryOptions.length; i++) {
+            var f = factoryOptions[i];
+            var selected = (selectedId && parseInt(selectedId, 10) === parseInt(f.factory_id, 10)) ? ' selected' : '';
+            html += '<option value="' + escapeAttr(f.factory_id) + '"' + selected + '>'
+                + escapeHtml(f.factory_name) + '</option>';
+        }
+        html += '</select>';
+        return html;
+    }
+
+    function syncLineInputsFromDom() {
+        $('#shipping-line-table-wrap tr[data-row-key]').each(function () {
+            var $tr = $(this);
+            var key = $tr.attr('data-row-key');
+            var line = getShippingLineByKey(key);
+            if (!line) {
+                return;
+            }
+            line.apply_product_name = $.trim($tr.find('.line-apply-product-name').val() || '');
+            line.apply_spec_model = $.trim($tr.find('.line-apply-spec-model').val() || '');
+            line.apply_qty = $.trim($tr.find('.line-apply-qty').val() || '');
+            // 仅读取输入框正式值；建议价不在输入框内，未填写保持空→保存为 NULL
+            line.apply_unit_price = $.trim($tr.find('.line-apply-unit-price').val() || '');
+            line.apply_purchase_unit_price = $.trim($tr.find('.line-apply-purchase-unit-price').val() || '');
+            line.remark = $.trim($tr.find('.line-remark').val() || '');
+            var factoryVal = $tr.find('.line-factory-select').val();
+            line.factory_id = factoryVal ? parseInt(factoryVal, 10) : null;
+            if (!line.factory_id) {
+                line.factory_id = null;
+                line.factory_name = '';
+            } else {
+                var optText = $tr.find('.line-factory-select option:selected').text();
+                line.factory_name = optText || '';
+            }
+            refreshLineSuggestFlags(line);
+        });
+    }
+
+    /** 正式价为空时才展示建议标识；不把建议值写入正式字段 */
+    function refreshLineSuggestFlags(line) {
+        if (!line) {
+            return;
+        }
+        var hasSale = hasConfirmedMoney(line.apply_unit_price);
+        var hasPurchase = hasConfirmedMoney(line.apply_purchase_unit_price);
+        var saleSuggest = line.unit_price != null && line.unit_price !== '' ? line.unit_price : null;
+        var purchaseSuggest = line.suggest_purchase_unit_price != null && line.suggest_purchase_unit_price !== ''
+            ? line.suggest_purchase_unit_price
+            : null;
+        line.is_suggest_unit_price = !hasSale && saleSuggest != null;
+        line.is_suggest_purchase_unit_price = !hasPurchase && purchaseSuggest != null;
+        line.display_apply_unit_price = hasSale ? line.apply_unit_price : saleSuggest;
+        line.display_apply_purchase_unit_price = hasPurchase ? line.apply_purchase_unit_price : purchaseSuggest;
+    }
+
+    function getShippingLineByKey(key) {
+        for (var i = 0; i < shippingLines.length; i++) {
+            if (shippingLines[i].client_row_key === key) {
+                return shippingLines[i];
+            }
+        }
+        return null;
+    }
+
+    function createLineFromSource(source, overrides) {
+        source = source || {};
+        overrides = overrides || {};
+        var qtyDefault = overrides.apply_qty !== undefined ? overrides.apply_qty : 0;
+        // 正式本次单价仅来自 overrides 或留空；建议价不得预填进正式字段
+        var applyUnitPrice = overrides.apply_unit_price !== undefined ? overrides.apply_unit_price : '';
+        var applyPurchaseUnitPrice = overrides.apply_purchase_unit_price !== undefined
+            ? overrides.apply_purchase_unit_price
+            : '';
+        var line = {
+            item_id: 0,
+            client_row_key: nextClientRowKey(),
+            order_item_id: parseInt(source.order_item_id, 10) || 0,
+            apply_line_no: 0,
+            is_invalid_order_item: false,
+            invalid_tip: '',
+            product_name: source.product_name || '',
+            spec_model: source.spec_model || '',
+            unit: source.unit || '',
+            order_qty: source.order_qty || 0,
+            applied_qty: source.applied_qty || 0,
+            remaining_qty: source.remaining_qty || 0,
+            unit_price: source.unit_price != null ? source.unit_price : '',
+            total_price: source.total_price != null ? source.total_price : '',
+            order_purchase_amount: source.order_purchase_amount != null ? source.order_purchase_amount : null,
+            supplier_id: source.supplier_id || '',
+            supplier_name: source.supplier_name || '',
+            product_manager_name: source.product_manager_name || '',
+            apply_product_name: overrides.apply_product_name != null ? overrides.apply_product_name : (source.product_name || ''),
+            apply_spec_model: overrides.apply_spec_model != null ? overrides.apply_spec_model : (source.spec_model || ''),
+            apply_qty: qtyDefault,
+            apply_unit_price: applyUnitPrice,
+            apply_purchase_unit_price: applyPurchaseUnitPrice,
+            display_apply_unit_price: null,
+            display_apply_purchase_unit_price: null,
+            is_suggest_unit_price: false,
+            is_suggest_purchase_unit_price: false,
+            suggest_purchase_unit_price: source.suggest_purchase_unit_price != null ? source.suggest_purchase_unit_price : null,
+            apply_sales_amount: null,
+            apply_purchase_amount: null,
+            factory_id: overrides.factory_id !== undefined ? overrides.factory_id : null,
+            factory_name: overrides.factory_name || '',
+            remark: overrides.remark || ''
+        };
+        refreshLineSuggestFlags(line);
+        return line;
+    }
+
     function renderProductTable(items) {
-        productItems = items || [];
-        if (!productItems.length) {
+        orderSourceItems = items || [];
+        if (!orderSourceItems.length) {
             $('#product-empty-tip').show();
             $('#product-table').addClass('layui-hide');
             if (productTableRendered) {
@@ -318,22 +645,21 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         $('#product-table').removeClass('layui-hide');
 
         var cols = [[
-            { field: 'product_name', title: '产品名称', minWidth: 140 },
-            { field: 'product_manager_name', title: '产品经理', width: 110 },
-            { field: 'spec_model', title: '规格型号', minWidth: 120 },
-            { field: 'unit', title: '单位', width: 70 },
+            { field: 'product_name', title: '产品名称', minWidth: 140, templet: function (d) { return escapeHtml(d.product_name); } },
+            { field: 'product_manager_name', title: '产品经理', width: 110, templet: function (d) { return escapeHtml(d.product_manager_name); } },
+            { field: 'spec_model', title: '规格型号', minWidth: 120, templet: function (d) { return escapeHtml(d.spec_model); } },
+            { field: 'unit', title: '单位', width: 70, templet: function (d) { return escapeHtml(d.unit); } },
             { field: 'order_qty', title: '订单数量', width: 90 },
             { field: 'applied_qty', title: '已有效申请数量', width: 130 },
             { field: 'remaining_qty', title: '剩余可申请数量', width: 130 },
-            { field: 'apply_qty', title: '本次申请发货数量', width: 150, templet: '#productApplyQtyTpl' },
-            { field: 'remark', title: '行备注', minWidth: 140, templet: '#productRemarkTpl' }
+            { title: '操作', width: 120, align: 'center', toolbar: '#orderSourceActionTpl' }
         ]];
 
         if (!productTableRendered) {
             table.render({
                 elem: '#product-table',
                 id: 'product-table',
-                data: productItems,
+                data: orderSourceItems,
                 cols: cols,
                 page: false,
                 limit: 9999,
@@ -341,11 +667,239 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             });
             productTableRendered = true;
         } else {
-            table.reload('product-table', { data: productItems });
+            table.reload('product-table', { data: orderSourceItems, cols: cols });
         }
     }
 
-    function loadOrderDetail(orderId, callback) {
+    function renderShippingLineTable() {
+        if (!shippingLines.length) {
+            $('#shipping-empty-tip').show();
+            $('#shipping-line-table').addClass('layui-hide');
+            if (shippingTableRendered) {
+                table.reload('shipping-line-table', { data: [] });
+            }
+            return;
+        }
+
+        $('#shipping-empty-tip').hide();
+        $('#shipping-line-table').removeClass('layui-hide');
+
+        var cols = [[
+            {
+                field: 'product_name', title: '原产品/状态', minWidth: 160, templet: function (d) {
+                    var html = escapeHtml(d.product_name || '');
+                    if (d.is_invalid_order_item) {
+                        html += '<div class="ship-invalid-tip">' + escapeHtml(d.invalid_tip || '原订单产品行已失效') + '</div>';
+                    }
+                    return html;
+                }
+            },
+            { field: 'spec_model', title: '原规格型号', minWidth: 110, templet: function (d) { return escapeHtml(d.spec_model || ''); } },
+            { field: 'order_qty', title: '订单数量', width: 90 },
+            { field: 'applied_qty', title: '已有效申请', width: 100 },
+            { field: 'remaining_qty', title: '剩余可申请', width: 100 },
+            {
+                field: 'apply_product_name', title: '本次产品名称', width: 180, templet: function (d) {
+                    return '<input type="text" class="layui-input line-apply-product-name" value="'
+                        + escapeAttr(d.apply_product_name || '') + '">';
+                }
+            },
+            {
+                field: 'apply_spec_model', title: '本次规格型号', width: 150, templet: function (d) {
+                    return '<input type="text" class="layui-input line-apply-spec-model" value="'
+                        + escapeAttr(d.apply_spec_model || '') + '">';
+                }
+            },
+            {
+                field: 'apply_qty', title: '本次数量', width: 110, templet: function (d) {
+                    return '<input type="text" inputmode="numeric" class="layui-input line-apply-qty" value="'
+                        + escapeAttr(d.apply_qty != null ? d.apply_qty : '') + '" placeholder="整数">';
+                }
+            },
+            {
+                field: 'apply_unit_price', title: '本次销售单价', width: 160, templet: function (d) {
+                    var formal = hasConfirmedMoney(d.apply_unit_price) ? d.apply_unit_price : '';
+                    var tip = '';
+                    if (!hasConfirmedMoney(d.apply_unit_price) && d.display_apply_unit_price != null && d.display_apply_unit_price !== '') {
+                        tip = '<div class="ship-suggest-tip">建议 '
+                            + escapeHtml(String(d.display_apply_unit_price))
+                            + ' <a href="javascript:;" class="ship-adopt-suggest" data-field="unit">采用</a></div>';
+                    }
+                    return '<input type="text" class="layui-input line-apply-unit-price" value="'
+                        + escapeAttr(formal) + '" placeholder="可空">' + tip;
+                }
+            },
+            {
+                field: 'apply_purchase_unit_price', title: '本次采购单价', width: 170, templet: function (d) {
+                    var formal = hasConfirmedMoney(d.apply_purchase_unit_price) ? d.apply_purchase_unit_price : '';
+                    var tip = '';
+                    if (!hasConfirmedMoney(d.apply_purchase_unit_price)
+                        && d.display_apply_purchase_unit_price != null
+                        && d.display_apply_purchase_unit_price !== '') {
+                        tip = '<div class="ship-suggest-tip">建议(采÷量) '
+                            + escapeHtml(String(d.display_apply_purchase_unit_price))
+                            + ' <a href="javascript:;" class="ship-adopt-suggest" data-field="purchase">采用</a></div>';
+                    }
+                    return '<input type="text" class="layui-input line-apply-purchase-unit-price" value="'
+                        + escapeAttr(formal) + '" placeholder="可空">' + tip;
+                }
+            },
+            {
+                field: 'amount_preview', title: '金额预览', width: 160, templet: function (d) {
+                    var saleFormal = hasConfirmedMoney(d.apply_unit_price);
+                    var purchaseFormal = hasConfirmedMoney(d.apply_purchase_unit_price);
+                    var salePrice = saleFormal ? d.apply_unit_price : d.display_apply_unit_price;
+                    var purchasePrice = purchaseFormal ? d.apply_purchase_unit_price : d.display_apply_purchase_unit_price;
+                    var sales = moneyPreview(d.apply_qty, salePrice);
+                    var purchase = moneyPreview(d.apply_qty, purchasePrice);
+                    var saleHtml = (saleFormal || !sales)
+                        ? ('销:' + escapeHtml(sales || '-'))
+                        : ('<span class="ship-preview-only">销(预览):' + escapeHtml(sales) + '</span>');
+                    var purchaseHtml = (purchaseFormal || !purchase)
+                        ? ('采:' + escapeHtml(purchase || '-'))
+                        : ('<span class="ship-preview-only">采(预览):' + escapeHtml(purchase) + '</span>');
+                    return '<div class="ship-amount-preview">' + saleHtml + '<br>' + purchaseHtml + '</div>';
+                }
+            },
+            {
+                field: 'factory_id', title: '厂家', width: 180, templet: function (d) {
+                    return buildFactorySelectHtml(d.factory_id);
+                }
+            },
+            {
+                field: 'remark', title: '备注', width: 140, templet: function (d) {
+                    return '<input type="text" class="layui-input line-remark" value="'
+                        + escapeAttr(d.remark || '') + '" placeholder="行备注">';
+                }
+            },
+            {
+                title: '操作', width: 190, align: 'center', templet: function () {
+                    return '<div class="line-action-btns">'
+                        + '<a class="layui-btn layui-btn-xs" lay-event="copy_line">复制</a>'
+                        + '<a class="layui-btn layui-btn-xs layui-btn-warm" lay-event="rebind_line">重选产品</a>'
+                        + '<a class="layui-btn layui-btn-xs layui-btn-danger" lay-event="delete_line">删除</a>'
+                        + '</div>';
+                }
+            }
+        ]];
+
+        var doneBind = function () {
+            var $view = $('#shipping-line-table').next('.layui-table-view');
+            $view.find('.layui-table-body tbody tr').each(function (idx) {
+                var line = shippingLines[idx];
+                if (line) {
+                    $(this).attr('data-row-key', line.client_row_key);
+                }
+            });
+            // 厂家使用原生 select（lay-ignore），不再 form.render('select')，避免表格内自定义下拉被裁切
+            updateAmountPreviews();
+        };
+
+        if (!shippingTableRendered) {
+            table.render({
+                elem: '#shipping-line-table',
+                id: 'shipping-line-table',
+                data: shippingLines,
+                cols: cols,
+                page: false,
+                limit: 9999,
+                text: { none: '暂无发货行' },
+                done: doneBind
+            });
+            shippingTableRendered = true;
+        } else {
+            table.reload('shipping-line-table', {
+                data: shippingLines,
+                cols: cols,
+                done: doneBind
+            });
+        }
+    }
+
+    function updateAmountPreviews() {
+        $('#shipping-line-table-wrap tr[data-row-key]').each(function () {
+            var $tr = $(this);
+            var key = $tr.attr('data-row-key');
+            var line = getShippingLineByKey(key);
+            var qty = $.trim($tr.find('.line-apply-qty').val() || '');
+            var sale = $.trim($tr.find('.line-apply-unit-price').val() || '');
+            var purchase = $.trim($tr.find('.line-apply-purchase-unit-price').val() || '');
+            var saleFormal = sale !== '';
+            var purchaseFormal = purchase !== '';
+            if (!saleFormal && line) {
+                var saleSuggest = line.display_apply_unit_price != null && line.display_apply_unit_price !== ''
+                    ? line.display_apply_unit_price
+                    : (line.unit_price != null && line.unit_price !== '' ? line.unit_price : null);
+                if (saleSuggest != null) {
+                    sale = String(saleSuggest);
+                }
+            }
+            if (!purchaseFormal && line) {
+                var purchaseSuggest = line.suggest_purchase_unit_price != null && line.suggest_purchase_unit_price !== ''
+                    ? line.suggest_purchase_unit_price
+                    : (line.display_apply_purchase_unit_price != null && line.display_apply_purchase_unit_price !== ''
+                        ? line.display_apply_purchase_unit_price
+                        : null);
+                if (purchaseSuggest != null) {
+                    purchase = String(purchaseSuggest);
+                }
+            }
+            var salesAmt = moneyPreview(qty, sale);
+            var purchaseAmt = moneyPreview(qty, purchase);
+            var saleHtml = (saleFormal || !salesAmt)
+                ? ('销:' + escapeHtml(salesAmt || '-'))
+                : ('<span class="ship-preview-only">销(预览):' + escapeHtml(salesAmt) + '</span>');
+            var purchaseHtml = (purchaseFormal || !purchaseAmt)
+                ? ('采:' + escapeHtml(purchaseAmt || '-'))
+                : ('<span class="ship-preview-only">采(预览):' + escapeHtml(purchaseAmt) + '</span>');
+            $tr.find('.ship-amount-preview').html(saleHtml + '<br>' + purchaseHtml);
+        });
+    }
+
+    function ensureFactories(callback) {
+        if (factoriesLoaded) {
+            if (typeof callback === 'function') {
+                callback(true);
+            }
+            return;
+        }
+        $.post(apiUrl, { op: 'list_factories' }, function (res) {
+            if (!res || res.code !== 0) {
+                layer.msg((res && res.msg) ? res.msg : '厂家列表加载失败', { icon: 2 });
+                factoryOptions = [];
+                factoriesLoaded = false;
+                if (typeof callback === 'function') {
+                    callback(false);
+                }
+                return;
+            }
+            factoryOptions = res.data || [];
+            factoriesLoaded = true;
+            if (typeof callback === 'function') {
+                callback(true);
+            }
+        }, 'json').fail(function () {
+            layer.msg('厂家列表加载失败，请稍后重试', { icon: 2 });
+            if (typeof callback === 'function') {
+                callback(false);
+            }
+        });
+    }
+
+    function resetShippingState() {
+        shippingLines = [];
+        orderAmountChanged = false;
+        orderAmountConfirmed = false;
+        confirmedOrderAmount = null;
+        draftOrderAmount = null;
+        draftEditUrl = '';
+        showWarnBanner([]);
+        renderShippingLineTable();
+        $('#btn-reopen-draft').hide();
+    }
+
+    function loadOrderDetail(orderId, callback, options) {
+        options = options || {};
         if (!orderId) {
             return;
         }
@@ -358,8 +912,11 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             }
             var data = res.data || {};
             $('#order_id').val(orderId);
-            fillOrderDisplay(data.order || {});
+            fillOrderDisplay(data.order || {}, options.fillReceiverIfEmpty !== false);
             renderProductTable(data.items || []);
+            if (!options.keepShippingLines) {
+                resetShippingState();
+            }
             if (data.warnings && data.warnings.length) {
                 layer.msg(data.warnings.join('；'), { icon: 0, time: 4000 });
             }
@@ -373,6 +930,11 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     }
 
     function openOrderSelectLayer() {
+        var currentApplyId = parseInt($('#apply_id').val(), 10) || 0;
+        if (currentApplyId > 0) {
+            layer.msg('草稿编辑期间禁止切换关联订单', { icon: 0 });
+            return;
+        }
         var contentHtml = $('#order-select-tpl').html();
         var layerIndex = layer.open({
             type: 1,
@@ -435,50 +997,335 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         });
     }
 
-    function collectItemsFromTable() {
-        var items = [];
-        $('#product-table-wrap .apply-qty-input').each(function () {
-            var $input = $(this);
-            var orderItemId = parseInt($input.attr('data-order-item-id'), 10) || 0;
-            var applyQty = parseInt($input.val(), 10);
-            if (isNaN(applyQty)) {
-                applyQty = 0;
+    function openRebindDialog(line) {
+        if (!orderSourceItems.length) {
+            layer.msg('当前订单没有可重选的产品明细', { icon: 2 });
+            return;
+        }
+        var optionsHtml = orderSourceItems.map(function (item) {
+            return '<option value="' + escapeAttr(item.order_item_id) + '">'
+                + escapeHtml(item.product_name + ' / ' + (item.spec_model || '-') + '（剩余' + item.remaining_qty + '）')
+                + '</option>';
+        }).join('');
+
+        layer.open({
+            type: 1,
+            title: '重新选择原订单产品行',
+            area: ['480px', '320px'],
+            content: '<div style="padding:16px;">'
+                + '<p style="margin-bottom:10px;color:#666;">重选后将重新读取当前订单产品原始信息作为原快照。请选择是否保留本行已填写的本次名称/型号/数量/价格/厂家。</p>'
+                + '<div class="layui-form-item"><label>有效产品</label>'
+                + '<select id="rebind-order-item-id" class="layui-input">' + optionsHtml + '</select></div>'
+                + '<div class="layui-form-item" style="margin-top:12px;">'
+                + '<input type="radio" name="rebind-keep" value="1" checked title="保留本次已填信息"> 保留本次已填信息<br>'
+                + '<input type="radio" name="rebind-keep" value="0" title="清空并按新产品预填"> 清空并按新产品预填'
+                + '</div></div>',
+            btn: ['确认重选', '取消'],
+            yes: function (index) {
+                var newId = parseInt($('#rebind-order-item-id').val(), 10) || 0;
+                var keep = $('input[name="rebind-keep"]:checked').val() === '1';
+                var source = findOrderSourceItem(newId);
+                if (!source) {
+                    layer.msg('请选择有效产品行', { icon: 2 });
+                    return;
+                }
+                syncLineInputsFromDom();
+                var overrides = keep ? {
+                    apply_product_name: line.apply_product_name,
+                    apply_spec_model: line.apply_spec_model,
+                    apply_qty: line.apply_qty,
+                    apply_unit_price: line.apply_unit_price,
+                    apply_purchase_unit_price: line.apply_purchase_unit_price,
+                    factory_id: line.factory_id,
+                    factory_name: line.factory_name,
+                    remark: line.remark
+                } : {
+                    apply_qty: 0
+                };
+                var newLine = createLineFromSource(source, overrides);
+                // 保持同一前端行键，避免表格抖动；不沿用失效行的旧原快照
+                newLine.client_row_key = line.client_row_key;
+                newLine.item_id = 0;
+                for (var i = 0; i < shippingLines.length; i++) {
+                    if (shippingLines[i].client_row_key === line.client_row_key) {
+                        shippingLines[i] = newLine;
+                        break;
+                    }
+                }
+                layer.close(index);
+                renderShippingLineTable();
             }
-            var remark = '';
-            var $remark = $('#product-table-wrap .item-remark-input[data-order-item-id="' + orderItemId + '"]');
-            if ($remark.length) {
-                remark = $.trim($remark.val());
-            }
-            items.push({
-                order_item_id: orderItemId,
-                apply_qty: applyQty,
-                remark: remark
-            });
         });
-        return items;
     }
 
-    function validateItemsBeforeSave(items) {
-        var hasPositive = false;
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            if (item.apply_qty < 0) {
-                return '本次申请发货数量不能为负数';
+    function collectShippingItemsForSave() {
+        syncLineInputsFromDom();
+        var items = [];
+        for (var i = 0; i < shippingLines.length; i++) {
+            var line = shippingLines[i];
+            if (line.is_invalid_order_item) {
+                return { ok: false, msg: '存在原订单产品行已失效的发货行，请先重选有效产品后再保存。' };
             }
-            if (item.apply_qty > 0) {
+            var qtyRes = parseStrictNonNegInt(line.apply_qty, '本次发货数量');
+            if (!qtyRes.ok) {
+                return { ok: false, msg: qtyRes.msg };
+            }
+            var saleRes = parseStrictOptionalMoney(line.apply_unit_price, '本次销售单价');
+            if (!saleRes.ok) {
+                return { ok: false, msg: saleRes.msg };
+            }
+            var purchaseRes = parseStrictOptionalMoney(line.apply_purchase_unit_price, '本次采购单价');
+            if (!purchaseRes.ok) {
+                return { ok: false, msg: purchaseRes.msg };
+            }
+            items.push({
+                order_item_id: parseInt(line.order_item_id, 10) || 0,
+                apply_qty: qtyRes.value,
+                apply_product_name: line.apply_product_name || '',
+                apply_spec_model: line.apply_spec_model || '',
+                apply_unit_price: saleRes.value,
+                apply_purchase_unit_price: purchaseRes.value,
+                factory_id: line.factory_id ? parseInt(line.factory_id, 10) : null,
+                remark: line.remark || ''
+            });
+        }
+        var hasPositive = false;
+        for (var j = 0; j < items.length; j++) {
+            if (items[j].apply_qty > 0) {
                 hasPositive = true;
-                var $input = $('#product-table-wrap .apply-qty-input[data-order-item-id="' + item.order_item_id + '"]');
-                var remaining = parseInt($input.attr('data-remaining'), 10) || 0;
-                if (item.apply_qty > remaining) {
-                    return '存在产品本次申请数量超过剩余可申请数量';
-                }
+                break;
             }
         }
         if (!hasPositive) {
-            return '至少需要选择一个产品并填写本次发货数量';
+            return { ok: false, msg: '至少需要一条正整数数量的发货行。' };
         }
-        return '';
+        return { ok: true, items: items };
     }
+
+    function doSaveDraft(extra) {
+        extra = extra || {};
+        if (savingDraft) {
+            return;
+        }
+        var orderId = parseInt($('#order_id').val(), 10) || 0;
+        if (!orderId) {
+            layer.msg('请先选择有效订单', { icon: 2 });
+            return;
+        }
+
+        var collected = collectShippingItemsForSave();
+        if (!collected.ok) {
+            layer.msg(collected.msg, { icon: 2 });
+            return;
+        }
+
+        var postData = {
+            op: 'save_draft',
+            order_id: orderId,
+            apply_id: parseInt($('#apply_id').val(), 10) || 0,
+            shipping_date: $.trim($('#shipping_date').val()),
+            receiver_name: $.trim($('#receiver_name').val()),
+            receiver_phone: $.trim($('#receiver_phone').val()),
+            receiver_address: $.trim($('#receiver_address').val()),
+            shipping_method: $.trim($('#shipping_method').val()),
+            shipping_remark: $.trim($('#shipping_remark').val()),
+            items: JSON.stringify(collected.items)
+        };
+
+        if (extra.order_amount_confirmed) {
+            postData.order_amount_confirmed = 1;
+            postData.confirmed_order_amount = extra.confirmed_order_amount;
+        } else if (orderAmountConfirmed && confirmedOrderAmount != null) {
+            postData.order_amount_confirmed = 1;
+            postData.confirmed_order_amount = confirmedOrderAmount;
+        }
+
+        savingDraft = true;
+        var $btn = $('#btn-save-draft');
+        $btn.addClass('layui-btn-disabled').prop('disabled', true).text('保存中...');
+        var loadIndex = layer.load(2);
+        $.post(apiUrl, postData, function (res) {
+            layer.close(loadIndex);
+            savingDraft = false;
+            $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存草稿');
+
+            if (!res || res.code !== 0) {
+                var msg = (res && res.msg) ? res.msg : '草稿保存失败，请稍后重试。';
+                if (msg.indexOf('原订单金额已发生变化') >= 0 && currentOrderMoney != null) {
+                    layer.confirm(escapeHtml(msg) + '<br><br>确认已重新核对当前订单金额 '
+                        + escapeHtml(currentOrderMoney) + ' 元后继续保存？', {
+                        icon: 0,
+                        title: '原订单金额变化确认'
+                    }, function (idx) {
+                        layer.close(idx);
+                        orderAmountConfirmed = true;
+                        confirmedOrderAmount = String(currentOrderMoney);
+                        doSaveDraft({
+                            order_amount_confirmed: 1,
+                            confirmed_order_amount: confirmedOrderAmount
+                        });
+                    });
+                    return;
+                }
+                layer.msg(msg, { icon: 2 });
+                return;
+            }
+
+            var data = res.data || {};
+            if (data.apply_id) {
+                $('#apply_id').val(data.apply_id);
+            }
+            if (data.apply_no) {
+                $('#apply_no_display').text(data.apply_no);
+            }
+            if (data.edit_url) {
+                draftEditUrl = data.edit_url;
+                $('#btn-reopen-draft').show();
+            } else if (data.apply_id) {
+                draftEditUrl = apiUrl + (apiUrl.indexOf('?') >= 0 ? '&' : '?') + 'id=' + encodeURIComponent(data.apply_id);
+                $('#btn-reopen-draft').show();
+            }
+
+            orderAmountChanged = false;
+            orderAmountConfirmed = false;
+            confirmedOrderAmount = null;
+            draftOrderAmount = currentOrderMoney;
+
+            layer.msg((res.msg || '草稿保存成功') + (data.apply_no ? ('：' + data.apply_no) : ''), { icon: 1 }, function () {
+                if (data.apply_id) {
+                    // 删除旧明细后重新插入，必须重新打开以获取最新行 ID
+                    window.location.href = draftEditUrl || (apiUrl + (apiUrl.indexOf('?') >= 0 ? '&' : '?') + 'id=' + encodeURIComponent(data.apply_id));
+                }
+            });
+        }, 'json').fail(function () {
+            layer.close(loadIndex);
+            savingDraft = false;
+            $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存草稿');
+            layer.msg('网络异常，请稍后重试', { icon: 2 });
+        });
+    }
+
+    table.on('tool(product-table)', function (obj) {
+        if (obj.event !== 'add_line') {
+            return;
+        }
+        var source = obj.data || {};
+        ensureFactories(function () {
+            // 新增行会整表重绘，先同步已有行未保存输入
+            syncLineInputsFromDom();
+            shippingLines.push(createLineFromSource(source, {
+                apply_qty: 0
+            }));
+            renderShippingLineTable();
+        });
+    });
+
+    table.on('tool(shipping-line-table)', function (obj) {
+        var data = obj.data || {};
+        var key = data.client_row_key;
+        if (!key) {
+            var $tr = $(obj.tr);
+            key = $tr.attr('data-row-key');
+        }
+        syncLineInputsFromDom();
+        var line = getShippingLineByKey(key);
+        if (!line) {
+            return;
+        }
+
+        if (obj.event === 'delete_line') {
+            shippingLines = shippingLines.filter(function (item) {
+                return item.client_row_key !== key;
+            });
+            renderShippingLineTable();
+            return;
+        }
+
+        if (obj.event === 'copy_line') {
+            if (line.is_invalid_order_item) {
+                layer.msg('失效行请先重选有效产品后再复制', { icon: 0 });
+                return;
+            }
+            var source = findOrderSourceItem(line.order_item_id);
+            if (!source) {
+                layer.msg('无法复制：原订单产品不存在', { icon: 2 });
+                return;
+            }
+            // 只复制已确认正式价；未确认时新行继续展示建议值，不静默落库
+            var copied = createLineFromSource(source, {
+                apply_product_name: line.apply_product_name,
+                apply_spec_model: line.apply_spec_model,
+                apply_qty: 0,
+                apply_unit_price: hasConfirmedMoney(line.apply_unit_price) ? line.apply_unit_price : '',
+                apply_purchase_unit_price: hasConfirmedMoney(line.apply_purchase_unit_price) ? line.apply_purchase_unit_price : '',
+                factory_id: null,
+                factory_name: '',
+                remark: line.remark || ''
+            });
+            shippingLines.push(copied);
+            renderShippingLineTable();
+            return;
+        }
+
+        if (obj.event === 'rebind_line') {
+            openRebindDialog(line);
+        }
+    });
+
+    $(document).on('input', '#shipping-line-table-wrap .line-apply-qty, #shipping-line-table-wrap .line-apply-unit-price, #shipping-line-table-wrap .line-apply-purchase-unit-price', function () {
+        var $input = $(this);
+        var $tr = $input.closest('tr');
+        var key = $tr.attr('data-row-key');
+        var line = getShippingLineByKey(key);
+        if (line) {
+            if ($input.hasClass('line-apply-unit-price')) {
+                line.apply_unit_price = $.trim($input.val() || '');
+            } else if ($input.hasClass('line-apply-purchase-unit-price')) {
+                line.apply_purchase_unit_price = $.trim($input.val() || '');
+            } else if ($input.hasClass('line-apply-qty')) {
+                line.apply_qty = $.trim($input.val() || '');
+            }
+            refreshLineSuggestFlags(line);
+        }
+        updateAmountPreviews();
+    });
+
+    // 明确采用建议价 → 写入正式输入框，之后才会被保存
+    $(document).on('click', '#shipping-line-table-wrap .ship-adopt-suggest', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var $a = $(this);
+        var $tr = $a.closest('tr');
+        var key = $tr.attr('data-row-key');
+        var field = $a.attr('data-field');
+        // 整表重绘前先同步所有行当前输入，避免丢失其他行未保存内容
+        syncLineInputsFromDom();
+        var line = getShippingLineByKey(key);
+        if (!line) {
+            return;
+        }
+        if (field === 'unit') {
+            var saleSuggest = line.display_apply_unit_price != null && line.display_apply_unit_price !== ''
+                ? line.display_apply_unit_price
+                : line.unit_price;
+            if (saleSuggest == null || saleSuggest === '') {
+                return;
+            }
+            line.apply_unit_price = String(saleSuggest);
+        } else if (field === 'purchase') {
+            var purchaseSuggest = line.suggest_purchase_unit_price != null && line.suggest_purchase_unit_price !== ''
+                ? line.suggest_purchase_unit_price
+                : line.display_apply_purchase_unit_price;
+            if (purchaseSuggest == null || purchaseSuggest === '') {
+                return;
+            }
+            line.apply_purchase_unit_price = String(purchaseSuggest);
+        } else {
+            return;
+        }
+        refreshLineSuggestFlags(line);
+        renderShippingLineTable();
+    });
 
     $('#btn-select-order').on('click', function () {
         openOrderSelectLayer();
@@ -492,82 +1339,135 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         }
     });
 
-    form.on('submit(ship-save-draft)', function () {
-        var orderId = parseInt($('#order_id').val(), 10) || 0;
-        if (!orderId) {
-            layer.msg('请先选择有效订单', { icon: 2 });
-            return false;
-        }
-
-        var items = collectItemsFromTable();
-        var validateMsg = validateItemsBeforeSave(items);
-        if (validateMsg) {
-            layer.msg(validateMsg, { icon: 2 });
-            return false;
-        }
-
-        var postData = {
-            op: 'save_draft',
-            order_id: orderId,
-            apply_id: parseInt($('#apply_id').val(), 10) || 0,
-            shipping_date: $.trim($('#shipping_date').val()),
-            receiver_name: $.trim($('#receiver_name').val()),
-            receiver_phone: $.trim($('#receiver_phone').val()),
-            receiver_address: $.trim($('#receiver_address').val()),
-            shipping_method: $.trim($('#shipping_method').val()),
-            shipping_remark: $.trim($('#shipping_remark').val()),
-            items: JSON.stringify(items)
-        };
-
-        var loadIndex = layer.load(2);
-        $.post(apiUrl, postData, function (res) {
-            layer.close(loadIndex);
-            if (!res || res.code !== 0) {
-                layer.msg((res && res.msg) ? res.msg : '草稿保存失败，请稍后重试。', { icon: 2 });
+    $('#btn-reopen-draft').on('click', function () {
+        if (!draftEditUrl) {
+            var applyId = parseInt($('#apply_id').val(), 10) || 0;
+            if (!applyId) {
                 return;
             }
-            var data = res.data || {};
-            if (data.apply_id) {
-                $('#apply_id').val(data.apply_id);
-            }
-            if (data.apply_no) {
-                $('#apply_no_display').text(data.apply_no);
-            }
-            layer.msg(res.msg || '草稿保存成功', { icon: 1 });
-        }, 'json').fail(function () {
-            layer.close(loadIndex);
-            layer.msg('网络异常，请稍后重试', { icon: 2 });
-        });
+            draftEditUrl = apiUrl + (apiUrl.indexOf('?') >= 0 ? '&' : '?') + 'id=' + encodeURIComponent(applyId);
+        }
+        window.location.href = draftEditUrl;
+    });
 
+    form.on('submit(ship-save-draft)', function () {
+        doSaveDraft();
         return false;
     });
 
+    function applyDraftData(draftData) {
+        if (!draftData || !draftData.order_id) {
+            return;
+        }
+        $('#apply_id').val(draftData.apply_id || '');
+        if (draftData.apply_no) {
+            $('#apply_no_display').text(draftData.apply_no);
+        }
+        $('#order_id').val(draftData.order_id);
+        fillOrderDisplay(draftData.order || {}, false);
+        orderSourceItems = draftData.order_source_items || draftData.items || [];
+        renderProductTable(orderSourceItems);
+
+        draftOrderAmount = draftData.draft_order_amount != null ? String(draftData.draft_order_amount) : null;
+        currentOrderMoney = draftData.current_order_amount != null
+            ? String(draftData.current_order_amount)
+            : (draftData.order && draftData.order.money != null ? String(draftData.order.money) : currentOrderMoney);
+        orderAmountChanged = !!draftData.order_amount_changed;
+        orderAmountConfirmed = false;
+        confirmedOrderAmount = null;
+
+        var warns = draftData.warnings || [];
+        if (draftData.order_amount_change_message) {
+            warns = warns.slice();
+            if (warns.indexOf(draftData.order_amount_change_message) < 0) {
+                warns.unshift(draftData.order_amount_change_message);
+            }
+        }
+        showWarnBanner(warns);
+
+        var lines = draftData.shipping_lines || [];
+        shippingLines = lines.map(function (row) {
+            var line = {
+                item_id: row.item_id || 0,
+                client_row_key: nextClientRowKey(),
+                order_item_id: row.order_item_id || 0,
+                apply_line_no: row.apply_line_no || 0,
+                is_invalid_order_item: !!row.is_invalid_order_item,
+                invalid_tip: row.invalid_tip || '',
+                product_name: row.product_name || '',
+                spec_model: row.spec_model || '',
+                unit: row.unit || '',
+                order_qty: row.order_qty || 0,
+                applied_qty: row.applied_qty || 0,
+                remaining_qty: row.remaining_qty || 0,
+                unit_price: row.unit_price,
+                total_price: row.total_price,
+                order_purchase_amount: row.order_purchase_amount,
+                supplier_id: row.supplier_id || '',
+                supplier_name: row.supplier_name || '',
+                product_manager_name: row.product_manager_name || '',
+                apply_product_name: row.apply_product_name || '',
+                apply_spec_model: row.apply_spec_model || '',
+                apply_qty: row.apply_qty != null ? row.apply_qty : 0,
+                // 正式价原样回填；NULL/空不回填建议值进输入框
+                apply_unit_price: hasConfirmedMoney(row.apply_unit_price) ? row.apply_unit_price : '',
+                apply_purchase_unit_price: hasConfirmedMoney(row.apply_purchase_unit_price) ? row.apply_purchase_unit_price : '',
+                display_apply_unit_price: row.display_apply_unit_price,
+                display_apply_purchase_unit_price: row.display_apply_purchase_unit_price,
+                is_suggest_unit_price: !!row.is_suggest_unit_price,
+                is_suggest_purchase_unit_price: !!row.is_suggest_purchase_unit_price,
+                suggest_purchase_unit_price: row.suggest_purchase_unit_price,
+                apply_sales_amount: row.apply_sales_amount,
+                apply_purchase_amount: row.apply_purchase_amount,
+                factory_id: row.factory_id != null && row.factory_id !== '' ? row.factory_id : null,
+                factory_name: row.factory_name || '',
+                remark: row.remark || ''
+            };
+            // 若后端未带 suggest_purchase 但给了 display 建议展示，保留展示源
+            if (line.suggest_purchase_unit_price == null
+                && !!row.is_suggest_purchase_unit_price
+                && row.display_apply_purchase_unit_price != null) {
+                line.suggest_purchase_unit_price = row.display_apply_purchase_unit_price;
+            }
+            refreshLineSuggestFlags(line);
+            return line;
+        });
+
+        if (draftData.edit_url) {
+            draftEditUrl = draftData.edit_url;
+            $('#btn-reopen-draft').show();
+        } else if (draftData.apply_id) {
+            draftEditUrl = apiUrl + (apiUrl.indexOf('?') >= 0 ? '&' : '?') + 'id=' + encodeURIComponent(draftData.apply_id);
+            $('#btn-reopen-draft').show();
+        }
+
+        ensureFactories(function () {
+            renderShippingLineTable();
+        });
+
+        $('#shipping_date').val(draftData.shipping_date || '');
+        $('#receiver_name').val(draftData.receiver_name || '');
+        $('#receiver_phone').val(draftData.receiver_phone || '');
+        $('#receiver_address').val(draftData.receiver_address || '');
+        $('#shipping_method').val(draftData.shipping_method || '');
+        $('#shipping_remark').val(draftData.shipping_remark || '');
+        $('#selected-order-tip').text('已选择订单：' + ((draftData.order && draftData.order.order_no) || ''));
+        $('#btn-select-order').addClass('layui-btn-disabled').prop('disabled', true);
+    }
+
     // 草稿编辑初始化
     var draftDataJson = '{$draftDataJson|raw}';
-    if (draftDataJson) {
-        try {
-            var draftData = JSON.parse(draftDataJson);
-            if (draftData && draftData.order_id) {
-                $('#apply_id').val(draftData.apply_id || '');
-                if (draftData.apply_no) {
-                    $('#apply_no_display').text(draftData.apply_no);
-                }
-                $('#order_id').val(draftData.order_id);
-                fillOrderDisplay(draftData.order || {});
-                renderProductTable(draftData.items || []);
-                $('#shipping_date').val(draftData.shipping_date || '');
-                $('#receiver_name').val(draftData.receiver_name || '');
-                $('#receiver_phone').val(draftData.receiver_phone || '');
-                $('#receiver_address').val(draftData.receiver_address || '');
-                $('#shipping_method').val(draftData.shipping_method || '');
-                $('#shipping_remark').val(draftData.shipping_remark || '');
-                $('#selected-order-tip').text('已选择订单：' + ((draftData.order && draftData.order.order_no) || ''));
+    ensureFactories(function () {
+        if (draftDataJson) {
+            try {
+                var draftData = JSON.parse(draftDataJson);
+                applyDraftData(draftData);
+            } catch (e) {
+                layer.msg('草稿数据解析失败', { icon: 2 });
             }
-        } catch (e) {
-            // ignore parse error
+        } else if (parseInt('{$draftId|default=0}', 10) > 0) {
+            layer.msg('草稿不存在或无权编辑', { icon: 2 });
         }
-    } else if (parseInt('{$draftId|default=0}', 10) > 0) {
-        layer.msg('草稿不存在或无权编辑', { icon: 2 });
-    }
+    });
 });
 </script>
