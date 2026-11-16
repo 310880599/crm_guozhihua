@@ -8,14 +8,281 @@
     layui.use(['layer'], function () {
         var layer = layui.layer;
 
+        // 公共 ESC：一次只关一层；禁止 closeAll；避免同一 document 重复绑定
+        if (window.__ADMIN_ESC_LAYER_BOUND__) {
+            return;
+        }
+        window.__ADMIN_ESC_LAYER_BOUND__ = true;
+
+        /**
+         * Layui layer 3.1.1：弹层 DOM 为 #layui-layer{times}，带 type/times。
+         * layer.index 只是自增计数，关闭后仍可能指向已销毁层，故不以它作为唯一依据。
+         * 跳过 tips/loading；其余按 z-index 取最上层，一次只关一层。
+         */
+        function getTopEscClosableLayerIndex() {
+            var nodes = document.querySelectorAll('.layui-layer');
+            var bestIdx = null;
+            var bestZ = -Infinity;
+            var i, el, type, times, z, style, idEl;
+
+            for (i = 0; i < nodes.length; i++) {
+                el = nodes[i];
+                type = el.getAttribute('type') || '';
+                if (type === 'tips' || type === 'loading') {
+                    continue;
+                }
+                times = el.getAttribute('times');
+                if (times === null || times === undefined || times === '') {
+                    continue;
+                }
+                // 以 #layui-layer{times} 校验索引仍有效（layer.index 不可靠）
+                idEl = document.getElementById('layui-layer' + times);
+                if (!idEl) {
+                    continue;
+                }
+                style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') {
+                    continue;
+                }
+                z = parseInt(style.zIndex || '0', 10);
+                if (isNaN(z)) {
+                    z = 0;
+                }
+                if (z >= bestZ) {
+                    bestZ = z;
+                    bestIdx = times;
+                }
+            }
+            return bestIdx;
+        }
+
+        /** 扫描可见的 tips / loading（type 精确匹配） */
+        function hasVisibleLayerOfType(layerType) {
+            var nodes = document.querySelectorAll('.layui-layer');
+            var i, el, type, style;
+            for (i = 0; i < nodes.length; i++) {
+                el = nodes[i];
+                type = el.getAttribute('type') || '';
+                if (type !== layerType) {
+                    continue;
+                }
+                style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') {
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * loading 可见时视为强阻塞：既不关其下方业务弹窗，也不关父壳。
+         * tips 只阻止穿透关父壳（见下方），不阻止关掉普通业务层。
+         */
+        function hasLocalLoadingLayer() {
+            return hasVisibleLayerOfType('loading');
+        }
+
+        function hasLocalTipsLayer() {
+            return hasVisibleLayerOfType('tips');
+        }
+
+        /**
+         * 部分业务页（订单详情等）用自定义预览节点，ESC 由页面自身处理。
+         * 仅当节点位于可见 .layui-layer 内时视为预览活动中，避免“节点存在即拦截”。
+         */
+        function hasLocalCustomPreview() {
+            var wrap = document.getElementById('previewWrap');
+            var img = document.getElementById('previewZoomImg');
+            var node = wrap || img;
+            var layerEl;
+            var style;
+
+            if (!node) {
+                return false;
+            }
+            layerEl = node.closest ? node.closest('.layui-layer') : null;
+            if (!layerEl) {
+                return false;
+            }
+            style = window.getComputedStyle(layerEl);
+            if (style.display === 'none' || style.visibility === 'hidden') {
+                return false;
+            }
+            return true;
+        }
+
+        /**
+         * P2：iframe 弹层关闭后，仅在目标 window 尚未持有可用键盘焦点时做恢复。
+         * 不无条件调用 window.focus()/parent.focus()；已有正文焦点则跳过。
+         * Layui 3.1.1 close(type:2) 无焦点恢复，且 isOutAnim 默认约 200ms 后才销毁 iframe。
+         */
+        function restoreKeyboardFocus(targetWin) {
+            var doc, active, body, tag, hasDocFocus;
+
+            try {
+                if (!targetWin || !targetWin.document || !targetWin.document.body) {
+                    return;
+                }
+                doc = targetWin.document;
+                active = doc.activeElement;
+                tag = active && active.tagName ? String(active.tagName).toLowerCase() : '';
+                hasDocFocus = typeof doc.hasFocus === 'function' ? doc.hasFocus() : true;
+
+                // 已在目标文档内持有可用焦点（非嵌套 iframe 元素）则跳过，避免抢输入框焦点
+                if (hasDocFocus && tag !== 'iframe') {
+                    return;
+                }
+
+                // 仅当目标文档未持有焦点时，才条件性聚焦该 window（禁止无条件 parent.focus）
+                if (!hasDocFocus && typeof targetWin.focus === 'function') {
+                    try {
+                        targetWin.focus();
+                    } catch (errWinFocus) {
+                        // ignore
+                    }
+                }
+
+                body = doc.body;
+                if (body.getAttribute('data-admin-esc-focus-tmp') !== '1') {
+                    if (!body.hasAttribute('tabindex')) {
+                        body.setAttribute('tabindex', '-1');
+                    }
+                    body.setAttribute('data-admin-esc-focus-tmp', '1');
+                }
+                if (typeof body.focus === 'function') {
+                    try {
+                        body.focus({ preventScroll: true });
+                    } catch (errFocusOpts) {
+                        body.focus();
+                    }
+                }
+            } catch (errRestore) {
+                // 跨域或销毁中：静默忽略
+            }
+        }
+
+        /** 关闭 iframe 层后延迟恢复：立刻一次 + 覆盖 Layui isOutAnim(~200ms) 后再一次 */
+        function scheduleKeyboardFocusRestore(targetWin) {
+            try {
+                if (!targetWin || typeof targetWin.setTimeout !== 'function') {
+                    return;
+                }
+                targetWin.setTimeout(function () {
+                    restoreKeyboardFocus(targetWin);
+                }, 0);
+                targetWin.setTimeout(function () {
+                    restoreKeyboardFocus(targetWin);
+                }, 220);
+            } catch (errSchedule) {
+                // ignore
+            }
+        }
+
+        function isIframeLayerIndex(idx) {
+            var el;
+            try {
+                el = document.getElementById('layui-layer' + idx);
+                return !!(el && (el.getAttribute('type') || '') === 'iframe');
+            } catch (errType) {
+                return false;
+            }
+        }
+
+        /**
+         * 当前页若由父页 layer.open({type:2}) 打开，则关闭父页这一层。
+         * 校验 getFrameIndex 返回值，并确认父文档中对应弹层仍存在；不做向上递归。
+         * 关闭成功后把键盘焦点条件式归还给父 window（解决三级 iframe ESC 后外层失焦）。
+         */
+        function tryCloseParentFrameLayer() {
+            var parentWin, parentLayer, idx, layerEl;
+
+            try {
+                if (!window.parent || window.parent === window) {
+                    return false;
+                }
+                parentWin = window.parent;
+                parentLayer = parentWin.layer;
+                if (!parentLayer || typeof parentLayer.getFrameIndex !== 'function' || typeof parentLayer.close !== 'function') {
+                    return false;
+                }
+                if (!window.name) {
+                    return false;
+                }
+                idx = parentLayer.getFrameIndex(window.name);
+                if (idx === null || idx === undefined || idx === '') {
+                    return false;
+                }
+                layerEl = parentWin.document.getElementById('layui-layer' + idx);
+                if (!layerEl) {
+                    return false;
+                }
+                parentLayer.close(idx);
+                // 子 iframe 即将销毁：在仍存活的父 window 上调度焦点恢复
+                scheduleKeyboardFocusRestore(parentWin);
+                return true;
+            } catch (err) {
+                return false;
+            }
+        }
+
+        function stopEscEvent(event) {
+            if (event.preventDefault) {
+                event.preventDefault();
+            }
+            if (event.stopImmediatePropagation) {
+                event.stopImmediatePropagation();
+            }
+            if (event.stopPropagation) {
+                event.stopPropagation();
+            }
+        }
+
+        // capture:true：保证先于同 document 上 bubble 阶段的业务 ESC（detailsEsc / galleryPreview）
+        // 成功关闭后再 stopImmediatePropagation，避免“先执行的监听已关一层、后续再关一层”
         document.addEventListener('keydown', function (event) {
             var key = event.key || event.keyCode;
+            var topIdx;
+            var closed = false;
+            var closedIframe = false;
 
-            if (key === 'Escape' || key === 'Esc' || key === 27) {
-                // 统一响应 ESC 关闭所有打开的弹窗，等价于点击右上角关闭
-                layer.closeAll();
+            if (!(key === 'Escape' || key === 'Esc' || key === 27)) {
+                return;
             }
-        });
+
+            // P1-3：loading 可见时，禁止关掉其下方业务层，也禁止关父壳
+            if (hasLocalLoadingLayer()) {
+                stopEscEvent(event);
+                return;
+            }
+
+            topIdx = getTopEscClosableLayerIndex();
+            if (topIdx !== null && topIdx !== undefined && topIdx !== '') {
+                closedIframe = isIframeLayerIndex(topIdx);
+                try {
+                    layer.close(topIdx);
+                    closed = true;
+                } catch (errClose) {
+                    closed = false;
+                }
+                if (closed) {
+                    // 本页关掉子 iframe 层后，焦点需留在本页，供下一次 ESC 关本页壳
+                    if (closedIframe) {
+                        scheduleKeyboardFocusRestore(window);
+                    }
+                    stopEscEvent(event);
+                }
+                return;
+            }
+
+            // tips 或自定义预览活动中：不穿透关父壳；预览让路给页面自有 ESC（不 stop）
+            if (hasLocalTipsLayer() || hasLocalCustomPreview()) {
+                return;
+            }
+
+            if (tryCloseParentFrameLayer()) {
+                stopEscEvent(event);
+            }
+        }, true);
     });
 </script>
-
