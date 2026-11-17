@@ -20,12 +20,14 @@
     }
 
     /*
-     * M3-2A：右侧固定操作列可见时，隐藏主表重复「继续编辑」，保留 td 占位。
+     * M3-2A/M3-2B：右侧固定操作列可见时，隐藏主表重复操作按钮，保留 td 占位。
      * Layui scrollPatch 在无横向溢出时给 .layui-table-fixed-r 加 .layui-hide，
      * 此时 :has 不匹配，主表按钮自动恢复可见。
      */
     .draft-ship-wrap .layui-table-view[lay-id="draft-table"]:has(.layui-table-fixed-r:not(.layui-hide))
-        .layui-table-main a[lay-event="continueEdit"] {
+        .layui-table-main a[lay-event="continueEdit"],
+    .draft-ship-wrap .layui-table-view[lay-id="draft-table"]:has(.layui-table-fixed-r:not(.layui-hide))
+        .layui-table-main a[lay-event="deleteDraft"] {
         visibility: hidden;
         pointer-events: none;
     }
@@ -78,6 +80,7 @@
 
 <script type="text/html" id="draft-action-tpl">
     <a class="layui-btn layui-btn-xs" lay-event="continueEdit">继续编辑</a>
+    <a class="layui-btn layui-btn-danger layui-btn-xs" style="margin-left:6px;" lay-event="deleteDraft">删除草稿</a>
 </script>
 
 {include file="common/foot"/}
@@ -89,6 +92,7 @@ layui.use(['table', 'form', 'layer'], function () {
 
     var listUrl = '{:url("Ship/draftShip")}';
     var editUrlBase = '{:url("Ship/createShip")}';
+    var deletingMap = {};
 
     function escapeHtml(str) {
         return String(str == null ? '' : str)
@@ -116,7 +120,7 @@ layui.use(['table', 'form', 'layer'], function () {
         limit: 10,
         limits: [10, 20, 50],
         text: { none: '暂无草稿' },
-        where: { keyword: '' },
+        where: { keyword: '', op: 'list' },
         cols: [[
             {
                 field: 'apply_no',
@@ -178,7 +182,7 @@ layui.use(['table', 'form', 'layer'], function () {
             },
             {
                 title: '操作',
-                width: 110,
+                width: 190,
                 fixed: 'right',
                 toolbar: '#draft-action-tpl'
             }
@@ -190,16 +194,70 @@ layui.use(['table', 'form', 'layer'], function () {
         }
     });
 
-    function reloadTable(resetPage) {
+    function reloadTable(resetPage, pageCurr) {
         var opts = {
             where: {
-                keyword: $.trim($('#keyword').val() || '')
+                keyword: $.trim($('#keyword').val() || ''),
+                op: 'list'
             }
         };
         if (resetPage) {
             opts.page = { curr: 1 };
+        } else if (pageCurr && pageCurr > 0) {
+            opts.page = { curr: pageCurr };
         }
         tableIns.reload(opts);
+    }
+
+    function getCurrentPage() {
+        var cfg = tableIns && tableIns.config ? tableIns.config : {};
+        var page = cfg.page;
+        if (page && typeof page === 'object' && page.curr) {
+            return parseInt(page.curr, 10) || 1;
+        }
+        return 1;
+    }
+
+    function reloadAfterDelete() {
+        var cache = table.cache['draft-table'] || [];
+        var curr = getCurrentPage();
+        if (cache.length <= 1 && curr > 1) {
+            reloadTable(false, curr - 1);
+        } else {
+            reloadTable(false);
+        }
+    }
+
+    function requestDeleteDraft(id) {
+        if (deletingMap[id]) {
+            return;
+        }
+        deletingMap[id] = true;
+        var loadIdx = layer.load(1, { shade: 0.1 });
+        $.ajax({
+            url: listUrl,
+            type: 'post',
+            dataType: 'json',
+            data: {
+                op: 'delete_draft',
+                id: id
+            },
+            success: function (res) {
+                layer.close(loadIdx);
+                deletingMap[id] = false;
+                if (res && parseInt(res.code, 10) === 0) {
+                    layer.msg(res.msg || '草稿删除成功', { icon: 1 });
+                    reloadAfterDelete();
+                } else {
+                    layer.msg((res && res.msg) ? res.msg : '草稿删除失败', { icon: 2 });
+                }
+            },
+            error: function () {
+                layer.close(loadIdx);
+                deletingMap[id] = false;
+                layer.msg('网络异常，删除失败', { icon: 2 });
+            }
+        });
     }
 
     $('#btn-search').on('click', function () {
@@ -219,15 +277,37 @@ layui.use(['table', 'form', 'layer'], function () {
     });
 
     table.on('tool(draft-table)', function (obj) {
-        if (obj.event !== 'continueEdit') {
-            return;
-        }
         var id = parseInt(obj.data && obj.data.id, 10);
         if (!id || id <= 0 || String(id) !== String(obj.data.id)) {
             layer.msg('草稿ID无效', { icon: 2 });
             return;
         }
-        window.location.href = editUrlBase + (editUrlBase.indexOf('?') >= 0 ? '&' : '?') + 'id=' + id;
+
+        if (obj.event === 'continueEdit') {
+            window.location.href = editUrlBase + (editUrlBase.indexOf('?') >= 0 ? '&' : '?') + 'id=' + id;
+            return;
+        }
+
+        if (obj.event === 'deleteDraft') {
+            var applyNo = (obj.data && obj.data.apply_no) ? String(obj.data.apply_no) : '';
+            var tip = applyNo
+                ? ('确定删除发货申请草稿【' + escapeHtml(applyNo) + '】吗？删除后将无法继续编辑。')
+                : '确定删除该发货申请草稿吗？删除后将无法继续编辑。';
+
+            // Layui 2.4.5：btn[0] → yes 回调；btn[1] → btn2 回调
+            layer.confirm(tip, {
+                icon: 3,
+                title: '删除确认',
+                btn: ['取消', '确认删除']
+            }, function (index) {
+                // 第一个按钮：取消
+                layer.close(index);
+            }, function (index) {
+                // 第二个按钮：确认删除
+                layer.close(index);
+                requestDeleteDraft(id);
+            });
+        }
     });
 });
 </script>

@@ -266,6 +266,10 @@ class ShippingApplyService
         if (empty($apply) || (int)($apply['status'] ?? -1) !== 0) {
             return null;
         }
+        // M3-2B：已软删除草稿禁止回填编辑
+        if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+            return null;
+        }
 
         if ((int)($apply['applicant_id'] ?? 0) !== $adminId && !$this->isShippingApplySuperAdmin($adminId)) {
             return null;
@@ -506,6 +510,10 @@ class ShippingApplyService
                         ->find();
                     if (empty($existingApply)) {
                         throw new Exception('草稿不存在。');
+                    }
+                    // M3-2B：事务内、明细重建前强制拒绝已软删除草稿
+                    if ((int)($existingApply['is_deleted'] ?? 0) !== 0) {
+                        throw new Exception('草稿已删除，无法继续编辑保存。');
                     }
                     if ((int)($existingApply['status'] ?? -1) !== 0) {
                         throw new Exception('只能编辑草稿状态的发货申请。');
@@ -854,7 +862,7 @@ class ShippingApplyService
     }
 
     /**
-     * 草稿箱列表（仅 status=0）
+     * 草稿箱列表（仅 status=0 且未软删除）
      *
      * @param array $params
      * @return array
@@ -883,7 +891,10 @@ class ShippingApplyService
 
         $keyword = trim((string)($params['keyword'] ?? ''));
 
-        $query = Db::name('crm_shipping_apply')->where('status', 0);
+        // M3-2B：强制排除已软删除草稿（含超管）
+        $query = Db::name('crm_shipping_apply')
+            ->where('status', 0)
+            ->where('is_deleted', 0);
 
         // 数据权限：普通业务员仅本人草稿；超管沿用 isShippingApplySuperAdmin
         if (!$this->isShippingApplySuperAdmin($adminId)) {
@@ -949,6 +960,145 @@ class ShippingApplyService
             'count' => $count,
             'data' => $data,
         ];
+    }
+
+    /**
+     * 软删除发货申请草稿（主表软删 + 审计日志，明细保留）
+     *
+     * @param mixed $applyId
+     * @return array
+     */
+    public function deleteDraft($applyId)
+    {
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => []];
+        }
+
+        try {
+            $applyId = $this->parsePositiveInt($applyId, '草稿ID无效');
+        } catch (Exception $e) {
+            return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+        }
+
+        $isSuperAdmin = $this->isShippingApplySuperAdmin($adminId);
+        $operatorName = trim((string)($admin['username'] ?? ''));
+        if ($operatorName === '') {
+            $operatorName = 'admin#' . $adminId;
+        }
+        $genericDenyMsg = '草稿不存在、已删除或无权限';
+
+        Db::startTrans();
+        try {
+            $apply = Db::name('crm_shipping_apply')
+                ->where('id', $applyId)
+                ->lock(true)
+                ->find();
+
+            if (empty($apply)) {
+                throw new Exception($genericDenyMsg);
+            }
+
+            $applicantId = (int)($apply['applicant_id'] ?? 0);
+            $canManage = ($applicantId === $adminId) || $isSuperAdmin;
+
+            if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+                throw new Exception($canManage ? '草稿已删除' : $genericDenyMsg);
+            }
+
+            if ((int)($apply['status'] ?? -1) !== 0) {
+                throw new Exception('仅草稿状态的发货申请可以删除');
+            }
+
+            if (!$canManage) {
+                throw new Exception($genericDenyMsg);
+            }
+
+            $now = date('Y-m-d H:i:s');
+            $affected = Db::name('crm_shipping_apply')
+                ->where('id', $applyId)
+                ->where('status', 0)
+                ->where('is_deleted', 0)
+                ->update([
+                    'is_deleted' => 1,
+                    'deleted_by' => $adminId,
+                    'deleted_at' => $now,
+                    'update_time' => $now,
+                ]);
+
+            if ((int)$affected !== 1) {
+                throw new Exception($genericDenyMsg);
+            }
+
+            $applyNo = trim((string)($apply['apply_no'] ?? ''));
+            $applicantName = trim((string)($apply['applicant_name'] ?? ''));
+            $opinionPayload = [
+                'apply_no' => $applyNo,
+                'original_applicant_id' => $applicantId,
+                'original_applicant_name' => $applicantName,
+                'is_deleted_before' => 0,
+                'is_deleted_after' => 1,
+            ];
+            $opinionJson = json_encode($opinionPayload, JSON_UNESCAPED_UNICODE);
+            if ($opinionJson === false) {
+                throw new Exception('删除审计信息编码失败');
+            }
+            if (strlen($opinionJson) > 1000) {
+                throw new Exception('删除审计信息过长');
+            }
+
+            $logId = Db::name('crm_shipping_approval_log')->insertGetId([
+                'shipping_apply_id' => $applyId,
+                'task_id' => null,
+                'operator_id' => $adminId,
+                'operator_name' => mb_substr($operatorName, 0, 100, 'UTF-8'),
+                'operator_role' => $isSuperAdmin ? 'system_admin' : 'applicant',
+                'action' => 'delete_draft',
+                'before_status' => 0,
+                'after_status' => 0,
+                'opinion' => $opinionJson,
+                'create_time' => $now,
+            ]);
+
+            if ((int)$logId <= 0) {
+                throw new Exception('删除审计日志写入失败');
+            }
+
+            Db::commit();
+
+            return ['code' => 0, 'msg' => '草稿删除成功', 'data' => ['id' => $applyId]];
+        } catch (Exception $e) {
+            Db::rollback();
+            $msg = (string)$e->getMessage();
+            $safeMsgs = [
+                $genericDenyMsg,
+                '草稿已删除',
+                '仅草稿状态的发货申请可以删除',
+                '删除审计信息编码失败',
+                '删除审计信息过长',
+                '删除审计日志写入失败',
+            ];
+            if (in_array($msg, $safeMsgs, true)) {
+                return ['code' => -200, 'msg' => $msg, 'data' => []];
+            }
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::deleteDraft] ' . $msg,
+                    'error'
+                );
+            }
+            return ['code' => -200, 'msg' => '草稿删除失败，请稍后重试', 'data' => []];
+        } catch (\Throwable $e) {
+            Db::rollback();
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::deleteDraft] ' . $e->getMessage(),
+                    'error'
+                );
+            }
+            return ['code' => -200, 'msg' => '草稿删除失败，请稍后重试', 'data' => []];
+        }
     }
 
     /**

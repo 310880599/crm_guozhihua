@@ -103,15 +103,25 @@ class Ship extends Common
     /**
      * 草稿箱
      * GET：列表页
-     * POST：分页查询草稿（status=0）
+     * POST：op 分发（list / delete_draft；无 op 兼容原列表查询）
      */
     public function draftShip()
     {
         $service = $this->getShippingApplyService();
 
         if (request()->isPost()) {
+            $op = trim((string)Request::param('op', ''));
             $params = Request::param();
-            return json($service->listDrafts(is_array($params) ? $params : []));
+
+            switch ($op) {
+                case '':
+                case 'list':
+                    return json($service->listDrafts(is_array($params) ? $params : []));
+                case 'delete_draft':
+                    return json($service->deleteDraft(Request::param('id')));
+                default:
+                    return json(['code' => -200, 'msg' => '无效的操作', 'data' => []]);
+            }
         }
 
         return $this->fetch('ship/draft_ship');
