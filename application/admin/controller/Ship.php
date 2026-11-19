@@ -103,7 +103,7 @@ class Ship extends Common
     /**
      * 草稿箱
      * GET：列表页
-     * POST：op 分发（list / delete_draft；无 op 兼容原列表查询）
+     * POST：op 分发（list / delete_draft / M4-1A-4 替代授权相关；无 op 兼容原列表查询）
      */
     public function draftShip()
     {
@@ -119,6 +119,14 @@ class Ship extends Common
                     return json($service->listDrafts(is_array($params) ? $params : []));
                 case 'delete_draft':
                     return json($service->deleteDraft(Request::param('id')));
+                case 'list_pm_substitutes':
+                    return json($service->listDraftPmSubstituteTargets(Request::param('apply_id')));
+                case 'list_substitute_candidates':
+                    return json($service->listPmSubstituteCandidates(is_array($params) ? $params : []));
+                case 'authorize_pm_substitute':
+                    return json($service->authorizePmSubstitute(is_array($params) ? $params : []));
+                case 'revoke_pm_substitute':
+                    return json($service->revokePmSubstitute(is_array($params) ? $params : []));
                 default:
                     return json(['code' => -200, 'msg' => '无效的操作', 'data' => []]);
             }

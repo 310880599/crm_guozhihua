@@ -15,6 +15,18 @@ class ShippingApplyService
     /** DECIMAL(12,2) 绝对值上限 */
     const MONEY_ABS_MAX = '9999999999.99';
 
+    /** 替代产品经理合法角色（含可兼任的产品总监） */
+    protected $pmSubstituteGroupIds = [13, 14, 18, 19, 22];
+
+    /** 授权原因最大字符数（对齐 crm_shipping_pm_substitute.reason VARCHAR(500)） */
+    const PM_SUBSTITUTE_REASON_MAX = 500;
+
+    /** 审计意见最大字符数（对齐 crm_shipping_approval_log.opinion VARCHAR(1000)） */
+    const APPROVAL_LOG_OPINION_MAX = 1000;
+
+    /** auth_version 为 INT UNSIGNED，禁止回绕到旧版本 */
+    const PM_SUBSTITUTE_AUTH_VERSION_MAX = 4294967295;
+
     /**
      * 是否超级管理员（可创建全部有效订单的发货申请）
      * admin_id==1 OR group_id==1 OR username==admin
@@ -307,12 +319,16 @@ class ShippingApplyService
         $shippingLines = [];
         $hasInvalidLines = false;
         $warnings = [];
-        // 透传订单详情中的经理异常等警告（实时状态）
+        // 透传订单详情警告；经理异常“请联系超管”类提示改由替代授权摘要统一生成，避免已授权后仍误导
         foreach ((array)($detailResult['data']['warnings'] ?? []) as $detailWarn) {
             $detailWarn = trim((string)$detailWarn);
-            if ($detailWarn !== '') {
-                $warnings[] = $detailWarn;
+            if ($detailWarn === '') {
+                continue;
             }
+            if (mb_strpos($detailWarn, '请联系超级管理员指定替代经理') !== false) {
+                continue;
+            }
+            $warnings[] = $detailWarn;
         }
 
         foreach ((array)$savedItems as $row) {
@@ -438,6 +454,49 @@ class ShippingApplyService
 
             $shippingLines[] = $line;
         }
+
+        // M4-1A-4：只读合并替代授权摘要（不写库）
+        $substituteMap = $this->loadPmSubstituteMapByApplyId($applyId);
+        $substituteWarnKeys = [];
+        foreach ($shippingLines as &$shippingLineRef) {
+            $oid = (int)($shippingLineRef['order_item_id'] ?? 0);
+            $subRow = ($oid > 0 && isset($substituteMap[$oid])) ? $substituteMap[$oid] : null;
+            $managerResolve = [
+                'manager_invalid' => !empty($shippingLineRef['manager_invalid']),
+                'manager_status' => (string)($shippingLineRef['manager_status'] ?? ''),
+                'admin_id' => $shippingLineRef['product_manager_id'] ?? null,
+                'username' => (string)($shippingLineRef['product_manager_name'] ?? ''),
+            ];
+            $subState = $this->buildPmSubstituteDisplayState($subRow, $managerResolve);
+            $shippingLineRef = array_merge($shippingLineRef, $subState);
+            $tip = trim((string)($subState['pm_substitute_tip'] ?? ''));
+            if ($tip !== '' && empty($shippingLineRef['is_invalid_order_item'])) {
+                $warnKey = $oid . '|' . $tip;
+                if (!isset($substituteWarnKeys[$warnKey])) {
+                    $substituteWarnKeys[$warnKey] = true;
+                    $productLabel = trim((string)($shippingLineRef['product_name'] ?? ''));
+                    if ($productLabel === '') {
+                        $productLabel = '产品';
+                    }
+                    $warnings[] = '产品【' . $productLabel . '】' . $tip;
+                }
+            }
+        }
+        unset($shippingLineRef);
+
+        // 订单源产品同步只读授权摘要（按 order_item_id）
+        foreach ($orderSourceItems as &$srcItemRef) {
+            $oid = (int)($srcItemRef['order_item_id'] ?? 0);
+            $subRow = ($oid > 0 && isset($substituteMap[$oid])) ? $substituteMap[$oid] : null;
+            $managerResolve = [
+                'manager_invalid' => !empty($srcItemRef['manager_invalid']),
+                'manager_status' => (string)($srcItemRef['manager_status'] ?? ''),
+                'admin_id' => $srcItemRef['product_manager_id'] ?? null,
+                'username' => (string)($srcItemRef['product_manager_name'] ?? ''),
+            ];
+            $srcItemRef = array_merge($srcItemRef, $this->buildPmSubstituteDisplayState($subRow, $managerResolve));
+        }
+        unset($srcItemRef);
 
         $draftOrderAmount = $this->normalizeNullableMoney($apply['order_amount'] ?? null, false);
         $currentOrderAmount = $this->normalizeNullableMoney(($detailResult['data']['order']['money'] ?? null), false);
@@ -818,6 +877,18 @@ class ShippingApplyService
                     Db::name('crm_shipping_apply_item')->insert($snapshot);
                 }
 
+                // M4-1A-4：原产品行已从草稿完全移除时，同事务失效对应有效替代授权
+                if ($existingApply && $savedApplyId > 0) {
+                    $this->invalidatePmSubstitutesForRemovedOrderItems(
+                        $savedApplyId,
+                        array_keys($qtySumByOrderItem),
+                        $adminId,
+                        trim((string)($admin['username'] ?? '')),
+                        $applyNo !== '' ? $applyNo : trim((string)($existingApply['apply_no'] ?? '')),
+                        $now
+                    );
+                }
+
                 Db::commit();
 
                 $finalApplyNo = $applyNo !== '' ? $applyNo : trim((string)($existingApply['apply_no'] ?? ''));
@@ -959,6 +1030,7 @@ class ShippingApplyService
                 'msg' => '获取成功',
                 'count' => 0,
                 'data' => [],
+                'is_super_admin' => $this->isShippingApplySuperAdmin($adminId) ? 1 : 0,
             ];
         }
 
@@ -1002,6 +1074,7 @@ class ShippingApplyService
             'msg' => '获取成功',
             'count' => $count,
             'data' => $data,
+            'is_super_admin' => $this->isShippingApplySuperAdmin($adminId) ? 1 : 0,
         ];
     }
 
@@ -1952,5 +2025,1251 @@ class ShippingApplyService
         }
 
         return $country;
+    }
+
+    // =========================
+    // M4-1A-4 异常产品经理受控替代
+    // =========================
+
+    /**
+     * 超管：列出草稿中可管理的替代授权目标（按 order_item_id 去重）
+     *
+     * @param mixed $applyId
+     * @return array
+     */
+    public function listDraftPmSubstituteTargets($applyId)
+    {
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => []];
+        }
+        if (!$this->isShippingApplySuperAdmin($adminId)) {
+            return ['code' => -200, 'msg' => '仅超级管理员可管理替代产品经理授权', 'data' => []];
+        }
+
+        try {
+            $applyId = $this->parsePositiveInt($applyId, '草稿ID无效');
+        } catch (Exception $e) {
+            return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+        }
+
+        $apply = Db::name('crm_shipping_apply')->where('id', $applyId)->find();
+        if (empty($apply) || (int)($apply['is_deleted'] ?? 0) !== 0 || (int)($apply['status'] ?? -1) !== 0) {
+            return ['code' => -200, 'msg' => '仅有效草稿可查看替代授权', 'data' => []];
+        }
+
+        $orderId = (int)($apply['order_id'] ?? 0);
+        $applyItems = Db::name('crm_shipping_apply_item')
+            ->where('shipping_apply_id', $applyId)
+            ->field('order_item_id,product_name,apply_product_name,apply_qty,apply_line_no')
+            ->order('apply_line_no', 'asc')
+            ->order('id', 'asc')
+            ->select();
+
+        $orderItemIds = [];
+        $lineMeta = [];
+        foreach ((array)$applyItems as $row) {
+            $oid = (int)($row['order_item_id'] ?? 0);
+            if ($oid <= 0) {
+                continue;
+            }
+            if (!isset($lineMeta[$oid])) {
+                $orderItemIds[] = $oid;
+                $name = trim((string)($row['apply_product_name'] ?? ''));
+                if ($name === '') {
+                    $name = trim((string)($row['product_name'] ?? ''));
+                }
+                $lineMeta[$oid] = [
+                    'product_name' => $name !== '' ? $name : '未命名产品',
+                    'line_count' => 0,
+                    'total_qty' => 0,
+                ];
+            }
+            $lineMeta[$oid]['line_count']++;
+            $lineMeta[$oid]['total_qty'] += (int)($row['apply_qty'] ?? 0);
+        }
+
+        if (empty($orderItemIds)) {
+            return [
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [
+                    'apply_id' => $applyId,
+                    'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+                    'items' => [],
+                ],
+            ];
+        }
+
+        $orderItems = Db::name('crm_order_item')
+            ->where('order_id', $orderId)
+            ->whereIn('id', $orderItemIds)
+            ->field('id,manager_id,product_name')
+            ->select();
+        $orderItemMap = [];
+        foreach ((array)$orderItems as $oi) {
+            $orderItemMap[(int)$oi['id']] = $oi;
+        }
+
+        $subMap = $this->loadPmSubstituteMapByApplyId($applyId);
+        $items = [];
+        foreach ($orderItemIds as $oid) {
+            $meta = $lineMeta[$oid];
+            $oi = isset($orderItemMap[$oid]) ? $orderItemMap[$oid] : null;
+            $productName = $meta['product_name'];
+            if ($oi && trim((string)($oi['product_name'] ?? '')) !== '') {
+                $productName = trim((string)$oi['product_name']);
+            }
+            $managerInfo = $this->resolveProductManagerForDraft(
+                $oi ? ($oi['manager_id'] ?? '') : '',
+                $productName
+            );
+            $subRow = isset($subMap[$oid]) ? $subMap[$oid] : null;
+            $display = $this->buildPmSubstituteDisplayState($subRow, $managerInfo);
+            $canAuthorize = !empty($managerInfo['manager_invalid'])
+                && in_array((string)($managerInfo['manager_status'] ?? ''), ['missing', 'disabled', 'invalid_id'], true)
+                && (string)($display['pm_substitute_display_status'] ?? '') !== 'frozen';
+
+            $items[] = [
+                'order_item_id' => $oid,
+                'product_name' => $productName,
+                'line_count' => (int)$meta['line_count'],
+                'total_qty' => (int)$meta['total_qty'],
+                'original_manager_id' => $managerInfo['admin_id'],
+                'original_manager_name' => (string)($managerInfo['username'] ?? ''),
+                'manager_invalid' => !empty($managerInfo['manager_invalid']),
+                'manager_status' => (string)($managerInfo['manager_status'] ?? ''),
+                'manager_invalid_reason' => (string)($managerInfo['manager_invalid_reason'] ?? ''),
+                'can_authorize' => $canAuthorize ? 1 : 0,
+                'substitute_record_id' => (int)($display['pm_substitute_record_id'] ?? 0),
+                'substitute_status' => (int)($display['pm_substitute_record_status'] ?? -1),
+                'substitute_manager_id' => $display['substitute_manager_id'],
+                'substitute_manager_name' => (string)($display['substitute_manager_name'] ?? ''),
+                'authorized_by' => (int)($display['pm_substitute_authorized_by'] ?? 0),
+                'authorized_by_name' => (string)($display['pm_substitute_authorized_by_name'] ?? ''),
+                'reason' => (string)($display['pm_substitute_reason'] ?? ''),
+                'version_token' => (string)($display['pm_substitute_version_token'] ?? 'none'),
+                'display_status' => (string)($display['pm_substitute_display_status'] ?? 'none'),
+                'display_tip' => (string)($display['pm_substitute_tip'] ?? ''),
+                'effective' => !empty($display['pm_substitute_effective']) ? 1 : 0,
+            ];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => [
+                'apply_id' => $applyId,
+                'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+                'items' => $items,
+            ],
+        ];
+    }
+
+    /**
+     * 超管：查询合格替代产品经理候选人
+     *
+     * @param array $params
+     * @return array
+     */
+    public function listPmSubstituteCandidates($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => [], 'count' => 0];
+        }
+        if (!$this->isShippingApplySuperAdmin($adminId)) {
+            return ['code' => -200, 'msg' => '仅超级管理员可查询替代产品经理候选人', 'data' => [], 'count' => 0];
+        }
+
+        $keyword = trim((string)($params['keyword'] ?? ''));
+        $query = Db::name('admin')
+            ->where('is_open', 1)
+            ->whereIn('group_id', $this->pmSubstituteGroupIds)
+            ->where('username', '<>', '');
+
+        if ($keyword !== '') {
+            if (preg_match('/^\d+$/', $keyword)) {
+                $kid = (int)$keyword;
+                $query->where(function ($q) use ($keyword, $kid) {
+                    $q->whereLike('username', '%' . $keyword . '%')
+                        ->whereOr('admin_id', $kid);
+                });
+            } else {
+                $query->whereLike('username', '%' . $keyword . '%');
+            }
+        }
+
+        $rows = $query
+            ->field('admin_id,username,group_id')
+            ->order('username', 'asc')
+            ->order('admin_id', 'asc')
+            ->limit(300)
+            ->select();
+
+        $data = [];
+        foreach ((array)$rows as $row) {
+            $cid = (int)($row['admin_id'] ?? 0);
+            if ($cid <= 0) {
+                continue;
+            }
+            // 排除一切具备超管身份的账号（不仅排除当前操作者）
+            if ($this->isShippingApplySuperAdmin($cid)) {
+                continue;
+            }
+            $name = trim((string)($row['username'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $data[] = [
+                'admin_id' => $cid,
+                'username' => $name,
+                'group_id' => (int)($row['group_id'] ?? 0),
+                'display_name' => $name . '（ID:' . $cid . '）',
+            ];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => $data,
+            'count' => count($data),
+        ];
+    }
+
+    /**
+     * 超管：首次指定或修改替代产品经理
+     *
+     * @param array $params
+     * @return array
+     */
+    public function authorizePmSubstitute($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => []];
+        }
+        if (!$this->isShippingApplySuperAdmin($adminId)) {
+            return ['code' => -200, 'msg' => '仅超级管理员可指定替代产品经理', 'data' => []];
+        }
+        $operatorName = trim((string)($admin['username'] ?? ''));
+        if ($operatorName === '') {
+            $operatorName = 'admin#' . $adminId;
+        }
+
+        try {
+            $applyId = $this->parsePositiveInt($params['apply_id'] ?? null, '草稿ID无效');
+            $orderItemId = $this->parsePositiveInt($params['order_item_id'] ?? null, '原订单产品ID无效');
+            $substituteManagerId = $this->parsePositiveInt(
+                $params['substitute_manager_id'] ?? null,
+                '替代产品经理ID无效'
+            );
+            $reason = $this->parseRequiredPmSubstituteReason($params['reason'] ?? null);
+            $expectedToken = trim((string)($params['expected_version_token'] ?? $params['version_token'] ?? ''));
+            if ($expectedToken === '') {
+                $expectedToken = 'none';
+            }
+        } catch (Exception $e) {
+            return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+        }
+
+        Db::startTrans();
+        try {
+            $ctx = $this->lockPmSubstituteDraftContext($applyId, $orderItemId);
+            $apply = $ctx['apply'];
+            $orderItem = $ctx['order_item'];
+            $applyNo = trim((string)($apply['apply_no'] ?? ''));
+            $now = date('Y-m-d H:i:s');
+
+            $productName = trim((string)($orderItem['product_name'] ?? ''));
+            if ($productName === '') {
+                $productName = '未命名产品';
+            }
+            $managerInfo = $this->resolveProductManagerForDraft($orderItem['manager_id'] ?? '', $productName);
+            if (empty($managerInfo['manager_invalid'])) {
+                // 原经理已恢复：禁止新增/修改授权。
+                // 若仍有 status=1 旧授权，须在本事务内失效并提交（失效+审计同事务）；
+                // 不得先写入再抛异常，否则外层 catch 的 rollback 会吞掉已成功的失效与审计。
+                $existing = $this->lockPmSubstituteRow($applyId, $orderItemId);
+                if (!empty($existing) && (int)($existing['status'] ?? 0) === 1) {
+                    $this->markPmSubstituteInvalid(
+                        $existing,
+                        $adminId,
+                        $operatorName,
+                        $applyNo,
+                        '原产品经理已恢复正常，替代授权自动失效',
+                        'original_restored',
+                        $now
+                    );
+                    $saved = Db::name('crm_shipping_pm_substitute')->where('id', (int)$existing['id'])->find();
+                    Db::commit();
+                    return [
+                        'code' => -200,
+                        'msg' => '原产品经理当前有效，不允许指定替代经理',
+                        'data' => $this->formatPmSubstituteWriteResult($saved, $managerInfo, true),
+                    ];
+                }
+                // 无有效旧授权：直接拒绝，不写无意义审计
+                Db::rollback();
+                return [
+                    'code' => -200,
+                    'msg' => '原产品经理当前有效，不允许指定替代经理',
+                    'data' => [],
+                ];
+            }
+            $managerStatus = (string)($managerInfo['manager_status'] ?? '');
+            if (!in_array($managerStatus, ['missing', 'disabled', 'invalid_id'], true)) {
+                throw new Exception('原产品经理当前状态不允许替代授权');
+            }
+
+            $candidate = $this->assertValidPmSubstituteCandidate($substituteManagerId);
+            $invalidReason = $this->mapManagerStatusToInvalidReason($managerStatus);
+
+            $existing = $this->lockPmSubstituteRow($applyId, $orderItemId);
+            $currentToken = $this->buildPmSubstituteVersionToken($existing);
+            if ($currentToken !== $expectedToken) {
+                throw new Exception('授权信息已被他人修改，请刷新后重试');
+            }
+
+            if (!empty($existing) && (int)($existing['status'] ?? 0) === 2) {
+                throw new Exception('该授权已提交冻结，不能修改');
+            }
+
+            // 幂等：有效授权且目标经理/原因未变
+            if (!empty($existing)
+                && (int)($existing['status'] ?? 0) === 1
+                && (int)($existing['substitute_manager_id'] ?? 0) === $substituteManagerId
+                && (string)($existing['reason'] ?? '') === $reason
+            ) {
+                Db::commit();
+                return [
+                    'code' => 0,
+                    'msg' => '授权未变化',
+                    'data' => $this->formatPmSubstituteWriteResult($existing, $managerInfo, false),
+                ];
+            }
+
+            $isFirstAuthorize = empty($existing) || (int)($existing['status'] ?? 0) === 0;
+            $action = $isFirstAuthorize ? 'pm_substitute_authorize' : 'pm_substitute_change';
+            $beforeStatus = empty($existing) ? null : (int)$existing['status'];
+            $beforeManagerId = empty($existing) ? null : (int)($existing['substitute_manager_id'] ?? 0);
+            $beforeManagerName = empty($existing) ? '' : (string)($existing['substitute_manager_name'] ?? '');
+            $beforeReason = empty($existing) ? '' : (string)($existing['reason'] ?? '');
+            $beforeAuthorizedBy = empty($existing) ? null : (int)($existing['authorized_by'] ?? 0);
+            $beforeAuthorizedByName = empty($existing) ? '' : (string)($existing['authorized_by_name'] ?? '');
+
+            $saveData = [
+                'shipping_apply_id' => $applyId,
+                'order_item_id' => $orderItemId,
+                'original_manager_id' => $managerInfo['admin_id'],
+                'original_manager_name' => (string)($managerInfo['username'] ?? ''),
+                'invalid_reason' => $invalidReason,
+                'substitute_manager_id' => $substituteManagerId,
+                'substitute_manager_name' => $candidate['username'],
+                'authorized_by' => $adminId,
+                'authorized_by_name' => mb_substr($operatorName, 0, 255, 'UTF-8'),
+                'reason' => $reason,
+                'status' => 1,
+                'update_time' => $now,
+            ];
+
+            if (empty($existing)) {
+                $saveData['create_time'] = $now;
+                $saveData['auth_version'] = 1;
+                try {
+                    $newId = (int)Db::name('crm_shipping_pm_substitute')->insertGetId($saveData);
+                } catch (\Throwable $e) {
+                    if (stripos($e->getMessage(), 'Duplicate entry') !== false) {
+                        throw new Exception('授权信息已被他人修改，请刷新后重试');
+                    }
+                    throw $e;
+                }
+                if ($newId <= 0) {
+                    throw new Exception('授权写入失败');
+                }
+                $saved = Db::name('crm_shipping_pm_substitute')->where('id', $newId)->find();
+            } else {
+                $this->updatePmSubstituteWithAuthVersionBump(
+                    (int)$existing['id'],
+                    (int)($existing['auth_version'] ?? 0),
+                    $saveData
+                );
+                $saved = Db::name('crm_shipping_pm_substitute')->where('id', (int)$existing['id'])->find();
+            }
+
+            if (empty($saved)) {
+                throw new Exception('授权写入后读取失败');
+            }
+
+            $this->writePmSubstituteAuditLogs([
+                'action' => $action,
+                'shipping_apply_id' => $applyId,
+                'apply_no' => $applyNo,
+                'order_item_id' => $orderItemId,
+                'product_name' => $productName,
+                'original_manager_id' => $managerInfo['admin_id'],
+                'original_manager_name' => (string)($managerInfo['username'] ?? ''),
+                'manager_status' => $managerStatus,
+                'invalid_reason' => $invalidReason,
+                'before_substitute_manager_id' => $beforeManagerId,
+                'before_substitute_manager_name' => $beforeManagerName,
+                'after_substitute_manager_id' => $substituteManagerId,
+                'after_substitute_manager_name' => $candidate['username'],
+                'before_status' => $beforeStatus,
+                'after_status' => 1,
+                'before_reason' => $beforeReason,
+                'after_reason' => $reason,
+                'before_authorized_by' => $beforeAuthorizedBy,
+                'before_authorized_by_name' => $beforeAuthorizedByName,
+                'operator_id' => $adminId,
+                'operator_name' => $operatorName,
+                'now' => $now,
+            ]);
+
+            Db::commit();
+            return [
+                'code' => 0,
+                'msg' => $isFirstAuthorize ? '替代产品经理授权成功' : '替代产品经理已更新',
+                'data' => $this->formatPmSubstituteWriteResult($saved, $managerInfo, true),
+            ];
+        } catch (Exception $e) {
+            Db::rollback();
+            return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+        } catch (\Throwable $e) {
+            Db::rollback();
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::authorizePmSubstitute] ' . $e->getMessage(),
+                    'error'
+                );
+            }
+            return ['code' => -200, 'msg' => '授权失败，请稍后重试', 'data' => []];
+        }
+    }
+
+    /**
+     * 超管：撤销替代产品经理授权
+     *
+     * @param array $params
+     * @return array
+     */
+    public function revokePmSubstitute($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => []];
+        }
+        if (!$this->isShippingApplySuperAdmin($adminId)) {
+            return ['code' => -200, 'msg' => '仅超级管理员可撤销替代产品经理授权', 'data' => []];
+        }
+        $operatorName = trim((string)($admin['username'] ?? ''));
+        if ($operatorName === '') {
+            $operatorName = 'admin#' . $adminId;
+        }
+
+        try {
+            $applyId = $this->parsePositiveInt($params['apply_id'] ?? null, '草稿ID无效');
+            $orderItemId = $this->parsePositiveInt($params['order_item_id'] ?? null, '原订单产品ID无效');
+            $reason = $this->parseRequiredPmSubstituteReason($params['reason'] ?? null);
+            $expectedToken = trim((string)($params['expected_version_token'] ?? $params['version_token'] ?? ''));
+            if ($expectedToken === '') {
+                throw new Exception('缺少授权版本信息，请刷新后重试');
+            }
+        } catch (Exception $e) {
+            return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+        }
+
+        Db::startTrans();
+        try {
+            $ctx = $this->lockPmSubstituteDraftContext($applyId, $orderItemId);
+            $apply = $ctx['apply'];
+            $orderItem = $ctx['order_item'];
+            $applyNo = trim((string)($apply['apply_no'] ?? ''));
+            $now = date('Y-m-d H:i:s');
+
+            $productName = trim((string)($orderItem['product_name'] ?? ''));
+            if ($productName === '') {
+                $productName = '未命名产品';
+            }
+            $managerInfo = $this->resolveProductManagerForDraft($orderItem['manager_id'] ?? '', $productName);
+
+            $existing = $this->lockPmSubstituteRow($applyId, $orderItemId);
+            if (empty($existing)) {
+                throw new Exception('未找到可撤销的授权记录');
+            }
+            $currentToken = $this->buildPmSubstituteVersionToken($existing);
+            if ($currentToken !== $expectedToken) {
+                throw new Exception('授权信息已被他人修改，请刷新后重试');
+            }
+            if ((int)($existing['status'] ?? 0) === 2) {
+                throw new Exception('该授权已提交冻结，不能撤销');
+            }
+            if ((int)($existing['status'] ?? 0) === 0) {
+                // 幂等：已撤销且原因相同则直接成功；否则提示刷新
+                Db::commit();
+                return [
+                    'code' => 0,
+                    'msg' => '授权已处于撤销状态',
+                    'data' => $this->formatPmSubstituteWriteResult($existing, $managerInfo, false),
+                ];
+            }
+
+            // 原经理已恢复：走失效日志，避免再写 revoke 造成语义混淆
+            if (empty($managerInfo['manager_invalid'])) {
+                $this->markPmSubstituteInvalid(
+                    $existing,
+                    $adminId,
+                    $operatorName,
+                    $applyNo,
+                    $reason,
+                    'original_restored',
+                    $now
+                );
+                $saved = Db::name('crm_shipping_pm_substitute')->where('id', (int)$existing['id'])->find();
+                Db::commit();
+                return [
+                    'code' => 0,
+                    'msg' => '原产品经理已恢复，替代授权已失效',
+                    'data' => $this->formatPmSubstituteWriteResult($saved, $managerInfo, true),
+                ];
+            }
+
+            // 保留原授权原因；撤销原因写入审计；auth_version 原子自增防 ABA
+            $this->updatePmSubstituteWithAuthVersionBump(
+                (int)$existing['id'],
+                (int)($existing['auth_version'] ?? 0),
+                [
+                    'status' => 0,
+                    'update_time' => $now,
+                ],
+                ['status' => 1]
+            );
+
+            $saved = Db::name('crm_shipping_pm_substitute')->where('id', (int)$existing['id'])->find();
+            $this->writePmSubstituteAuditLogs([
+                'action' => 'pm_substitute_revoke',
+                'shipping_apply_id' => $applyId,
+                'apply_no' => $applyNo,
+                'order_item_id' => $orderItemId,
+                'product_name' => $productName,
+                'original_manager_id' => $existing['original_manager_id'] ?? $managerInfo['admin_id'],
+                'original_manager_name' => (string)($existing['original_manager_name'] ?? $managerInfo['username'] ?? ''),
+                'manager_status' => (string)($managerInfo['manager_status'] ?? ''),
+                'invalid_reason' => (int)($existing['invalid_reason'] ?? 0),
+                'before_substitute_manager_id' => (int)($existing['substitute_manager_id'] ?? 0),
+                'before_substitute_manager_name' => (string)($existing['substitute_manager_name'] ?? ''),
+                'after_substitute_manager_id' => (int)($existing['substitute_manager_id'] ?? 0),
+                'after_substitute_manager_name' => (string)($existing['substitute_manager_name'] ?? ''),
+                'before_status' => 1,
+                'after_status' => 0,
+                'before_reason' => (string)($existing['reason'] ?? ''),
+                'after_reason' => $reason,
+                'before_authorized_by' => (int)($existing['authorized_by'] ?? 0),
+                'before_authorized_by_name' => (string)($existing['authorized_by_name'] ?? ''),
+                'operator_id' => $adminId,
+                'operator_name' => $operatorName,
+                'now' => $now,
+            ]);
+
+            Db::commit();
+            return [
+                'code' => 0,
+                'msg' => '替代授权已撤销',
+                'data' => $this->formatPmSubstituteWriteResult($saved, $managerInfo, true),
+            ];
+        } catch (Exception $e) {
+            Db::rollback();
+            return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+        } catch (\Throwable $e) {
+            Db::rollback();
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::revokePmSubstitute] ' . $e->getMessage(),
+                    'error'
+                );
+            }
+            return ['code' => -200, 'msg' => '撤销失败，请稍后重试', 'data' => []];
+        }
+    }
+
+    /**
+     * 锁序：订单 → 订单产品 → 发货申请 → 校验发货行存在
+     *
+     * @param int $applyId
+     * @param int $orderItemId
+     * @return array{apply:array,order:array,order_item:array}
+     * @throws Exception
+     */
+    protected function lockPmSubstituteDraftContext($applyId, $orderItemId)
+    {
+        $applyId = (int)$applyId;
+        $orderItemId = (int)$orderItemId;
+
+        $applyPreview = Db::name('crm_shipping_apply')->where('id', $applyId)->find();
+        if (empty($applyPreview)) {
+            throw new Exception('发货申请不存在');
+        }
+        $orderId = (int)($applyPreview['order_id'] ?? 0);
+        if ($orderId <= 0) {
+            throw new Exception('发货申请关联订单无效');
+        }
+
+        $order = Db::name('crm_client_order')
+            ->where('id', $orderId)
+            ->lock(true)
+            ->find();
+        if (empty($order)) {
+            throw new Exception('关联原订单不存在');
+        }
+
+        $orderItem = Db::name('crm_order_item')
+            ->where('id', $orderItemId)
+            ->where('order_id', $orderId)
+            ->lock(true)
+            ->find();
+        if (empty($orderItem)) {
+            throw new Exception('原订单产品行不存在或不属于该订单');
+        }
+
+        $apply = Db::name('crm_shipping_apply')
+            ->where('id', $applyId)
+            ->lock(true)
+            ->find();
+        if (empty($apply)) {
+            throw new Exception('发货申请不存在');
+        }
+        if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+            throw new Exception('草稿已删除，不能授权');
+        }
+        if ((int)($apply['status'] ?? -1) !== 0) {
+            throw new Exception('仅草稿状态可管理替代授权');
+        }
+        if ((int)($apply['order_id'] ?? 0) !== $orderId) {
+            throw new Exception('发货申请关联订单异常');
+        }
+
+        $lineExists = Db::name('crm_shipping_apply_item')
+            ->where('shipping_apply_id', $applyId)
+            ->where('order_item_id', $orderItemId)
+            ->lock(true)
+            ->find();
+        if (empty($lineExists)) {
+            throw new Exception('当前草稿不存在该原产品的有效发货行');
+        }
+
+        return [
+            'apply' => $apply,
+            'order' => $order,
+            'order_item' => $orderItem,
+        ];
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $orderItemId
+     * @return array|null
+     */
+    protected function lockPmSubstituteRow($applyId, $orderItemId)
+    {
+        $row = Db::name('crm_shipping_pm_substitute')
+            ->where('shipping_apply_id', (int)$applyId)
+            ->where('order_item_id', (int)$orderItemId)
+            ->lock(true)
+            ->find();
+        return empty($row) ? null : $row;
+    }
+
+    /**
+     * 草稿保存后：对已不在有效发货行中的 order_item_id 失效替代授权
+     *
+     * @param int $applyId
+     * @param int[] $keptOrderItemIds
+     * @param int $operatorId
+     * @param string $operatorName
+     * @param string $applyNo
+     * @param string $now
+     * @throws Exception
+     */
+    protected function invalidatePmSubstitutesForRemovedOrderItems(
+        $applyId,
+        array $keptOrderItemIds,
+        $operatorId,
+        $operatorName,
+        $applyNo,
+        $now
+    ) {
+        $applyId = (int)$applyId;
+        if ($applyId <= 0) {
+            return;
+        }
+        $keptMap = [];
+        foreach ($keptOrderItemIds as $oid) {
+            $oid = (int)$oid;
+            if ($oid > 0) {
+                $keptMap[$oid] = true;
+            }
+        }
+
+        $rows = Db::name('crm_shipping_pm_substitute')
+            ->where('shipping_apply_id', $applyId)
+            ->where('status', 1)
+            ->lock(true)
+            ->select();
+
+        foreach ((array)$rows as $row) {
+            $oid = (int)($row['order_item_id'] ?? 0);
+            if ($oid > 0 && isset($keptMap[$oid])) {
+                continue;
+            }
+            $this->markPmSubstituteInvalid(
+                $row,
+                (int)$operatorId,
+                (string)$operatorName,
+                (string)$applyNo,
+                '草稿已移除该原订单产品的全部发货行，替代授权自动失效',
+                'order_item_removed',
+                $now
+            );
+        }
+    }
+
+    /**
+     * 将有效授权置为失效并写审计（调用方须已在事务内且已锁行）
+     *
+     * @param array $row
+     * @param int $operatorId
+     * @param string $operatorName
+     * @param string $applyNo
+     * @param string $reason
+     * @param string $invalidateType
+     * @param string $now
+     * @throws Exception
+     */
+    protected function markPmSubstituteInvalid(
+        array $row,
+        $operatorId,
+        $operatorName,
+        $applyNo,
+        $reason,
+        $invalidateType,
+        $now
+    ) {
+        $id = (int)($row['id'] ?? 0);
+        if ($id <= 0 || (int)($row['status'] ?? 0) !== 1) {
+            return;
+        }
+        $this->updatePmSubstituteWithAuthVersionBump(
+            $id,
+            (int)($row['auth_version'] ?? 0),
+            [
+                'status' => 0,
+                'update_time' => $now,
+            ],
+            ['status' => 1]
+        );
+
+        $reason = trim((string)$reason);
+        if ($reason === '') {
+            $reason = '替代授权自动失效';
+        }
+        if (mb_strlen($reason, 'UTF-8') > self::PM_SUBSTITUTE_REASON_MAX) {
+            $reason = mb_substr($reason, 0, self::PM_SUBSTITUTE_REASON_MAX, 'UTF-8');
+        }
+
+        $this->writePmSubstituteAuditLogs([
+            'action' => 'pm_substitute_invalidate',
+            'shipping_apply_id' => (int)($row['shipping_apply_id'] ?? 0),
+            'apply_no' => (string)$applyNo,
+            'order_item_id' => (int)($row['order_item_id'] ?? 0),
+            'product_name' => '',
+            'original_manager_id' => $row['original_manager_id'] ?? null,
+            'original_manager_name' => (string)($row['original_manager_name'] ?? ''),
+            'manager_status' => '',
+            'invalid_reason' => (int)($row['invalid_reason'] ?? 0),
+            'before_substitute_manager_id' => (int)($row['substitute_manager_id'] ?? 0),
+            'before_substitute_manager_name' => (string)($row['substitute_manager_name'] ?? ''),
+            'after_substitute_manager_id' => (int)($row['substitute_manager_id'] ?? 0),
+            'after_substitute_manager_name' => (string)($row['substitute_manager_name'] ?? ''),
+            'before_status' => 1,
+            'after_status' => 0,
+            'before_reason' => (string)($row['reason'] ?? ''),
+            'after_reason' => $reason,
+            'before_authorized_by' => (int)($row['authorized_by'] ?? 0),
+            'before_authorized_by_name' => (string)($row['authorized_by_name'] ?? ''),
+            'invalidate_type' => (string)$invalidateType,
+            'operator_id' => (int)$operatorId,
+            'operator_name' => (string)$operatorName,
+            'now' => $now,
+        ]);
+    }
+
+    /**
+     * @param mixed $raw
+     * @return string
+     * @throws Exception
+     */
+    protected function parseRequiredPmSubstituteReason($raw)
+    {
+        if (is_array($raw) || is_object($raw)) {
+            throw new Exception('授权原因格式不正确');
+        }
+        $reason = trim((string)$raw);
+        if ($reason === '') {
+            throw new Exception('请填写授权原因');
+        }
+        if (mb_strlen($reason, 'UTF-8') > self::PM_SUBSTITUTE_REASON_MAX) {
+            throw new Exception('授权原因不能超过' . self::PM_SUBSTITUTE_REASON_MAX . '个字符');
+        }
+        return $reason;
+    }
+
+    /**
+     * @param int $adminId
+     * @return array{admin_id:int,username:string,group_id:int}
+     * @throws Exception
+     */
+    protected function assertValidPmSubstituteCandidate($adminId)
+    {
+        $adminId = (int)$adminId;
+        if ($adminId <= 0) {
+            throw new Exception('替代产品经理ID无效');
+        }
+        $row = Db::name('admin')
+            ->where('admin_id', $adminId)
+            ->field('admin_id,username,group_id,is_open')
+            ->find();
+        if (empty($row)) {
+            throw new Exception('替代产品经理账号不存在');
+        }
+        $username = trim((string)($row['username'] ?? ''));
+        if ($username === '') {
+            throw new Exception('替代产品经理姓名无效');
+        }
+        if ((int)($row['is_open'] ?? 0) !== 1) {
+            throw new Exception('不能指定已停用的账号作为替代产品经理');
+        }
+        $groupId = (int)($row['group_id'] ?? 0);
+        if (!in_array($groupId, $this->pmSubstituteGroupIds, true)) {
+            throw new Exception('替代产品经理角色不在允许范围');
+        }
+        if ($this->isShippingApplySuperAdmin($adminId)) {
+            throw new Exception('不能指定超级管理员账号作为替代产品经理');
+        }
+        return [
+            'admin_id' => $adminId,
+            'username' => $username,
+            'group_id' => $groupId,
+        ];
+    }
+
+    /**
+     * @param string $managerStatus
+     * @return int 1账号不存在或原ID无效 2账号停用
+     */
+    protected function mapManagerStatusToInvalidReason($managerStatus)
+    {
+        return ((string)$managerStatus === 'disabled') ? 2 : 1;
+    }
+
+    /**
+     * 并发版本令牌：使用记录 ID + 不可回退的 auth_version，消除业务字段 A→B→A 的 ABA
+     *
+     * @param array|null $row
+     * @return string
+     */
+    protected function buildPmSubstituteVersionToken($row)
+    {
+        if (empty($row) || !is_array($row)) {
+            return 'none';
+        }
+        $id = (int)($row['id'] ?? 0);
+        if ($id <= 0) {
+            return 'none';
+        }
+        $ver = (int)($row['auth_version'] ?? 0);
+        if ($ver <= 0) {
+            $ver = 1;
+        }
+        return $id . '|' . $ver;
+    }
+
+    /**
+     * 条件更新并原子递增 auth_version（auth_version=auth_version+1）
+     * 影响行数必须为 1，否则抛错由外层事务回滚
+     *
+     * @param int $id
+     * @param int $expectedVersion
+     * @param array $data 业务字段（勿直接写入 PHP 计算后的 auth_version）
+     * @param array $extraWhere 额外 WHERE，如 ['status'=>1]
+     * @return void
+     * @throws Exception
+     */
+    protected function updatePmSubstituteWithAuthVersionBump($id, $expectedVersion, array $data, array $extraWhere = [])
+    {
+        $id = (int)$id;
+        $expectedVersion = (int)$expectedVersion;
+        if ($id <= 0 || $expectedVersion <= 0) {
+            throw new Exception('授权版本数据异常，请刷新后重试');
+        }
+        if ($expectedVersion >= self::PM_SUBSTITUTE_AUTH_VERSION_MAX) {
+            throw new Exception('授权版本号已达上限，请联系管理员');
+        }
+        unset($data['auth_version']);
+        $data['auth_version'] = Db::raw('auth_version+1');
+
+        $query = Db::name('crm_shipping_pm_substitute')
+            ->where('id', $id)
+            ->where('auth_version', $expectedVersion);
+        foreach ($extraWhere as $field => $value) {
+            $query->where($field, $value);
+        }
+        $affected = $query->update($data);
+        if ((int)$affected !== 1) {
+            throw new Exception('授权信息已被他人修改，请刷新后重试');
+        }
+    }
+
+    /**
+     * @param int $applyId
+     * @return array<int,array>
+     */
+    protected function loadPmSubstituteMapByApplyId($applyId)
+    {
+        $applyId = (int)$applyId;
+        if ($applyId <= 0) {
+            return [];
+        }
+        $rows = Db::name('crm_shipping_pm_substitute')
+            ->where('shipping_apply_id', $applyId)
+            ->select();
+        $map = [];
+        foreach ((array)$rows as $row) {
+            $oid = (int)($row['order_item_id'] ?? 0);
+            if ($oid > 0) {
+                $map[$oid] = $row;
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * 只读展示态（不写库）
+     *
+     * @param array|null $subRow
+     * @param array $managerResolve
+     * @return array
+     */
+    protected function buildPmSubstituteDisplayState($subRow, array $managerResolve)
+    {
+        $empty = [
+            'pm_substitute_record_id' => 0,
+            'pm_substitute_record_status' => -1,
+            'pm_substitute_version_token' => 'none',
+            'pm_substitute_effective' => false,
+            'pm_substitute_display_status' => 'none',
+            'pm_substitute_tip' => '',
+            'substitute_manager_id' => null,
+            'substitute_manager_name' => '',
+            'pm_substitute_authorized_by' => 0,
+            'pm_substitute_authorized_by_name' => '',
+            'pm_substitute_reason' => '',
+        ];
+
+        $managerInvalid = !empty($managerResolve['manager_invalid']);
+        if (empty($subRow) || !is_array($subRow)) {
+            if ($managerInvalid) {
+                $empty['pm_substitute_display_status'] = 'need_authorize';
+                $empty['pm_substitute_tip'] = '原产品经理异常，尚未指定替代经理，请联系超级管理员处理';
+            }
+            return $empty;
+        }
+
+        $token = $this->buildPmSubstituteVersionToken($subRow);
+        $status = (int)($subRow['status'] ?? 0);
+        $subId = (int)($subRow['substitute_manager_id'] ?? 0);
+        $subName = trim((string)($subRow['substitute_manager_name'] ?? ''));
+        $base = [
+            'pm_substitute_record_id' => (int)($subRow['id'] ?? 0),
+            'pm_substitute_record_status' => $status,
+            'pm_substitute_version_token' => $token,
+            'pm_substitute_effective' => false,
+            'pm_substitute_display_status' => 'none',
+            'pm_substitute_tip' => '',
+            'substitute_manager_id' => $subId > 0 ? $subId : null,
+            'substitute_manager_name' => $subName,
+            'pm_substitute_authorized_by' => (int)($subRow['authorized_by'] ?? 0),
+            'pm_substitute_authorized_by_name' => trim((string)($subRow['authorized_by_name'] ?? '')),
+            'pm_substitute_reason' => (string)($subRow['reason'] ?? ''),
+        ];
+
+        if (!$managerInvalid) {
+            $base['pm_substitute_display_status'] = 'original_restored';
+            $base['pm_substitute_tip'] = '原产品经理已恢复，替代授权不再生效';
+            return $base;
+        }
+
+        if ($status === 2) {
+            $base['pm_substitute_display_status'] = 'frozen';
+            $base['pm_substitute_tip'] = '替代授权已提交冻结';
+            return $base;
+        }
+
+        if ($status === 0) {
+            $base['pm_substitute_display_status'] = 'revoked';
+            $base['pm_substitute_tip'] = '替代授权已撤销，请重新联系超级管理员';
+            return $base;
+        }
+
+        // status=1：再校验替代人当前是否仍合格
+        try {
+            $this->assertValidPmSubstituteCandidate($subId);
+            $base['pm_substitute_effective'] = true;
+            $base['pm_substitute_display_status'] = 'authorized';
+            $base['pm_substitute_tip'] = '已指定替代产品经理：' . ($subName !== '' ? $subName : ('ID:' . $subId));
+        } catch (Exception $e) {
+            $base['pm_substitute_display_status'] = 'substitute_unavailable';
+            $base['pm_substitute_tip'] = '替代产品经理当前不可用（' . $e->getMessage() . '）';
+        }
+
+        return $base;
+    }
+
+    /**
+     * @param array|null $saved
+     * @param array $managerInfo
+     * @param bool $changed
+     * @return array
+     */
+    protected function formatPmSubstituteWriteResult($saved, array $managerInfo, $changed)
+    {
+        $display = $this->buildPmSubstituteDisplayState($saved, $managerInfo);
+        return [
+            'changed' => $changed ? 1 : 0,
+            'record_id' => (int)($display['pm_substitute_record_id'] ?? 0),
+            'version_token' => (string)($display['pm_substitute_version_token'] ?? 'none'),
+            'status' => (int)($display['pm_substitute_record_status'] ?? -1),
+            'display_status' => (string)($display['pm_substitute_display_status'] ?? 'none'),
+            'display_tip' => (string)($display['pm_substitute_tip'] ?? ''),
+            'effective' => !empty($display['pm_substitute_effective']) ? 1 : 0,
+            'substitute_manager_id' => $display['substitute_manager_id'],
+            'substitute_manager_name' => (string)($display['substitute_manager_name'] ?? ''),
+            'reason' => (string)($display['pm_substitute_reason'] ?? ''),
+        ];
+    }
+
+    /**
+     * 写入授权审计；必要时拆成多条 opinion 以保证完整旧/新原因可恢复
+     *
+     * @param array $payload
+     * @throws Exception
+     */
+    protected function writePmSubstituteAuditLogs(array $payload)
+    {
+        $action = trim((string)($payload['action'] ?? ''));
+        if ($action === '' || mb_strlen($action, 'UTF-8') > 50) {
+            throw new Exception('审计动作类型无效');
+        }
+        $applyId = (int)($payload['shipping_apply_id'] ?? 0);
+        if ($applyId <= 0) {
+            throw new Exception('审计关联申请无效');
+        }
+        $operatorId = (int)($payload['operator_id'] ?? 0);
+        $operatorName = trim((string)($payload['operator_name'] ?? ''));
+        if ($operatorName === '') {
+            $operatorName = 'admin#' . $operatorId;
+        }
+        $now = (string)($payload['now'] ?? date('Y-m-d H:i:s'));
+        $eventId = sprintf(
+            'pmsub-%d-%d-%s',
+            $applyId,
+            (int)($payload['order_item_id'] ?? 0),
+            str_replace('.', '', uniqid('', true))
+        );
+
+        $beforeReason = (string)($payload['before_reason'] ?? '');
+        $afterReason = (string)($payload['after_reason'] ?? '');
+
+        $meta = [
+            'event_id' => $eventId,
+            'part' => 1,
+            'apply_id' => $applyId,
+            'apply_no' => (string)($payload['apply_no'] ?? ''),
+            'order_item_id' => (int)($payload['order_item_id'] ?? 0),
+            'product_name' => (string)($payload['product_name'] ?? ''),
+            'original_manager_id' => $payload['original_manager_id'] ?? null,
+            'original_manager_name' => (string)($payload['original_manager_name'] ?? ''),
+            'manager_status' => (string)($payload['manager_status'] ?? ''),
+            'invalid_reason' => (int)($payload['invalid_reason'] ?? 0),
+            'before_substitute_manager_id' => $payload['before_substitute_manager_id'] ?? null,
+            'before_substitute_manager_name' => (string)($payload['before_substitute_manager_name'] ?? ''),
+            'after_substitute_manager_id' => $payload['after_substitute_manager_id'] ?? null,
+            'after_substitute_manager_name' => (string)($payload['after_substitute_manager_name'] ?? ''),
+            'before_auth_status' => $payload['before_status'] ?? null,
+            'after_auth_status' => $payload['after_status'] ?? null,
+            'before_authorized_by' => $payload['before_authorized_by'] ?? null,
+            'before_authorized_by_name' => (string)($payload['before_authorized_by_name'] ?? ''),
+            'operator_id' => $operatorId,
+            'operator_name' => $operatorName,
+            'invalidate_type' => (string)($payload['invalidate_type'] ?? ''),
+            'before_reason_len' => mb_strlen($beforeReason, 'UTF-8'),
+            'after_reason_len' => mb_strlen($afterReason, 'UTF-8'),
+            'time' => $now,
+        ];
+
+        $parts = [];
+        $tryFull = $meta;
+        $tryFull['before_reason'] = $beforeReason;
+        $tryFull['after_reason'] = $afterReason;
+        $tryFull['parts'] = 1;
+        $fullJson = $this->encodeApprovalLogOpinion($tryFull);
+        if ($this->approvalLogOpinionFits($fullJson)) {
+            $parts[] = $fullJson;
+        } else {
+            $meta['parts'] = 1; // 先占位，稍后回填
+            $meta['reason_storage'] = 'split';
+            $headJson = $this->encodeApprovalLogOpinion($meta);
+            if (!$this->approvalLogOpinionFits($headJson)) {
+                // 极端：压缩产品名再试
+                $meta['product_name'] = mb_substr((string)$meta['product_name'], 0, 40, 'UTF-8');
+                $headJson = $this->encodeApprovalLogOpinion($meta);
+            }
+            if (!$this->approvalLogOpinionFits($headJson)) {
+                throw new Exception('授权审计信息过长，无法安全写入');
+            }
+
+            $detailParts = [];
+            if ($beforeReason !== '') {
+                $detailParts = array_merge(
+                    $detailParts,
+                    $this->splitOpinionTextParts($eventId, 'before_reason', $beforeReason)
+                );
+            }
+            if ($afterReason !== '') {
+                $detailParts = array_merge(
+                    $detailParts,
+                    $this->splitOpinionTextParts($eventId, 'after_reason', $afterReason)
+                );
+            }
+            if (empty($detailParts)) {
+                throw new Exception('授权审计原因拆分失败');
+            }
+            $totalParts = 1 + count($detailParts);
+            $meta['parts'] = $totalParts;
+            $headJson = $this->encodeApprovalLogOpinion($meta);
+            if (!$this->approvalLogOpinionFits($headJson)) {
+                throw new Exception('授权审计信息过长，无法安全写入');
+            }
+            $parts[] = $headJson;
+            foreach ($detailParts as $idx => $detail) {
+                $detail['part'] = $idx + 2;
+                $detail['parts'] = $totalParts;
+                $detailJson = $this->encodeApprovalLogOpinion($detail);
+                if (!$this->approvalLogOpinionFits($detailJson)) {
+                    throw new Exception('授权审计分片写入失败');
+                }
+                $parts[] = $detailJson;
+            }
+        }
+
+        $applyStatus = 0;
+        $operatorRole = $this->isShippingApplySuperAdmin($operatorId) ? 'system_admin' : 'applicant';
+        // 草稿保存触发的自动失效：标记为 system，便于与超管手工授权区分
+        if ($action === 'pm_substitute_invalidate'
+            && in_array((string)($payload['invalidate_type'] ?? ''), ['order_item_removed', 'original_restored'], true)
+            && $operatorRole !== 'system_admin'
+        ) {
+            $operatorRole = 'system';
+        }
+        foreach ($parts as $opinionJson) {
+            $logId = Db::name('crm_shipping_approval_log')->insertGetId([
+                'shipping_apply_id' => $applyId,
+                'task_id' => null,
+                'operator_id' => $operatorId,
+                'operator_name' => mb_substr($operatorName, 0, 100, 'UTF-8'),
+                'operator_role' => $operatorRole,
+                'action' => $action,
+                'before_status' => $applyStatus,
+                'after_status' => $applyStatus,
+                'opinion' => $opinionJson,
+                'create_time' => $now,
+            ]);
+            if ((int)$logId <= 0) {
+                throw new Exception('授权审计日志写入失败');
+            }
+        }
+    }
+
+    /**
+     * @param array $payload
+     * @return string
+     * @throws Exception
+     */
+    protected function encodeApprovalLogOpinion(array $payload)
+    {
+        $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
+        if ($json === false) {
+            throw new Exception('授权审计信息编码失败');
+        }
+        return $json;
+    }
+
+    /**
+     * MySQL utf8mb4 VARCHAR 按字符计；同时保守限制字节，避免连接层异常
+     *
+     * @param string $json
+     * @return bool
+     */
+    protected function approvalLogOpinionFits($json)
+    {
+        $json = (string)$json;
+        if (mb_strlen($json, 'UTF-8') > self::APPROVAL_LOG_OPINION_MAX) {
+            return false;
+        }
+        // 保守：utf8mb4 单字符最多 4 字节
+        if (strlen($json) > (self::APPROVAL_LOG_OPINION_MAX * 4)) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * @param string $eventId
+     * @param string $field
+     * @param string $text
+     * @return array
+     * @throws Exception
+     */
+    protected function splitOpinionTextParts($eventId, $field, $text)
+    {
+        $text = (string)$text;
+        $chunks = [];
+        // 预留 JSON 外壳空间，按约 700 字符切分正文
+        $chunkSize = 700;
+        $len = mb_strlen($text, 'UTF-8');
+        if ($len <= 0) {
+            return [];
+        }
+        for ($offset = 0; $offset < $len; $offset += $chunkSize) {
+            $chunks[] = mb_substr($text, $offset, $chunkSize, 'UTF-8');
+        }
+        $result = [];
+        $total = count($chunks);
+        foreach ($chunks as $i => $chunk) {
+            $result[] = [
+                'event_id' => $eventId,
+                'field' => $field,
+                'chunk_index' => $i + 1,
+                'chunk_total' => $total,
+                'content' => $chunk,
+            ];
+        }
+        return $result;
     }
 }

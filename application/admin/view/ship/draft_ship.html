@@ -27,7 +27,9 @@
     .draft-ship-wrap .layui-table-view[lay-id="draft-table"]:has(.layui-table-fixed-r:not(.layui-hide))
         .layui-table-main a[lay-event="continueEdit"],
     .draft-ship-wrap .layui-table-view[lay-id="draft-table"]:has(.layui-table-fixed-r:not(.layui-hide))
-        .layui-table-main a[lay-event="deleteDraft"] {
+        .layui-table-main a[lay-event="deleteDraft"],
+    .draft-ship-wrap .layui-table-view[lay-id="draft-table"]:has(.layui-table-fixed-r:not(.layui-hide))
+        .layui-table-main a[lay-event="authorizePm"] {
         visibility: hidden;
         pointer-events: none;
     }
@@ -80,19 +82,36 @@
 
 <script type="text/html" id="draft-action-tpl">
     <a class="layui-btn layui-btn-xs" lay-event="continueEdit">继续编辑</a>
+    {{# if (d._is_super_admin) { }}
+    <a class="layui-btn layui-btn-normal layui-btn-xs" style="margin-left:6px;" lay-event="authorizePm">指定替代经理</a>
+    {{# } }}
     <a class="layui-btn layui-btn-danger layui-btn-xs" style="margin-left:6px;" lay-event="deleteDraft">删除草稿</a>
 </script>
+
+<div id="pm-sub-dialog" style="display:none; padding:12px 16px 8px;">
+    <div style="margin-bottom:8px; color:#666;">
+        申请编号：<span id="pm-sub-apply-no"></span>
+        <span style="margin-left:12px;">仅展示当前草稿中的原订单产品（同产品多行合并为一条）</span>
+    </div>
+    <div id="pm-sub-list" style="max-height:360px; overflow:auto;"></div>
+</div>
 
 {include file="common/foot"/}
 <script>
 layui.use(['table', 'form', 'layer'], function () {
     var table = layui.table;
     var layer = layui.layer;
+    var form = layui.form;
     var $ = layui.$;
 
     var listUrl = '{:url("Ship/draftShip")}';
     var editUrlBase = '{:url("Ship/createShip")}';
     var deletingMap = {};
+    var authorizingMap = {};
+    var isSuperAdmin = false;
+    var candidateCache = null;
+    var pmDialogIndex = null;
+    var currentPmApplyId = 0;
 
     function escapeHtml(str) {
         return String(str == null ? '' : str)
@@ -182,11 +201,23 @@ layui.use(['table', 'form', 'layer'], function () {
             },
             {
                 title: '操作',
-                width: 190,
+                width: 280,
                 fixed: 'right',
                 toolbar: '#draft-action-tpl'
             }
         ]],
+        parseData: function (res) {
+            isSuperAdmin = !!(res && parseInt(res.is_super_admin, 10) === 1);
+            var rows = (res && res.data) ? res.data : [];
+            if (Object.prototype.toString.call(rows) === '[object Array]') {
+                rows.forEach(function (row) {
+                    if (row) {
+                        row._is_super_admin = isSuperAdmin;
+                    }
+                });
+            }
+            return res;
+        },
         done: function (res) {
             if (res && typeof res.code !== 'undefined' && parseInt(res.code, 10) !== 0) {
                 layer.msg(res.msg || '加载失败', { icon: 2 });
@@ -307,7 +338,294 @@ layui.use(['table', 'form', 'layer'], function () {
                 layer.close(index);
                 requestDeleteDraft(id);
             });
+            return;
         }
+
+        if (obj.event === 'authorizePm') {
+            if (!isSuperAdmin) {
+                layer.msg('仅超级管理员可操作', { icon: 2 });
+                return;
+            }
+            openPmSubstituteDialog(id, (obj.data && obj.data.apply_no) ? String(obj.data.apply_no) : '');
+        }
+    });
+
+    function managerStatusText(status) {
+        switch (String(status || '')) {
+            case 'missing':
+                return '不存在';
+            case 'disabled':
+                return '已停用';
+            case 'invalid_id':
+                return 'ID非法';
+            case 'valid':
+                return '正常';
+            default:
+                return status || '-';
+        }
+    }
+
+    function displayStatusText(status) {
+        switch (String(status || '')) {
+            case 'authorized':
+                return '已授权有效';
+            case 'need_authorize':
+                return '待指定';
+            case 'revoked':
+                return '已撤销';
+            case 'original_restored':
+                return '原经理已恢复';
+            case 'substitute_unavailable':
+                return '替代人不可用';
+            case 'frozen':
+                return '已冻结';
+            case 'none':
+                return '无需替代';
+            default:
+                return status || '-';
+        }
+    }
+
+    function loadCandidates(cb) {
+        if (candidateCache) {
+            cb(candidateCache);
+            return;
+        }
+        $.ajax({
+            url: listUrl,
+            type: 'post',
+            dataType: 'json',
+            data: { op: 'list_substitute_candidates' },
+            success: function (res) {
+                if (res && parseInt(res.code, 10) === 0) {
+                    candidateCache = res.data || [];
+                    cb(candidateCache);
+                } else {
+                    layer.msg((res && res.msg) ? res.msg : '候选人加载失败', { icon: 2 });
+                    cb([]);
+                }
+            },
+            error: function () {
+                layer.msg('网络异常，候选人加载失败', { icon: 2 });
+                cb([]);
+            }
+        });
+    }
+
+    function buildCandidateOptions(selectedId) {
+        var html = '<option value="">请选择替代产品经理</option>';
+        var list = candidateCache || [];
+        var sid = selectedId ? String(selectedId) : '';
+        list.forEach(function (c) {
+            var id = String(c.admin_id || '');
+            var label = c.display_name || ((c.username || '') + '（ID:' + id + '）');
+            html += '<option value="' + escapeHtml(id) + '"'
+                + (sid && sid === id ? ' selected' : '') + '>'
+                + escapeHtml(label) + '</option>';
+        });
+        return html;
+    }
+
+    function renderPmSubstituteList(payload) {
+        var items = (payload && payload.items) ? payload.items : [];
+        var $box = $('#pm-sub-list');
+        if (!items.length) {
+            $box.html('<div style="padding:20px;color:#999;text-align:center;">当前草稿没有发货产品</div>');
+            return;
+        }
+        var html = '';
+        items.forEach(function (it) {
+            var canAuth = parseInt(it.can_authorize, 10) === 1;
+            var displayStatus = String(it.display_status || '');
+            var showActions = canAuth || displayStatus === 'authorized' || displayStatus === 'substitute_unavailable';
+            html += '<div class="pm-sub-item" data-oid="' + escapeHtml(String(it.order_item_id || '')) + '"'
+                + ' data-token="' + escapeHtml(String(it.version_token || 'none')) + '"'
+                + ' style="border:1px solid #e6e6e6;border-radius:2px;padding:10px 12px;margin-bottom:10px;">';
+            html += '<div><strong>' + escapeHtml(it.product_name || '未命名产品') + '</strong>'
+                + ' <span style="color:#999;">（原产品ID:' + escapeHtml(String(it.order_item_id || '')) + '，'
+                + escapeHtml(String(it.line_count || 0)) + ' 行）</span></div>';
+            html += '<div style="margin-top:4px;">原经理：'
+                + escapeHtml(it.original_manager_name || (it.original_manager_id ? ('ID:' + it.original_manager_id) : '—'))
+                + ' / 状态：' + escapeHtml(managerStatusText(it.manager_status))
+                + ' / 授权：' + escapeHtml(displayStatusText(it.display_status))
+                + '</div>';
+            if (it.display_tip) {
+                html += '<div style="margin-top:4px;color:#FF5722;">' + escapeHtml(it.display_tip) + '</div>';
+            }
+            if (!showActions) {
+                html += '</div>';
+                return;
+            }
+            html += '<div class="layui-form" style="margin-top:8px;">';
+            html += '<div class="layui-form-item" style="margin-bottom:8px;">'
+                + '<label class="layui-form-label" style="width:90px;padding:9px 0;">替代经理</label>'
+                + '<div class="layui-input-block" style="margin-left:100px;">'
+                + '<select class="pm-sub-candidate">' + buildCandidateOptions(it.substitute_manager_id) + '</select>'
+                + '</div></div>';
+            html += '<div class="layui-form-item" style="margin-bottom:8px;">'
+                + '<label class="layui-form-label" style="width:90px;padding:9px 0;">原因</label>'
+                + '<div class="layui-input-block" style="margin-left:100px;">'
+                + '<textarea class="layui-textarea pm-sub-reason" maxlength="500" placeholder="首次指定/修改/撤销均需填写原因">'
+                + escapeHtml(displayStatus === 'authorized' ? '' : (it.reason || ''))
+                + '</textarea></div></div>';
+            html += '<div style="text-align:right;">';
+            if (canAuth || displayStatus === 'authorized' || displayStatus === 'substitute_unavailable') {
+                html += '<button type="button" class="layui-btn layui-btn-sm btn-pm-authorize">'
+                    + (displayStatus === 'authorized' || displayStatus === 'substitute_unavailable' ? '修改授权' : '指定授权')
+                    + '</button>';
+            }
+            if (displayStatus === 'authorized' || displayStatus === 'substitute_unavailable') {
+                html += '<button type="button" class="layui-btn layui-btn-primary layui-btn-sm btn-pm-revoke" style="margin-left:8px;">撤销授权</button>';
+            }
+            html += '</div></div></div>';
+        });
+        $box.html(html);
+        form.render('select');
+    }
+
+    function refreshPmSubstituteDialog() {
+        if (!currentPmApplyId) {
+            return;
+        }
+        var loadIdx = layer.load(1, { shade: 0.1 });
+        $.ajax({
+            url: listUrl,
+            type: 'post',
+            dataType: 'json',
+            data: { op: 'list_pm_substitutes', apply_id: currentPmApplyId },
+            success: function (res) {
+                layer.close(loadIdx);
+                if (!res || parseInt(res.code, 10) !== 0) {
+                    layer.msg((res && res.msg) ? res.msg : '加载授权信息失败', { icon: 2 });
+                    return;
+                }
+                $('#pm-sub-apply-no').text((res.data && res.data.apply_no) ? res.data.apply_no : '');
+                loadCandidates(function () {
+                    renderPmSubstituteList(res.data || {});
+                });
+            },
+            error: function () {
+                layer.close(loadIdx);
+                layer.msg('网络异常，加载授权信息失败', { icon: 2 });
+            }
+        });
+    }
+
+    function openPmSubstituteDialog(applyId, applyNo) {
+        currentPmApplyId = applyId;
+        $('#pm-sub-apply-no').text(applyNo || '');
+        $('#pm-sub-list').html('<div style="padding:20px;text-align:center;color:#999;">加载中…</div>');
+        pmDialogIndex = layer.open({
+            type: 1,
+            title: '指定替代产品经理',
+            area: ['720px', '520px'],
+            content: $('#pm-sub-dialog'),
+            success: function () {
+                refreshPmSubstituteDialog();
+            },
+            end: function () {
+                currentPmApplyId = 0;
+                pmDialogIndex = null;
+            }
+        });
+    }
+
+    function requestPmAction(op, data, done) {
+        var key = String(data.apply_id) + ':' + String(data.order_item_id) + ':' + op;
+        if (authorizingMap[key]) {
+            return;
+        }
+        authorizingMap[key] = true;
+        var loadIdx = layer.load(1, { shade: 0.1 });
+        $.ajax({
+            url: listUrl,
+            type: 'post',
+            dataType: 'json',
+            data: $.extend({ op: op }, data),
+            success: function (res) {
+                layer.close(loadIdx);
+                authorizingMap[key] = false;
+                if (res && parseInt(res.code, 10) === 0) {
+                    layer.msg(res.msg || '操作成功', { icon: 1 });
+                    if (typeof done === 'function') {
+                        done(res);
+                    }
+                    refreshPmSubstituteDialog();
+                } else {
+                    layer.msg((res && res.msg) ? res.msg : '操作失败', { icon: 2 });
+                }
+            },
+            error: function () {
+                layer.close(loadIdx);
+                authorizingMap[key] = false;
+                layer.msg('网络异常，操作失败', { icon: 2 });
+            }
+        });
+    }
+
+    $(document).on('click', '.btn-pm-authorize', function () {
+        var $item = $(this).closest('.pm-sub-item');
+        var oid = parseInt($item.attr('data-oid'), 10) || 0;
+        var token = String($item.attr('data-token') || 'none');
+        var managerId = parseInt($item.find('.pm-sub-candidate').val(), 10) || 0;
+        var reason = $.trim($item.find('.pm-sub-reason').val() || '');
+        if (!currentPmApplyId || oid <= 0) {
+            layer.msg('参数无效', { icon: 2 });
+            return;
+        }
+        if (managerId <= 0) {
+            layer.msg('请选择替代产品经理', { icon: 2 });
+            return;
+        }
+        if (!reason) {
+            layer.msg('请填写授权原因', { icon: 2 });
+            return;
+        }
+        if (reason.length > 500) {
+            layer.msg('授权原因不能超过500个字符', { icon: 2 });
+            return;
+        }
+        requestPmAction('authorize_pm_substitute', {
+            apply_id: currentPmApplyId,
+            order_item_id: oid,
+            substitute_manager_id: managerId,
+            reason: reason,
+            expected_version_token: token
+        });
+    });
+
+    $(document).on('click', '.btn-pm-revoke', function () {
+        var $item = $(this).closest('.pm-sub-item');
+        var oid = parseInt($item.attr('data-oid'), 10) || 0;
+        var token = String($item.attr('data-token') || '');
+        var reason = $.trim($item.find('.pm-sub-reason').val() || '');
+        if (!currentPmApplyId || oid <= 0) {
+            layer.msg('参数无效', { icon: 2 });
+            return;
+        }
+        if (!reason) {
+            layer.msg('请填写撤销原因', { icon: 2 });
+            return;
+        }
+        if (reason.length > 500) {
+            layer.msg('撤销原因不能超过500个字符', { icon: 2 });
+            return;
+        }
+        layer.confirm('确认撤销该产品的替代产品经理授权吗？', {
+            icon: 3,
+            title: '撤销确认',
+            btn: ['取消', '确认撤销']
+        }, function (index) {
+            layer.close(index);
+        }, function (index) {
+            layer.close(index);
+            requestPmAction('revoke_pm_substitute', {
+                apply_id: currentPmApplyId,
+                order_item_id: oid,
+                reason: reason,
+                expected_version_token: token
+            });
+        });
     });
 });
 </script>

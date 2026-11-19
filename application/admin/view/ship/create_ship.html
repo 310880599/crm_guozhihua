@@ -541,6 +541,31 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         }
     }
 
+    function formatPmSubstituteTip(d) {
+        d = d || {};
+        var tip = d.pm_substitute_tip || '';
+        if (tip) {
+            return tip;
+        }
+        var status = String(d.pm_substitute_display_status || '');
+        if (status === 'authorized' && d.substitute_manager_name) {
+            return '已指定替代产品经理：' + d.substitute_manager_name;
+        }
+        if (status === 'need_authorize' || (!status && d.manager_invalid)) {
+            return '原产品经理异常，尚未指定替代经理，请联系超级管理员处理';
+        }
+        if (status === 'revoked') {
+            return '替代授权已撤销，请重新联系超级管理员';
+        }
+        if (status === 'original_restored') {
+            return '原产品经理已恢复，替代授权不再生效';
+        }
+        if (status === 'substitute_unavailable') {
+            return '替代产品经理当前不可用，授权暂不可用';
+        }
+        return '';
+    }
+
     function formatManagerDisplayHtml(d) {
         d = d || {};
         var name = d.product_manager_name || '';
@@ -548,6 +573,15 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         if (d.manager_invalid) {
             var tip = managerStatusLabel(d.manager_status) || '产品经理异常';
             html += '<div class="ship-invalid-tip">' + escapeHtml(tip) + '</div>';
+            var subTip = formatPmSubstituteTip(d);
+            if (subTip) {
+                html += '<div class="ship-invalid-tip">' + escapeHtml(subTip) + '</div>';
+            }
+        } else if (String(d.pm_substitute_display_status || '') === 'original_restored') {
+            var restoredTip = formatPmSubstituteTip(d);
+            if (restoredTip) {
+                html += '<div class="ship-invalid-tip">' + escapeHtml(restoredTip) + '</div>';
+            }
         }
         return html || '—';
     }
@@ -561,7 +595,14 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             product_manager_name: source.product_manager_name || '',
             manager_invalid: !!source.manager_invalid,
             manager_invalid_reason: source.manager_invalid_reason || '',
-            manager_status: source.manager_status || (source.manager_invalid ? 'missing' : 'valid')
+            manager_status: source.manager_status || (source.manager_invalid ? 'missing' : 'valid'),
+            pm_substitute_display_status: source.pm_substitute_display_status || '',
+            pm_substitute_tip: source.pm_substitute_tip || '',
+            pm_substitute_effective: !!source.pm_substitute_effective,
+            substitute_manager_id: source.substitute_manager_id != null && source.substitute_manager_id !== ''
+                ? source.substitute_manager_id
+                : null,
+            substitute_manager_name: source.substitute_manager_name || ''
         };
     }
 
@@ -697,6 +738,11 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             manager_invalid: managerFields.manager_invalid,
             manager_invalid_reason: managerFields.manager_invalid_reason,
             manager_status: managerFields.manager_status,
+            pm_substitute_display_status: managerFields.pm_substitute_display_status,
+            pm_substitute_tip: managerFields.pm_substitute_tip,
+            pm_substitute_effective: managerFields.pm_substitute_effective,
+            substitute_manager_id: managerFields.substitute_manager_id,
+            substitute_manager_name: managerFields.substitute_manager_name,
             apply_product_name: overrides.apply_product_name != null ? overrides.apply_product_name : (source.product_name || ''),
             apply_spec_model: overrides.apply_spec_model != null ? overrides.apply_spec_model : (source.spec_model || ''),
             apply_qty: qtyDefault,
@@ -783,7 +829,12 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
                         html += '<div class="ship-invalid-tip">' + escapeHtml(d.invalid_tip || '原订单产品行已失效') + '</div>';
                     } else if (d.manager_invalid) {
                         var mgrTip = managerStatusLabel(d.manager_status) || '产品经理异常';
-                        html += '<div class="ship-invalid-tip">' + escapeHtml(mgrTip) + '（可存草稿，提交前需超管处理）</div>';
+                        var subTip = formatPmSubstituteTip(d);
+                        if (subTip) {
+                            html += '<div class="ship-invalid-tip">' + escapeHtml(mgrTip) + '；' + escapeHtml(subTip) + '</div>';
+                        } else {
+                            html += '<div class="ship-invalid-tip">' + escapeHtml(mgrTip) + '（可存草稿，提交前需超管处理）</div>';
+                        }
                     }
                     return html;
                 }
@@ -1656,6 +1707,13 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
                 manager_invalid: !!row.manager_invalid,
                 manager_invalid_reason: row.manager_invalid_reason || '',
                 manager_status: row.manager_status || (row.manager_invalid ? 'missing' : 'valid'),
+                pm_substitute_display_status: row.pm_substitute_display_status || '',
+                pm_substitute_tip: row.pm_substitute_tip || '',
+                pm_substitute_effective: !!row.pm_substitute_effective,
+                substitute_manager_id: row.substitute_manager_id != null && row.substitute_manager_id !== ''
+                    ? row.substitute_manager_id
+                    : null,
+                substitute_manager_name: row.substitute_manager_name || '',
                 apply_product_name: row.apply_product_name || '',
                 apply_spec_model: row.apply_spec_model || '',
                 apply_qty: row.apply_qty != null ? row.apply_qty : 0,
