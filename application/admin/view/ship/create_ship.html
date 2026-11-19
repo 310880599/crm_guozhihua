@@ -61,6 +61,17 @@
         width: 100%;
         box-sizing: border-box;
     }
+    /* 产品源表：允许经理异常提示换行，避免被单元格裁切 */
+    #product-table-wrap .layui-table-body td .layui-table-cell {
+        height: auto !important;
+        min-height: 38px;
+        max-height: none;
+        line-height: 1.45;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        word-break: break-word;
+    }
     /* 仅作用于本次发货行表格：解除 Layui 单元格固定高度/nowrap/overflow 裁切 */
     #shipping-line-table-wrap {
         overflow-x: auto;
@@ -516,6 +527,44 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         $('#ship-warn-banner').html(html).show();
     }
 
+    /** 经理异常状态短文案（与后端 manager_status 对齐） */
+    function managerStatusLabel(status) {
+        switch (String(status || '')) {
+            case 'missing':
+                return '原产品经理不存在';
+            case 'disabled':
+                return '原产品经理已停用';
+            case 'invalid_id':
+                return '产品经理ID非法';
+            default:
+                return '';
+        }
+    }
+
+    function formatManagerDisplayHtml(d) {
+        d = d || {};
+        var name = d.product_manager_name || '';
+        var html = escapeHtml(name || (d.manager_invalid ? '—' : ''));
+        if (d.manager_invalid) {
+            var tip = managerStatusLabel(d.manager_status) || '产品经理异常';
+            html += '<div class="ship-invalid-tip">' + escapeHtml(tip) + '</div>';
+        }
+        return html || '—';
+    }
+
+    function pickManagerFieldsFromSource(source) {
+        source = source || {};
+        return {
+            product_manager_id: source.product_manager_id != null && source.product_manager_id !== ''
+                ? source.product_manager_id
+                : null,
+            product_manager_name: source.product_manager_name || '',
+            manager_invalid: !!source.manager_invalid,
+            manager_invalid_reason: source.manager_invalid_reason || '',
+            manager_status: source.manager_status || (source.manager_invalid ? 'missing' : 'valid')
+        };
+    }
+
     function fillOrderDisplay(order, fillReceiverIfEmpty) {
         order = order || {};
         $('#display_order_no').val(order.order_no || '');
@@ -624,6 +673,7 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         var applyPurchaseUnitPrice = overrides.apply_purchase_unit_price !== undefined
             ? overrides.apply_purchase_unit_price
             : '';
+        var managerFields = pickManagerFieldsFromSource(source);
         var line = {
             item_id: 0,
             client_row_key: nextClientRowKey(),
@@ -642,7 +692,11 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             order_purchase_amount: source.order_purchase_amount != null ? source.order_purchase_amount : null,
             supplier_id: source.supplier_id || '',
             supplier_name: source.supplier_name || '',
-            product_manager_name: source.product_manager_name || '',
+            product_manager_id: managerFields.product_manager_id,
+            product_manager_name: managerFields.product_manager_name,
+            manager_invalid: managerFields.manager_invalid,
+            manager_invalid_reason: managerFields.manager_invalid_reason,
+            manager_status: managerFields.manager_status,
             apply_product_name: overrides.apply_product_name != null ? overrides.apply_product_name : (source.product_name || ''),
             apply_spec_model: overrides.apply_spec_model != null ? overrides.apply_spec_model : (source.spec_model || ''),
             apply_qty: qtyDefault,
@@ -679,7 +733,11 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
 
         var cols = [[
             { field: 'product_name', title: '产品名称', minWidth: 140, templet: function (d) { return escapeHtml(d.product_name); } },
-            { field: 'product_manager_name', title: '产品经理', width: 110, templet: function (d) { return escapeHtml(d.product_manager_name); } },
+            {
+                field: 'product_manager_name', title: '产品经理', minWidth: 130, templet: function (d) {
+                    return formatManagerDisplayHtml(d);
+                }
+            },
             { field: 'spec_model', title: '规格型号', minWidth: 120, templet: function (d) { return escapeHtml(d.spec_model); } },
             { field: 'unit', title: '单位', width: 70, templet: function (d) { return escapeHtml(d.unit); } },
             { field: 'order_qty', title: '订单数量', width: 90 },
@@ -723,6 +781,9 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
                     var html = escapeHtml(d.product_name || '');
                     if (d.is_invalid_order_item) {
                         html += '<div class="ship-invalid-tip">' + escapeHtml(d.invalid_tip || '原订单产品行已失效') + '</div>';
+                    } else if (d.manager_invalid) {
+                        var mgrTip = managerStatusLabel(d.manager_status) || '产品经理异常';
+                        html += '<div class="ship-invalid-tip">' + escapeHtml(mgrTip) + '（可存草稿，提交前需超管处理）</div>';
                     }
                     return html;
                 }
@@ -950,9 +1011,8 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             if (!options.keepShippingLines) {
                 resetShippingState();
             }
-            if (data.warnings && data.warnings.length) {
-                layer.msg(data.warnings.join('；'), { icon: 0, time: 4000 });
-            }
+            // 经理异常等汇总进横幅，避免 layer.msg 刷屏；切换订单时由 reset 清空后再写入
+            showWarnBanner(data.warnings || []);
             if (typeof callback === 'function') {
                 callback(data);
             }
@@ -1589,7 +1649,13 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
                 order_purchase_amount: row.order_purchase_amount,
                 supplier_id: row.supplier_id || '',
                 supplier_name: row.supplier_name || '',
+                product_manager_id: row.product_manager_id != null && row.product_manager_id !== ''
+                    ? row.product_manager_id
+                    : null,
                 product_manager_name: row.product_manager_name || '',
+                manager_invalid: !!row.manager_invalid,
+                manager_invalid_reason: row.manager_invalid_reason || '',
+                manager_status: row.manager_status || (row.manager_invalid ? 'missing' : 'valid'),
                 apply_product_name: row.apply_product_name || '',
                 apply_spec_model: row.apply_spec_model || '',
                 apply_qty: row.apply_qty != null ? row.apply_qty : 0,

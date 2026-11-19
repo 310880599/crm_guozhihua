@@ -175,6 +175,7 @@ class ShippingApplyService
         }
         $appliedMap = $this->calcAppliedQtyMap($orderItemIds);
         $warnings = [];
+        $managerWarnings = [];
 
         $items = [];
         foreach ($orderItems as $item) {
@@ -184,10 +185,13 @@ class ShippingApplyService
                 $productName = '未命名产品';
             }
 
-            try {
-                $managerInfo = $this->resolveProductManager($item['manager_id'] ?? '', $productName);
-            } catch (Exception $e) {
-                return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+            // 草稿展示路径使用宽容解析：单行经理异常不阻断整单产品加载
+            $managerInfo = $this->resolveProductManagerForDraft($item['manager_id'] ?? '', $productName);
+            if (!empty($managerInfo['manager_invalid'])) {
+                $reason = trim((string)($managerInfo['manager_invalid_reason'] ?? ''));
+                if ($reason !== '') {
+                    $managerWarnings[] = $reason;
+                }
             }
 
             $orderQty = (int)($item['qty'] ?? 0);
@@ -204,8 +208,11 @@ class ShippingApplyService
             $items[] = [
                 'order_item_id' => $orderItemId,
                 'product_name' => $productName,
-                'product_manager_id' => (int)($managerInfo['admin_id'] ?? 0),
-                'product_manager_name' => $managerInfo['username'],
+                'product_manager_id' => $managerInfo['product_manager_id'],
+                'product_manager_name' => $managerInfo['product_manager_name'],
+                'manager_invalid' => !empty($managerInfo['manager_invalid']),
+                'manager_invalid_reason' => (string)($managerInfo['manager_invalid_reason'] ?? ''),
+                'manager_status' => (string)($managerInfo['manager_status'] ?? 'valid'),
                 'spec_model' => trim((string)($item['spec_model'] ?? '')),
                 'unit' => trim((string)($item['unit'] ?? '')),
                 'order_qty' => $orderQty,
@@ -218,6 +225,11 @@ class ShippingApplyService
                 'supplier_id' => trim((string)($item['supplier_id'] ?? '')),
                 'supplier_name' => trim((string)($item['supplier_name'] ?? '')),
             ];
+        }
+
+        if (!empty($managerWarnings)) {
+            $warnings = array_merge($warnings, $managerWarnings);
+            $warnings[] = '当前允许保存草稿，但正式提交审核前需要联系超级管理员指定替代经理。';
         }
 
         return [
@@ -295,6 +307,13 @@ class ShippingApplyService
         $shippingLines = [];
         $hasInvalidLines = false;
         $warnings = [];
+        // 透传订单详情中的经理异常等警告（实时状态）
+        foreach ((array)($detailResult['data']['warnings'] ?? []) as $detailWarn) {
+            $detailWarn = trim((string)$detailWarn);
+            if ($detailWarn !== '') {
+                $warnings[] = $detailWarn;
+            }
+        }
 
         foreach ((array)$savedItems as $row) {
             $orderItemId = (int)($row['order_item_id'] ?? 0);
@@ -311,6 +330,11 @@ class ShippingApplyService
             $snapTotalPrice = $this->normalizeNullableMoney($row['total_price'] ?? null, false);
             $snapSupplierId = trim((string)($row['supplier_id'] ?? ''));
             $snapSupplierName = trim((string)($row['supplier_name'] ?? ''));
+            $snapManagerIdRaw = $row['product_manager_id'] ?? null;
+            $snapManagerId = ($snapManagerIdRaw === null || $snapManagerIdRaw === '')
+                ? null
+                : ((int)$snapManagerIdRaw > 0 ? (int)$snapManagerIdRaw : null);
+            $snapManagerName = trim((string)($row['product_manager_name'] ?? ''));
 
             $orderPurchaseAmount = $this->readNullableDbMoney($row['order_purchase_amount'] ?? null);
             if ($orderPurchaseAmount === null && !$isInvalid && array_key_exists('order_purchase_amount', $src)) {
@@ -350,6 +374,22 @@ class ShippingApplyService
                 $isSuggestPurchaseUnitPrice = true;
             }
 
+            // 经理异常与订单产品行失效使用不同标记；有效行透传实时经理状态
+            $managerInvalid = false;
+            $managerInvalidReason = '';
+            $managerStatus = '';
+            $liveManagerId = $snapManagerId;
+            $liveManagerName = $snapManagerName;
+            if (!$isInvalid) {
+                $managerInvalid = !empty($src['manager_invalid']);
+                $managerInvalidReason = (string)($src['manager_invalid_reason'] ?? '');
+                $managerStatus = (string)($src['manager_status'] ?? 'valid');
+                $liveManagerId = array_key_exists('product_manager_id', $src)
+                    ? $src['product_manager_id']
+                    : $snapManagerId;
+                $liveManagerName = (string)($src['product_manager_name'] ?? $snapManagerName);
+            }
+
             $line = [
                 'item_id' => (int)($row['id'] ?? 0),
                 'client_row_key' => '',
@@ -368,9 +408,11 @@ class ShippingApplyService
                 'order_purchase_amount' => $orderPurchaseAmount,
                 'supplier_id' => $isInvalid ? $snapSupplierId : (string)($src['supplier_id'] ?? $snapSupplierId),
                 'supplier_name' => $isInvalid ? $snapSupplierName : (string)($src['supplier_name'] ?? $snapSupplierName),
-                'product_manager_name' => $isInvalid
-                    ? trim((string)($row['product_manager_name'] ?? ''))
-                    : (string)($src['product_manager_name'] ?? ''),
+                'product_manager_id' => $liveManagerId,
+                'product_manager_name' => $liveManagerName,
+                'manager_invalid' => $managerInvalid,
+                'manager_invalid_reason' => $managerInvalidReason,
+                'manager_status' => $managerStatus,
                 'apply_product_name' => $applyProductName,
                 'apply_spec_model' => $applySpecModel,
                 'apply_qty' => (int)($row['apply_qty'] ?? 0),
@@ -640,7 +682,8 @@ class ShippingApplyService
                     if ($productName === '') {
                         $productName = '未命名产品';
                     }
-                    $managerInfo = $this->resolveProductManager($orderItem['manager_id'] ?? '', $productName);
+                    // 草稿保存使用宽容解析：异常经理可落库快照，但不表示已获审批资格
+                    $managerInfo = $this->resolveProductManagerForDraft($orderItem['manager_id'] ?? '', $productName);
                     $inputItem = $pending['input'];
 
                     $applyProductName = $this->parseOptionalApplyText(
@@ -1343,6 +1386,27 @@ class ShippingApplyService
             ? $applyFields['order_purchase_amount']
             : $this->normalizeNullableMoney($orderItem['purchase_price'] ?? null);
 
+        // 经理快照：非法 ID 保存 NULL，禁止把 0 当作有效 admin_id
+        $productManagerId = null;
+        if (array_key_exists('product_manager_id', $managerInfo)) {
+            $productManagerId = $managerInfo['product_manager_id'];
+        } elseif (array_key_exists('admin_id', $managerInfo)) {
+            $productManagerId = $managerInfo['admin_id'];
+        }
+        if ($productManagerId === null || $productManagerId === '') {
+            $productManagerId = null;
+        } else {
+            $productManagerId = (int)$productManagerId;
+            if ($productManagerId <= 0) {
+                $productManagerId = null;
+            }
+        }
+        if (array_key_exists('product_manager_name', $managerInfo)) {
+            $productManagerName = trim((string)$managerInfo['product_manager_name']);
+        } else {
+            $productManagerName = trim((string)($managerInfo['username'] ?? ''));
+        }
+
         return [
             'order_item_id' => $orderItemId,
             'order_id' => $orderId,
@@ -1351,8 +1415,8 @@ class ShippingApplyService
             'product_id' => trim((string)($orderItem['product_id'] ?? '')),
             'product_name' => $productName,
             'apply_product_name' => $applyProductName,
-            'product_manager_id' => (int)($managerInfo['admin_id'] ?? 0),
-            'product_manager_name' => trim((string)($managerInfo['username'] ?? '')),
+            'product_manager_id' => $productManagerId,
+            'product_manager_name' => $productManagerName,
             'spec_model' => $specModel,
             'apply_spec_model' => $applySpecModel,
             'supplier_id' => trim((string)($orderItem['supplier_id'] ?? '')),
@@ -1706,7 +1770,10 @@ class ShippingApplyService
     }
 
     /**
-     * 解析产品经理
+     * 严格解析产品经理（用于需要有效审批人的业务场景）
+     *
+     * 账号不存在、用户名为空、ID 非法时抛出异常。
+     * 草稿展示/保存请使用 resolveProductManagerForDraft()，勿将本方法改为始终放行异常经理。
      *
      * @param mixed $managerIdRaw
      * @param string $productName
@@ -1741,6 +1808,119 @@ class ShippingApplyService
         return [
             'admin_id' => (int)$admin['admin_id'],
             'username' => trim((string)$admin['username']),
+        ];
+    }
+
+    /**
+     * 草稿专用：宽容解析产品经理
+     *
+     * 仅表示「草稿可以保存/展示」，绝不表示「已获得审批资格」。
+     * 不信任前端传入的经理 ID/姓名/异常标志；状态由服务端按原订单 manager_id + admin 表判断。
+     * 数据库连接失败、SQL 错误等系统异常仍向上抛出，不得伪装为经理不存在。
+     *
+     * @param mixed $managerIdRaw 原订单产品行 manager_id
+     * @param string $productName
+     * @return array{
+     *   admin_id:?int,
+     *   username:string,
+     *   product_manager_id:?int,
+     *   product_manager_name:string,
+     *   manager_invalid:bool,
+     *   manager_invalid_reason:string,
+     *   manager_status:string
+     * }
+     */
+    protected function resolveProductManagerForDraft($managerIdRaw, $productName)
+    {
+        $productName = trim((string)$productName);
+        if ($productName === '') {
+            $productName = '未命名产品';
+        }
+
+        $raw = $managerIdRaw === null ? '' : trim((string)$managerIdRaw);
+        if ($raw === '' || !preg_match('/^\d+$/', $raw) || (int)$raw <= 0) {
+            return $this->buildDraftManagerResolveResult(
+                null,
+                '',
+                true,
+                '产品【' . $productName . '】的产品经理ID非法（空/0/非数字），请联系超级管理员指定替代经理。',
+                'invalid_id'
+            );
+        }
+
+        $managerId = (int)$raw;
+        $admin = Db::name('admin')
+            ->where('admin_id', $managerId)
+            ->field('admin_id,username,is_open')
+            ->find();
+
+        if (empty($admin)) {
+            return $this->buildDraftManagerResolveResult(
+                $managerId,
+                '',
+                true,
+                '产品【' . $productName . '】的原产品经理账号不存在，请联系超级管理员指定替代经理。',
+                'missing'
+            );
+        }
+
+        $username = trim((string)($admin['username'] ?? ''));
+        if ($username === '') {
+            return $this->buildDraftManagerResolveResult(
+                $managerId,
+                '',
+                true,
+                '产品【' . $productName . '】的原产品经理用户名为空，请联系超级管理员指定替代经理。',
+                'missing'
+            );
+        }
+
+        if ((int)($admin['is_open'] ?? 0) !== 1) {
+            return $this->buildDraftManagerResolveResult(
+                (int)$admin['admin_id'],
+                $username,
+                true,
+                '产品【' . $productName . '】的原产品经理「' . $username . '」已停用，请联系超级管理员指定替代经理。',
+                'disabled'
+            );
+        }
+
+        return $this->buildDraftManagerResolveResult(
+            (int)$admin['admin_id'],
+            $username,
+            false,
+            '',
+            'valid'
+        );
+    }
+
+    /**
+     * 统一草稿经理解析返回结构
+     *
+     * @param int|null $adminId
+     * @param string $username
+     * @param bool $invalid
+     * @param string $reason
+     * @param string $status valid|missing|disabled|invalid_id
+     * @return array
+     */
+    protected function buildDraftManagerResolveResult($adminId, $username, $invalid, $reason, $status)
+    {
+        if ($adminId !== null) {
+            $adminId = (int)$adminId;
+            if ($adminId <= 0) {
+                $adminId = null;
+            }
+        }
+
+        return [
+            'admin_id' => $adminId,
+            'username' => (string)$username,
+            'product_manager_id' => $adminId,
+            'product_manager_name' => (string)$username,
+            'manager_invalid' => (bool)$invalid,
+            'manager_invalid_reason' => (string)$reason,
+            'manager_status' => (string)$status,
         ];
     }
 
