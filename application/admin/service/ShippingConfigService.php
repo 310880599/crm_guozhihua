@@ -161,6 +161,45 @@ class ShippingConfigService
     }
 
     /**
+     * 正式提交专用：读取配置 Map（数据库异常向上抛出，不得吞掉伪装成默认值）
+     *
+     * 与 getConfigMap() 的差异：页面路径可降级默认值；正式提交必须失败可见。
+     * 仍强制业务语义 amount_basis=order_total，但会先暴露库内原始值供调用方核验。
+     *
+     * @return array{map:array,raw_amount_basis:string}
+     * @throws \Throwable
+     */
+    public function getConfigMapForSubmit()
+    {
+        $map = [];
+        foreach ($this->allowedKeys as $key) {
+            $meta = $this->configMeta[$key] ?? [];
+            $map[$key] = (string)($meta['default'] ?? '');
+        }
+
+        $rows = ShippingConfig::whereIn('config_key', $this->allowedKeys)
+            ->order('sort', 'asc')
+            ->order('id', 'asc')
+            ->select();
+        foreach ($rows as $row) {
+            $key = (string)($row['config_key'] ?? '');
+            if ($key === '' || !in_array($key, $this->allowedKeys, true)) {
+                continue;
+            }
+            $map[$key] = (string)($row['config_value'] ?? '');
+        }
+
+        $rawAmountBasis = trim((string)($map['amount_basis'] ?? ''));
+        // 业务强制：审批金额判断依据永远是原订单总金额
+        $map['amount_basis'] = 'order_total';
+
+        return [
+            'map' => $map,
+            'raw_amount_basis' => $rawAmountBasis,
+        ];
+    }
+
+    /**
      * 获取管理员信息
      *
      * @param int $adminId

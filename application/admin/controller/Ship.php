@@ -11,6 +11,24 @@ use think\facade\Request;
  */
 class Ship extends Common
 {
+    /** 请求体上限（字节）：256 KB */
+    const SUBMIT_HTTP_MAX_BODY_BYTES = 262144;
+
+    /** items JSON 字符串上限（字节） */
+    const SUBMIT_HTTP_MAX_ITEMS_BYTES = 262144;
+
+    /** 发货行上限 */
+    const SUBMIT_HTTP_MAX_ITEM_ROWS = 200;
+
+    /** JSON 嵌套深度上限 */
+    const SUBMIT_HTTP_MAX_JSON_DEPTH = 16;
+
+    /** 正式提交 CSRF：Session 键（与业务 submit_token 分离） */
+    const SUBMIT_CSRF_SESSION_KEY = 'ship_submit_csrf';
+
+    /** CSRF Token：bin2hex(random_bytes(32)) → 64 hex */
+    const SUBMIT_CSRF_TOKEN_HEX_LEN = 64;
+
     /**
      * @return ShippingConfigService
      */
@@ -94,8 +112,23 @@ class Ship extends Common
             $draftData = $service->getDraftForEdit($draftId);
         }
 
+        // 页面渲染：输出可信 Session 身份与 CSRF（仅 GET；不参与草稿保存）
+        $sessionAid = $this->normalizeSubmitSessionAid($this->getSubmitSessionAid());
+        $submitCsrfToken = '';
+        if ($sessionAid > 0) {
+            try {
+                $submitCsrfToken = $this->ensureSubmitCsrfToken($sessionAid);
+            } catch (\Throwable $e) {
+                $submitCsrfToken = '';
+            }
+        }
+
         $this->assign('draftDataJson', $draftData ? json_encode($draftData, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) : '');
         $this->assign('draftId', $draftId);
+        $this->assign('sessionAid', $sessionAid);
+        // JSON 编码输出到 JS，避免 XSS / 模板转义破坏 Token
+        $this->assign('sessionAidJson', json_encode((int)$sessionAid));
+        $this->assign('submitCsrfTokenJson', json_encode((string)$submitCsrfToken, JSON_UNESCAPED_SLASHES));
 
         return $this->fetch('ship/create_ship');
     }
@@ -133,5 +166,409 @@ class Ship extends Common
         }
 
         return $this->fetch('ship/draft_ship');
+    }
+
+    /**
+     * 正式提交发货申请（HTTP 入口；默认关闭）
+     *
+     * 仅负责：开关 / POST / Session / 输入结构校验 / 一次 Service 调用 / JSON 透传。
+     * 禁止在此开启事务或复制提交业务逻辑。
+     *
+     * @return \think\response\Json
+     */
+    public function submitApply()
+    {
+        // 1. 服务端默认关闭开关（严格布尔；缺省/非 true 一律关闭）
+        if (config('shipping_submit.enabled') !== true) {
+            return json([
+                'code' => -200,
+                'msg'  => '正式提交接口尚未开放',
+                'data' => [],
+            ]);
+        }
+
+        // 2. 仅允许 POST（禁止 GET/HEAD/其它方法及 Query 触发提交）
+        if (!$this->request->isPost()) {
+            return json([
+                'code' => -200,
+                'msg'  => '仅支持 POST 提交',
+                'data' => [],
+            ]);
+        }
+
+        // 3. Session 登录校验（防御加深；Common::initialize 可能已拦截未登录）
+        // 身份权威来源仅为 session('aid')，见 getSubmitSessionAid()
+        $aidRaw = $this->getSubmitSessionAid();
+        $aid = $this->normalizeSubmitSessionAid($aidRaw);
+        if ($aid <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => ($aidRaw === null || $aidRaw === '' || $aidRaw === false)
+                    ? '请先登录'
+                    : '登录状态无效',
+                'data' => [],
+            ]);
+        }
+
+        // 4. CSRF 校验（与业务 submit_token 分离；不一次性销毁，兼容幂等重试）
+        $csrfRaw = $this->request->post('csrf_token');
+        $csrfCheck = $this->validateSubmitCsrfToken($csrfRaw, $aid);
+        if ($csrfCheck['ok'] !== true) {
+            return json([
+                'code' => -200,
+                'msg'  => $csrfCheck['msg'],
+                'data' => [],
+            ]);
+        }
+
+        // 5. 请求体大小保护（CONTENT_LENGTH；并兼容 post_max_size 丢弃后的空 POST）
+        $contentLength = isset($_SERVER['CONTENT_LENGTH']) ? (int)$_SERVER['CONTENT_LENGTH'] : 0;
+        if ($contentLength > self::SUBMIT_HTTP_MAX_BODY_BYTES) {
+            return json([
+                'code' => -200,
+                'msg'  => '请求体过大，已被拒绝',
+                'data' => [],
+            ]);
+        }
+
+        // 6. 仅读取 POST（禁止 param() 混合 GET）
+        $params = $this->request->post();
+        if (!is_array($params)) {
+            $params = [];
+        }
+
+        // post_max_size 超限时 PHP 可能清空 $_POST，此时仍有 CONTENT_LENGTH
+        if ($params === [] && $contentLength > 0) {
+            return json([
+                'code' => -200,
+                'msg'  => '请求体无法解析或已超限，已被拒绝',
+                'data' => [],
+            ]);
+        }
+
+        // 关闭态以外也不允许请求参数控制开关；CSRF 不进入业务载荷
+        unset($params['shipping_submit'], $params['enabled'], $params['csrf_token']);
+
+        // 7. items 结构校验（完整业务校验仍由 Service 负责）
+        $itemsResult = $this->parseSubmitApplyItems($params);
+        if ($itemsResult['ok'] !== true) {
+            return json([
+                'code' => -200,
+                'msg'  => $itemsResult['msg'],
+                'data' => [],
+            ]);
+        }
+        $params['items'] = $itemsResult['items'];
+
+        // 申请人身份仅以 Session 为准；前端 applicant_id 不得成为权威身份
+        // Service 内部会再次 unset 并以 session('aid') 解析，此处不信任也不改写为前端值
+
+        try {
+            // 8. 仅调用一次 Service；9. 原样透传（含 idempotent_replay / result_uncertain）
+            $result = $this->getShippingApplyService()->submitApply($params);
+            if (!is_array($result)) {
+                return json([
+                    'code' => -200,
+                    'msg'  => '正式提交暂时无法完成，请稍后查询提交状态',
+                    'data' => [],
+                ]);
+            }
+            return json($result);
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[Ship::submitApply] ' . $e->getMessage(),
+                    'error'
+                );
+            }
+            // 无法断言事务已回滚；不替换 token、不自动重试、不泄露 SQL/堆栈
+            return json([
+                'code' => -200,
+                'msg'  => '正式提交暂时无法完成，请稍后查询提交状态',
+                'data' => [],
+            ]);
+        }
+    }
+
+    /**
+     * 正式提交身份：仅信任 session('aid')
+     *
+     * @return mixed
+     */
+    protected function getSubmitSessionAid()
+    {
+        return session('aid');
+    }
+
+    /**
+     * 将 Session aid 规范化为正整数；非法返回 0
+     *
+     * @param mixed $raw
+     * @return int
+     */
+    protected function normalizeSubmitSessionAid($raw)
+    {
+        if ($raw === null || $raw === '' || $raw === false || is_array($raw) || is_object($raw) || is_bool($raw)) {
+            return 0;
+        }
+        if (is_int($raw)) {
+            return $raw > 0 ? $raw : 0;
+        }
+        if (is_float($raw)) {
+            return 0;
+        }
+        if (!is_numeric($raw)) {
+            return 0;
+        }
+        $text = trim((string)$raw);
+        if ($text === '' || !preg_match('/^[1-9]\d*$/', $text)) {
+            return 0;
+        }
+        $aid = (int)$text;
+        if ($aid <= 0 || (string)$aid !== $text) {
+            return 0;
+        }
+        return $aid;
+    }
+
+    /**
+     * 读取正式提交 CSRF Session 记录（可测试覆盖）
+     *
+     * @return mixed
+     */
+    protected function getSubmitCsrfSessionRecord()
+    {
+        return session(self::SUBMIT_CSRF_SESSION_KEY);
+    }
+
+    /**
+     * 写入正式提交 CSRF Session 记录（可测试覆盖）
+     *
+     * @param array $record
+     * @return void
+     */
+    protected function setSubmitCsrfSessionRecord(array $record)
+    {
+        session(self::SUBMIT_CSRF_SESSION_KEY, $record);
+    }
+
+    /**
+     * CSRF Token 格式：64 位小写/大写十六进制
+     *
+     * @param mixed $token
+     * @return bool
+     */
+    protected function isValidSubmitCsrfTokenFormat($token)
+    {
+        if (!is_string($token)) {
+            return false;
+        }
+        if (strlen($token) !== self::SUBMIT_CSRF_TOKEN_HEX_LEN) {
+            return false;
+        }
+        return (bool)preg_match('/^[a-fA-F0-9]{' . self::SUBMIT_CSRF_TOKEN_HEX_LEN . '}$/', $token);
+    }
+
+    /**
+     * 生成或复用与当前 aid 绑定的 CSRF Token（同 Session 内可重复校验，不一次性销毁）
+     *
+     * @param int $aid
+     * @return string
+     * @throws \RuntimeException
+     */
+    protected function ensureSubmitCsrfToken($aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            throw new \RuntimeException('登录状态无效');
+        }
+
+        $record = $this->getSubmitCsrfSessionRecord();
+        if (is_array($record)
+            && isset($record['aid'], $record['token'])
+            && (int)$record['aid'] === $aid
+            && $this->isValidSubmitCsrfTokenFormat($record['token'])
+        ) {
+            return (string)$record['token'];
+        }
+
+        try {
+            $token = bin2hex(random_bytes(32));
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+        if (!$this->isValidSubmitCsrfTokenFormat($token)) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+
+        $this->setSubmitCsrfSessionRecord([
+            'aid'   => $aid,
+            'token' => $token,
+        ]);
+
+        return $token;
+    }
+
+    /**
+     * 校验正式提交 CSRF（失败不泄露服务端 Token）
+     *
+     * @param mixed $raw
+     * @param int   $aid
+     * @return array{ok:bool,msg:string}
+     */
+    protected function validateSubmitCsrfToken($raw, $aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            return ['ok' => false, 'msg' => '登录状态无效'];
+        }
+        // 缺键 / 非字符串 / 空 / 格式非法：统一拒绝文案，不泄露服务端 Token
+        if ($raw === null || is_array($raw) || is_object($raw) || is_bool($raw) || is_int($raw) || is_float($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+        if (!is_string($raw) || $raw === '' || !$this->isValidSubmitCsrfTokenFormat($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        $record = $this->getSubmitCsrfSessionRecord();
+        if (!is_array($record)
+            || !isset($record['aid'], $record['token'])
+            || !$this->isValidSubmitCsrfTokenFormat($record['token'])
+        ) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        // 账号切换：旧 CSRF 立即失效（不清除 uncertain 业务意图；仅拒绝本次请求）
+        if ((int)$record['aid'] !== $aid) {
+            return ['ok' => false, 'msg' => '登录身份已变化，请刷新页面后重新确认提交状态'];
+        }
+
+        if (!hash_equals((string)$record['token'], $raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        return ['ok' => true, 'msg' => ''];
+    }
+
+    /**
+     * 解析并校验正式提交 items（Controller 层结构闸门）
+     *
+     * @param array $params
+     * @return array{ok:bool,msg:string,items?:array}
+     */
+    protected function parseSubmitApplyItems(array $params)
+    {
+        if (!array_key_exists('items', $params)) {
+            return ['ok' => false, 'msg' => '发货明细不能为空'];
+        }
+
+        $itemsRaw = $params['items'];
+
+        if (is_string($itemsRaw)) {
+            if ($itemsRaw === '') {
+                return ['ok' => false, 'msg' => '发货明细不能为空'];
+            }
+            if (strlen($itemsRaw) > self::SUBMIT_HTTP_MAX_ITEMS_BYTES) {
+                return ['ok' => false, 'msg' => '发货明细过大，已被拒绝'];
+            }
+            if (!mb_check_encoding($itemsRaw, 'UTF-8')) {
+                return ['ok' => false, 'msg' => '发货明细编码无效'];
+            }
+
+            $decoded = json_decode($itemsRaw, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return ['ok' => false, 'msg' => '发货明细格式不正确'];
+            }
+            // JSON null / 标量：禁止静默转 []
+            if (!is_array($decoded)) {
+                return ['ok' => false, 'msg' => '发货明细必须是列表'];
+            }
+            $items = $decoded;
+        } elseif (is_array($itemsRaw)) {
+            $items = $itemsRaw;
+        } else {
+            return ['ok' => false, 'msg' => '发货明细格式不正确'];
+        }
+
+        // 拒绝 JSON 对象（关联数组）冒充列表
+        if (!$this->isSubmitItemsListArray($items)) {
+            return ['ok' => false, 'msg' => '发货明细必须是列表'];
+        }
+
+        if ($items === []) {
+            return ['ok' => false, 'msg' => '发货明细不能为空'];
+        }
+
+        if (count($items) > self::SUBMIT_HTTP_MAX_ITEM_ROWS) {
+            return ['ok' => false, 'msg' => '发货明细行数超过限制'];
+        }
+
+        if (!$this->isSubmitItemsDepthAllowed($items, 1)) {
+            return ['ok' => false, 'msg' => '发货明细结构过深，已被拒绝'];
+        }
+
+        foreach ($items as $row) {
+            if (!is_array($row)) {
+                return ['ok' => false, 'msg' => '发货明细行格式不正确'];
+            }
+            // 行本身不得再是纯列表伪装；业务字段由 Service 校验
+            if (!$this->isSubmitItemRowObject($row)) {
+                return ['ok' => false, 'msg' => '发货明细行格式不正确'];
+            }
+        }
+
+        return ['ok' => true, 'msg' => '', 'items' => $items];
+    }
+
+    /**
+     * 是否为 0..n-1 连续整数键的列表
+     *
+     * @param array $arr
+     * @return bool
+     */
+    protected function isSubmitItemsListArray(array $arr)
+    {
+        if ($arr === []) {
+            return true;
+        }
+        return array_keys($arr) === range(0, count($arr) - 1);
+    }
+
+    /**
+     * 行对象：允许空对象；拒绝纯列表行（无业务键）
+     *
+     * @param array $row
+     * @return bool
+     */
+    protected function isSubmitItemRowObject(array $row)
+    {
+        if ($row === []) {
+            return true;
+        }
+        // 纯 [1,2,3] 视为非法行；关联/混合键视为对象交由 Service
+        return !$this->isSubmitItemsListArray($row);
+    }
+
+    /**
+     * 限制嵌套深度，防止异常深度 JSON 消耗资源
+     *
+     * @param mixed $value
+     * @param int   $depth
+     * @return bool
+     */
+    protected function isSubmitItemsDepthAllowed($value, $depth)
+    {
+        if ($depth > self::SUBMIT_HTTP_MAX_JSON_DEPTH) {
+            return false;
+        }
+        if (!is_array($value)) {
+            return true;
+        }
+        foreach ($value as $child) {
+            if (!$this->isSubmitItemsDepthAllowed($child, $depth + 1)) {
+                return false;
+            }
+        }
+        return true;
     }
 }

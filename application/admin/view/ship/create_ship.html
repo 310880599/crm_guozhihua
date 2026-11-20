@@ -363,10 +363,13 @@
             <div class="layui-form-item" style="margin-bottom: 0;">
                 <div class="layui-input-block">
                     <button type="button" class="layui-btn" id="btn-save-draft" lay-submit lay-filter="ship-save-draft">保存草稿</button>
+                    <button type="button" class="layui-btn layui-btn-normal" id="btn-submit-apply">提交审核</button>
+                    <button type="button" class="layui-btn layui-btn-warm" id="btn-retry-submit" style="display:none;">使用原请求重新确认</button>
                     <button type="button" class="layui-btn layui-btn-primary" id="btn-reopen-draft" style="display:none;">重新打开本草稿</button>
                     <button type="button" class="layui-btn layui-btn-primary" id="btn-back">返回</button>
                 </div>
             </div>
+            <div id="submit-intent-banner" class="ship-warn-banner" style="display:none; margin-top:12px;"></div>
         </div>
     </form>
 </div>
@@ -405,6 +408,9 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var $ = layui.$;
 
     var apiUrl = '{:url("Ship/createShip")}';
+    var submitApiUrl = '{:url("Ship/submitApply")}';
+    var pageSessionAid = {$sessionAidJson|default=0|raw};
+    var pageCsrfToken = {$submitCsrfTokenJson|default='""'|raw};
     var orderSourceItems = [];
     var shippingLines = [];
     var factoryOptions = [];
@@ -413,6 +419,8 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var shippingTableRendered = false;
     var rowKeySeq = 1;
     var savingDraft = false;
+    var submittingApply = false;
+    var formLockedAfterSubmit = false;
     var currentOrderMoney = null;
     var draftOrderAmount = null;
     var orderAmountChanged = false;
@@ -422,6 +430,9 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var draftBoxUrl = '{:url("Ship/draftShip")}';
     var isLegitimateDraftEdit = false;
     var draftBaselineSnapshot = null;
+    var activeSubmitIntent = null;
+    var submitLoadIndex = null;
+    var submitChannel = null;
 
     laydate.render({
         elem: '#shipping_date',
@@ -1246,25 +1257,21 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         return { ok: true, items: items };
     }
 
-    function doSaveDraft(extra) {
+    /** 共用表单载荷（草稿宽松规则）；正式提交另做强校验 */
+    function buildShippingFormData(extra) {
         extra = extra || {};
-        if (savingDraft) {
-            return;
-        }
         var orderId = parseInt($('#order_id').val(), 10) || 0;
         if (!orderId) {
-            layer.msg('请先选择有效订单', { icon: 2 });
-            return;
+            return { ok: false, msg: '请先选择有效订单' };
         }
-
         var collected = collectShippingItemsForSave();
         if (!collected.ok) {
-            layer.msg(collected.msg, { icon: 2 });
-            return;
+            return collected;
         }
-
-        var postData = {
-            op: 'save_draft',
+        if (collected.items.length > 200) {
+            return { ok: false, msg: '发货明细行数超过限制' };
+        }
+        var data = {
             order_id: orderId,
             apply_id: parseInt($('#apply_id').val(), 10) || 0,
             shipping_date: $.trim($('#shipping_date').val()),
@@ -1273,15 +1280,60 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
             receiver_address: $.trim($('#receiver_address').val()),
             shipping_method: $.trim($('#shipping_method').val()),
             shipping_remark: $.trim($('#shipping_remark').val()),
-            items: JSON.stringify(collected.items)
+            items: collected.items
         };
-
         if (extra.order_amount_confirmed) {
-            postData.order_amount_confirmed = 1;
-            postData.confirmed_order_amount = extra.confirmed_order_amount;
+            data.order_amount_confirmed = 1;
+            data.confirmed_order_amount = String(extra.confirmed_order_amount);
         } else if (orderAmountConfirmed && confirmedOrderAmount != null) {
+            data.order_amount_confirmed = 1;
+            data.confirmed_order_amount = String(confirmedOrderAmount);
+        }
+        if (extra.shipping_date_history_confirmed) {
+            data.shipping_date_history_confirmed = 1;
+        }
+        return { ok: true, data: data };
+    }
+
+    function doSaveDraft(extra) {
+        extra = extra || {};
+        if (formLockedAfterSubmit) {
+            layer.msg('该发货申请已提交审核，不能再保存草稿。', { icon: 0 });
+            return;
+        }
+        if (submittingApply) {
+            layer.msg('正在提交审核，请稍候。', { icon: 0 });
+            return;
+        }
+        if (savingDraft) {
+            return;
+        }
+        if (activeSubmitIntent && (activeSubmitIntent.state === 'sending' || activeSubmitIntent.state === 'uncertain')) {
+            layer.msg('存在尚未确认结果的正式提交，请先处理后再保存草稿。', { icon: 0 });
+            return;
+        }
+
+        var built = buildShippingFormData(extra);
+        if (!built.ok) {
+            layer.msg(built.msg, { icon: 2 });
+            return;
+        }
+
+        var postData = {
+            op: 'save_draft',
+            order_id: built.data.order_id,
+            apply_id: built.data.apply_id,
+            shipping_date: built.data.shipping_date,
+            receiver_name: built.data.receiver_name,
+            receiver_phone: built.data.receiver_phone,
+            receiver_address: built.data.receiver_address,
+            shipping_method: built.data.shipping_method,
+            shipping_remark: built.data.shipping_remark,
+            items: JSON.stringify(built.data.items)
+        };
+        if (built.data.order_amount_confirmed === 1) {
             postData.order_amount_confirmed = 1;
-            postData.confirmed_order_amount = confirmedOrderAmount;
+            postData.confirmed_order_amount = built.data.confirmed_order_amount;
         }
 
         savingDraft = true;
@@ -1291,7 +1343,9 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         $.post(apiUrl, postData, function (res) {
             layer.close(loadIndex);
             savingDraft = false;
-            $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存草稿');
+            if (!formLockedAfterSubmit) {
+                $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存草稿');
+            }
 
             if (!res || res.code !== 0) {
                 var msg = (res && res.msg) ? res.msg : '草稿保存失败，请稍后重试。';
@@ -1344,7 +1398,9 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         }, 'json').fail(function () {
             layer.close(loadIndex);
             savingDraft = false;
-            $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存草稿');
+            if (!formLockedAfterSubmit) {
+                $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存草稿');
+            }
             layer.msg('网络异常，请稍后重试', { icon: 2 });
         });
     }
@@ -1503,6 +1559,852 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         return false;
     });
 
+    // =========================
+    // M4-1C-2 正式提交：Token / 冻结载荷 / 状态机
+    // =========================
+    var SUBMIT_INTENT_FULL_KEY = 'yg_crm_ship_submit_full_v1';
+    var SUBMIT_INTENT_INDEX_KEY = 'yg_crm_ship_submit_index_v1';
+    var SUBMIT_CHANNEL_NAME = 'yg_crm_ship_submit_v1';
+    var SUBMIT_INTENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+    function generateSecureSubmitToken() {
+        if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+            return { ok: false, msg: '当前浏览器不支持安全随机数，无法正式提交。请更换现代浏览器后重试。' };
+        }
+        var bytes = new Uint8Array(24);
+        window.crypto.getRandomValues(bytes);
+        var hex = '';
+        for (var i = 0; i < bytes.length; i++) {
+            var h = bytes[i].toString(16);
+            hex += (h.length < 2 ? '0' : '') + h;
+        }
+        // 48 hex chars，符合 8～64 / [A-Za-z0-9_-]
+        if (!/^[A-Za-z0-9_-]{8,64}$/.test(hex)) {
+            return { ok: false, msg: '提交标识生成失败，请刷新页面后重试。' };
+        }
+        return { ok: true, token: hex };
+    }
+
+    function getShanghaiTodayYmd() {
+        try {
+            var parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Shanghai',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).formatToParts(new Date());
+            var y = '', m = '', d = '';
+            for (var i = 0; i < parts.length; i++) {
+                if (parts[i].type === 'year') y = parts[i].value;
+                if (parts[i].type === 'month') m = parts[i].value;
+                if (parts[i].type === 'day') d = parts[i].value;
+            }
+            if (y && m && d) {
+                return y + '-' + m + '-' + d;
+            }
+        } catch (e) { /* fallback below */ }
+        var now = new Date();
+        var utc = now.getTime() + now.getTimezoneOffset() * 60000;
+        var sh = new Date(utc + 8 * 3600000);
+        var mm = sh.getMonth() + 1;
+        var dd = sh.getDate();
+        return sh.getFullYear() + '-' + (mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd;
+    }
+
+    function intentScopeKey(accountId, applyId, orderId) {
+        return 'a' + String(accountId || 0) + '_p' + String(applyId || 0) + '_o' + String(orderId || 0);
+    }
+
+    function currentPageScopeKey() {
+        return intentScopeKey(
+            pageSessionAid,
+            parseInt($('#apply_id').val(), 10) || 0,
+            parseInt($('#order_id').val(), 10) || 0
+        );
+    }
+
+    function safeStorageGet(storage, key) {
+        try {
+            if (!storage) return null;
+            return storage.getItem(key);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function safeStorageSet(storage, key, value) {
+        try {
+            if (!storage) return false;
+            storage.setItem(key, value);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function safeStorageRemove(storage, key) {
+        try {
+            if (!storage) return;
+            storage.removeItem(key);
+        } catch (e) { /* ignore */ }
+    }
+
+    function readIntentMap(storage, key) {
+        var raw = safeStorageGet(storage, key);
+        if (!raw) return {};
+        try {
+            var parsed = JSON.parse(raw);
+            return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function writeIntentMap(storage, key, map) {
+        return safeStorageSet(storage, key, JSON.stringify(map));
+    }
+
+    function isProtectedIntentState(state) {
+        return state === 'prepared' || state === 'sending' || state === 'uncertain';
+    }
+
+    function stripPiiFromIntent(intent) {
+        if (!intent) return null;
+        return {
+            version: 1,
+            accountId: intent.accountId,
+            applyId: intent.applyId,
+            orderId: intent.orderId,
+            submitToken: intent.submitToken,
+            state: intent.state,
+            createdAt: intent.createdAt,
+            updatedAt: intent.updatedAt,
+            scopeKey: intent.scopeKey,
+            hasFrozenPayload: !!(intent.frozenPayload && typeof intent.frozenPayload === 'object')
+        };
+    }
+
+    function persistSubmitIntent(intent) {
+        if (!intent || !intent.scopeKey) {
+            return { ok: false, msg: '提交意图无效，无法持久化。' };
+        }
+        var storageFailMsg = '浏览器无法安全保存提交状态，本次未发送请求。请检查浏览器存储权限。';
+        var fullMap = readIntentMap(window.sessionStorage, SUBMIT_INTENT_FULL_KEY);
+        var prevFull = Object.prototype.hasOwnProperty.call(fullMap, intent.scopeKey)
+            ? fullMap[intent.scopeKey]
+            : null;
+        fullMap[intent.scopeKey] = intent;
+        var fullOk = writeIntentMap(window.sessionStorage, SUBMIT_INTENT_FULL_KEY, fullMap);
+        if (!fullOk) {
+            return { ok: false, msg: storageFailMsg };
+        }
+        var indexMap = readIntentMap(window.localStorage, SUBMIT_INTENT_INDEX_KEY);
+        indexMap[intent.scopeKey] = stripPiiFromIntent(intent);
+        var indexOk = writeIntentMap(window.localStorage, SUBMIT_INTENT_INDEX_KEY, indexMap);
+        if (!indexOk) {
+            // session 已写、local 失败：回滚本次写入，且不得误删既有 uncertain 意图
+            if (prevFull) {
+                fullMap[intent.scopeKey] = prevFull;
+            } else {
+                delete fullMap[intent.scopeKey];
+            }
+            writeIntentMap(window.sessionStorage, SUBMIT_INTENT_FULL_KEY, fullMap);
+            return { ok: false, msg: storageFailMsg };
+        }
+        activeSubmitIntent = intent;
+        broadcastSubmitIntent(intent);
+        return { ok: true };
+    }
+
+    function clearSubmitIntent(scopeKey, opts) {
+        opts = opts || {};
+        var fullMap = readIntentMap(window.sessionStorage, SUBMIT_INTENT_FULL_KEY);
+        delete fullMap[scopeKey];
+        writeIntentMap(window.sessionStorage, SUBMIT_INTENT_FULL_KEY, fullMap);
+        if (opts.clearIndex !== false) {
+            var indexMap = readIntentMap(window.localStorage, SUBMIT_INTENT_INDEX_KEY);
+            delete indexMap[scopeKey];
+            writeIntentMap(window.localStorage, SUBMIT_INTENT_INDEX_KEY, indexMap);
+        }
+        if (activeSubmitIntent && activeSubmitIntent.scopeKey === scopeKey) {
+            activeSubmitIntent = null;
+        }
+        if (opts.broadcast !== false) {
+            broadcastSubmitIntent({ scopeKey: scopeKey, state: 'cleared' });
+        }
+    }
+
+    function loadSubmitIntentForPage() {
+        var applyId = parseInt($('#apply_id').val(), 10) || 0;
+        var orderId = parseInt($('#order_id').val(), 10) || 0;
+        var fullMap = readIntentMap(window.sessionStorage, SUBMIT_INTENT_FULL_KEY);
+        var indexMap = readIntentMap(window.localStorage, SUBMIT_INTENT_INDEX_KEY);
+        var candidates = [];
+        var sk;
+        for (sk in fullMap) {
+            if (!Object.prototype.hasOwnProperty.call(fullMap, sk)) continue;
+            candidates.push({ source: 'full', intent: fullMap[sk] });
+        }
+        for (sk in indexMap) {
+            if (!Object.prototype.hasOwnProperty.call(indexMap, sk)) continue;
+            if (!fullMap[sk]) {
+                candidates.push({ source: 'index', intent: indexMap[sk] });
+            }
+        }
+        var matched = null;
+        var foreignUncertain = null;
+        var now = Date.now();
+        for (var i = 0; i < candidates.length; i++) {
+            var item = candidates[i];
+            var intent = item.intent;
+            if (!intent || !intent.submitToken) continue;
+            if (intent.updatedAt && (now - intent.updatedAt) > SUBMIT_INTENT_TTL_MS) {
+                if (!isProtectedIntentState(intent.state)) {
+                    clearSubmitIntent(intent.scopeKey || sk, { broadcast: false });
+                }
+                continue;
+            }
+            var sameApply = (parseInt(intent.applyId, 10) || 0) === applyId;
+            var sameOrder = (parseInt(intent.orderId, 10) || 0) === orderId;
+            if (!sameApply && !(applyId === 0 && sameOrder && orderId > 0)) {
+                continue;
+            }
+            if (applyId === 0 && orderId > 0 && !sameOrder) {
+                continue;
+            }
+            if ((parseInt(intent.accountId, 10) || 0) !== pageSessionAid) {
+                if (isProtectedIntentState(intent.state)) {
+                    foreignUncertain = intent;
+                }
+                continue;
+            }
+            if (!matched || (intent.updatedAt || 0) > (matched.intent.updatedAt || 0)) {
+                matched = item;
+            }
+        }
+        return { matched: matched, foreignUncertain: foreignUncertain };
+    }
+
+    function showSubmitIntentBanner(html, level) {
+        var $b = $('#submit-intent-banner');
+        if (!html) {
+            $b.hide().empty();
+            return;
+        }
+        var color = level === 'danger' ? '#a94442' : (level === 'success' ? '#3c763d' : '#8a6d3b');
+        $b.css('color', color).html(html).show();
+    }
+
+    function setSubmitButtonsForState(state) {
+        var $submit = $('#btn-submit-apply');
+        var $retry = $('#btn-retry-submit');
+        var $save = $('#btn-save-draft');
+        if (formLockedAfterSubmit || state === 'success') {
+            $submit.addClass('layui-btn-disabled').prop('disabled', true).text('已提交审核');
+            $retry.hide();
+            $save.addClass('layui-btn-disabled').prop('disabled', true);
+            return;
+        }
+        if (state === 'sending') {
+            $submit.addClass('layui-btn-disabled').prop('disabled', true).text('提交中...');
+            $retry.hide();
+            $save.addClass('layui-btn-disabled').prop('disabled', true);
+            return;
+        }
+        if (state === 'uncertain' || state === 'prepared') {
+            $submit.addClass('layui-btn-disabled').prop('disabled', true).text('提交审核');
+            $retry.show().removeClass('layui-btn-disabled').prop('disabled', false);
+            $save.addClass('layui-btn-disabled').prop('disabled', true);
+            return;
+        }
+        $submit.removeClass('layui-btn-disabled').prop('disabled', false).text('提交审核');
+        $retry.hide();
+        if (!savingDraft) {
+            $save.removeClass('layui-btn-disabled').prop('disabled', false).text('保存草稿');
+        }
+    }
+
+    function lockFormAfterSuccess(applyNo) {
+        formLockedAfterSubmit = true;
+        $('#ship-create-form').find('input, textarea, select, button').not('#btn-back,#btn-back-to-draft').each(function () {
+            var $el = $(this);
+            if ($el.attr('id') === 'btn-back' || $el.attr('id') === 'btn-back-to-draft') {
+                return;
+            }
+            if ($el.is('button')) {
+                if ($el.attr('id') === 'btn-submit-apply') {
+                    $el.addClass('layui-btn-disabled').prop('disabled', true).text('已提交审核');
+                } else if ($el.attr('id') === 'btn-retry-submit') {
+                    $el.hide();
+                } else if ($el.attr('id') === 'btn-save-draft') {
+                    $el.addClass('layui-btn-disabled').prop('disabled', true);
+                } else if ($el.attr('id') !== 'btn-reopen-draft') {
+                    $el.addClass('layui-btn-disabled').prop('disabled', true);
+                }
+            } else {
+                $el.prop('disabled', true);
+            }
+        });
+        if (applyNo) {
+            $('#apply_no_display').text(applyNo);
+        }
+        setSubmitButtonsForState('success');
+    }
+
+    function validateFormalSubmitPayload(data) {
+        if (!data || !data.order_id) {
+            return { ok: false, msg: '请先选择有效订单。' };
+        }
+        if (!data.shipping_date || !/^\d{4}-\d{2}-\d{2}$/.test(data.shipping_date)) {
+            return { ok: false, msg: '预计发货日期不能为空或格式不正确。' };
+        }
+        if (!data.receiver_name) {
+            return { ok: false, msg: '收货人不能为空。' };
+        }
+        if (!data.receiver_phone) {
+            return { ok: false, msg: '收货电话不能为空。' };
+        }
+        if (!data.receiver_address) {
+            return { ok: false, msg: '收货地址不能为空。' };
+        }
+        if (!data.shipping_method) {
+            return { ok: false, msg: '发货方式不能为空。' };
+        }
+        if (!data.items || !data.items.length) {
+            return { ok: false, msg: '至少需要一条正整数数量的发货行。' };
+        }
+        if (data.items.length > 200) {
+            return { ok: false, msg: '发货明细行数超过限制' };
+        }
+        var positive = 0;
+        for (var i = 0; i < data.items.length; i++) {
+            var row = data.items[i];
+            var qty = parseInt(row.apply_qty, 10) || 0;
+            if (qty <= 0) {
+                continue;
+            }
+            positive++;
+            if (!row.factory_id || parseInt(row.factory_id, 10) <= 0) {
+                return { ok: false, msg: '正式提交必须为每条发货行选择有效厂家。' };
+            }
+            if (!hasConfirmedMoney(row.apply_unit_price)) {
+                return { ok: false, msg: '本次销售单价必填（允许 0.00，不允许空值）。' };
+            }
+            if (!isStrictMoneyString(String(row.apply_unit_price).trim())) {
+                return { ok: false, msg: '本次销售单价格式不正确。' };
+            }
+            if (!hasConfirmedMoney(row.apply_purchase_unit_price)) {
+                return { ok: false, msg: '本次采购单价必填（允许 0.00，不允许空值）。' };
+            }
+            if (!isStrictMoneyString(String(row.apply_purchase_unit_price).trim())) {
+                return { ok: false, msg: '本次采购单价格式不正确。' };
+            }
+        }
+        if (positive <= 0) {
+            return { ok: false, msg: '至少需要一条正整数数量的发货行。' };
+        }
+        return { ok: true };
+    }
+
+    function buildFrozenPostBody(intent) {
+        var payload = intent.frozenPayload;
+        var body = {
+            apply_id: payload.apply_id,
+            order_id: payload.order_id,
+            shipping_date: payload.shipping_date,
+            receiver_name: payload.receiver_name,
+            receiver_phone: payload.receiver_phone,
+            receiver_address: payload.receiver_address,
+            shipping_method: payload.shipping_method,
+            shipping_remark: payload.shipping_remark,
+            submit_token: intent.submitToken,
+            csrf_token: pageCsrfToken,
+            items: JSON.stringify(payload.items)
+        };
+        if (payload.order_amount_confirmed === 1) {
+            body.order_amount_confirmed = '1';
+            body.confirmed_order_amount = String(payload.confirmed_order_amount);
+        }
+        if (payload.shipping_date_history_confirmed === 1) {
+            body.shipping_date_history_confirmed = '1';
+        }
+        return body;
+    }
+
+    function closeSubmitLoading() {
+        if (submitLoadIndex != null) {
+            layer.close(submitLoadIndex);
+            submitLoadIndex = null;
+        }
+    }
+
+    function markIntentState(intent, state) {
+        intent.state = state;
+        intent.updatedAt = Date.now();
+        return persistSubmitIntent(intent);
+    }
+
+    function handleSubmitSuccess(intent, res, isReplay) {
+        var data = (res && res.data) ? res.data : {};
+        var applyNo = data.apply_no || '';
+        // 先持久化/广播明确 success，再静默清理，避免 cleared 覆盖 success
+        intent.state = 'success';
+        intent.updatedAt = Date.now();
+        var saved = persistSubmitIntent(intent);
+        if (!saved.ok) {
+            broadcastSubmitIntent({
+                scopeKey: intent.scopeKey,
+                state: 'success',
+                accountId: intent.accountId || 0,
+                submitToken: intent.submitToken || ''
+            });
+        }
+        clearSubmitIntent(intent.scopeKey, { broadcast: false });
+        activeSubmitIntent = null;
+        closeSubmitLoading();
+        submittingApply = false;
+        lockFormAfterSuccess(applyNo);
+        var tip = isReplay
+            ? ('该发货申请此前已经提交成功' + (applyNo ? ('：' + applyNo) : ''))
+            : ('发货申请已提交审核' + (applyNo ? ('：' + applyNo) : ''));
+        showSubmitIntentBanner(escapeHtml(tip), 'success');
+        layer.msg(tip, { icon: 1, time: 4000 });
+    }
+
+    function handleSubmitUncertain(intent, tip) {
+        var persistRes = markIntentState(intent, 'uncertain');
+        closeSubmitLoading();
+        submittingApply = false;
+        // 持久化失败也必须保留内存中的原 token / 冻结载荷，禁止清除
+        intent.state = 'uncertain';
+        activeSubmitIntent = intent;
+        setSubmitButtonsForState('uncertain');
+        var msg = tip || '网络异常，无法确认本次发货申请是否已经提交。请保留当前提交信息，使用原请求重试或联系管理员核实。';
+        if (!persistRes || !persistRes.ok) {
+            msg = '提交结果未知，且浏览器无法保存保护状态。请勿关闭本页面，请联系管理员核实是否已提交成功。';
+        }
+        showSubmitIntentBanner(escapeHtml(msg), 'danger');
+        layer.alert(escapeHtml(msg), { icon: 0, title: '提交结果待确认' });
+    }
+
+    function handleSubmitAuthInvalid(intent, res) {
+        // 登录/CSRF 无效：请求未进 Service，但必须保留已发送意图供核实，禁止宣称可随意重发新 token
+        markIntentState(intent, 'uncertain');
+        intent.state = 'uncertain';
+        activeSubmitIntent = intent;
+        closeSubmitLoading();
+        submittingApply = false;
+        setSubmitButtonsForState('uncertain');
+        var msg = (res && res.msg)
+            ? res.msg
+            : '登录或安全校验失效，请刷新页面后使用原请求重新确认提交状态。';
+        showSubmitIntentBanner(escapeHtml(msg), 'danger');
+        layer.alert(escapeHtml(msg), { icon: 0, title: '请重新核实身份' });
+    }
+
+    function handleSubmitRejected(intent, res) {
+        // 仅机器可识别的明确安全拒绝：可解除保护；禁止把普通 code!=0 当明确拒绝
+        broadcastSubmitIntent({
+            scopeKey: intent.scopeKey,
+            state: 'definite_reject',
+            accountId: intent.accountId || 0,
+            submitToken: intent.submitToken || ''
+        });
+        clearSubmitIntent(intent.scopeKey, { broadcast: false });
+        activeSubmitIntent = null;
+        closeSubmitLoading();
+        submittingApply = false;
+        setSubmitButtonsForState('idle');
+        var msg = (res && res.msg) ? res.msg : '提交被拒绝，请检查后重试。';
+        showSubmitIntentBanner(escapeHtml(msg), 'danger');
+        layer.msg(msg, { icon: 2 });
+    }
+
+    function isAuthInvalidSubmitMsg(msg) {
+        return msg === '请先登录'
+            || msg === '登录状态无效'
+            || msg === '安全校验失败，请刷新页面后重试'
+            || msg === '登录身份已变化，请刷新页面后重新确认提交状态';
+    }
+
+    function classifySubmitResponse(res, xhr) {
+        if (res && res.data && res.data.result_uncertain === true) {
+            return 'uncertain';
+        }
+        if (res && res.code === 0 && res.data && res.data.submission_succeeded === true) {
+            return res.data.idempotent_replay === true ? 'idempotent_success' : 'success';
+        }
+        // 服务端若将来提供机器可识别“绝对未写库”标志，才可 definite_reject
+        if (res && res.data && res.data.submission_definitely_rejected === true) {
+            return 'definite_reject';
+        }
+        if (res && typeof res === 'object' && res.msg === '正式提交接口尚未开放') {
+            return 'gate_closed';
+        }
+        if (res && typeof res === 'object' && isAuthInvalidSubmitMsg(res.msg)) {
+            return 'auth_invalid';
+        }
+        // 保守默认：已发出的非成功结果（含 code=-200 空 data / Throwable 兜底）一律 uncertain，保留 token
+        return 'uncertain';
+    }
+
+    function sendFrozenSubmitRequest(intent) {
+        if (!intent || !intent.frozenPayload || !intent.submitToken) {
+            layer.msg('无法恢复原始提交载荷，禁止自动重发。请登录原账号后联系管理员核实申请结果。', { icon: 2 });
+            return;
+        }
+        if ((parseInt(intent.accountId, 10) || 0) !== pageSessionAid) {
+            layer.alert('当前登录账号与原提交意图不一致。请重新登录原账号后核查提交结果，禁止以当前账号重发。', { icon: 0, title: '账号不一致' });
+            return;
+        }
+        if (!pageCsrfToken) {
+            layer.msg('安全校验信息缺失，请刷新页面后重试。', { icon: 2 });
+            return;
+        }
+        if (submittingApply) {
+            return;
+        }
+        submittingApply = true;
+        // 发送前先写入 sending，避免关闭浏览器时误判为未发送
+        var persistRes = markIntentState(intent, 'sending');
+        if (!persistRes.ok) {
+            submittingApply = false;
+            layer.msg(persistRes.msg, { icon: 2 });
+            return;
+        }
+        setSubmitButtonsForState('sending');
+        submitLoadIndex = layer.load(2);
+        var body = buildFrozenPostBody(intent);
+        $.ajax({
+            url: submitApiUrl,
+            type: 'POST',
+            data: body,
+            dataType: 'json',
+            timeout: 60000
+        }).done(function (res) {
+            var kind = classifySubmitResponse(res);
+            if (kind === 'success') {
+                handleSubmitSuccess(intent, res, false);
+                return;
+            }
+            if (kind === 'idempotent_success') {
+                handleSubmitSuccess(intent, res, true);
+                return;
+            }
+            if (kind === 'gate_closed') {
+                // 开关关闭：Controller 在进入 Service 前固定拒绝，可解除本次未执行意图
+                broadcastSubmitIntent({
+                    scopeKey: intent.scopeKey,
+                    state: 'gate_closed',
+                    accountId: intent.accountId || 0,
+                    submitToken: intent.submitToken || ''
+                });
+                clearSubmitIntent(intent.scopeKey, { broadcast: false });
+                activeSubmitIntent = null;
+                closeSubmitLoading();
+                submittingApply = false;
+                setSubmitButtonsForState('idle');
+                showSubmitIntentBanner(escapeHtml(res.msg || '正式提交接口尚未开放'), 'danger');
+                layer.msg(res.msg || '正式提交接口尚未开放', { icon: 0 });
+                return;
+            }
+            if (kind === 'auth_invalid') {
+                handleSubmitAuthInvalid(intent, res);
+                return;
+            }
+            if (kind === 'definite_reject') {
+                handleSubmitRejected(intent, res);
+                return;
+            }
+            // uncertain（含 code=-200 无事务语义、未知字段、缺少成功标志等）
+            handleSubmitUncertain(intent, (res && res.msg) ? res.msg : '');
+        }).fail(function (xhr) {
+            // 超时/断连/非 JSON/HTTP 500/登录页 HTML：一律结果未知，保留 token
+            handleSubmitUncertain(intent);
+        });
+    }
+
+    function beginFormalSubmitFlow() {
+        if (formLockedAfterSubmit) {
+            layer.msg('该发货申请已提交审核。', { icon: 0 });
+            return;
+        }
+        if (savingDraft || submittingApply) {
+            layer.msg('请等待当前操作完成。', { icon: 0 });
+            return;
+        }
+        if (!pageSessionAid || pageSessionAid <= 0) {
+            layer.msg('登录状态无效，请重新登录。', { icon: 2 });
+            return;
+        }
+        if (!pageCsrfToken) {
+            layer.msg('安全校验信息缺失，请刷新页面后重试。', { icon: 2 });
+            return;
+        }
+
+        var restored = loadSubmitIntentForPage();
+        if (restored.foreignUncertain) {
+            layer.alert('检测到其他账号留下的未确认提交意图。请重新登录原账号核查结果；当前账号不得重发该提交。', {
+                icon: 0,
+                title: '账号切换保护'
+            });
+            return;
+        }
+        if (restored.matched) {
+            var existing = restored.matched.intent;
+            if (restored.matched.source === 'index' && !existing.frozenPayload) {
+                showSubmitIntentBanner('检测到可能已发送但无法恢复原始提交载荷的记录，禁止自动重新提交。请联系管理员核实原申请结果。', 'danger');
+                setSubmitButtonsForState('uncertain');
+                layer.alert('无法恢复原始冻结载荷，禁止生成新的提交标识重发。请保留现场并联系管理员核实。', { icon: 0, title: '提交结果待核实' });
+                return;
+            }
+            if (isProtectedIntentState(existing.state) && existing.frozenPayload) {
+                activeSubmitIntent = existing;
+                setSubmitButtonsForState(existing.state === 'sending' ? 'uncertain' : existing.state);
+                showSubmitIntentBanner('存在未确认的正式提交意图，请使用原请求重新确认，不要重新生成提交标识。', 'danger');
+                return;
+            }
+        }
+
+        var built = buildShippingFormData({});
+        if (!built.ok) {
+            layer.msg(built.msg, { icon: 2 });
+            return;
+        }
+        var formalCheck = validateFormalSubmitPayload(built.data);
+        if (!formalCheck.ok) {
+            layer.msg(formalCheck.msg, { icon: 2 });
+            return;
+        }
+
+        function afterHistoryConfirm(historyConfirmed) {
+            var payload = $.extend(true, {}, built.data);
+            if (historyConfirmed) {
+                payload.shipping_date_history_confirmed = 1;
+            }
+
+            function afterAmountConfirm(amountExtra) {
+                if (amountExtra && amountExtra.order_amount_confirmed) {
+                    payload.order_amount_confirmed = 1;
+                    payload.confirmed_order_amount = String(amountExtra.confirmed_order_amount);
+                    orderAmountConfirmed = true;
+                    confirmedOrderAmount = String(amountExtra.confirmed_order_amount);
+                } else if (orderAmountChanged && currentOrderMoney != null && !payload.order_amount_confirmed) {
+                    layer.confirm(
+                        '原订单金额已发生变化，当前订单金额为 '
+                        + escapeHtml(String(currentOrderMoney))
+                        + ' 元。确认已重新核对后继续提交审核？',
+                        { icon: 0, title: '原订单金额变化确认' },
+                        function (idx) {
+                            layer.close(idx);
+                            afterAmountConfirm({
+                                order_amount_confirmed: 1,
+                                confirmed_order_amount: String(currentOrderMoney)
+                            });
+                        }
+                    );
+                    return;
+                }
+
+                layer.confirm('确定提交该发货申请进入审批流程吗？提交成功后将不能再按草稿方式修改。', {
+                    icon: 3,
+                    title: '提交确认'
+                }, function (idx) {
+                    layer.close(idx);
+                    var tokenRes = generateSecureSubmitToken();
+                    if (!tokenRes.ok) {
+                        layer.msg(tokenRes.msg, { icon: 2 });
+                        return;
+                    }
+                    var now = Date.now();
+                    var intent = {
+                        version: 1,
+                        accountId: pageSessionAid,
+                        applyId: payload.apply_id || 0,
+                        orderId: payload.order_id,
+                        submitToken: tokenRes.token,
+                        state: 'prepared',
+                        createdAt: now,
+                        updatedAt: now,
+                        scopeKey: intentScopeKey(pageSessionAid, payload.apply_id || 0, payload.order_id),
+                        frozenPayload: payload
+                    };
+                    var saved = persistSubmitIntent(intent);
+                    if (!saved.ok) {
+                        layer.msg(saved.msg, { icon: 2 });
+                        return;
+                    }
+                    sendFrozenSubmitRequest(intent);
+                });
+            }
+
+            afterAmountConfirm(null);
+        }
+
+        var today = getShanghaiTodayYmd();
+        if (built.data.shipping_date < today) {
+            layer.confirm('当前选择的发货日期早于今天，是否确认按照该日期提交审核？', {
+                icon: 0,
+                title: '历史发货日期确认'
+            }, function (idx) {
+                layer.close(idx);
+                afterHistoryConfirm(true);
+            });
+            return;
+        }
+        afterHistoryConfirm(false);
+    }
+
+    function retryFrozenSubmit() {
+        if (!activeSubmitIntent || !activeSubmitIntent.frozenPayload) {
+            var restored = loadSubmitIntentForPage();
+            if (restored.matched && restored.matched.intent && restored.matched.intent.frozenPayload) {
+                activeSubmitIntent = restored.matched.intent;
+            } else {
+                layer.msg('无法恢复原始提交载荷，禁止自动重发。请联系管理员核实。', { icon: 2 });
+                return;
+            }
+        }
+        sendFrozenSubmitRequest(activeSubmitIntent);
+    }
+
+    function broadcastSubmitIntent(intent) {
+        try {
+            if (submitChannel) {
+                submitChannel.postMessage({
+                    type: 'intent',
+                    scopeKey: intent.scopeKey,
+                    state: intent.state,
+                    accountId: intent.accountId || 0,
+                    submitToken: intent.submitToken || ''
+                });
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    function initSubmitIntentChannel() {
+        try {
+            if (typeof window.BroadcastChannel === 'function') {
+                submitChannel = new BroadcastChannel(SUBMIT_CHANNEL_NAME);
+                submitChannel.onmessage = function (ev) {
+                    var data = ev && ev.data ? ev.data : null;
+                    if (!data || data.type !== 'intent') return;
+                    if (!activeSubmitIntent) return;
+                    if (data.scopeKey !== activeSubmitIntent.scopeKey) return;
+                    if (data.state === 'success') {
+                        if (formLockedAfterSubmit) return;
+                        lockFormAfterSuccess('');
+                        showSubmitIntentBanner('该申请已提交审核，请刷新页面查看最新状态', 'success');
+                        clearSubmitIntent(activeSubmitIntent.scopeKey, { broadcast: false });
+                        return;
+                    }
+                    if (data.state === 'cleared') {
+                        // cleared 仅表示本地清理，不能代表成功；已成功锁定则忽略
+                        if (formLockedAfterSubmit) return;
+                        clearSubmitIntent(activeSubmitIntent.scopeKey, { broadcast: false });
+                        setSubmitButtonsForState('idle');
+                        return;
+                    }
+                    if (data.state === 'gate_closed') {
+                        if (formLockedAfterSubmit) return;
+                        clearSubmitIntent(activeSubmitIntent.scopeKey, { broadcast: false });
+                        setSubmitButtonsForState('idle');
+                        showSubmitIntentBanner('正式提交接口尚未开放', 'danger');
+                        return;
+                    }
+                    if (data.state === 'definite_reject' || data.state === 'rejected') {
+                        if (formLockedAfterSubmit) return;
+                        clearSubmitIntent(activeSubmitIntent.scopeKey, { broadcast: false });
+                        setSubmitButtonsForState('idle');
+                        return;
+                    }
+                    if (data.state === 'sending' || data.state === 'uncertain' || data.state === 'auth_invalid' || data.state === 'prepared') {
+                        // uncertain/auth 不得释放其他标签保护，禁止新 token
+                        setSubmitButtonsForState('uncertain');
+                        showSubmitIntentBanner('其他标签页正在处理同一提交意图，请勿重新生成提交标识。', 'danger');
+                    }
+                };
+            }
+        } catch (e) {
+            submitChannel = null;
+        }
+        try {
+            window.addEventListener('storage', function (ev) {
+                if (!ev || ev.key !== SUBMIT_INTENT_INDEX_KEY) return;
+                if (formLockedAfterSubmit) return;
+                var restored = loadSubmitIntentForPage();
+                if (restored.matched && restored.matched.intent) {
+                    var remote = restored.matched.intent;
+                    if (remote.state === 'success') {
+                        // 仅锁定本页已有同 scope 活动意图，避免 apply_id=0 订单级永久互锁
+                        if (activeSubmitIntent && activeSubmitIntent.scopeKey === remote.scopeKey) {
+                            lockFormAfterSuccess('');
+                            showSubmitIntentBanner('该申请已提交审核，请刷新页面查看最新状态', 'success');
+                            clearSubmitIntent(activeSubmitIntent.scopeKey, { broadcast: false });
+                        }
+                    } else if (isProtectedIntentState(remote.state) || remote.state === 'auth_invalid') {
+                        if (!activeSubmitIntent || activeSubmitIntent.scopeKey === remote.scopeKey) {
+                            if (remote.frozenPayload) {
+                                activeSubmitIntent = remote;
+                            } else if (activeSubmitIntent && activeSubmitIntent.scopeKey === remote.scopeKey) {
+                                activeSubmitIntent.state = remote.state === 'sending' ? 'uncertain' : remote.state;
+                            }
+                            setSubmitButtonsForState(
+                                (remote.state === 'sending' || remote.state === 'auth_invalid') ? 'uncertain' : remote.state
+                            );
+                            showSubmitIntentBanner('其他标签页正在处理同一提交意图，请勿重新生成提交标识。', 'danger');
+                        }
+                    }
+                }
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    function restoreSubmitIntentOnLoad() {
+        initSubmitIntentChannel();
+        var restored = loadSubmitIntentForPage();
+        if (restored.foreignUncertain) {
+            showSubmitIntentBanner('检测到其他账号的未确认提交意图。请重新登录原账号核查结果；当前不得重发。', 'danger');
+            setSubmitButtonsForState('idle');
+            return;
+        }
+        if (!restored.matched) {
+            setSubmitButtonsForState('idle');
+            return;
+        }
+        var item = restored.matched;
+        var intent = item.intent;
+        if (item.source === 'index' && !intent.frozenPayload && isProtectedIntentState(intent.state)) {
+            showSubmitIntentBanner('浏览器关闭后无法恢复完整冻结载荷。为防止重复申请，已禁止自动重发。请联系管理员核实原提交结果。', 'danger');
+            setSubmitButtonsForState('uncertain');
+            $('#btn-retry-submit').addClass('layui-btn-disabled').prop('disabled', true);
+            return;
+        }
+        if (intent.state === 'success') {
+            lockFormAfterSuccess('');
+            showSubmitIntentBanner('该发货申请此前已经提交成功。', 'success');
+            return;
+        }
+        if (isProtectedIntentState(intent.state) && intent.frozenPayload) {
+            activeSubmitIntent = intent;
+            if (intent.state === 'sending') {
+                // 刷新前可能已发送：升级为 uncertain，保留原 token
+                markIntentState(intent, 'uncertain');
+            }
+            setSubmitButtonsForState('uncertain');
+            showSubmitIntentBanner('检测到未确认的正式提交意图，请使用原请求重新确认。', 'danger');
+            return;
+        }
+        setSubmitButtonsForState('idle');
+    }
+
+    $('#btn-submit-apply').on('click', function () {
+        beginFormalSubmitFlow();
+    });
+    $('#btn-retry-submit').on('click', function () {
+        retryFrozenSubmit();
+    });
+
     function normalizeSnapshotText(v) {
         return String(v == null ? '' : v).trim();
     }
@@ -1629,6 +2531,10 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     function goBackToDraftBox() {
         if (savingDraft) {
             layer.msg('正在保存草稿，请稍候。', { icon: 0 });
+            return;
+        }
+        if (submittingApply || (activeSubmitIntent && isProtectedIntentState(activeSubmitIntent.state))) {
+            layer.msg('存在未确认的正式提交，请先处理后再返回。', { icon: 0 });
             return;
         }
         if (!hasUnsavedChanges()) {
@@ -1787,6 +2693,8 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         } else if (parseInt('{$draftId|default=0}', 10) > 0) {
             layer.msg('草稿不存在或无权编辑', { icon: 2 });
         }
+        // 订单/草稿回填后再恢复提交意图，避免 scope 错配
+        restoreSubmitIntentOnLoad();
     });
 });
 </script>
