@@ -1,0 +1,362 @@
+{include file="common/head"/}
+<style>
+    .apply-detail-wrap {
+        padding: 12px 16px 24px;
+        background: #f6f7f9;
+        min-height: 100%;
+        box-sizing: border-box;
+    }
+    .apply-detail-wrap .layui-card {
+        margin-bottom: 12px;
+        box-shadow: none;
+    }
+    .apply-detail-wrap .layui-card-header {
+        font-weight: 600;
+    }
+    .apply-detail-kv {
+        margin: 0;
+        padding: 4px 0;
+        line-height: 22px;
+        word-break: break-all;
+    }
+    .apply-detail-kv .k {
+        color: #888;
+        display: inline-block;
+        min-width: 96px;
+    }
+    .apply-detail-kv .v {
+        color: #333;
+    }
+    .apply-progress {
+        padding: 8px 4px 4px;
+    }
+    .apply-progress-stage {
+        position: relative;
+        padding: 0 0 16px 18px;
+        border-left: 2px solid #e6e6e6;
+        margin-left: 8px;
+    }
+    .apply-progress-stage:last-child {
+        border-left-color: transparent;
+        padding-bottom: 0;
+    }
+    .apply-progress-stage::before {
+        content: '';
+        position: absolute;
+        left: -6px;
+        top: 4px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #c2c2c2;
+    }
+    .apply-progress-stage.is-done::before {
+        background: #5FB878;
+    }
+    .apply-progress-stage.is-active::before {
+        background: #1E9FFF;
+    }
+    .apply-progress-stage.is-rejected::before {
+        background: #FF5722;
+    }
+    .apply-progress-title {
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .apply-progress-node {
+        color: #666;
+        margin: 2px 0;
+        padding-left: 2px;
+    }
+    .apply-detail-mask {
+        color: #999;
+        font-style: italic;
+    }
+    .apply-detail-empty {
+        color: #999;
+        padding: 12px 0;
+    }
+    .apply-detail-toolbar {
+        text-align: right;
+        margin-bottom: 8px;
+    }
+    /* 「关闭」：不透明底色，避免在灰底页面上可读性不足 */
+    .apply-detail-wrap .apply-detail-close-btn {
+        background-color: #1E9FFF !important;
+        color: #fff !important;
+        border: 1px solid #1E9FFF !important;
+        opacity: 1 !important;
+    }
+    .apply-detail-wrap .apply-detail-close-btn:hover {
+        background-color: #0d8aee !important;
+        border-color: #0d8aee !important;
+        color: #fff !important;
+    }
+</style>
+</head>
+<body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
+<div class="admin-main layui-anim layui-anim-upbit apply-detail-wrap" id="apply-detail-root">
+    <div class="apply-detail-toolbar">
+        <button type="button" class="layui-btn layui-btn-sm apply-detail-close-btn" id="btn-close-detail">关闭</button>
+    </div>
+
+    <div class="layui-card">
+        <div class="layui-card-header">基本信息</div>
+        <div class="layui-card-body">
+            <div class="layui-row layui-col-space10" id="sec-basic"></div>
+        </div>
+    </div>
+
+    <div class="layui-card">
+        <div class="layui-card-header">发货信息</div>
+        <div class="layui-card-body">
+            <div class="layui-row layui-col-space10" id="sec-shipping"></div>
+        </div>
+    </div>
+
+    <div class="layui-card">
+        <div class="layui-card-header">发货产品明细</div>
+        <div class="layui-card-body" style="overflow-x:auto;">
+            <table class="layui-table" lay-size="sm">
+                <thead>
+                <tr>
+                    <th>原订单产品</th>
+                    <th>本次产品名称</th>
+                    <th>规格型号</th>
+                    <th>数量</th>
+                    <th>销售单价</th>
+                    <th>销售金额</th>
+                    <th>采购单价</th>
+                    <th>采购金额</th>
+                    <th>厂家</th>
+                    <th>备注</th>
+                </tr>
+                </thead>
+                <tbody id="sec-items"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="layui-card">
+        <div class="layui-card-header">审批进度</div>
+        <div class="layui-card-body">
+            <div class="apply-progress" id="sec-progress"></div>
+        </div>
+    </div>
+
+    <div class="layui-card">
+        <div class="layui-card-header">历史操作</div>
+        <div class="layui-card-body" style="overflow-x:auto;">
+            <table class="layui-table" lay-size="sm">
+                <thead>
+                <tr>
+                    <th style="width:160px;">时间</th>
+                    <th style="width:120px;">操作</th>
+                    <th style="width:120px;">操作人</th>
+                    <th style="width:200px;">状态变化</th>
+                    <th>说明</th>
+                </tr>
+                </thead>
+                <tbody id="sec-logs"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{include file="common/foot"/}
+<script>
+layui.use(['layer'], function () {
+    var layer = layui.layer;
+    var $ = layui.$;
+
+    // 服务端已 json_encode（含 JSON_HEX_*），直接作为 JS 对象表达式嵌入，避免二次字符串转义
+    var detailPayload = null;
+    try {
+        detailPayload = {$detailJson|default='null'|raw};
+        if (!detailPayload || typeof detailPayload !== 'object') {
+            detailPayload = null;
+        }
+    } catch (e) {
+        detailPayload = null;
+    }
+
+    function escapeHtml(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatAmount(v) {
+        if (v === null || typeof v === 'undefined' || v === '') {
+            return '-';
+        }
+        var n = parseFloat(v);
+        if (isNaN(n)) {
+            return '-';
+        }
+        return n.toFixed(2);
+    }
+
+    function kv(label, value) {
+        return '<p class="apply-detail-kv"><span class="k">' + escapeHtml(label)
+            + '</span><span class="v">' + escapeHtml(value == null || value === '' ? '-' : value) + '</span></p>';
+    }
+
+    function renderFail(msg) {
+        $('#apply-detail-root').html(
+            '<div class="layui-card"><div class="layui-card-body apply-detail-empty">'
+            + escapeHtml(msg || '无权查看或记录不存在')
+            + '</div></div>'
+        );
+    }
+
+    if (!detailPayload || !detailPayload.apply) {
+        renderFail('无权查看或记录不存在');
+        return;
+    }
+
+    // 本轮只读：即使载荷被篡改也不展示审批按钮
+    var canApprove = false;
+    if (canApprove) {
+        // reserved for M4-2B
+    }
+
+    var apply = detailPayload.apply || {};
+    var items = detailPayload.items || [];
+    var progress = detailPayload.approval_progress || {};
+    var logs = detailPayload.approval_logs || [];
+
+    var basicHtml = ''
+        + '<div class="layui-col-md4">' + kv('发货申请编号', apply.apply_no) + '</div>'
+        + '<div class="layui-col-md4">' + kv('原订单编号', apply.order_no) + '</div>'
+        + '<div class="layui-col-md4">' + kv('客户名称', apply.customer_name) + '</div>'
+        + '<div class="layui-col-md4">' + kv('申请人', apply.applicant_name) + '</div>'
+        + '<div class="layui-col-md4">' + kv('正式提交时间', apply.submit_time) + '</div>'
+        + '<div class="layui-col-md4">' + kv('原订单总金额', formatAmount(apply.order_amount)) + '</div>'
+        + '<div class="layui-col-md4">' + kv('审批阈值快照', formatAmount(apply.approval_threshold)) + '</div>'
+        + '<div class="layui-col-md4">' + kv('审批路线', apply.approval_route_text) + '</div>'
+        + '<div class="layui-col-md4">' + kv('当前状态', apply.status_text) + '</div>'
+        + '<div class="layui-col-md4">' + kv('审批轮次', apply.approval_round) + '</div>';
+    $('#sec-basic').html(basicHtml);
+
+    var shippingHtml = ''
+        + '<div class="layui-col-md4">' + kv('预计发货日期', apply.shipping_date) + '</div>'
+        + '<div class="layui-col-md4">' + kv('发货方式', apply.shipping_method) + '</div>'
+        + '<div class="layui-col-md4">' + kv('收货人', apply.receiver_name) + '</div>'
+        + '<div class="layui-col-md4">' + kv('联系电话', apply.receiver_phone) + '</div>'
+        + '<div class="layui-col-md8">' + kv('收货地址', apply.receiver_address) + '</div>'
+        + '<div class="layui-col-md12">' + kv('发货备注', apply.shipping_remark) + '</div>';
+    $('#sec-shipping').html(shippingHtml);
+
+    var itemHtml = '';
+    if (!items.length) {
+        itemHtml = '<tr><td colspan="10" class="apply-detail-empty">暂无产品明细</td></tr>';
+    } else {
+        for (var i = 0; i < items.length; i++) {
+            var row = items[i] || {};
+            var purchaseUnit = parseInt(row.purchase_price_masked, 10) === 1
+                ? '<span class="apply-detail-mask">无权限</span>'
+                : escapeHtml(formatAmount(row.apply_purchase_unit_price));
+            var purchaseAmt = parseInt(row.purchase_price_masked, 10) === 1
+                ? '<span class="apply-detail-mask">无权限</span>'
+                : escapeHtml(formatAmount(row.apply_purchase_amount));
+            itemHtml += '<tr>'
+                + '<td>' + escapeHtml(row.source_product_name || '-') + '</td>'
+                + '<td>' + escapeHtml(row.apply_product_name || '-') + '</td>'
+                + '<td>' + escapeHtml(row.apply_spec_model || '-') + '</td>'
+                + '<td>' + escapeHtml(String(row.apply_qty == null ? '-' : row.apply_qty)) + '</td>'
+                + '<td>' + escapeHtml(formatAmount(row.apply_unit_price)) + '</td>'
+                + '<td>' + escapeHtml(formatAmount(row.apply_sales_amount)) + '</td>'
+                + '<td>' + purchaseUnit + '</td>'
+                + '<td>' + purchaseAmt + '</td>'
+                + '<td>' + escapeHtml(row.factory_name || '-') + '</td>'
+                + '<td>' + escapeHtml(row.remark || '-') + '</td>'
+                + '</tr>';
+        }
+    }
+    $('#sec-items').html(itemHtml);
+
+    var stages = (progress && progress.stages) ? progress.stages : [];
+    var progressHtml = '';
+    if (!stages.length) {
+        progressHtml = '<div class="apply-detail-empty">暂无审批进度</div>';
+    } else {
+        for (var s = 0; s < stages.length; s++) {
+            var stage = stages[s] || {};
+            var cls = 'apply-progress-stage';
+            if (stage.rejected) {
+                cls += ' is-rejected';
+            } else if (stage.active) {
+                cls += ' is-active';
+            } else if (stage.done) {
+                cls += ' is-done';
+            }
+            progressHtml += '<div class="' + cls + '">';
+            progressHtml += '<div class="apply-progress-title">' + escapeHtml(stage.title || '') + '</div>';
+            var nodes = stage.nodes || [];
+            if (!nodes.length && stage.key === 'finished') {
+                progressHtml += '<div class="apply-progress-node">'
+                    + (stage.done ? '已完成' : '尚未完成')
+                    + '</div>';
+            } else if (!nodes.length) {
+                progressHtml += '<div class="apply-progress-node">暂无节点</div>';
+            } else {
+                for (var n = 0; n < nodes.length; n++) {
+                    var node = nodes[n] || {};
+                    var name = node.approver_name || '';
+                    var st = node.status_text || '';
+                    var time = node.time || node.activate_time || node.audit_time || '';
+                    var line = escapeHtml(name || '—') + '：' + escapeHtml(st || '-');
+                    if (time) {
+                        line += '（' + escapeHtml(time) + '）';
+                    }
+                    progressHtml += '<div class="apply-progress-node">' + line + '</div>';
+                }
+            }
+            progressHtml += '</div>';
+        }
+    }
+    $('#sec-progress').html(progressHtml);
+
+    var logHtml = '';
+    if (!logs.length) {
+        logHtml = '<tr><td colspan="5" class="apply-detail-empty">暂无历史操作</td></tr>';
+    } else {
+        for (var l = 0; l < logs.length; l++) {
+            var log = logs[l] || {};
+            var statusChange = '';
+            if (log.before_status_text || log.after_status_text) {
+                statusChange = escapeHtml(log.before_status_text || '-')
+                    + ' → '
+                    + escapeHtml(log.after_status_text || '-');
+            } else {
+                statusChange = '-';
+            }
+            logHtml += '<tr>'
+                + '<td>' + escapeHtml(log.create_time || '-') + '</td>'
+                + '<td>' + escapeHtml(log.action_text || log.action || '-') + '</td>'
+                + '<td>' + escapeHtml(log.operator_name || '-') + '</td>'
+                + '<td>' + statusChange + '</td>'
+                + '<td>' + escapeHtml(log.opinion_text || '-') + '</td>'
+                + '</tr>';
+        }
+    }
+    $('#sec-logs').html(logHtml);
+
+    $('#btn-close-detail').on('click', function () {
+        try {
+            if (parent && parent.layer && typeof parent.layer.getFrameIndex === 'function') {
+                var index = parent.layer.getFrameIndex(window.name);
+                parent.layer.close(index);
+                return;
+            }
+        } catch (e2) {}
+        window.history.back();
+    });
+});
+</script>
+</body>
+</html>

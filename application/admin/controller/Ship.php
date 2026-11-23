@@ -169,6 +169,77 @@ class Ship extends Common
     }
 
     /**
+     * 我的发货申请（M4-2A 只读列表）
+     * GET：列表页
+     * POST：op=list → listMyApplies（仅本人正式申请）
+     */
+    public function myShip()
+    {
+        $service = $this->getShippingApplyService();
+
+        if (request()->isPost()) {
+            $op = trim((string)Request::param('op', ''));
+            $params = Request::param();
+            if (!is_array($params)) {
+                $params = [];
+            }
+
+            switch ($op) {
+                case '':
+                case 'list':
+                    return json($service->listMyApplies($params));
+                default:
+                    return json(['code' => -200, 'msg' => '无效的操作', 'count' => 0, 'data' => []]);
+            }
+        }
+
+        return $this->fetch('ship/my_ship');
+    }
+
+    /**
+     * 统一发货申请只读详情（M4-2A；供「我的发货申请」与后续「待我审核」复用）
+     * GET：鉴权后渲染；禁止写操作
+     */
+    public function applyDetail()
+    {
+        if (request()->isPost()) {
+            return json(['code' => -200, 'msg' => '详情接口仅支持查看', 'data' => []]);
+        }
+
+        $idRaw = Request::param('id', 0);
+        // 严格正整数；非法不进入敏感查询组装
+        if (is_int($idRaw)) {
+            $applyId = $idRaw > 0 ? $idRaw : 0;
+        } elseif (is_string($idRaw) && preg_match('/^[1-9]\d*$/', trim($idRaw))) {
+            $applyId = (int)trim($idRaw);
+        } else {
+            $applyId = 0;
+        }
+
+        if ($applyId <= 0) {
+            return $this->error('无权查看或记录不存在');
+        }
+
+        $result = $this->getShippingApplyService()->getApplyDetailForView($applyId);
+        if (!is_array($result) || (int)($result['code'] ?? -1) !== 0) {
+            $msg = is_array($result) ? trim((string)($result['msg'] ?? '')) : '';
+            if ($msg === '') {
+                $msg = '无权查看或记录不存在';
+            }
+            return $this->error($msg);
+        }
+
+        $data = isset($result['data']) && is_array($result['data']) ? $result['data'] : [];
+        // 后端强制只读；前端伪造无效
+        $data['can_approve'] = false;
+
+        $this->assign('detailJson', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP));
+        $this->assign('applyId', $applyId);
+
+        return $this->fetch('ship/apply_detail');
+    }
+
+    /**
      * 正式提交发货申请（HTTP 入口；默认关闭）
      *
      * 仅负责：开关 / POST / Session / 输入结构校验 / 一次 Service 调用 / JSON 透传。

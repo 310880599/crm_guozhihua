@@ -6447,4 +6447,916 @@ class ShippingApplyService
             );
         }
     }
+
+    // -------------------------------------------------------------------------
+    // M4-2A：我的发货申请列表 + 统一只读详情（只读；不写库）
+    // -------------------------------------------------------------------------
+
+    /** 列表关键词最大字符数 */
+    const MY_APPLY_KEYWORD_MAX = 100;
+
+    /** 列表分页上限 */
+    const MY_APPLY_LIST_LIMIT_MAX = 100;
+
+    /** 统一详情拒绝文案（无权限 / 不存在 / 已删 / 非正式申请统一） */
+    const APPLY_VIEW_DENY_MSG = '无权查看或记录不存在';
+
+    /**
+     * 我的发货申请列表（Layui 分页）
+     *
+     * P0：任意登录身份（含超管）仅查询 applicant_id = session('aid')。
+     * 禁止信任前端 applicant_id / user_id / is_admin 等扩大范围。
+     *
+     * @param array $params
+     * @return array{code:int,msg:string,count:int,data:array}
+     */
+    public function listMyApplies($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        // 显式丢弃前端伪造身份字段，避免后续误用
+        unset(
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['can_view'],
+            $params['viewer_role'],
+            $params['can_approve']
+        );
+
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'count' => 0, 'data' => []];
+        }
+
+        $page = (int)($params['page'] ?? 1);
+        if ($page < 1) {
+            $page = 1;
+        }
+        $limit = (int)($params['limit'] ?? 10);
+        if ($limit < 1) {
+            $limit = 10;
+        }
+        if ($limit > self::MY_APPLY_LIST_LIMIT_MAX) {
+            $limit = self::MY_APPLY_LIST_LIMIT_MAX;
+        }
+
+        $keyword = trim((string)($params['keyword'] ?? ''));
+        if (mb_strlen($keyword, 'UTF-8') > self::MY_APPLY_KEYWORD_MAX) {
+            return ['code' => -200, 'msg' => '关键字过长', 'count' => 0, 'data' => []];
+        }
+
+        $statusFilter = null;
+        if (array_key_exists('status', $params) && $params['status'] !== '' && $params['status'] !== null) {
+            $statusRaw = $params['status'];
+            if (is_bool($statusRaw) || is_array($statusRaw) || is_object($statusRaw) || is_float($statusRaw)) {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+            if (is_string($statusRaw)) {
+                $statusRaw = trim($statusRaw);
+                if ($statusRaw === '' || !preg_match('/^(0|[1-9]\d*)$/', $statusRaw)) {
+                    return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+                }
+                $statusFilter = (int)$statusRaw;
+            } elseif (is_int($statusRaw)) {
+                $statusFilter = $statusRaw;
+            } else {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+            if (!in_array($statusFilter, self::HISTORICAL_SUBMIT_SUCCESS_STATUSES, true)) {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+        }
+
+        $startTime = trim((string)($params['start_time'] ?? ''));
+        $endTime = trim((string)($params['end_time'] ?? ''));
+        $startBound = null;
+        $endBound = null;
+        if ($startTime !== '') {
+            $startBound = $this->parseMyApplyDateBound($startTime, true);
+            if ($startBound === null) {
+                return ['code' => -200, 'msg' => '开始日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($endTime !== '') {
+            $endBound = $this->parseMyApplyDateBound($endTime, false);
+            if ($endBound === null) {
+                return ['code' => -200, 'msg' => '结束日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($startBound !== null && $endBound !== null && strcmp($startBound, $endBound) > 0) {
+            return ['code' => -200, 'msg' => '开始日期不能晚于结束日期', 'count' => 0, 'data' => []];
+        }
+
+        // P0：本人过滤对超管同样强制；仅正式提交成功状态白名单；排除软删
+        $query = Db::name('crm_shipping_apply')
+            ->where('applicant_id', $adminId)
+            ->where('is_deleted', 0)
+            ->whereIn('status', self::HISTORICAL_SUBMIT_SUCCESS_STATUSES);
+
+        if ($statusFilter !== null) {
+            $query->where('status', $statusFilter);
+        }
+        if ($keyword !== '') {
+            $query->where(function ($q) use ($keyword) {
+                $q->whereLike('apply_no', '%' . $keyword . '%')
+                    ->whereOr('order_no', 'like', '%' . $keyword . '%')
+                    ->whereOr('customer_name', 'like', '%' . $keyword . '%');
+            });
+        }
+        if ($startBound !== null) {
+            $query->where('submit_time', '>=', $startBound);
+        }
+        if ($endBound !== null) {
+            $query->where('submit_time', '<=', $endBound);
+        }
+
+        try {
+            $count = (int)(clone $query)->count('id');
+            if ($count <= 0) {
+                return [
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'count' => 0,
+                    'data' => [],
+                ];
+            }
+
+            $rows = (clone $query)
+                ->field('id,apply_no,order_no,customer_name,order_amount,shipping_date,submit_time,status,approval_round,approval_route,approval_threshold,applicant_name')
+                ->order('submit_time', 'desc')
+                ->order('id', 'desc')
+                ->page($page, $limit)
+                ->select();
+            $rows = (array)$rows;
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::listMyApplies] ' . $e->getMessage(), 'error');
+            }
+            return ['code' => -200, 'msg' => '列表加载失败，请稍后重试', 'count' => 0, 'data' => []];
+        }
+
+        $applyIds = [];
+        $roundMap = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) {
+                $applyIds[] = $id;
+                $roundMap[$id] = (int)($row['approval_round'] ?? 0);
+            }
+        }
+
+        $summaryMap = $this->buildDraftProductSummaries($applyIds);
+        $approverMap = $this->loadCurrentApproverMap($applyIds, $roundMap, $rows);
+
+        $data = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            $status = (int)($row['status'] ?? 0);
+            $approverInfo = isset($approverMap[$id]) && is_array($approverMap[$id])
+                ? $approverMap[$id]
+                : [
+                    'current_approver_text' => '',
+                    'next_stage_text' => '',
+                ];
+            $data[] = [
+                'id' => $id,
+                'apply_no' => trim((string)($row['apply_no'] ?? '')),
+                'order_no' => trim((string)($row['order_no'] ?? '')),
+                'customer_name' => trim((string)($row['customer_name'] ?? '')),
+                'order_amount' => round((float)($row['order_amount'] ?? 0), 2),
+                'shipping_date' => trim((string)($row['shipping_date'] ?? '')),
+                'submit_time' => trim((string)($row['submit_time'] ?? '')),
+                'status' => $status,
+                'status_text' => $this->mapApplyStatusText($status),
+                'approval_round' => (int)($row['approval_round'] ?? 0),
+                'approval_route' => (int)($row['approval_route'] ?? 0),
+                'approval_route_text' => $this->mapApprovalRouteText((int)($row['approval_route'] ?? 0)),
+                'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
+                'current_approver_text' => (string)($approverInfo['current_approver_text'] ?? ''),
+                'next_stage_text' => (string)($approverInfo['next_stage_text'] ?? ''),
+            ];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功',
+            'count' => $count,
+            'data' => $data,
+        ];
+    }
+
+    /**
+     * 统一发货申请只读详情（鉴权后返回；供页面与后续「待我审核」复用）
+     *
+     * @param mixed $applyId
+     * @return array{code:int,msg:string,data:array}
+     */
+    public function getApplyDetailForView($applyId)
+    {
+        $admin = $this->getCurrentAdminInfo();
+        $viewerId = (int)$admin['admin_id'];
+        if ($viewerId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => []];
+        }
+
+        try {
+            $applyId = $this->parsePositiveInt($applyId, self::APPLY_VIEW_DENY_MSG);
+        } catch (Exception $e) {
+            return ['code' => -200, 'msg' => self::APPLY_VIEW_DENY_MSG, 'data' => []];
+        }
+
+        try {
+            $apply = Db::name('crm_shipping_apply')
+                ->where('id', $applyId)
+                ->find();
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::getApplyDetailForView] ' . $e->getMessage(), 'error');
+            }
+            return ['code' => -200, 'msg' => '详情加载失败，请稍后重试', 'data' => []];
+        }
+
+        if (empty($apply) || !is_array($apply)) {
+            return ['code' => -200, 'msg' => self::APPLY_VIEW_DENY_MSG, 'data' => []];
+        }
+        if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+            return ['code' => -200, 'msg' => self::APPLY_VIEW_DENY_MSG, 'data' => []];
+        }
+        $applyStatus = (int)($apply['status'] ?? -1);
+        if (!in_array($applyStatus, self::HISTORICAL_SUBMIT_SUCCESS_STATUSES, true)) {
+            return ['code' => -200, 'msg' => self::APPLY_VIEW_DENY_MSG, 'data' => []];
+        }
+
+        $access = $this->resolveApplyViewAccess($apply, $viewerId);
+        if (empty($access['ok'])) {
+            // 无权：不返回任何业务快照
+            return ['code' => -200, 'msg' => self::APPLY_VIEW_DENY_MSG, 'data' => []];
+        }
+
+        $viewerRole = (string)($access['role'] ?? '');
+        $canViewAllPurchase = !empty($access['can_view_all_purchase']);
+        $viewerManagerId = (int)($access['viewer_manager_id'] ?? 0);
+        $round = (int)($apply['approval_round'] ?? 0);
+
+        try {
+            $items = Db::name('crm_shipping_apply_item')
+                ->where('shipping_apply_id', $applyId)
+                ->field('id,shipping_apply_id,order_item_id,apply_line_no,product_name,apply_product_name,spec_model,apply_spec_model,apply_qty,apply_unit_price,apply_sales_amount,apply_purchase_unit_price,apply_purchase_amount,factory_id,factory_name,product_manager_id,product_manager_name,remark,unit')
+                ->order('apply_line_no', 'asc')
+                ->order('id', 'asc')
+                ->select();
+            $items = (array)$items;
+
+            $tasks = [];
+            if ($round > 0) {
+                $tasks = Db::name('crm_shipping_approval_task')
+                    ->where('shipping_apply_id', $applyId)
+                    ->where('approval_round', $round)
+                    ->field('id,shipping_apply_id,approval_round,approval_type,approver_id,approver_name,status,opinion,activate_time,audit_time,create_time')
+                    ->order('approval_type', 'asc')
+                    ->order('id', 'asc')
+                    ->select();
+                $tasks = (array)$tasks;
+            }
+
+            $logs = Db::name('crm_shipping_approval_log')
+                ->where('shipping_apply_id', $applyId)
+                ->field('id,shipping_apply_id,task_id,operator_id,operator_name,operator_role,action,before_status,after_status,opinion,create_time')
+                ->order('id', 'asc')
+                ->select();
+            $logs = (array)$logs;
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::getApplyDetailForView.load] ' . $e->getMessage(), 'error');
+            }
+            return ['code' => -200, 'msg' => '详情加载失败，请稍后重试', 'data' => []];
+        }
+
+        $itemRows = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $lineManagerId = (int)($item['product_manager_id'] ?? 0);
+            $canSeePurchase = $canViewAllPurchase
+                || ($viewerRole === 'product_manager' && $viewerManagerId > 0 && $lineManagerId === $viewerManagerId);
+
+            $purchaseUnit = null;
+            $purchaseAmount = null;
+            $purchaseMasked = false;
+            if ($canSeePurchase) {
+                $purchaseUnit = $item['apply_purchase_unit_price'] !== null && $item['apply_purchase_unit_price'] !== ''
+                    ? round((float)$item['apply_purchase_unit_price'], 2)
+                    : null;
+                $purchaseAmount = $item['apply_purchase_amount'] !== null && $item['apply_purchase_amount'] !== ''
+                    ? round((float)$item['apply_purchase_amount'], 2)
+                    : null;
+            } else {
+                $purchaseMasked = true;
+            }
+
+            $productName = trim((string)($item['apply_product_name'] ?? ''));
+            if ($productName === '') {
+                $productName = trim((string)($item['product_name'] ?? ''));
+            }
+            $specModel = trim((string)($item['apply_spec_model'] ?? ''));
+            if ($specModel === '') {
+                $specModel = trim((string)($item['spec_model'] ?? ''));
+            }
+
+            $itemRows[] = [
+                'id' => (int)($item['id'] ?? 0),
+                'apply_line_no' => (int)($item['apply_line_no'] ?? 0),
+                'source_product_name' => trim((string)($item['product_name'] ?? '')),
+                'apply_product_name' => $productName,
+                'apply_spec_model' => $specModel,
+                'apply_qty' => (int)($item['apply_qty'] ?? 0),
+                'unit' => trim((string)($item['unit'] ?? '')),
+                'apply_unit_price' => $item['apply_unit_price'] !== null && $item['apply_unit_price'] !== ''
+                    ? round((float)$item['apply_unit_price'], 2)
+                    : null,
+                'apply_sales_amount' => $item['apply_sales_amount'] !== null && $item['apply_sales_amount'] !== ''
+                    ? round((float)$item['apply_sales_amount'], 2)
+                    : null,
+                'apply_purchase_unit_price' => $purchaseUnit,
+                'apply_purchase_amount' => $purchaseAmount,
+                'purchase_price_masked' => $purchaseMasked ? 1 : 0,
+                'factory_id' => isset($item['factory_id']) && $item['factory_id'] !== null && $item['factory_id'] !== ''
+                    ? (int)$item['factory_id']
+                    : null,
+                'factory_name' => trim((string)($item['factory_name'] ?? '')),
+                'product_manager_id' => $lineManagerId > 0 ? $lineManagerId : null,
+                'product_manager_name' => trim((string)($item['product_manager_name'] ?? '')),
+                'remark' => trim((string)($item['remark'] ?? '')),
+            ];
+        }
+
+        $progress = $this->buildApprovalProgress($apply, $tasks);
+        $logRows = $this->formatApprovalLogsForView($logs, $viewerRole);
+
+        $header = [
+            'id' => (int)$apply['id'],
+            'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+            'order_id' => (int)($apply['order_id'] ?? 0),
+            'order_no' => trim((string)($apply['order_no'] ?? '')),
+            'customer_name' => trim((string)($apply['customer_name'] ?? '')),
+            'applicant_id' => (int)($apply['applicant_id'] ?? 0),
+            'applicant_name' => trim((string)($apply['applicant_name'] ?? '')),
+            'submit_time' => trim((string)($apply['submit_time'] ?? '')),
+            'order_amount' => round((float)($apply['order_amount'] ?? 0), 2),
+            'approval_threshold' => round((float)($apply['approval_threshold'] ?? 0), 2),
+            'approval_route' => (int)($apply['approval_route'] ?? 0),
+            'approval_route_text' => $this->mapApprovalRouteText((int)($apply['approval_route'] ?? 0)),
+            'approval_round' => $round,
+            'status' => $applyStatus,
+            'status_text' => $this->mapApplyStatusText($applyStatus),
+            'shipping_date' => trim((string)($apply['shipping_date'] ?? '')),
+            'shipping_method' => trim((string)($apply['shipping_method'] ?? '')),
+            'receiver_name' => trim((string)($apply['receiver_name'] ?? '')),
+            'receiver_phone' => trim((string)($apply['receiver_phone'] ?? '')),
+            'receiver_address' => trim((string)($apply['receiver_address'] ?? '')),
+            'shipping_remark' => trim((string)($apply['shipping_remark'] ?? '')),
+            'product_director_name' => trim((string)($apply['product_director_name'] ?? '')),
+        ];
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功',
+            'data' => [
+                'apply' => $header,
+                'items' => $itemRows,
+                'approval_progress' => $progress,
+                'approval_logs' => $logRows,
+                // 预留给 M4-2B；本轮只读，后端强制 false，不信任前端
+                'can_approve' => false,
+                'viewer_role' => $viewerRole,
+            ],
+        ];
+    }
+
+    /**
+     * 申请主状态文案
+     *
+     * @param int $status
+     * @return string
+     */
+    public function mapApplyStatusText($status)
+    {
+        $status = (int)$status;
+        $map = [
+            0 => '草稿',
+            10 => '待产品经理审核',
+            20 => '产品经理驳回',
+            30 => '待产品总监审核',
+            40 => '产品总监驳回',
+            50 => '审批通过',
+            60 => '已取消',
+        ];
+        if (isset($map[$status])) {
+            return $map[$status];
+        }
+        return '状态待确认(' . $status . ')';
+    }
+
+    /**
+     * 审批路线文案
+     *
+     * @param int $route
+     * @return string
+     */
+    public function mapApprovalRouteText($route)
+    {
+        $route = (int)$route;
+        if ($route === 1) {
+            return '产品经理审批';
+        }
+        if ($route === 2) {
+            return '产品经理+产品总监审批';
+        }
+        return '路线待确认(' . $route . ')';
+    }
+
+    /**
+     * 批量聚合当前页申请的当前审批人 / 下一阶段（避免 N+1；不 JOIN 分页）
+     *
+     * @param int[] $applyIds
+     * @param array<int,int> $roundMap apply_id => approval_round
+     * @param array $applyRows 当前页主表行（含 status/approval_route）
+     * @return array<int,array{current_approver_text:string,next_stage_text:string}>
+     */
+    public function loadCurrentApproverMap(array $applyIds, array $roundMap, array $applyRows = [])
+    {
+        $applyIds = array_values(array_unique(array_filter(array_map('intval', $applyIds), function ($id) {
+            return $id > 0;
+        })));
+        $result = [];
+        foreach ($applyIds as $id) {
+            $result[$id] = [
+                'current_approver_text' => '',
+                'next_stage_text' => '',
+            ];
+        }
+        if (empty($applyIds)) {
+            return $result;
+        }
+
+        $statusRouteMap = [];
+        foreach ($applyRows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $id = (int)($row['id'] ?? 0);
+            if ($id <= 0) {
+                continue;
+            }
+            $statusRouteMap[$id] = [
+                'status' => (int)($row['status'] ?? 0),
+                'approval_route' => (int)($row['approval_route'] ?? 0),
+            ];
+        }
+
+        try {
+            $tasks = Db::name('crm_shipping_approval_task')
+                ->whereIn('shipping_apply_id', $applyIds)
+                ->field('id,shipping_apply_id,approval_round,approval_type,approver_id,approver_name,status')
+                ->order('id', 'asc')
+                ->select();
+            $tasks = (array)$tasks;
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::loadCurrentApproverMap] ' . $e->getMessage(), 'error');
+            }
+            return $result;
+        }
+
+        /** @var array<int,array<int,string>> $currentNames */
+        $currentNames = [];
+        /** @var array<int,array<int,string>> $nextNames */
+        $nextNames = [];
+
+        foreach ($tasks as $task) {
+            if (!is_array($task)) {
+                continue;
+            }
+            $applyId = (int)($task['shipping_apply_id'] ?? 0);
+            if ($applyId <= 0 || !isset($roundMap[$applyId])) {
+                continue;
+            }
+            $taskRound = (int)($task['approval_round'] ?? 0);
+            if ($taskRound !== (int)$roundMap[$applyId]) {
+                continue;
+            }
+
+            $name = trim((string)($task['approver_name'] ?? ''));
+            if ($name === '') {
+                $aid = (int)($task['approver_id'] ?? 0);
+                $name = $aid > 0 ? ('用户#' . $aid) : '未知审批人';
+            }
+            $taskStatus = (int)($task['status'] ?? -1);
+            $approvalType = (int)($task['approval_type'] ?? 0);
+            $approverId = (int)($task['approver_id'] ?? 0);
+
+            $applyMeta = isset($statusRouteMap[$applyId]) ? $statusRouteMap[$applyId] : null;
+            $applyStatus = $applyMeta ? (int)$applyMeta['status'] : -1;
+            // 主状态与任务类型必须匹配：10→经理(1)，30→总监(2)；驳回/通过/取消/草稿/未知 → 无当前审批人
+            $allowedApprovalType = 0;
+            if ($applyStatus === 10) {
+                $allowedApprovalType = 1;
+            } elseif ($applyStatus === 30) {
+                $allowedApprovalType = 2;
+            }
+
+            // 当前审批人：本轮 + 已激活待审 + 类型与主状态一致
+            if ($taskStatus === 1 && $allowedApprovalType > 0 && $approvalType === $allowedApprovalType) {
+                if (!isset($currentNames[$applyId])) {
+                    $currentNames[$applyId] = [];
+                }
+                $dedupeKey = $approverId > 0 ? ('id:' . $approverId) : ('name:' . $name);
+                if (!isset($currentNames[$applyId][$dedupeKey])) {
+                    $currentNames[$applyId][$dedupeKey] = $name;
+                }
+            }
+
+            // 下一阶段：仅 status=10 + 高金额路线 + 本轮总监预创建未激活（驳回/取消/完成不展示）
+            if ($applyMeta
+                && $applyStatus === 10
+                && (int)$applyMeta['approval_route'] === 2
+                && $approvalType === 2
+                && $taskStatus === 0
+            ) {
+                if (!isset($nextNames[$applyId])) {
+                    $nextNames[$applyId] = [];
+                }
+                $dedupeKey = $approverId > 0 ? ('id:' . $approverId) : ('name:' . $name);
+                if (!isset($nextNames[$applyId][$dedupeKey])) {
+                    $nextNames[$applyId][$dedupeKey] = $name . '（未激活）';
+                }
+            }
+        }
+
+        foreach ($applyIds as $id) {
+            $curr = isset($currentNames[$id]) ? array_values($currentNames[$id]) : [];
+            $next = isset($nextNames[$id]) ? array_values($nextNames[$id]) : [];
+            $result[$id] = [
+                'current_approver_text' => implode('、', $curr),
+                'next_stage_text' => empty($next) ? '' : ('下一阶段：' . implode('、', $next)),
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * 组装当前轮审批进度（只读展示）
+     *
+     * @param array $apply
+     * @param array $tasks 已过滤为本轮的任务
+     * @return array
+     */
+    public function buildApprovalProgress(array $apply, array $tasks)
+    {
+        $route = (int)($apply['approval_route'] ?? 0);
+        $status = (int)($apply['status'] ?? 0);
+        $round = (int)($apply['approval_round'] ?? 0);
+
+        $pmTasks = [];
+        $directorTasks = [];
+        foreach ($tasks as $task) {
+            if (!is_array($task)) {
+                continue;
+            }
+            $type = (int)($task['approval_type'] ?? 0);
+            $node = [
+                'task_id' => (int)($task['id'] ?? 0),
+                'approver_id' => (int)($task['approver_id'] ?? 0),
+                'approver_name' => trim((string)($task['approver_name'] ?? '')),
+                'status' => (int)($task['status'] ?? -1),
+                'status_text' => $this->mapApprovalTaskStatusText((int)($task['status'] ?? -1)),
+                'activate_time' => trim((string)($task['activate_time'] ?? '')),
+                'audit_time' => trim((string)($task['audit_time'] ?? '')),
+            ];
+            if ($type === 1) {
+                $pmTasks[] = $node;
+            } elseif ($type === 2) {
+                $directorTasks[] = $node;
+            }
+        }
+
+        $stages = [];
+        $stages[] = [
+            'key' => 'submit',
+            'title' => '业务员正式提交',
+            'done' => true,
+            'nodes' => [
+                [
+                    'approver_name' => trim((string)($apply['applicant_name'] ?? '')),
+                    'status_text' => '已提交',
+                    'time' => trim((string)($apply['submit_time'] ?? '')),
+                ],
+            ],
+        ];
+        $stages[] = [
+            'key' => 'product_manager',
+            'title' => '产品经理审核',
+            'done' => in_array($status, [30, 50], true) || ($status === 20),
+            'active' => $status === 10,
+            'rejected' => $status === 20,
+            'nodes' => $pmTasks,
+        ];
+        if ($route === 2) {
+            $stages[] = [
+                'key' => 'product_director',
+                'title' => '产品总监审核',
+                'done' => $status === 50 || $status === 40,
+                'active' => $status === 30,
+                'rejected' => $status === 40,
+                'nodes' => $directorTasks,
+            ];
+        }
+        $stages[] = [
+            'key' => 'finished',
+            'title' => '审批完成',
+            'done' => $status === 50,
+            'active' => false,
+            'nodes' => [],
+        ];
+
+        return [
+            'approval_round' => $round,
+            'approval_route' => $route,
+            'apply_status' => $status,
+            'apply_status_text' => $this->mapApplyStatusText($status),
+            'stages' => $stages,
+        ];
+    }
+
+    /**
+     * 审批任务状态文案（仅确认 0/1；其余不猜测）
+     *
+     * @param int $taskStatus
+     * @return string
+     */
+    public function mapApprovalTaskStatusText($taskStatus)
+    {
+        $taskStatus = (int)$taskStatus;
+        if ($taskStatus === 0) {
+            return '未激活';
+        }
+        if ($taskStatus === 1) {
+            return '待审核';
+        }
+        return '状态待确认(' . $taskStatus . ')';
+    }
+
+    /**
+     * 整理审批历史为安全可读记录（过滤内部替代授权审计；不输出原始 opinion JSON）
+     *
+     * @param array $logs
+     * @param string $viewerRole
+     * @return array
+     */
+    public function formatApprovalLogsForView(array $logs, $viewerRole = '')
+    {
+        $viewerRole = (string)$viewerRole;
+        $rows = [];
+        foreach ($logs as $log) {
+            if (!is_array($log)) {
+                continue;
+            }
+            $action = trim((string)($log['action'] ?? ''));
+            if ($action === '') {
+                continue;
+            }
+
+            // 内部管理审计：本轮不对普通查看者展示原文
+            if (strpos($action, 'pm_substitute_') === 0
+                || $action === 'submit_finance_cc_anomaly'
+                || $action === 'delete_draft'
+            ) {
+                continue;
+            }
+
+            $summary = $this->buildPublicApprovalLogSummary($action, $log);
+            if ($summary === null) {
+                // 未知动作：仅显示动作码，不展开 opinion
+                $summary = [
+                    'action_text' => '操作记录(' . $action . ')',
+                    'opinion_text' => '',
+                ];
+            }
+
+            $rows[] = [
+                'id' => (int)($log['id'] ?? 0),
+                'action' => $action,
+                'action_text' => (string)$summary['action_text'],
+                'operator_name' => trim((string)($log['operator_name'] ?? '')),
+                'operator_role' => trim((string)($log['operator_role'] ?? '')),
+                'before_status' => isset($log['before_status']) && $log['before_status'] !== null && $log['before_status'] !== ''
+                    ? (int)$log['before_status']
+                    : null,
+                'after_status' => isset($log['after_status']) && $log['after_status'] !== null && $log['after_status'] !== ''
+                    ? (int)$log['after_status']
+                    : null,
+                'before_status_text' => isset($log['before_status']) && $log['before_status'] !== null && $log['before_status'] !== ''
+                    ? $this->mapApplyStatusText((int)$log['before_status'])
+                    : '',
+                'after_status_text' => isset($log['after_status']) && $log['after_status'] !== null && $log['after_status'] !== ''
+                    ? $this->mapApplyStatusText((int)$log['after_status'])
+                    : '',
+                'opinion_text' => (string)$summary['opinion_text'],
+                'create_time' => trim((string)($log['create_time'] ?? '')),
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * 解析列表日期边界（仅允许 Y-m-d）
+     *
+     * @param string $date
+     * @param bool $isStart true→00:00:00；false→23:59:59
+     * @return string|null
+     */
+    protected function parseMyApplyDateBound($date, $isStart)
+    {
+        $date = trim((string)$date);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return null;
+        }
+        $dt = \DateTime::createFromFormat('Y-m-d', $date);
+        if (!$dt || $dt->format('Y-m-d') !== $date) {
+            return null;
+        }
+        return $isStart ? ($date . ' 00:00:00') : ($date . ' 23:59:59');
+    }
+
+    /**
+     * 统一详情查看鉴权（申请人 / 本轮激活审批人；超管本轮不额外放行）
+     *
+     * @param array $apply
+     * @param int $viewerId
+     * @return array{ok:bool,role:string,can_view_all_purchase:bool,viewer_manager_id:int}
+     */
+    protected function resolveApplyViewAccess(array $apply, $viewerId)
+    {
+        $deny = [
+            'ok' => false,
+            'role' => '',
+            'can_view_all_purchase' => false,
+            'viewer_manager_id' => 0,
+        ];
+        $viewerId = (int)$viewerId;
+        if ($viewerId <= 0) {
+            return $deny;
+        }
+
+        if ((int)($apply['applicant_id'] ?? 0) === $viewerId) {
+            return [
+                'ok' => true,
+                'role' => 'applicant',
+                'can_view_all_purchase' => true,
+                'viewer_manager_id' => 0,
+            ];
+        }
+
+        $applyId = (int)($apply['id'] ?? 0);
+        $round = (int)($apply['approval_round'] ?? 0);
+        $status = (int)($apply['status'] ?? -1);
+        if ($applyId <= 0 || $round <= 0) {
+            return $deny;
+        }
+
+        // 产品经理：本轮激活任务 + 申请处于待经理审核
+        if ($status === 10) {
+            try {
+                $pmTask = Db::name('crm_shipping_approval_task')
+                    ->where('shipping_apply_id', $applyId)
+                    ->where('approval_round', $round)
+                    ->where('approver_id', $viewerId)
+                    ->where('approval_type', 1)
+                    ->where('status', 1)
+                    ->field('id')
+                    ->find();
+            } catch (\Throwable $e) {
+                return $deny;
+            }
+            if (!empty($pmTask)) {
+                return [
+                    'ok' => true,
+                    'role' => 'product_manager',
+                    'can_view_all_purchase' => false,
+                    'viewer_manager_id' => $viewerId,
+                ];
+            }
+        }
+
+        // 产品总监：本轮激活任务 + 申请处于待总监审核；预创建未激活不得越权
+        if ($status === 30) {
+            try {
+                $dirTask = Db::name('crm_shipping_approval_task')
+                    ->where('shipping_apply_id', $applyId)
+                    ->where('approval_round', $round)
+                    ->where('approver_id', $viewerId)
+                    ->where('approval_type', 2)
+                    ->where('status', 1)
+                    ->field('id')
+                    ->find();
+            } catch (\Throwable $e) {
+                return $deny;
+            }
+            if (!empty($dirTask)) {
+                return [
+                    'ok' => true,
+                    'role' => 'product_director',
+                    // 总监审整单；采购价对其开放（仍禁止未激活预创建任务）
+                    'can_view_all_purchase' => true,
+                    'viewer_manager_id' => 0,
+                ];
+            }
+        }
+
+        // 超管本轮不额外开放跨人查看
+        return $deny;
+    }
+
+    /**
+     * @param string $action
+     * @param array $log
+     * @return array{action_text:string,opinion_text:string}|null
+     */
+    protected function buildPublicApprovalLogSummary($action, array $log)
+    {
+        $opinionRaw = trim((string)($log['opinion'] ?? ''));
+        if ($action === 'submit') {
+            $note = '发货申请已正式提交';
+            if ($opinionRaw !== '' && $opinionRaw[0] === '{') {
+                $decoded = json_decode($opinionRaw, true);
+                if (is_array($decoded) && isset($decoded['note']) && is_string($decoded['note'])) {
+                    $noteText = trim($decoded['note']);
+                    if ($noteText !== '') {
+                        $note = $noteText;
+                    }
+                }
+            } elseif ($opinionRaw !== '' && $opinionRaw[0] !== '{') {
+                // 非 JSON 意见：截断后作为纯文本
+                $note = mb_substr($opinionRaw, 0, 200, 'UTF-8');
+            }
+            return [
+                'action_text' => '正式提交',
+                'opinion_text' => $note,
+            ];
+        }
+
+        // 预留：未来审批通过/驳回（M4-2B）；本轮仅安全展示，不猜字段契约
+        if ($action === 'approve' || $action === 'pm_approve' || $action === 'director_approve') {
+            $text = $this->extractPlainOpinionText($opinionRaw);
+            return [
+                'action_text' => '审核通过',
+                'opinion_text' => $text,
+            ];
+        }
+        if ($action === 'reject' || $action === 'pm_reject' || $action === 'director_reject') {
+            $text = $this->extractPlainOpinionText($opinionRaw);
+            return [
+                'action_text' => '审核驳回',
+                'opinion_text' => $text,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * 从 opinion 提取对用户安全的纯文本（JSON 仅取常见可读键；禁止整段 JSON 原样输出）
+     *
+     * @param string $opinionRaw
+     * @return string
+     */
+    protected function extractPlainOpinionText($opinionRaw)
+    {
+        $opinionRaw = trim((string)$opinionRaw);
+        if ($opinionRaw === '') {
+            return '';
+        }
+        if ($opinionRaw[0] === '{') {
+            $decoded = json_decode($opinionRaw, true);
+            if (!is_array($decoded)) {
+                return '';
+            }
+            foreach (['opinion', 'reason', 'note', 'comment'] as $key) {
+                if (isset($decoded[$key]) && is_string($decoded[$key])) {
+                    $t = trim($decoded[$key]);
+                    if ($t !== '') {
+                        return mb_substr($t, 0, 500, 'UTF-8');
+                    }
+                }
+            }
+            return '';
+        }
+        return mb_substr($opinionRaw, 0, 500, 'UTF-8');
+    }
 }
