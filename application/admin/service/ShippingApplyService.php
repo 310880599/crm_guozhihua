@@ -6649,6 +6649,217 @@ class ShippingApplyService
     }
 
     /**
+     * 待我审核列表（M4-2B-2A 只读；Layui 分页）
+     *
+     * 权限依据：crm_shipping_approval_task.approver_id = session('aid')
+     * 且任务 status=1、approval_round=申请当前轮次、主状态与审批类型匹配：
+     *   status=10 → approval_type=1；status=30 → approval_type=2。
+     * 禁止信任前端 approver_id / group_id / is_admin；超管不扩大范围。
+     *
+     * 去重键：shipping_apply_id（同一审批人对同一申请本轮同阶段多条任务只展示一行）。
+     * 异常重复：保留 MIN(task.id) 作为 pending_task_id，matched_task_cnt>1 时写 error 日志，不掩盖计数。
+     *
+     * @param array $params
+     * @return array{code:int,msg:string,count:int,data:array}
+     */
+    public function listPendingApplies($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        // 显式丢弃前端伪造身份 / 审批字段，避免后续误用
+        unset(
+            $params['approver_id'],
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['can_view'],
+            $params['viewer_role'],
+            $params['can_approve'],
+            $params['approval_type'],
+            $params['task_status']
+        );
+
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'count' => 0, 'data' => []];
+        }
+
+        $page = (int)($params['page'] ?? 1);
+        if ($page < 1) {
+            $page = 1;
+        }
+        $limit = (int)($params['limit'] ?? 10);
+        if ($limit < 1) {
+            $limit = 10;
+        }
+        if ($limit > self::MY_APPLY_LIST_LIMIT_MAX) {
+            $limit = self::MY_APPLY_LIST_LIMIT_MAX;
+        }
+
+        $keyword = trim((string)($params['keyword'] ?? ''));
+        if (mb_strlen($keyword, 'UTF-8') > self::MY_APPLY_KEYWORD_MAX) {
+            return ['code' => -200, 'msg' => '关键字过长', 'count' => 0, 'data' => []];
+        }
+
+        $startTime = trim((string)($params['start_time'] ?? ''));
+        $endTime = trim((string)($params['end_time'] ?? ''));
+        $startBound = null;
+        $endBound = null;
+        if ($startTime !== '') {
+            $startBound = $this->parseMyApplyDateBound($startTime, true);
+            if ($startBound === null) {
+                return ['code' => -200, 'msg' => '开始日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($endTime !== '') {
+            $endBound = $this->parseMyApplyDateBound($endTime, false);
+            if ($endBound === null) {
+                return ['code' => -200, 'msg' => '结束日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($startBound !== null && $endBound !== null && strcmp($startBound, $endBound) > 0) {
+            return ['code' => -200, 'msg' => '开始日期不能晚于结束日期', 'count' => 0, 'data' => []];
+        }
+
+        $query = Db::name('crm_shipping_approval_task')->alias('t')
+            ->join('crm_shipping_apply a', 'a.id = t.shipping_apply_id')
+            ->where('t.approver_id', $adminId)
+            ->where('t.status', 1)
+            ->where('a.is_deleted', 0)
+            ->whereRaw('t.approval_round = a.approval_round')
+            ->where(function ($q) {
+                $q->where(function ($q2) {
+                    $q2->where('a.status', 10)->where('t.approval_type', 1);
+                })->whereOr(function ($q2) {
+                    $q2->where('a.status', 30)->where('t.approval_type', 2);
+                });
+            });
+
+        if ($keyword !== '') {
+            $query->where(function ($q) use ($keyword) {
+                $q->whereLike('a.apply_no', '%' . $keyword . '%')
+                    ->whereOr('a.order_no', 'like', '%' . $keyword . '%')
+                    ->whereOr('a.customer_name', 'like', '%' . $keyword . '%')
+                    ->whereOr('a.applicant_name', 'like', '%' . $keyword . '%');
+            });
+        }
+        if ($startBound !== null) {
+            $query->where('a.submit_time', '>=', $startBound);
+        }
+        if ($endBound !== null) {
+            $query->where('a.submit_time', '<=', $endBound);
+        }
+
+        try {
+            // 按申请去重计数，避免同申请多任务导致分页总数偏大
+            $count = (int)(clone $query)->count('DISTINCT a.id');
+            if ($count <= 0) {
+                return [
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'count' => 0,
+                    'data' => [],
+                ];
+            }
+
+            $rows = (clone $query)
+                ->field(
+                    'a.id,a.apply_no,a.order_no,a.customer_name,a.applicant_id,a.applicant_name,'
+                    . 'a.order_amount,a.shipping_date,a.submit_time,a.status,a.approval_round,a.approval_route,'
+                    . 'MIN(t.id) AS pending_task_id,COUNT(t.id) AS matched_task_cnt,'
+                    . 'MAX(t.approval_type) AS matched_approval_type'
+                )
+                ->group('a.id')
+                ->order('a.submit_time', 'desc')
+                ->order('a.id', 'desc')
+                ->page($page, $limit)
+                ->select();
+            $rows = (array)$rows;
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::listPendingApplies] ' . $e->getMessage(), 'error');
+            }
+            return ['code' => -200, 'msg' => '列表加载失败，请稍后重试', 'count' => 0, 'data' => []];
+        }
+
+        $applyIds = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) {
+                $applyIds[] = $id;
+            }
+            $matchedCnt = (int)($row['matched_task_cnt'] ?? 0);
+            if ($matchedCnt > 1 && class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::listPendingApplies] duplicate pending tasks'
+                    . ' apply_id=' . $id
+                    . ' approver_id=' . $adminId
+                    . ' matched_task_cnt=' . $matchedCnt
+                    . ' kept_task_id=' . (int)($row['pending_task_id'] ?? 0),
+                    'error'
+                );
+            }
+        }
+
+        $summaryMap = $this->buildDraftProductSummaries($applyIds);
+
+        $data = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            $status = (int)($row['status'] ?? 0);
+            $data[] = [
+                'id' => $id,
+                'apply_no' => trim((string)($row['apply_no'] ?? '')),
+                'order_no' => trim((string)($row['order_no'] ?? '')),
+                'customer_name' => trim((string)($row['customer_name'] ?? '')),
+                'applicant_id' => (int)($row['applicant_id'] ?? 0),
+                'applicant_name' => trim((string)($row['applicant_name'] ?? '')),
+                'order_amount' => round((float)($row['order_amount'] ?? 0), 2),
+                'shipping_date' => trim((string)($row['shipping_date'] ?? '')),
+                'submit_time' => trim((string)($row['submit_time'] ?? '')),
+                'status' => $status,
+                'status_text' => $this->mapApplyStatusText($status),
+                'current_stage_text' => $this->mapPendingApprovalStageText($status),
+                'approval_round' => (int)($row['approval_round'] ?? 0),
+                'approval_route' => (int)($row['approval_route'] ?? 0),
+                'approval_route_text' => $this->mapApprovalRouteText((int)($row['approval_route'] ?? 0)),
+                'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
+                'pending_task_id' => (int)($row['pending_task_id'] ?? 0),
+                'matched_approval_type' => (int)($row['matched_approval_type'] ?? 0),
+                // 本轮只读入口；写操作属 M4-2B-2B，后端强制不可审
+                'can_approve' => false,
+            ];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功',
+            'count' => $count,
+            'data' => $data,
+        ];
+    }
+
+    /**
+     * 待我审核列表：当前审批阶段文案（仅 10/30 有效）
+     *
+     * @param int $status
+     * @return string
+     */
+    public function mapPendingApprovalStageText($status)
+    {
+        $status = (int)$status;
+        if ($status === 10) {
+            return '产品经理审核';
+        }
+        if ($status === 30) {
+            return '产品总监审核';
+        }
+        return '-';
+    }
+
+    /**
      * 统一发货申请只读详情（鉴权后返回；供页面与后续「待我审核」复用）
      *
      * @param mixed $applyId

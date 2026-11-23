@@ -197,6 +197,34 @@ class Ship extends Common
     }
 
     /**
+     * 待我审核（M4-2B-2A 只读列表；本轮不提供通过/驳回写操作）
+     * GET：列表页
+     * POST：op=list → listPendingApplies（仅 session 审批人有效任务）
+     */
+    public function pendingShip()
+    {
+        $service = $this->getShippingApplyService();
+
+        if (request()->isPost()) {
+            $op = trim((string)Request::param('op', ''));
+            $params = Request::param();
+            if (!is_array($params)) {
+                $params = [];
+            }
+
+            switch ($op) {
+                case '':
+                case 'list':
+                    return json($service->listPendingApplies($params));
+                default:
+                    return json(['code' => -200, 'msg' => '无效的操作', 'count' => 0, 'data' => []]);
+            }
+        }
+
+        return $this->fetch('ship/pending_ship');
+    }
+
+    /**
      * 统一发货申请只读详情（M4-2A；供「我的发货申请」与后续「待我审核」复用）
      * GET：鉴权后渲染；禁止写操作
      */
