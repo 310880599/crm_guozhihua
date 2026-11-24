@@ -26,8 +26,14 @@ class Ship extends Common
     /** 正式提交 CSRF：Session 键（与业务 submit_token 分离） */
     const SUBMIT_CSRF_SESSION_KEY = 'ship_submit_csrf';
 
+    /** 审批决策 CSRF：Session 键（与正式提交 CSRF / 审批幂等严格分离） */
+    const DECIDE_CSRF_SESSION_KEY = 'ship_decide_csrf';
+
     /** CSRF Token：bin2hex(random_bytes(32)) → 64 hex */
     const SUBMIT_CSRF_TOKEN_HEX_LEN = 64;
+
+    /** 审批 CSRF Token 长度（与提交 CSRF 同规格） */
+    const DECIDE_CSRF_TOKEN_HEX_LEN = 64;
 
     /**
      * @return ShippingConfigService
@@ -225,8 +231,8 @@ class Ship extends Common
     }
 
     /**
-     * 统一发货申请只读详情（M4-2A；供「我的发货申请」与后续「待我审核」复用）
-     * GET：鉴权后渲染；禁止写操作
+     * 统一发货申请详情（M4-2A/M4-2B；供「我的发货申请」与「待我审核」复用）
+     * GET：鉴权后渲染；禁止写操作。可审上下文来自 Service，不信任前端。
      */
     public function applyDetail()
     {
@@ -258,13 +264,217 @@ class Ship extends Common
         }
 
         $data = isset($result['data']) && is_array($result['data']) ? $result['data'] : [];
-        // 后端强制只读；前端伪造无效
-        $data['can_approve'] = false;
+        // 仅信任 Service 返回的可审上下文；不因 URL 来源授予写权限
+        $canApprove = !empty($data['can_approve']);
+        $approvalTaskId = (int)($data['approval_task_id'] ?? 0);
+        if (!$canApprove || $approvalTaskId <= 0) {
+            $data['can_approve'] = false;
+            $data['approval_task_id'] = 0;
+            $data['approval_type'] = (int)($data['approval_type'] ?? 0);
+            $data['approval_round'] = (int)($data['approval_round'] ?? 0);
+            $data['approval_action_label'] = (string)($data['approval_action_label'] ?? '');
+        } else {
+            $data['can_approve'] = true;
+            $data['approval_task_id'] = $approvalTaskId;
+        }
+
+        // 审批 CSRF：仅对当前有合法审批资格的详情页签发（独立 Session 键）
+        $decideCsrfToken = '';
+        if (!empty($data['can_approve'])) {
+            $sessionAid = $this->normalizeSubmitSessionAid($this->getSubmitSessionAid());
+            if ($sessionAid > 0) {
+                try {
+                    $decideCsrfToken = $this->ensureDecideCsrfToken($sessionAid);
+                } catch (\Throwable $e) {
+                    // Token 签发失败：降级为不可审展示，避免无 CSRF 的写入口
+                    $decideCsrfToken = '';
+                    $data['can_approve'] = false;
+                    $data['approval_task_id'] = 0;
+                }
+            } else {
+                $data['can_approve'] = false;
+                $data['approval_task_id'] = 0;
+            }
+        }
 
         $this->assign('detailJson', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP));
         $this->assign('applyId', $applyId);
+        $this->assign('decideCsrfTokenJson', json_encode((string)$decideCsrfToken, JSON_UNESCAPED_SLASHES));
+        $this->assign('decideUrlJson', json_encode((string)url('Ship/decideApply'), JSON_UNESCAPED_SLASHES));
 
         return $this->fetch('ship/apply_detail');
+    }
+
+    /**
+     * 发货申请审批决策（通过/驳回）HTTP 入口
+     *
+     * 仅负责：POST / Session / 独立 CSRF / 参数入口 / 一次 Service 调用 / JSON 透传。
+     * 禁止在此开启事务或复制审批状态机。
+     *
+     * @return \think\response\Json
+     */
+    public function decideApply()
+    {
+        // 1. 仅允许 POST
+        if (!$this->request->isPost()) {
+            return json([
+                'code' => -200,
+                'msg'  => '仅支持 POST 提交',
+                'data' => [],
+            ]);
+        }
+
+        // 2. Session 登录校验（身份权威来源仅为 session('aid')）
+        $aidRaw = $this->getSubmitSessionAid();
+        $aid = $this->normalizeSubmitSessionAid($aidRaw);
+        if ($aid <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => ($aidRaw === null || $aidRaw === '' || $aidRaw === false)
+                    ? '请先登录'
+                    : '登录状态无效',
+                'data' => [],
+            ]);
+        }
+
+        // 3. 独立审批 CSRF
+        $csrfRaw = $this->request->post('csrf_token');
+        $csrfCheck = $this->validateDecideCsrfToken($csrfRaw, $aid);
+        if ($csrfCheck['ok'] !== true) {
+            return json([
+                'code' => -200,
+                'msg'  => $csrfCheck['msg'],
+                'data' => [],
+            ]);
+        }
+
+        // 4. 仅读取 POST（禁止 param() 混合 GET）
+        $params = $this->request->post();
+        if (!is_array($params)) {
+            $params = [];
+        }
+
+        // 5. decision 闸门（仅 approve|reject；其余拒绝）
+        $decisionRaw = isset($params['decision']) ? $params['decision'] : '';
+        if (!is_string($decisionRaw) && !is_numeric($decisionRaw)) {
+            return json([
+                'code' => -200,
+                'msg'  => '审批动作无效',
+                'data' => [],
+            ]);
+        }
+        $decision = trim((string)$decisionRaw);
+        if ($decision !== 'approve' && $decision !== 'reject') {
+            return json([
+                'code' => -200,
+                'msg'  => '审批动作无效',
+                'data' => [],
+            ]);
+        }
+
+        // 6. 入口级正整数闸门（完整业务校验仍由 Service）
+        $applyIdCheck = $this->parseDecidePositiveInt(
+            array_key_exists('apply_id', $params) ? $params['apply_id'] : null
+        );
+        $taskIdCheck = $this->parseDecidePositiveInt(
+            array_key_exists('task_id', $params) ? $params['task_id'] : null
+        );
+        if ($applyIdCheck <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => '发货申请ID无效',
+                'data' => [],
+            ]);
+        }
+        if ($taskIdCheck <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => '审批任务ID无效',
+                'data' => [],
+            ]);
+        }
+
+        // 显式丢弃伪造身份/权限字段；CSRF 不进入业务载荷
+        unset(
+            $params['csrf_token'],
+            $params['approver_id'],
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['operator_id'],
+            $params['operator_role'],
+            $params['approval_round'],
+            $params['approval_type'],
+            $params['can_approve'],
+            $params['can_view'],
+            $params['viewer_role']
+        );
+
+        $params['apply_id'] = $applyIdCheck;
+        $params['task_id'] = $taskIdCheck;
+        // 统一意见字段；驳回理由必填由 Service 校验
+        if (!array_key_exists('opinion', $params)) {
+            $params['opinion'] = '';
+        }
+
+        try {
+            $result = $this->getShippingApplyService()->decideApply($params, $decision);
+            if (!is_array($result)) {
+                return json([
+                    'code' => -200,
+                    'msg'  => '审批暂时无法完成，请刷新后核对',
+                    'data' => [],
+                ]);
+            }
+            // 原样透传（含 idempotent_replay / result_uncertain）；不得把失败改成 code=0
+            return json($result);
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[Ship::decideApply] ' . $e->getMessage(),
+                    'error'
+                );
+            }
+            return json([
+                'code' => -200,
+                'msg'  => '审批暂时无法完成，请刷新后核对',
+                'data' => [],
+            ]);
+        }
+    }
+
+    /**
+     * 审批入口正整数解析（严格；非法返回 0）
+     *
+     * @param mixed $raw
+     * @return int
+     */
+    protected function parseDecidePositiveInt($raw)
+    {
+        if ($raw === null || $raw === '' || is_array($raw) || is_object($raw) || is_bool($raw)) {
+            return 0;
+        }
+        if (is_int($raw)) {
+            return $raw > 0 ? $raw : 0;
+        }
+        if (is_float($raw)) {
+            return 0;
+        }
+        if (!is_numeric($raw)) {
+            return 0;
+        }
+        $text = trim((string)$raw);
+        if ($text === '' || !preg_match('/^[1-9]\d*$/', $text)) {
+            return 0;
+        }
+        $n = (int)$text;
+        if ($n <= 0 || (string)$n !== $text) {
+            return 0;
+        }
+        return $n;
     }
 
     /**
@@ -669,5 +879,126 @@ class Ship extends Common
             }
         }
         return true;
+    }
+
+    // -------------------------------------------------------------------------
+    // M4-2B-2B-2B-2：审批独立 CSRF（Session 键 ship_decide_csrf）
+    // -------------------------------------------------------------------------
+
+    /**
+     * 读取审批 CSRF Session 记录
+     *
+     * @return mixed
+     */
+    protected function getDecideCsrfSessionRecord()
+    {
+        return session(self::DECIDE_CSRF_SESSION_KEY);
+    }
+
+    /**
+     * 写入审批 CSRF Session 记录
+     *
+     * @param array $record
+     * @return void
+     */
+    protected function setDecideCsrfSessionRecord(array $record)
+    {
+        session(self::DECIDE_CSRF_SESSION_KEY, $record);
+    }
+
+    /**
+     * 审批 CSRF Token 格式校验
+     *
+     * @param mixed $token
+     * @return bool
+     */
+    protected function isValidDecideCsrfTokenFormat($token)
+    {
+        if (!is_string($token)) {
+            return false;
+        }
+        if (strlen($token) !== self::DECIDE_CSRF_TOKEN_HEX_LEN) {
+            return false;
+        }
+        return (bool)preg_match('/^[a-fA-F0-9]{' . self::DECIDE_CSRF_TOKEN_HEX_LEN . '}$/', $token);
+    }
+
+    /**
+     * 生成或复用与当前 aid 绑定的审批 CSRF Token（同 Session 可重复校验；不一次性销毁）
+     *
+     * @param int $aid
+     * @return string
+     * @throws \RuntimeException
+     */
+    protected function ensureDecideCsrfToken($aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            throw new \RuntimeException('登录状态无效');
+        }
+
+        $record = $this->getDecideCsrfSessionRecord();
+        if (is_array($record)
+            && isset($record['aid'], $record['token'])
+            && (int)$record['aid'] === $aid
+            && $this->isValidDecideCsrfTokenFormat($record['token'])
+        ) {
+            return (string)$record['token'];
+        }
+
+        try {
+            $token = bin2hex(random_bytes(32));
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+        if (!$this->isValidDecideCsrfTokenFormat($token)) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+
+        $this->setDecideCsrfSessionRecord([
+            'aid'   => $aid,
+            'token' => $token,
+        ]);
+
+        return $token;
+    }
+
+    /**
+     * 校验审批 CSRF（失败不泄露服务端 Token）
+     *
+     * @param mixed $raw
+     * @param int   $aid
+     * @return array{ok:bool,msg:string}
+     */
+    protected function validateDecideCsrfToken($raw, $aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            return ['ok' => false, 'msg' => '登录状态无效'];
+        }
+        if ($raw === null || is_array($raw) || is_object($raw) || is_bool($raw) || is_int($raw) || is_float($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+        if (!is_string($raw) || $raw === '' || !$this->isValidDecideCsrfTokenFormat($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        $record = $this->getDecideCsrfSessionRecord();
+        if (!is_array($record)
+            || !isset($record['aid'], $record['token'])
+            || !$this->isValidDecideCsrfTokenFormat($record['token'])
+        ) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        if ((int)$record['aid'] !== $aid) {
+            return ['ok' => false, 'msg' => '登录身份已变化，请刷新页面后重新确认审批状态'];
+        }
+
+        if (!hash_equals((string)$record['token'], $raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        return ['ok' => true, 'msg' => ''];
     }
 }

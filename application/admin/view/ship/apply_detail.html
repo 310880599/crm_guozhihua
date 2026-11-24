@@ -92,6 +92,30 @@
         border-color: #0d8aee !important;
         color: #fff !important;
     }
+    .apply-detail-actions {
+        margin-top: 8px;
+        padding: 12px 0 4px;
+        text-align: center;
+        border-top: 1px solid #e6e6e6;
+    }
+    .apply-detail-actions .layui-btn {
+        margin: 0 6px;
+        min-width: 110px;
+    }
+    .apply-detail-reject-box {
+        padding: 8px 4px 0;
+    }
+    .apply-detail-reject-box textarea {
+        width: 100%;
+        min-height: 110px;
+        box-sizing: border-box;
+        resize: vertical;
+    }
+    .apply-detail-reject-hint {
+        color: #999;
+        font-size: 12px;
+        margin-top: 6px;
+    }
 </style>
 </head>
 <body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
@@ -161,6 +185,11 @@
             </table>
         </div>
     </div>
+
+    <div class="apply-detail-actions" id="sec-approve-actions" style="display:none;">
+        <button type="button" class="layui-btn layui-btn-normal" id="btn-approve-pass">审核通过</button>
+        <button type="button" class="layui-btn layui-btn-danger" id="btn-approve-reject">审核驳回</button>
+    </div>
 </div>
 
 {include file="common/foot"/}
@@ -179,6 +208,10 @@ layui.use(['layer'], function () {
     } catch (e) {
         detailPayload = null;
     }
+
+    var pageDecideCsrfToken = {$decideCsrfTokenJson|default='""'|raw};
+    var pageDecideUrl = {$decideUrlJson|default='""'|raw};
+    var pageApplyId = parseInt('{$applyId|default=0}', 10) || 0;
 
     function escapeHtml(str) {
         return String(str == null ? '' : str)
@@ -218,16 +251,23 @@ layui.use(['layer'], function () {
         return;
     }
 
-    // 本轮只读：即使载荷被篡改也不展示审批按钮
-    var canApprove = false;
-    if (canApprove) {
-        // reserved for M4-2B
-    }
+    // 按钮展示仅看服务端字段；前端伪造无效，写权限由 POST decideApply 再校验
+    var canApprove = detailPayload.can_approve === true
+        || detailPayload.can_approve === 1
+        || detailPayload.can_approve === '1';
+    var approvalTaskId = parseInt(detailPayload.approval_task_id, 10) || 0;
+    var approvalActionLabel = String(detailPayload.approval_action_label || '审核');
+    var decideLocked = false;
+    var decideSubmitting = false;
+    var rejectLayerIndex = null;
 
     var apply = detailPayload.apply || {};
     var items = detailPayload.items || [];
     var progress = detailPayload.approval_progress || {};
     var logs = detailPayload.approval_logs || [];
+    if (!pageApplyId && apply.id) {
+        pageApplyId = parseInt(apply.id, 10) || 0;
+    }
 
     var basicHtml = ''
         + '<div class="layui-col-md4">' + kv('发货申请编号', apply.apply_no) + '</div>'
@@ -346,7 +386,7 @@ layui.use(['layer'], function () {
     }
     $('#sec-logs').html(logHtml);
 
-    $('#btn-close-detail').on('click', function () {
+    function closeDetailFrame() {
         try {
             if (parent && parent.layer && typeof parent.layer.getFrameIndex === 'function') {
                 var index = parent.layer.getFrameIndex(window.name);
@@ -355,7 +395,256 @@ layui.use(['layer'], function () {
             }
         } catch (e2) {}
         window.history.back();
+    }
+
+    function notifyParentPendingRefresh() {
+        try {
+            if (parent && typeof parent.refreshPendingShipList === 'function') {
+                parent.refreshPendingShipList(false);
+                return true;
+            }
+        } catch (e3) {}
+        return false;
+    }
+
+    function setApproveButtonsDisabled(disabled) {
+        var $btns = $('#btn-approve-pass, #btn-approve-reject');
+        if (disabled) {
+            $btns.addClass('layui-btn-disabled').prop('disabled', true);
+        } else {
+            $btns.removeClass('layui-btn-disabled').prop('disabled', false);
+        }
+    }
+
+    function lockApproveUi(reasonMsg) {
+        decideLocked = true;
+        decideSubmitting = false;
+        setApproveButtonsDisabled(true);
+        if (reasonMsg) {
+            layer.msg(reasonMsg, { icon: 0, time: 3500 });
+        }
+    }
+
+    function safeErrorMsg(msg, fallback) {
+        var text = $.trim(String(msg == null ? '' : msg));
+        if (!text) {
+            return fallback || '操作失败';
+        }
+        // 避免把超长/HTML 噪声当错误文案
+        if (text.length > 200) {
+            text = text.substring(0, 200);
+        }
+        if (/<html|<script|login|登录页面/i.test(text) && text.length > 80) {
+            return '登录状态可能已失效，请重新登录后核对';
+        }
+        return text;
+    }
+
+    function parseDecideResponse(raw) {
+        if (raw && typeof raw === 'object') {
+            return { ok: true, data: raw };
+        }
+        if (typeof raw !== 'string') {
+            return { ok: false, reason: 'non_json' };
+        }
+        var text = $.trim(raw);
+        if (!text) {
+            return { ok: false, reason: 'empty' };
+        }
+        if (text.charAt(0) === '<' || /<!DOCTYPE|<html/i.test(text)) {
+            return { ok: false, reason: 'html_login' };
+        }
+        try {
+            var obj = JSON.parse(text);
+            if (!obj || typeof obj !== 'object') {
+                return { ok: false, reason: 'non_json' };
+            }
+            return { ok: true, data: obj };
+        } catch (e4) {
+            return { ok: false, reason: 'non_json' };
+        }
+    }
+
+    function handleDecideSuccess(res, decision) {
+        var data = (res && res.data && typeof res.data === 'object') ? res.data : {};
+        var replay = data.idempotent_replay === true || data.idempotent_replay === 1 || data.idempotent_replay === '1';
+        var tip;
+        if (replay) {
+            tip = decision === 'reject' ? '此前已驳回' : '此前已通过';
+        } else if (decision === 'reject') {
+            tip = '驳回成功';
+        } else {
+            tip = '审核通过成功';
+        }
+        if (res && res.msg && !replay) {
+            // 优先简洁成功文案；服务端业务 msg 可作补充
+            tip = tip;
+        }
+        layer.msg(tip, { icon: 1, time: 1800 }, function () {
+            notifyParentPendingRefresh();
+            closeDetailFrame();
+        });
+        // 成功后不再恢复按钮
+        decideLocked = true;
+        setApproveButtonsDisabled(true);
+    }
+
+    function handleDecideResponse(res, decision) {
+        var data = (res && res.data && typeof res.data === 'object') ? res.data : {};
+        var uncertain = data.result_uncertain === true || data.result_uncertain === 1 || data.result_uncertain === '1';
+
+        if (uncertain) {
+            lockApproveUi('审批结果尚无法确认，请刷新后核对');
+            return;
+        }
+
+        if (res && parseInt(res.code, 10) === 0) {
+            handleDecideSuccess(res, decision);
+            return;
+        }
+
+        // 明确业务失败：不报成功、不自动重试
+        decideSubmitting = false;
+        var msg = safeErrorMsg(res && res.msg, '审批失败，请刷新后核对');
+        if (/状态|冲突|失效|轮次|不可审批|无权/i.test(msg)) {
+            msg = msg + '（建议刷新后核对）';
+        }
+        layer.msg(msg, { icon: 2, time: 3200 });
+        // 若任务可能已失效，保持按钮可用但用户需自行刷新；不确定时不鼓励立刻再点
+        if (!decideLocked) {
+            setApproveButtonsDisabled(false);
+        }
+    }
+
+    function postDecide(decision, opinion, onAlways) {
+        if (decideLocked || decideSubmitting) {
+            return;
+        }
+        if (!canApprove || approvalTaskId <= 0 || pageApplyId <= 0) {
+            layer.msg('当前不可审批', { icon: 2 });
+            return;
+        }
+        if (!pageDecideCsrfToken || !pageDecideUrl) {
+            layer.msg('安全校验未就绪，请刷新页面后重试', { icon: 2 });
+            return;
+        }
+
+        decideSubmitting = true;
+        setApproveButtonsDisabled(true);
+
+        $.ajax({
+            url: pageDecideUrl,
+            type: 'POST',
+            dataType: 'text',
+            timeout: 60000,
+            data: {
+                apply_id: pageApplyId,
+                task_id: approvalTaskId,
+                decision: decision,
+                opinion: opinion == null ? '' : String(opinion),
+                csrf_token: pageDecideCsrfToken
+            }
+        }).done(function (raw, textStatus, jqXHR) {
+            var parsed = parseDecideResponse(raw);
+            if (!parsed.ok) {
+                if (parsed.reason === 'html_login') {
+                    lockApproveUi('登录状态可能已失效，请重新登录后核对');
+                } else {
+                    lockApproveUi('请求结果未能确认，请刷新核对');
+                }
+                return;
+            }
+            handleDecideResponse(parsed.data, decision);
+        }).fail(function (jqXHR, textStatus) {
+            // 超时/网络错误不能证明事务失败；禁止自动重试、禁止报成功
+            var hint = '请求结果未能确认，请刷新核对';
+            if (textStatus === 'timeout') {
+                hint = '请求超时，审批结果未能确认，请刷新核对';
+            } else if (jqXHR && (jqXHR.status === 401 || jqXHR.status === 403)) {
+                hint = '登录状态可能已失效，请重新登录后核对';
+            }
+            lockApproveUi(hint);
+        }).always(function () {
+            if (typeof onAlways === 'function') {
+                onAlways();
+            }
+        });
+    }
+
+    function openRejectDialog() {
+        if (decideLocked || decideSubmitting) {
+            return;
+        }
+        if (rejectLayerIndex != null) {
+            return;
+        }
+        var formHtml = ''
+            + '<div class="apply-detail-reject-box">'
+            + '<textarea id="reject-opinion-input" class="layui-textarea" maxlength="500" placeholder="请填写驳回理由（必填）"></textarea>'
+            + '<div class="apply-detail-reject-hint">最多 500 字；提交前将去除首尾空格。</div>'
+            + '</div>';
+
+        rejectLayerIndex = layer.open({
+            type: 1,
+            title: '审核驳回',
+            area: ['480px', '280px'],
+            shadeClose: false,
+            content: formHtml,
+            btn: ['确认驳回', '取消'],
+            yes: function (index) {
+                if (decideLocked || decideSubmitting) {
+                    return;
+                }
+                var $input = $('#reject-opinion-input');
+                var opinion = $.trim($input.val() || '');
+                if (!opinion) {
+                    layer.msg('驳回理由不能为空', { icon: 2 });
+                    return;
+                }
+                if (opinion.length > 500) {
+                    layer.msg('驳回理由不能超过500个字符', { icon: 2 });
+                    return;
+                }
+                var $yes = $('.layui-layer' + index + ' .layui-layer-btn0');
+                $yes.addClass('layui-btn-disabled').css('pointer-events', 'none');
+                postDecide('reject', opinion, function () {
+                    if (decideLocked) {
+                        try { layer.close(index); } catch (e5) {}
+                        return;
+                    }
+                    if (!decideSubmitting) {
+                        $yes.removeClass('layui-btn-disabled').css('pointer-events', '');
+                    }
+                });
+            },
+            end: function () {
+                rejectLayerIndex = null;
+            }
+        });
+    }
+
+    $('#btn-close-detail').on('click', function () {
+        closeDetailFrame();
     });
+
+    if (canApprove && approvalTaskId > 0 && pageDecideCsrfToken && pageDecideUrl && pageApplyId > 0) {
+        $('#sec-approve-actions').show();
+        if (approvalActionLabel) {
+            // 可选：标题提示当前阶段（不改变按钮文案）
+        }
+        $('#btn-approve-pass').on('click', function () {
+            if (decideLocked || decideSubmitting) {
+                return;
+            }
+            layer.confirm('确认审核通过？', { icon: 3, title: '审核通过' }, function (index) {
+                layer.close(index);
+                postDecide('approve', '');
+            });
+        });
+        $('#btn-approve-reject').on('click', function () {
+            openRejectDialog();
+        });
+    }
 });
 </script>
 </body>

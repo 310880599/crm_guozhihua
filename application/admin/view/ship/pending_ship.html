@@ -282,6 +282,20 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
         tableIns.reload(opts);
     }
 
+    /**
+     * 供详情 iframe 在审批成功后回调（保留筛选；默认保留当前分页）。
+     * 当前页因审批后无记录时，由 Layui table 自行展示空态；用户可再查/翻页。
+     */
+    window.refreshPendingShipList = function (resetPage) {
+        try {
+            reloadTable(!!resetPage);
+        } catch (e) {
+            try {
+                table.reload('pending-ship-table', { where: buildWhere() });
+            } catch (e2) {}
+        }
+    };
+
     $('#btn-search').on('click', function () {
         reloadTable(true);
     });

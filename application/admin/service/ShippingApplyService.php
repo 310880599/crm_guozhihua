@@ -7007,6 +7007,8 @@ class ShippingApplyService
 
         $progress = $this->buildApprovalProgress($apply, $tasks);
         $logRows = $this->formatApprovalLogsForView($logs, $viewerRole);
+        // 可审上下文与 viewer_role 分开计算；仅用于详情按钮展示，写权限仍由 decideApply 校验
+        $approvalAction = $this->resolveViewerApprovalActionContext($apply, $viewerId, $tasks);
 
         $header = [
             'id' => (int)$apply['id'],
@@ -7041,10 +7043,112 @@ class ShippingApplyService
                 'items' => $itemRows,
                 'approval_progress' => $progress,
                 'approval_logs' => $logRows,
-                // 预留给 M4-2B；本轮只读，后端强制 false，不信任前端
-                'can_approve' => false,
+                'can_approve' => !empty($approvalAction['can_approve']),
+                'approval_task_id' => (int)($approvalAction['approval_task_id'] ?? 0),
+                'approval_type' => (int)($approvalAction['approval_type'] ?? 0),
+                'approval_round' => (int)($approvalAction['approval_round'] ?? 0),
+                'approval_action_label' => (string)($approvalAction['approval_action_label'] ?? ''),
                 'viewer_role' => $viewerRole,
             ],
+        ];
+    }
+
+    /**
+     * 详情页只读审核操作上下文（按钮展示用；不替代 decideApply 写入校验）
+     *
+     * 与 viewer_role 分离：显示角色不等于写权限。现有 decideApply / V1.6 未禁止
+     * 「申请人兼任有效审批任务」场景；若本人持有本轮匹配的 status=1 任务则允许展示按钮。
+     * 异常多条有效任务不随意挑选，返回不可审。
+     *
+     * @param array $apply
+     * @param int $viewerId
+     * @param array $tasks 已按本轮过滤的任务集合
+     * @return array{can_approve:bool,approval_task_id:int,approval_type:int,approval_round:int,approval_action_label:string}
+     */
+    public function resolveViewerApprovalActionContext(array $apply, $viewerId, array $tasks)
+    {
+        $deny = [
+            'can_approve' => false,
+            'approval_task_id' => 0,
+            'approval_type' => 0,
+            'approval_round' => 0,
+            'approval_action_label' => '',
+        ];
+        $viewerId = (int)$viewerId;
+        if ($viewerId <= 0) {
+            return $deny;
+        }
+
+        $round = (int)($apply['approval_round'] ?? 0);
+        $status = (int)($apply['status'] ?? -1);
+        if ($round < 1) {
+            return $deny;
+        }
+        // 仅有效审批阶段；已完成/驳回/取消等不可审
+        if ($status !== 10 && $status !== 30) {
+            return $deny;
+        }
+
+        // 账号须存在且启用（与 assertApproverActiveForDecision 一致）
+        try {
+            $adminRow = $this->lookupAdminRowForSubmit($viewerId);
+        } catch (\Throwable $e) {
+            return $deny;
+        }
+        if ($adminRow === null || empty($adminRow) || (int)($adminRow['is_open'] ?? 0) !== 1) {
+            return $deny;
+        }
+
+        $expectedType = ($status === 10) ? 1 : 2;
+        $matched = [];
+        foreach ($tasks as $task) {
+            if (!is_array($task)) {
+                continue;
+            }
+            if ((int)($task['approver_id'] ?? 0) !== $viewerId) {
+                continue;
+            }
+            if ((int)($task['approval_round'] ?? 0) !== $round) {
+                continue;
+            }
+            // 未激活(0)/已处理/失效不得审；总监预创建未激活不会进入此处
+            if ((int)($task['status'] ?? -1) !== 1) {
+                continue;
+            }
+            if ((int)($task['approval_type'] ?? 0) !== $expectedType) {
+                continue;
+            }
+            $matched[] = $task;
+        }
+
+        if (count($matched) === 0) {
+            return $deny;
+        }
+        if (count($matched) > 1) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::resolveViewerApprovalActionContext] duplicate active tasks'
+                    . ' apply_id=' . (int)($apply['id'] ?? 0)
+                    . ' viewer_id=' . $viewerId
+                    . ' count=' . count($matched),
+                    'error'
+                );
+            }
+            // 异常多任务：不随意选择
+            return $deny;
+        }
+
+        $taskId = (int)($matched[0]['id'] ?? 0);
+        if ($taskId <= 0) {
+            return $deny;
+        }
+
+        return [
+            'can_approve' => true,
+            'approval_task_id' => $taskId,
+            'approval_type' => $expectedType,
+            'approval_round' => $round,
+            'approval_action_label' => $expectedType === 2 ? '产品总监审核' : '产品经理审核',
         ];
     }
 
@@ -7305,7 +7409,7 @@ class ShippingApplyService
     }
 
     /**
-     * 审批任务状态文案（仅确认 0/1；其余不猜测）
+     * 审批任务状态文案（0/1/2/3/4；其余不猜测）
      *
      * @param int $taskStatus
      * @return string
@@ -7318,6 +7422,15 @@ class ShippingApplyService
         }
         if ($taskStatus === 1) {
             return '待审核';
+        }
+        if ($taskStatus === 2) {
+            return '已通过';
+        }
+        if ($taskStatus === 3) {
+            return '已驳回';
+        }
+        if ($taskStatus === 4) {
+            return '已失效';
         }
         return '状态待确认(' . $taskStatus . ')';
     }
@@ -7569,5 +7682,1806 @@ class ShippingApplyService
             return '';
         }
         return mb_substr($opinionRaw, 0, 500, 'UTF-8');
+    }
+
+    // -------------------------------------------------------------------------
+    // M4-2B-2B-2A：审批通过 / 驳回（Service 内部单事务；不暴露 HTTP）
+    // -------------------------------------------------------------------------
+
+    /** 审批意见纯文本最大字符数（须为 JSON 包装后留出 opinion 字段余量） */
+    const APPROVAL_DECISION_OPINION_TEXT_MAX = 500;
+
+    /** 审批动作 */
+    const APPROVAL_ACTION_APPROVE = 'approve';
+    const APPROVAL_ACTION_REJECT = 'reject';
+
+    /**
+     * 产品经理/总监审核通过（身份仅来自 session('aid')）
+     *
+     * @param array $params apply_id / task_id / opinion?
+     * @return array
+     */
+    public function approveApply(array $params = [])
+    {
+        return $this->decideApply($params, self::APPROVAL_ACTION_APPROVE);
+    }
+
+    /**
+     * 产品经理/总监审核驳回（驳回理由必填；身份仅来自 session('aid')）
+     *
+     * @param array $params apply_id / task_id / opinion|reject_reason
+     * @return array
+     */
+    public function rejectApply(array $params = [])
+    {
+        return $this->decideApply($params, self::APPROVAL_ACTION_REJECT);
+    }
+
+    /**
+     * 统一审批决策入口（通过/驳回共用事务与权限校验）
+     *
+     * @param array $params
+     * @param string $decision approve|reject
+     * @return array
+     */
+    public function decideApply(array $params = [], $decision = self::APPROVAL_ACTION_APPROVE)
+    {
+        $params = is_array($params) ? $params : [];
+        // 显式丢弃前端伪造身份/权限字段
+        unset(
+            $params['approver_id'],
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['operator_id'],
+            $params['operator_role'],
+            $params['approval_round'],
+            $params['approval_type'],
+            $params['can_approve'],
+            $params['can_view'],
+            $params['viewer_role']
+        );
+
+        $decision = trim((string)$decision);
+        if ($decision !== self::APPROVAL_ACTION_APPROVE && $decision !== self::APPROVAL_ACTION_REJECT) {
+            return $this->buildApprovalFailResult('审批动作无效');
+        }
+
+        try {
+            $operator = $this->assertApproverActiveForDecision();
+            $applyId = $this->parseStrictPositiveInt(
+                array_key_exists('apply_id', $params) ? $params['apply_id'] : null,
+                '发货申请ID无效'
+            );
+            $taskId = $this->parseStrictPositiveInt(
+                array_key_exists('task_id', $params) ? $params['task_id'] : null,
+                '审批任务ID无效'
+            );
+            $opinionText = $this->parseApprovalDecisionOpinionText(
+                $params,
+                $decision === self::APPROVAL_ACTION_REJECT
+            );
+        } catch (Exception $e) {
+            return $this->buildApprovalFailResult($e->getMessage());
+        } catch (\Throwable $e) {
+            $this->logApprovalError('decideApply.precheck', $e);
+            return $this->buildApprovalFailResult('审批失败，请稍后重试。');
+        }
+
+        $txStarted = false;
+        $commitAttempted = false;
+        $planned = null;
+        try {
+            $this->beginApprovalTransaction();
+            $txStarted = true;
+
+            $planned = $this->executeDecideApplyInTransaction([
+                'apply_id' => $applyId,
+                'task_id' => $taskId,
+                'decision' => $decision,
+                'opinion_text' => $opinionText,
+                'operator' => $operator,
+            ]);
+
+            $commitAttempted = true;
+            $this->commitApprovalTransaction();
+            $txStarted = false;
+
+            return $this->buildApprovalSuccessResult($planned, !empty($planned['idempotent_replay']));
+        } catch (\Throwable $e) {
+            $rollbackFailed = false;
+            if ($txStarted) {
+                try {
+                    $this->rollbackApprovalTransaction();
+                } catch (\Throwable $rollbackEx) {
+                    $rollbackFailed = true;
+                    $this->logApprovalError('decideApply.rollback', $rollbackEx);
+                }
+                $txStarted = false;
+            }
+
+            if ($commitAttempted) {
+                return $this->finalizeApprovalAfterCommitUncertainty(
+                    $e,
+                    $applyId,
+                    $taskId,
+                    $decision,
+                    (int)$operator['admin_id'],
+                    $opinionText
+                );
+            }
+
+            if ($rollbackFailed) {
+                $this->logApprovalError('decideApply.rollback_failed_pre_commit', $e);
+                return $this->buildApprovalUncertainResult($applyId, $taskId);
+            }
+
+            if ($e instanceof Exception) {
+                return $this->buildApprovalFailResult($e->getMessage());
+            }
+            $this->logApprovalError('decideApply', $e);
+            return $this->buildApprovalFailResult('审批失败，请稍后重试。');
+        }
+    }
+
+    /**
+     * 事务内审批写库主体（调用方已开启事务；辅助方法不得再开事务）
+     *
+     * @param array $ctx
+     * @return array
+     * @throws Exception
+     */
+    protected function executeDecideApplyInTransaction(array $ctx)
+    {
+        $applyId = (int)$ctx['apply_id'];
+        $taskId = (int)$ctx['task_id'];
+        $decision = (string)$ctx['decision'];
+        $opinionText = (string)$ctx['opinion_text'];
+        $operator = $ctx['operator'];
+        $operatorId = (int)$operator['admin_id'];
+        $operatorName = (string)$operator['username'];
+
+        $apply = $this->lockShippingApplyForApproval($applyId);
+        if (empty($apply) || !is_array($apply)) {
+            throw new Exception('发货申请不存在或无权审批');
+        }
+        if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+            throw new Exception('发货申请不存在或无权审批');
+        }
+
+        $round = (int)($apply['approval_round'] ?? 0);
+        if ($round < 1) {
+            throw new Exception('当前申请不在可审批轮次');
+        }
+
+        $tasks = $this->lockApprovalTasksForRound($applyId, $round);
+        $items = $this->loadApplyItemsForApprovalManagerSet($applyId);
+
+        $this->assertApprovalRouteSnapshotConsistent($apply);
+
+        $targetTask = null;
+        $matchedMine = [];
+        foreach ($tasks as $task) {
+            if (!is_array($task)) {
+                continue;
+            }
+            if ((int)($task['id'] ?? 0) === $taskId) {
+                $targetTask = $task;
+            }
+            if ((int)($task['approver_id'] ?? 0) === $operatorId
+                && (int)($task['status'] ?? -1) === 1
+            ) {
+                $matchedMine[] = $task;
+            }
+        }
+        if ($targetTask === null) {
+            throw new Exception('审批任务不存在或不属于当前申请轮次');
+        }
+        if ((int)($targetTask['shipping_apply_id'] ?? 0) !== $applyId) {
+            throw new Exception('审批任务与发货申请不匹配');
+        }
+        if ((int)($targetTask['approval_round'] ?? 0) !== $round) {
+            throw new Exception('审批任务轮次已失效，请刷新后重试');
+        }
+        if ((int)($targetTask['approver_id'] ?? 0) !== $operatorId) {
+            $this->logApprovalError(
+                'decideApply.forged_approver',
+                new Exception('operator=' . $operatorId . ' task=' . $taskId . ' apply=' . $applyId)
+            );
+            throw new Exception('无权审批该任务');
+        }
+        if (count($matchedMine) > 1) {
+            $this->logApprovalError(
+                'decideApply.duplicate_active_tasks',
+                new Exception('operator=' . $operatorId . ' apply=' . $applyId . ' round=' . $round)
+            );
+            throw new Exception('审批任务状态异常，请联系管理员');
+        }
+
+        // 受限幂等：任务已终态时核验日志，禁止二次写入
+        $taskStatus = (int)($targetTask['status'] ?? -1);
+        if ($taskStatus !== 1) {
+            $logs = $this->loadApprovalLogsForTaskCurrentRead($applyId, $taskId);
+            $replay = $this->resolveApprovalIdempotentReplay([
+                'apply' => $apply,
+                'task' => $targetTask,
+                'logs' => $logs,
+                'decision' => $decision,
+                'opinion_text' => $opinionText,
+                'operator_id' => $operatorId,
+            ]);
+            if ($replay !== null) {
+                return $replay;
+            }
+            throw new Exception($this->describeApprovalConflictMessage($taskStatus, $decision));
+        }
+
+        $expectedPmIds = $this->buildExpectedPmApproverIdsFromItemSnapshots($items);
+        $this->assertPmApprovalTaskSetIntegrity($expectedPmIds, $tasks, $apply);
+
+        $applyStatus = $this->parseDefinedShippingApplyStatus($apply['status'] ?? null);
+        if ($applyStatus === null) {
+            throw new Exception('发货申请状态异常');
+        }
+        $approvalType = (int)($targetTask['approval_type'] ?? 0);
+        if ($applyStatus === 10) {
+            if ($approvalType !== 1) {
+                throw new Exception('当前阶段不允许操作该审批任务');
+            }
+        } elseif ($applyStatus === 30) {
+            if ($approvalType !== 2) {
+                throw new Exception('当前阶段不允许操作该审批任务');
+            }
+        } else {
+            throw new Exception('当前申请状态不可审批');
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $plan = $this->planApprovalDecisionMutations([
+            'apply' => $apply,
+            'tasks' => $tasks,
+            'target_task' => $targetTask,
+            'decision' => $decision,
+            'opinion_text' => $opinionText,
+            'operator_id' => $operatorId,
+            'operator_name' => $operatorName,
+            'expected_pm_ids' => $expectedPmIds,
+            'now' => $now,
+        ]);
+
+        $this->applyApprovalDecisionMutations($plan);
+
+        $plan['idempotent_replay'] = false;
+        return $plan;
+    }
+
+    /**
+     * 规划审批写库变更（纯逻辑；不写库）
+     *
+     * @param array $ctx
+     * @return array
+     * @throws Exception
+     */
+    public function planApprovalDecisionMutations(array $ctx)
+    {
+        $apply = $ctx['apply'];
+        $tasks = $ctx['tasks'];
+        $targetTask = $ctx['target_task'];
+        $decision = (string)$ctx['decision'];
+        $opinionText = (string)$ctx['opinion_text'];
+        $operatorId = (int)$ctx['operator_id'];
+        $operatorName = (string)$ctx['operator_name'];
+        $expectedPmIds = $ctx['expected_pm_ids'];
+        $now = (string)$ctx['now'];
+
+        $applyId = (int)($apply['id'] ?? 0);
+        $round = (int)($apply['approval_round'] ?? 0);
+        $route = (int)($apply['approval_route'] ?? 0);
+        $beforeStatus = (int)($apply['status'] ?? 0);
+        $taskId = (int)($targetTask['id'] ?? 0);
+        $approvalType = (int)($targetTask['approval_type'] ?? 0);
+
+        if ($decision === self::APPROVAL_ACTION_REJECT && trim($opinionText) === '') {
+            throw new Exception('驳回理由不能为空');
+        }
+
+        $operatorRole = $approvalType === 2 ? 'product_director' : 'product_manager';
+        $taskUpdates = [];
+        $applyUpdate = null;
+        $afterStatus = $beforeStatus;
+        $activateDirectorTaskId = 0;
+
+        if ($decision === self::APPROVAL_ACTION_APPROVE) {
+            $taskUpdates[] = [
+                'id' => $taskId,
+                'from_status' => 1,
+                'to_status' => 2,
+                'opinion' => $opinionText,
+                'audit_time' => $now,
+                'activate_time' => null,
+            ];
+
+            if ($approvalType === 1) {
+                // 基于锁内任务集合判断是否全部经理已通过（含本次）
+                $pendingOther = 0;
+                foreach ($tasks as $t) {
+                    if (!is_array($t)) {
+                        continue;
+                    }
+                    if ((int)($t['approval_type'] ?? 0) !== 1) {
+                        continue;
+                    }
+                    $tid = (int)($t['id'] ?? 0);
+                    $st = (int)($t['status'] ?? -1);
+                    if ($tid === $taskId) {
+                        continue;
+                    }
+                    if ($st === 1) {
+                        $pendingOther++;
+                    } elseif ($st !== 2) {
+                        throw new Exception('产品经理审批任务状态异常，拒绝推进');
+                    }
+                }
+                // 完整性：预期集合内每个人都必须存在且最终为通过
+                $wouldPassIds = [];
+                foreach ($tasks as $t) {
+                    if (!is_array($t) || (int)($t['approval_type'] ?? 0) !== 1) {
+                        continue;
+                    }
+                    $tid = (int)($t['id'] ?? 0);
+                    $aid = (int)($t['approver_id'] ?? 0);
+                    $st = (int)($t['status'] ?? -1);
+                    if ($tid === $taskId) {
+                        $wouldPassIds[$aid] = $aid;
+                    } elseif ($st === 2) {
+                        $wouldPassIds[$aid] = $aid;
+                    }
+                }
+                $allPmPassed = ($pendingOther === 0)
+                    && $this->isSamePositiveIntSet($expectedPmIds, array_values($wouldPassIds));
+
+                if (!$allPmPassed) {
+                    // 非最后一位：主表保持 10
+                    $afterStatus = 10;
+                    $applyUpdate = null;
+                } else {
+                    if ($route === 1) {
+                        $afterStatus = 50;
+                        $applyUpdate = [
+                            'from_status' => 10,
+                            'to_status' => 50,
+                            'current_stage' => 0,
+                            'approved_time' => $now,
+                        ];
+                    } elseif ($route === 2) {
+                        $directorTasks = [];
+                        foreach ($tasks as $t) {
+                            if (!is_array($t)) {
+                                continue;
+                            }
+                            if ((int)($t['approval_type'] ?? 0) === 2) {
+                                $directorTasks[] = $t;
+                            }
+                        }
+                        if (count($directorTasks) !== 1) {
+                            throw new Exception('产品总监审批任务数量异常，整单拒绝');
+                        }
+                        $dir = $directorTasks[0];
+                        if ((int)($dir['status'] ?? -1) !== 0) {
+                            throw new Exception('产品总监审批任务状态异常，无法激活');
+                        }
+                        $dirId = (int)($dir['id'] ?? 0);
+                        if ($dirId <= 0) {
+                            throw new Exception('产品总监审批任务缺失');
+                        }
+                        // 与主表快照一致
+                        $snapDir = (int)($apply['product_director_id'] ?? 0);
+                        if ($snapDir <= 0 || $snapDir !== (int)($dir['approver_id'] ?? 0)) {
+                            throw new Exception('产品总监审批任务与提交快照不一致');
+                        }
+                        $activateDirectorTaskId = $dirId;
+                        $taskUpdates[] = [
+                            'id' => $dirId,
+                            'from_status' => 0,
+                            'to_status' => 1,
+                            'opinion' => null,
+                            'audit_time' => null,
+                            'activate_time' => $now,
+                        ];
+                        $afterStatus = 30;
+                        $applyUpdate = [
+                            'from_status' => 10,
+                            'to_status' => 30,
+                            'current_stage' => 2,
+                            'approved_time' => null,
+                        ];
+                    } else {
+                        throw new Exception('审批路线快照无效');
+                    }
+                }
+            } elseif ($approvalType === 2) {
+                $afterStatus = 50;
+                $applyUpdate = [
+                    'from_status' => 30,
+                    'to_status' => 50,
+                    'current_stage' => 0,
+                    'approved_time' => $now,
+                ];
+            } else {
+                throw new Exception('审批任务类型无效');
+            }
+        } else {
+            // reject
+            $taskUpdates[] = [
+                'id' => $taskId,
+                'from_status' => 1,
+                'to_status' => 3,
+                'opinion' => $opinionText,
+                'audit_time' => $now,
+                'activate_time' => null,
+            ];
+
+            if ($approvalType === 1) {
+                foreach ($tasks as $t) {
+                    if (!is_array($t)) {
+                        continue;
+                    }
+                    $tid = (int)($t['id'] ?? 0);
+                    if ($tid <= 0 || $tid === $taskId) {
+                        continue;
+                    }
+                    $st = (int)($t['status'] ?? -1);
+                    $type = (int)($t['approval_type'] ?? 0);
+                    if ($type === 1 && $st === 1) {
+                        $taskUpdates[] = [
+                            'id' => $tid,
+                            'from_status' => 1,
+                            'to_status' => 4,
+                            'opinion' => null,
+                            'audit_time' => null,
+                            'activate_time' => null,
+                        ];
+                    } elseif ($type === 2 && $st === 0) {
+                        $taskUpdates[] = [
+                            'id' => $tid,
+                            'from_status' => 0,
+                            'to_status' => 4,
+                            'opinion' => null,
+                            'audit_time' => null,
+                            'activate_time' => null,
+                        ];
+                    } elseif ($type === 2 && $st === 1) {
+                        // 经理阶段不应存在已激活总监任务
+                        throw new Exception('审批任务集合异常：总监任务已提前激活');
+                    } elseif ($st === 2) {
+                        // 已通过保留
+                        continue;
+                    } elseif ($st === 3 || $st === 4) {
+                        continue;
+                    } else {
+                        throw new Exception('存在无法处理的审批任务状态，整单拒绝');
+                    }
+                }
+                $afterStatus = 20;
+                $applyUpdate = [
+                    'from_status' => 10,
+                    'to_status' => 20,
+                    'current_stage' => 0,
+                    'approved_time' => null,
+                ];
+            } elseif ($approvalType === 2) {
+                foreach ($tasks as $t) {
+                    if (!is_array($t)) {
+                        continue;
+                    }
+                    $tid = (int)($t['id'] ?? 0);
+                    if ($tid === $taskId) {
+                        continue;
+                    }
+                    $st = (int)($t['status'] ?? -1);
+                    if ($st === 1) {
+                        throw new Exception('存在未处理的异常审批任务，拒绝驳回写入');
+                    }
+                }
+                $afterStatus = 40;
+                $applyUpdate = [
+                    'from_status' => 30,
+                    'to_status' => 40,
+                    'current_stage' => 0,
+                    'approved_time' => null,
+                ];
+            } else {
+                throw new Exception('审批任务类型无效');
+            }
+        }
+
+        $logPayload = [
+            'shipping_apply_id' => $applyId,
+            'task_id' => $taskId,
+            'operator_id' => $operatorId,
+            'operator_name' => $operatorName,
+            'operator_role' => $operatorRole,
+            'action' => $decision,
+            'before_status' => $beforeStatus,
+            'after_status' => $afterStatus,
+            'opinion_text' => $opinionText,
+            'approval_round' => $round,
+            'approval_type' => $approvalType,
+            'now' => $now,
+        ];
+
+        return [
+            'apply_id' => $applyId,
+            'task_id' => $taskId,
+            'decision' => $decision,
+            'before_status' => $beforeStatus,
+            'after_status' => $afterStatus,
+            'approval_round' => $round,
+            'approval_route' => $route,
+            'current_stage' => $applyUpdate !== null
+                ? (int)$applyUpdate['current_stage']
+                : (int)($apply['current_stage'] ?? 0),
+            'operator_id' => $operatorId,
+            'operator_name' => $operatorName,
+            'operator_role' => $operatorRole,
+            'task_updates' => $taskUpdates,
+            'apply_update' => $applyUpdate,
+            'log' => $logPayload,
+            'activate_director_task_id' => $activateDirectorTaskId,
+            'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+            'now' => $now,
+            'idempotent_replay' => false,
+        ];
+    }
+
+    /**
+     * 执行规划好的审批变更（条件 UPDATE + 审计；检查影响行数）
+     *
+     * @param array $plan
+     * @return void
+     * @throws Exception
+     */
+    protected function applyApprovalDecisionMutations(array $plan)
+    {
+        $applyId = (int)$plan['apply_id'];
+        $now = (string)$plan['now'];
+
+        foreach ((array)$plan['task_updates'] as $upd) {
+            if (!is_array($upd)) {
+                continue;
+            }
+            $tid = (int)($upd['id'] ?? 0);
+            $from = (int)($upd['from_status'] ?? -1);
+            $to = (int)($upd['to_status'] ?? -1);
+            if ($tid <= 0) {
+                throw new Exception('审批任务更新参数无效');
+            }
+            $data = [
+                'status' => $to,
+                'update_time' => $now,
+            ];
+            if (array_key_exists('opinion', $upd) && $upd['opinion'] !== null) {
+                $data['opinion'] = (string)$upd['opinion'];
+            }
+            if (!empty($upd['audit_time'])) {
+                $data['audit_time'] = (string)$upd['audit_time'];
+            }
+            if (!empty($upd['activate_time'])) {
+                $data['activate_time'] = (string)$upd['activate_time'];
+            }
+            $affected = $this->updateApprovalTaskConditional($tid, $applyId, $from, $data);
+            if ((int)$affected !== 1) {
+                throw new Exception(
+                    $to === 1
+                        ? '产品总监任务激活失败，请刷新后重试'
+                        : '审批任务更新失败，请刷新后重试'
+                );
+            }
+        }
+
+        if (!empty($plan['apply_update']) && is_array($plan['apply_update'])) {
+            $au = $plan['apply_update'];
+            $data = [
+                'status' => (int)$au['to_status'],
+                'current_stage' => (int)$au['current_stage'],
+                'update_time' => $now,
+            ];
+            if (array_key_exists('approved_time', $au) && $au['approved_time'] !== null) {
+                $data['approved_time'] = (string)$au['approved_time'];
+            }
+            $affected = $this->updateShippingApplyStatusConditional(
+                $applyId,
+                (int)$au['from_status'],
+                $data
+            );
+            if ((int)$affected !== 1) {
+                throw new Exception('发货申请状态更新失败，请刷新后重试');
+            }
+        }
+
+        $this->writeApprovalDecisionAuditLog($plan['log']);
+    }
+
+    /**
+     * 从发货行产品经理快照构建本轮预期经理集合（去重；可信来源）
+     *
+     * @param array $items
+     * @return int[]
+     * @throws Exception
+     */
+    public function buildExpectedPmApproverIdsFromItemSnapshots(array $items)
+    {
+        if (empty($items)) {
+            throw new Exception('BLOCKED：无法证明当前轮次审批任务集合完整性');
+        }
+        $ids = [];
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                throw new Exception('BLOCKED：无法证明当前轮次审批任务集合完整性');
+            }
+            $raw = $item['product_manager_id'] ?? null;
+            if ($raw === null || $raw === '') {
+                throw new Exception('BLOCKED：无法证明当前轮次审批任务集合完整性');
+            }
+            try {
+                $pmid = $this->parseStrictPositiveInt($raw, '产品经理快照无效');
+            } catch (Exception $e) {
+                throw new Exception('BLOCKED：无法证明当前轮次审批任务集合完整性');
+            }
+            $ids[$pmid] = $pmid;
+        }
+        if (empty($ids)) {
+            throw new Exception('BLOCKED：无法证明当前轮次审批任务集合完整性');
+        }
+        $list = array_values($ids);
+        sort($list, SORT_NUMERIC);
+        return $list;
+    }
+
+    /**
+     * 产品经理审批任务集合完整性校验（禁止仅用 COUNT 代替集合相等）
+     *
+     * @param int[] $expectedPmIds
+     * @param array $roundTasks
+     * @param array $apply
+     * @return void
+     * @throws Exception
+     */
+    public function assertPmApprovalTaskSetIntegrity(array $expectedPmIds, array $roundTasks, array $apply)
+    {
+        if (empty($expectedPmIds)) {
+            throw new Exception('BLOCKED：无法证明当前轮次审批任务集合完整性');
+        }
+        foreach ($expectedPmIds as $id) {
+            if (!is_int($id) || $id <= 0) {
+                throw new Exception('BLOCKED：无法证明当前轮次审批任务集合完整性');
+            }
+        }
+
+        $applyId = (int)($apply['id'] ?? 0);
+        if ($applyId <= 0) {
+            throw new Exception('审批任务数据异常');
+        }
+        $round = (int)($apply['approval_round'] ?? 0);
+        if ($round < 1) {
+            throw new Exception('审批任务轮次不匹配');
+        }
+        $route = (int)($apply['approval_route'] ?? 0);
+        $applyStatus = $this->parseDefinedShippingApplyStatus($apply['status'] ?? null);
+        if ($applyStatus === null) {
+            throw new Exception('发货申请状态异常');
+        }
+
+        $pmApproverIds = [];
+        $pmTaskIdsByApprover = [];
+        $pmTasks = [];
+        $directorTasks = [];
+        foreach ($roundTasks as $task) {
+            if (!is_array($task)) {
+                throw new Exception('审批任务数据异常');
+            }
+            if ((int)($task['shipping_apply_id'] ?? 0) !== $applyId) {
+                throw new Exception('审批任务不属于当前申请');
+            }
+            if ((int)($task['approval_round'] ?? 0) !== $round) {
+                throw new Exception('审批任务轮次不匹配');
+            }
+            $type = (int)($task['approval_type'] ?? 0);
+            $approverId = (int)($task['approver_id'] ?? 0);
+            $taskId = (int)($task['id'] ?? 0);
+            if ($approverId <= 0 || $taskId <= 0) {
+                throw new Exception('审批任务数据异常');
+            }
+            if ($type === 1) {
+                if (isset($pmTaskIdsByApprover[$approverId])) {
+                    throw new Exception('产品经理审批任务存在异常重复，拒绝继续');
+                }
+                $pmTaskIdsByApprover[$approverId] = $taskId;
+                $pmApproverIds[] = $approverId;
+                $pmTasks[] = $task;
+            } elseif ($type === 2) {
+                $directorTasks[] = $task;
+            } else {
+                throw new Exception('存在错误的审批任务类型');
+            }
+        }
+
+        sort($pmApproverIds, SORT_NUMERIC);
+        $expectedSorted = array_values($expectedPmIds);
+        sort($expectedSorted, SORT_NUMERIC);
+        if (!$this->isSamePositiveIntSet($expectedSorted, $pmApproverIds)) {
+            // 缺失 / 多余
+            throw new Exception('产品经理审批任务集合与发货行快照不一致，拒绝继续');
+        }
+
+        // status=30：全部经理必须已通过；路线必须为高金额
+        if ($applyStatus === 30) {
+            if ($route !== 2) {
+                throw new Exception('审批路线与主申请状态不一致');
+            }
+            foreach ($pmTasks as $pmTask) {
+                $pmStatus = $this->parseDefinedShippingApplyStatus($pmTask['status'] ?? null);
+                if ($pmStatus !== 2) {
+                    throw new Exception('产品经理审批任务状态异常，拒绝继续');
+                }
+            }
+        }
+
+        if ($route === 1) {
+            if (!empty($directorTasks)) {
+                throw new Exception('低金额路线不应存在产品总监审批任务');
+            }
+        } elseif ($route === 2) {
+            if (count($directorTasks) !== 1) {
+                throw new Exception('高金额路线产品总监审批任务数量异常');
+            }
+            $dir = $directorTasks[0];
+            $snapDir = (int)($apply['product_director_id'] ?? 0);
+            if ($snapDir <= 0 || $snapDir !== (int)($dir['approver_id'] ?? 0)) {
+                throw new Exception('产品总监审批任务与提交快照不一致');
+            }
+            if ((int)($dir['approval_type'] ?? 0) !== 2) {
+                throw new Exception('产品总监审批任务类型异常');
+            }
+            if ((int)($dir['id'] ?? 0) <= 0
+                || (int)($dir['shipping_apply_id'] ?? 0) !== $applyId
+                || (int)($dir['approval_round'] ?? 0) !== $round
+            ) {
+                throw new Exception('产品总监审批任务数据异常');
+            }
+            $dirStatus = $this->parseDefinedShippingApplyStatus($dir['status'] ?? null);
+            if ($dirStatus === null) {
+                throw new Exception('产品总监审批任务状态异常');
+            }
+            if ($applyStatus === 10) {
+                // 待经理审：总监必须为未激活预创建（不得把 status=4 当成正常预创建）
+                if ($dirStatus !== 0) {
+                    throw new Exception('产品总监审批任务状态异常');
+                }
+                if (!$this->isApprovalTaskDatetimeAbsent($dir['activate_time'] ?? null)) {
+                    throw new Exception('产品总监审批任务激活时间异常');
+                }
+                if (!$this->isApprovalTaskDatetimeAbsent($dir['audit_time'] ?? null)) {
+                    throw new Exception('产品总监审批任务审核时间异常');
+                }
+            } elseif ($applyStatus === 30) {
+                if ($dirStatus !== 1) {
+                    throw new Exception('产品总监审批任务状态异常');
+                }
+                if (!$this->isApprovalTaskDatetimePresent($dir['activate_time'] ?? null)) {
+                    throw new Exception('产品总监审批任务激活时间异常');
+                }
+                if (!$this->isApprovalTaskDatetimeAbsent($dir['audit_time'] ?? null)) {
+                    throw new Exception('产品总监审批任务审核时间异常');
+                }
+            }
+        } else {
+            throw new Exception('审批路线快照无效');
+        }
+    }
+
+    /**
+     * 审批任务时间字段是否为空（null / 空串 / 零日期）
+     *
+     * @param mixed $raw
+     * @return bool
+     */
+    public function isApprovalTaskDatetimeAbsent($raw)
+    {
+        if ($raw === null) {
+            return true;
+        }
+        if (is_bool($raw) || is_array($raw) || is_object($raw) || is_int($raw) || is_float($raw)) {
+            return false;
+        }
+        if (!is_string($raw)) {
+            return false;
+        }
+        $text = trim($raw);
+        return $text === '' || $text === '0000-00-00 00:00:00';
+    }
+
+    /**
+     * 审批任务时间字段是否具备可证明的合法 datetime 值
+     *
+     * @param mixed $raw
+     * @return bool
+     */
+    public function isApprovalTaskDatetimePresent($raw)
+    {
+        if ($raw === null || is_bool($raw) || is_array($raw) || is_object($raw) || is_int($raw) || is_float($raw)) {
+            return false;
+        }
+        if (!is_string($raw)) {
+            return false;
+        }
+        $text = trim($raw);
+        if ($text === '' || $text === '0000-00-00 00:00:00') {
+            return false;
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $text)) {
+            return false;
+        }
+        $ts = strtotime($text);
+        return $ts !== false;
+    }
+
+    /**
+     * 校验提交时金额阈值与 approval_route 快照内部一致性
+     *
+     * @param array $apply
+     * @return void
+     * @throws Exception
+     */
+    public function assertApprovalRouteSnapshotConsistent(array $apply)
+    {
+        $route = (int)($apply['approval_route'] ?? 0);
+        if ($route !== 1 && $route !== 2) {
+            throw new Exception('审批路线快照无效');
+        }
+        $amountRaw = $apply['order_amount'] ?? null;
+        $thresholdRaw = $apply['approval_threshold'] ?? null;
+        if ($amountRaw === null || $thresholdRaw === null || $amountRaw === '' || $thresholdRaw === '') {
+            throw new Exception('审批金额快照不完整');
+        }
+        if (is_bool($amountRaw) || is_array($amountRaw) || is_object($amountRaw)
+            || is_bool($thresholdRaw) || is_array($thresholdRaw) || is_object($thresholdRaw)
+        ) {
+            throw new Exception('审批金额快照无效');
+        }
+        $amount = is_string($amountRaw) ? trim($amountRaw) : (string)$amountRaw;
+        $threshold = is_string($thresholdRaw) ? trim($thresholdRaw) : (string)$thresholdRaw;
+        if ($amount === '' || $threshold === ''
+            || !preg_match('/^-?\d+(\.\d+)?$/', $amount)
+            || !preg_match('/^-?\d+(\.\d+)?$/', $threshold)
+        ) {
+            throw new Exception('审批金额快照格式无效');
+        }
+        $cmp = bccomp($amount, $threshold, 2);
+        $expectedRoute = ($cmp < 0) ? 1 : 2;
+        if ($route !== $expectedRoute) {
+            throw new Exception('审批路线与金额阈值快照不一致，拒绝错误流转');
+        }
+    }
+
+    /**
+     * 受限幂等核验（基于任务终态 + 审计日志；非请求级 Token）
+     *
+     * @param array $ctx
+     * @return array|null 可幂等返回的计划结果；无法证明则 null（由调用方转冲突）
+     * @throws Exception 明确冲突时抛错
+     */
+    public function resolveApprovalIdempotentReplay(array $ctx)
+    {
+        $task = $ctx['task'];
+        $logs = isset($ctx['logs']) && is_array($ctx['logs']) ? $ctx['logs'] : [];
+        $decision = (string)$ctx['decision'];
+        $opinionText = (string)$ctx['opinion_text'];
+        $operatorId = (int)$ctx['operator_id'];
+        $apply = $ctx['apply'];
+
+        $taskStatus = $this->parseDefinedShippingApplyStatus($task['status'] ?? null);
+        $taskId = (int)($task['id'] ?? 0);
+        $applyId = (int)($apply['id'] ?? 0);
+
+        if ($taskStatus === 4) {
+            throw new Exception('审批任务已失效，不能重复操作');
+        }
+        if ($taskStatus === 0) {
+            throw new Exception('审批任务尚未激活，不能审批');
+        }
+        if ($taskStatus === 2 && $decision === self::APPROVAL_ACTION_REJECT) {
+            throw new Exception('该任务已通过，不能再驳回');
+        }
+        if ($taskStatus === 3 && $decision === self::APPROVAL_ACTION_APPROVE) {
+            throw new Exception('该任务已驳回，不能再通过');
+        }
+        if ($taskStatus === 2 && $decision !== self::APPROVAL_ACTION_APPROVE) {
+            throw new Exception('审批操作冲突');
+        }
+        if ($taskStatus === 3 && $decision !== self::APPROVAL_ACTION_REJECT) {
+            throw new Exception('审批操作冲突');
+        }
+        if ($taskStatus !== 2 && $taskStatus !== 3) {
+            return null;
+        }
+
+        // 终态与动作一致是必要非充分条件；仍须唯一严格审计证据
+        if ($decision === self::APPROVAL_ACTION_APPROVE && $taskStatus !== 2) {
+            return null;
+        }
+        if ($decision === self::APPROVAL_ACTION_REJECT && $taskStatus !== 3) {
+            return null;
+        }
+        if ($applyId <= 0 || $taskId <= 0) {
+            return null;
+        }
+        if ((int)($task['shipping_apply_id'] ?? 0) !== $applyId) {
+            return null;
+        }
+
+        $identityMatched = [];
+        foreach ($logs as $log) {
+            if (!is_array($log)) {
+                continue;
+            }
+            if ((int)($log['shipping_apply_id'] ?? 0) !== $applyId) {
+                continue;
+            }
+            if ((int)($log['task_id'] ?? 0) !== $taskId) {
+                continue;
+            }
+            if ((int)($log['operator_id'] ?? 0) !== $operatorId) {
+                continue;
+            }
+            if (trim((string)($log['action'] ?? '')) !== $decision) {
+                continue;
+            }
+            $identityMatched[] = $log;
+        }
+        if (empty($identityMatched)) {
+            return null;
+        }
+
+        $validLogs = [];
+        $opinionConflict = false;
+        foreach ($identityMatched as $log) {
+            $check = $this->evaluateStrictApprovalHistoricalEvidence($ctx, $log);
+            if ($check === 'opinion_mismatch') {
+                $opinionConflict = true;
+                continue;
+            }
+            if ($check === 'ok') {
+                $validLogs[] = $log;
+            }
+        }
+        if ($opinionConflict && empty($validLogs)) {
+            if ($decision === self::APPROVAL_ACTION_REJECT) {
+                throw new Exception('驳回请求与历史记录不一致');
+            }
+            throw new Exception('审核意见与历史记录不一致');
+        }
+        if (count($validLogs) !== 1) {
+            // 无唯一有效审计证据：不得假装成功
+            return null;
+        }
+        $log = $validLogs[0];
+        $logBefore = $this->parseDefinedShippingApplyStatus($log['before_status'] ?? null);
+        $logAfter = $this->parseDefinedShippingApplyStatus($log['after_status'] ?? null);
+        $applyStatus = $this->parseDefinedShippingApplyStatus($apply['status'] ?? null);
+        if ($logBefore === null || $logAfter === null || $applyStatus === null) {
+            return null;
+        }
+
+        return [
+            'apply_id' => $applyId,
+            'task_id' => $taskId,
+            'decision' => $decision,
+            'before_status' => $logBefore,
+            'after_status' => $logAfter,
+            'approval_round' => (int)($apply['approval_round'] ?? 0),
+            'approval_route' => (int)($apply['approval_route'] ?? 0),
+            'current_stage' => (int)($apply['current_stage'] ?? 0),
+            'operator_id' => $operatorId,
+            'operator_name' => trim((string)($log['operator_name'] ?? '')),
+            'operator_role' => trim((string)($log['operator_role'] ?? '')),
+            'task_updates' => [],
+            'apply_update' => null,
+            'log' => null,
+            'activate_director_task_id' => 0,
+            'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+            'now' => trim((string)($log['create_time'] ?? '')),
+            'idempotent_replay' => true,
+            'apply_status' => $applyStatus,
+        ];
+    }
+
+    /**
+     * 严格核验单条审批审计是否可作为受限幂等成功证据
+     *
+     * @param array $ctx
+     * @param array $log
+     * @return string ok|opinion_mismatch|invalid
+     */
+    public function evaluateStrictApprovalHistoricalEvidence(array $ctx, array $log)
+    {
+        $task = isset($ctx['task']) && is_array($ctx['task']) ? $ctx['task'] : [];
+        $apply = isset($ctx['apply']) && is_array($ctx['apply']) ? $ctx['apply'] : [];
+        $decision = (string)($ctx['decision'] ?? '');
+        $opinionText = (string)($ctx['opinion_text'] ?? '');
+        $operatorId = (int)($ctx['operator_id'] ?? 0);
+
+        $applyId = (int)($apply['id'] ?? 0);
+        $taskId = (int)($task['id'] ?? 0);
+        // 轮次禁止宽松 (int) 转换；当前操作证据必须与主申请当前轮次一致
+        $taskRound = $this->parseDefinedShippingApplyStatus($task['approval_round'] ?? null);
+        $applyRound = $this->parseDefinedShippingApplyStatus($apply['approval_round'] ?? null);
+        $taskType = (int)($task['approval_type'] ?? 0);
+        $taskStatus = $this->parseDefinedShippingApplyStatus($task['status'] ?? null);
+
+        if ($applyId <= 0 || $taskId <= 0 || $operatorId <= 0) {
+            return 'invalid';
+        }
+        if ($taskRound === null || $applyRound === null || $taskRound < 1 || $applyRound < 1) {
+            return 'invalid';
+        }
+        // 旧轮次历史证据不得识别为当前轮次审批成功（历史记录本身保留不改写）
+        if ($taskRound !== $applyRound) {
+            return 'invalid';
+        }
+        if ($decision !== self::APPROVAL_ACTION_APPROVE && $decision !== self::APPROVAL_ACTION_REJECT) {
+            return 'invalid';
+        }
+        if ($taskType !== 1 && $taskType !== 2) {
+            return 'invalid';
+        }
+        if ((int)($task['shipping_apply_id'] ?? 0) !== $applyId) {
+            return 'invalid';
+        }
+        if ((int)($log['shipping_apply_id'] ?? 0) !== $applyId) {
+            return 'invalid';
+        }
+        if ((int)($log['task_id'] ?? 0) !== $taskId) {
+            return 'invalid';
+        }
+        if ((int)($log['operator_id'] ?? 0) !== $operatorId) {
+            return 'invalid';
+        }
+        if (trim((string)($log['action'] ?? '')) !== $decision) {
+            return 'invalid';
+        }
+        if ($decision === self::APPROVAL_ACTION_APPROVE && $taskStatus !== 2) {
+            return 'invalid';
+        }
+        if ($decision === self::APPROVAL_ACTION_REJECT && $taskStatus !== 3) {
+            return 'invalid';
+        }
+
+        $logBefore = $this->parseDefinedShippingApplyStatus($log['before_status'] ?? null);
+        $logAfter = $this->parseDefinedShippingApplyStatus($log['after_status'] ?? null);
+        if ($logBefore === null || $logAfter === null) {
+            return 'invalid';
+        }
+        if (!$this->isLegalApprovalStatusTransition($decision, $taskType, $logBefore, $logAfter)) {
+            return 'invalid';
+        }
+
+        $payload = $this->decodeApprovalDecisionAuditOpinionJson($log['opinion'] ?? '');
+        if ($payload === null) {
+            return 'invalid';
+        }
+        if (!array_key_exists('approval_round', $payload) || !array_key_exists('approval_type', $payload)
+            || !array_key_exists('task_id', $payload)
+        ) {
+            return 'invalid';
+        }
+        $jsonRound = $this->parseDefinedShippingApplyStatus($payload['approval_round']);
+        $jsonType = $this->parseDefinedShippingApplyStatus($payload['approval_type']);
+        $jsonTaskId = $this->parseDefinedShippingApplyStatus($payload['task_id']);
+        if ($jsonRound === null || $jsonType === null || $jsonTaskId === null) {
+            return 'invalid';
+        }
+        if ($jsonRound !== $taskRound || $jsonType !== $taskType || $jsonTaskId !== $taskId) {
+            return 'invalid';
+        }
+        if (array_key_exists('action', $payload)
+            && trim((string)$payload['action']) !== $decision
+        ) {
+            return 'invalid';
+        }
+        // JSON 若持久化了状态，必须与日志表字段严格一致
+        if (array_key_exists('before_status', $payload)) {
+            $jsonBefore = $this->parseDefinedShippingApplyStatus($payload['before_status']);
+            if ($jsonBefore === null || $jsonBefore !== $logBefore) {
+                return 'invalid';
+            }
+        }
+        if (array_key_exists('after_status', $payload)) {
+            $jsonAfter = $this->parseDefinedShippingApplyStatus($payload['after_status']);
+            if ($jsonAfter === null || $jsonAfter !== $logAfter) {
+                return 'invalid';
+            }
+        }
+
+        $loggedOpinion = $this->extractPlainOpinionText((string)($log['opinion'] ?? ''));
+        if ($decision === self::APPROVAL_ACTION_REJECT) {
+            if ($opinionText === '' || $loggedOpinion === '' || $opinionText !== $loggedOpinion) {
+                return 'opinion_mismatch';
+            }
+        } else {
+            // 保守契约：通过意见也必须与历史规范化文本完全一致（含双空）
+            if ($opinionText !== $loggedOpinion) {
+                return 'opinion_mismatch';
+            }
+        }
+
+        $applyStatus = $this->parseDefinedShippingApplyStatus($apply['status'] ?? null);
+        if ($applyStatus === null) {
+            return 'invalid';
+        }
+        if (!$this->isApprovalApplyStatusCompatibleWithHistoricalDecision(
+            $decision,
+            $taskType,
+            $logAfter,
+            $applyStatus
+        )) {
+            return 'invalid';
+        }
+
+        return 'ok';
+    }
+
+    /**
+     * 解码审批决策审计 opinion JSON；非法返回 null（不做宽松默认补全）
+     *
+     * @param mixed $opinionRaw
+     * @return array|null
+     */
+    public function decodeApprovalDecisionAuditOpinionJson($opinionRaw)
+    {
+        if ($opinionRaw === null || is_bool($opinionRaw) || is_array($opinionRaw) || is_object($opinionRaw)
+            || is_int($opinionRaw) || is_float($opinionRaw)
+        ) {
+            return null;
+        }
+        $text = trim((string)$opinionRaw);
+        if ($text === '' || $text[0] !== '{') {
+            return null;
+        }
+        $decoded = json_decode($text, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+        return $decoded;
+    }
+
+    /**
+     * V1.6 合法审批主状态转换矩阵
+     *
+     * @param string $decision
+     * @param int $approvalType
+     * @param int $beforeStatus
+     * @param int $afterStatus
+     * @return bool
+     */
+    public function isLegalApprovalStatusTransition($decision, $approvalType, $beforeStatus, $afterStatus)
+    {
+        $decision = (string)$decision;
+        $approvalType = (int)$approvalType;
+        $beforeStatus = (int)$beforeStatus;
+        $afterStatus = (int)$afterStatus;
+
+        if ($decision === self::APPROVAL_ACTION_APPROVE) {
+            if ($approvalType === 1) {
+                // 经理通过：非最后保持 10；最后高金额→30；最后低金额→50
+                return $beforeStatus === 10 && in_array($afterStatus, [10, 30, 50], true);
+            }
+            if ($approvalType === 2) {
+                return $beforeStatus === 30 && $afterStatus === 50;
+            }
+            return false;
+        }
+        if ($decision === self::APPROVAL_ACTION_REJECT) {
+            if ($approvalType === 1) {
+                return $beforeStatus === 10 && $afterStatus === 20;
+            }
+            if ($approvalType === 2) {
+                return $beforeStatus === 30 && $afterStatus === 40;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    /**
+     * 历史审批动作后，主表状态是否仍与合法演进兼容
+     *（允许其他经理后续合法推进；不能只拿当前 status 硬等 after_status）
+     *
+     * @param string $decision
+     * @param int $approvalType
+     * @param int|null $logAfterStatus
+     * @param int $currentApplyStatus
+     * @return bool
+     */
+    public function isApprovalApplyStatusCompatibleWithHistoricalDecision(
+        $decision,
+        $approvalType,
+        $logAfterStatus,
+        $currentApplyStatus
+    ) {
+        $decision = (string)$decision;
+        $approvalType = (int)$approvalType;
+        if ($logAfterStatus === null) {
+            return false;
+        }
+        // 禁止 (int)'10abc' 一类宽松转换进入兼容判断
+        if (!is_int($logAfterStatus) && !is_int($currentApplyStatus)) {
+            $parsedAfter = $this->parseDefinedShippingApplyStatus($logAfterStatus);
+            $parsedCurrent = $this->parseDefinedShippingApplyStatus($currentApplyStatus);
+            if ($parsedAfter === null || $parsedCurrent === null) {
+                return false;
+            }
+            $logAfterStatus = $parsedAfter;
+            $currentApplyStatus = $parsedCurrent;
+        } else {
+            if (!is_int($logAfterStatus)) {
+                $parsedAfter = $this->parseDefinedShippingApplyStatus($logAfterStatus);
+                if ($parsedAfter === null) {
+                    return false;
+                }
+                $logAfterStatus = $parsedAfter;
+            }
+            if (!is_int($currentApplyStatus)) {
+                $parsedCurrent = $this->parseDefinedShippingApplyStatus($currentApplyStatus);
+                if ($parsedCurrent === null) {
+                    return false;
+                }
+                $currentApplyStatus = $parsedCurrent;
+            }
+        }
+        $logAfterStatus = (int)$logAfterStatus;
+        $currentApplyStatus = (int)$currentApplyStatus;
+
+        if ($decision === self::APPROVAL_ACTION_REJECT) {
+            if ($approvalType === 1) {
+                return $logAfterStatus === 20 && $currentApplyStatus === 20;
+            }
+            if ($approvalType === 2) {
+                return $logAfterStatus === 40 && $currentApplyStatus === 40;
+            }
+            return false;
+        }
+
+        if ($decision !== self::APPROVAL_ACTION_APPROVE) {
+            return false;
+        }
+
+        if ($approvalType === 2) {
+            // 总监通过后应为 50；若被取消则不兼容
+            return $logAfterStatus === 50 && $currentApplyStatus === 50;
+        }
+        if ($approvalType !== 1) {
+            return false;
+        }
+
+        // 经理通过：日志 after 可能是 10（非最后）、30（进总监）、50（低金额完成）
+        if ($logAfterStatus === 10) {
+            // 之后其他经理可能推进到 30/50，或驳回到 20
+            return in_array($currentApplyStatus, [10, 20, 30, 50], true);
+        }
+        if ($logAfterStatus === 30) {
+            return in_array($currentApplyStatus, [30, 40, 50], true);
+        }
+        if ($logAfterStatus === 50) {
+            return $currentApplyStatus === 50;
+        }
+        return false;
+    }
+
+    /**
+     * Session 审批人有效性
+     *
+     * @return array{admin_id:int,username:string,group_id:int}
+     * @throws Exception
+     */
+    public function assertApproverActiveForDecision()
+    {
+        $aidRaw = session('aid');
+        if ($aidRaw === null || $aidRaw === '' || is_array($aidRaw) || is_object($aidRaw) || is_bool($aidRaw)) {
+            throw new Exception('请先登录');
+        }
+        try {
+            $adminId = $this->parseStrictPositiveInt($aidRaw, '请先登录');
+        } catch (Exception $e) {
+            throw new Exception('请先登录');
+        }
+
+        try {
+            $row = $this->lookupAdminRowForSubmit($adminId);
+        } catch (\Throwable $e) {
+            throw $e;
+        }
+        if ($row === null || empty($row)) {
+            throw new Exception('审批人账号不存在或已失效');
+        }
+        $username = trim((string)($row['username'] ?? ''));
+        if ($username === '') {
+            throw new Exception('审批人姓名无效');
+        }
+        if ((int)($row['is_open'] ?? 0) !== 1) {
+            throw new Exception('审批人账号已停用，不能审批');
+        }
+
+        return [
+            'admin_id' => (int)$row['admin_id'],
+            'username' => $username,
+            'group_id' => (int)($row['group_id'] ?? 0),
+        ];
+    }
+
+    /**
+     * 解析审批意见 / 驳回理由
+     *
+     * @param array $params
+     * @param bool $required
+     * @return string
+     * @throws Exception
+     */
+    public function parseApprovalDecisionOpinionText(array $params, $required)
+    {
+        $raw = null;
+        if (array_key_exists('opinion', $params)) {
+            $raw = $params['opinion'];
+        } elseif (array_key_exists('reject_reason', $params)) {
+            $raw = $params['reject_reason'];
+        } else {
+            $raw = '';
+        }
+        if ($raw === null) {
+            $raw = '';
+        }
+        if (is_bool($raw) || is_array($raw) || is_object($raw) || is_int($raw) || is_float($raw)) {
+            throw new Exception($required ? '驳回理由格式无效' : '审核意见格式无效');
+        }
+        $text = trim((string)$raw);
+        if ($required && $text === '') {
+            throw new Exception('驳回理由不能为空');
+        }
+        if (mb_strlen($text, 'UTF-8') > self::APPROVAL_DECISION_OPINION_TEXT_MAX) {
+            throw new Exception(
+                $required
+                    ? ('驳回理由不能超过' . self::APPROVAL_DECISION_OPINION_TEXT_MAX . '个字符')
+                    : ('审核意见不能超过' . self::APPROVAL_DECISION_OPINION_TEXT_MAX . '个字符')
+            );
+        }
+        return $text;
+    }
+
+    /**
+     * @param int $applyId
+     * @return array|null
+     */
+    protected function lockShippingApplyForApproval($applyId)
+    {
+        $applyId = (int)$applyId;
+        if ($applyId <= 0) {
+            return null;
+        }
+        $row = Db::name('crm_shipping_apply')
+            ->where('id', $applyId)
+            ->lock(true)
+            ->find();
+        return empty($row) ? null : $row;
+    }
+
+    /**
+     * 按稳定 ID 升序锁定本轮全部审批任务
+     *
+     * @param int $applyId
+     * @param int $round
+     * @return array
+     */
+    protected function lockApprovalTasksForRound($applyId, $round)
+    {
+        $rows = Db::name('crm_shipping_approval_task')
+            ->where('shipping_apply_id', (int)$applyId)
+            ->where('approval_round', (int)$round)
+            ->order('id', 'asc')
+            ->lock(true)
+            ->select();
+        return empty($rows) ? [] : (array)$rows;
+    }
+
+    /**
+     * 读取发货行经理快照（事务内；审批不改明细）
+     *
+     * @param int $applyId
+     * @return array
+     */
+    protected function loadApplyItemsForApprovalManagerSet($applyId)
+    {
+        $rows = Db::name('crm_shipping_apply_item')
+            ->where('shipping_apply_id', (int)$applyId)
+            ->field('id,shipping_apply_id,order_item_id,product_manager_id,product_manager_name')
+            ->order('id', 'asc')
+            ->select();
+        return empty($rows) ? [] : (array)$rows;
+    }
+
+    /**
+     * @param int $taskId
+     * @param int $applyId
+     * @param int $fromStatus
+     * @param array $data
+     * @return int
+     */
+    protected function updateApprovalTaskConditional($taskId, $applyId, $fromStatus, array $data)
+    {
+        return (int)Db::name('crm_shipping_approval_task')
+            ->where('id', (int)$taskId)
+            ->where('shipping_apply_id', (int)$applyId)
+            ->where('status', (int)$fromStatus)
+            ->update($data);
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $fromStatus
+     * @param array $data
+     * @return int
+     */
+    protected function updateShippingApplyStatusConditional($applyId, $fromStatus, array $data)
+    {
+        return (int)Db::name('crm_shipping_apply')
+            ->where('id', (int)$applyId)
+            ->where('status', (int)$fromStatus)
+            ->where('is_deleted', 0)
+            ->update($data);
+    }
+
+    /**
+     * @param array $payload
+     * @throws Exception
+     */
+    protected function writeApprovalDecisionAuditLog(array $payload)
+    {
+        $applyId = (int)($payload['shipping_apply_id'] ?? 0);
+        $taskId = (int)($payload['task_id'] ?? 0);
+        $action = trim((string)($payload['action'] ?? ''));
+        if ($applyId <= 0 || $taskId <= 0) {
+            throw new Exception('审批审计关联无效');
+        }
+        if ($action !== self::APPROVAL_ACTION_APPROVE && $action !== self::APPROVAL_ACTION_REJECT) {
+            throw new Exception('审批审计动作无效');
+        }
+
+        $opinion = [
+            'approval_round' => (int)($payload['approval_round'] ?? 0),
+            'approval_type' => (int)($payload['approval_type'] ?? 0),
+            'task_id' => $taskId,
+            'action' => $action,
+            'opinion' => (string)($payload['opinion_text'] ?? ''),
+        ];
+        if ($action === self::APPROVAL_ACTION_REJECT) {
+            $opinion['reason'] = (string)($payload['opinion_text'] ?? '');
+        }
+        $opinionJson = json_encode($opinion, JSON_UNESCAPED_UNICODE);
+        if ($opinionJson === false) {
+            throw new Exception('审批审计信息编码失败');
+        }
+        if (!mb_check_encoding($opinionJson, 'UTF-8')) {
+            throw new Exception('审批审计信息编码失败');
+        }
+        if (strlen($opinionJson) > self::APPROVAL_LOG_OPINION_MAX) {
+            throw new Exception('审批审计信息过长');
+        }
+
+        $logId = (int)Db::name('crm_shipping_approval_log')->insertGetId([
+            'shipping_apply_id' => $applyId,
+            'task_id' => $taskId,
+            'operator_id' => (int)($payload['operator_id'] ?? 0),
+            'operator_name' => mb_substr((string)($payload['operator_name'] ?? ''), 0, 100, 'UTF-8'),
+            'operator_role' => mb_substr((string)($payload['operator_role'] ?? ''), 0, 50, 'UTF-8'),
+            'action' => $action,
+            'before_status' => (int)($payload['before_status'] ?? 0),
+            'after_status' => (int)($payload['after_status'] ?? 0),
+            'opinion' => $opinionJson,
+            'create_time' => (string)($payload['now'] ?? date('Y-m-d H:i:s')),
+        ]);
+        if ($logId <= 0) {
+            throw new Exception('审批审计日志写入失败');
+        }
+    }
+
+    /**
+     * 当前读：指定任务的审批日志
+     *
+     * @param int $applyId
+     * @param int $taskId
+     * @return array
+     */
+    protected function loadApprovalLogsForTaskCurrentRead($applyId, $taskId)
+    {
+        $rows = Db::name('crm_shipping_approval_log')
+            ->where('shipping_apply_id', (int)$applyId)
+            ->where('task_id', (int)$taskId)
+            ->order('id', 'asc')
+            ->select();
+        return empty($rows) ? [] : (array)$rows;
+    }
+
+    /**
+     * COMMIT 不确定后的只读恢复（禁止自动重写）
+     *
+     * @param \Throwable $e
+     * @param int $applyId
+     * @param int $taskId
+     * @param string $decision
+     * @param int $operatorId
+     * @param string $opinionText
+     * @return array
+     */
+    protected function finalizeApprovalAfterCommitUncertainty(
+        $e,
+        $applyId,
+        $taskId,
+        $decision,
+        $operatorId,
+        $opinionText
+    ) {
+        $this->logApprovalError('decideApply.commit_uncertain', $e);
+        try {
+            $recovered = $this->recoverApprovalResultAfterCommitUncertainty(
+                (int)$applyId,
+                (int)$taskId,
+                (string)$decision,
+                (int)$operatorId,
+                (string)$opinionText
+            );
+            if ($recovered !== null) {
+                return $recovered;
+            }
+        } catch (\Throwable $ex) {
+            $this->logApprovalError('recoverApprovalResultAfterCommitUncertainty', $ex);
+        }
+        return $this->buildApprovalUncertainResult($applyId, $taskId);
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $taskId
+     * @param string $decision
+     * @param int $operatorId
+     * @param string $opinionText
+     * @return array|null
+     */
+    protected function recoverApprovalResultAfterCommitUncertainty(
+        $applyId,
+        $taskId,
+        $decision,
+        $operatorId,
+        $opinionText
+    ) {
+        $apply = $this->findShippingApplyCurrentRead($applyId);
+        if ($apply === null) {
+            return null;
+        }
+        $task = $this->findApprovalTaskCurrentRead($taskId);
+        if ($task === null) {
+            return null;
+        }
+        if ((int)($task['shipping_apply_id'] ?? 0) !== (int)$applyId) {
+            return null;
+        }
+        if ((int)($task['approver_id'] ?? 0) !== (int)$operatorId) {
+            return null;
+        }
+        $logs = $this->loadApprovalLogsForTaskCurrentRead($applyId, $taskId);
+        $replay = $this->resolveApprovalIdempotentReplay([
+            'apply' => $apply,
+            'task' => $task,
+            'logs' => $logs,
+            'decision' => $decision,
+            'opinion_text' => $opinionText,
+            'operator_id' => $operatorId,
+        ]);
+        if ($replay === null) {
+            return null;
+        }
+        return $this->buildApprovalSuccessResult($replay, true);
+    }
+
+    /**
+     * @param int $applyId
+     * @return array|null
+     */
+    protected function findShippingApplyCurrentRead($applyId)
+    {
+        $row = Db::name('crm_shipping_apply')->where('id', (int)$applyId)->find();
+        return empty($row) ? null : $row;
+    }
+
+    /**
+     * @param int $taskId
+     * @return array|null
+     */
+    protected function findApprovalTaskCurrentRead($taskId)
+    {
+        $row = Db::name('crm_shipping_approval_task')->where('id', (int)$taskId)->find();
+        return empty($row) ? null : $row;
+    }
+
+    /**
+     * @return void
+     */
+    protected function beginApprovalTransaction()
+    {
+        Db::startTrans();
+    }
+
+    /**
+     * @return void
+     */
+    protected function commitApprovalTransaction()
+    {
+        Db::commit();
+    }
+
+    /**
+     * @return void
+     */
+    protected function rollbackApprovalTransaction()
+    {
+        Db::rollback();
+    }
+
+    /**
+     * @param array $plan
+     * @param bool $idempotentReplay
+     * @return array
+     */
+    protected function buildApprovalSuccessResult(array $plan, $idempotentReplay)
+    {
+        $after = isset($plan['after_status']) ? (int)$plan['after_status'] : null;
+        $applyStatus = isset($plan['apply_status']) ? (int)$plan['apply_status'] : $after;
+        $msg = '审批操作成功';
+        if ($idempotentReplay) {
+            $msg = ((string)($plan['decision'] ?? '') === self::APPROVAL_ACTION_REJECT)
+                ? '该审批任务此前已驳回'
+                : '该审批任务此前已通过';
+        }
+        return [
+            'code' => 0,
+            'msg' => $msg,
+            'data' => [
+                'apply_id' => (int)($plan['apply_id'] ?? 0),
+                'apply_no' => trim((string)($plan['apply_no'] ?? '')),
+                'task_id' => (int)($plan['task_id'] ?? 0),
+                'decision' => (string)($plan['decision'] ?? ''),
+                'status' => $applyStatus,
+                'after_status' => $after,
+                'approval_round' => (int)($plan['approval_round'] ?? 0),
+                'current_stage' => (int)($plan['current_stage'] ?? 0),
+                'idempotent_replay' => $idempotentReplay ? true : false,
+                'result_uncertain' => false,
+                'idempotency_note' => 'limited_to_task_and_audit_evidence_not_request_token',
+            ],
+        ];
+    }
+
+    /**
+     * @param string $msg
+     * @return array
+     */
+    protected function buildApprovalFailResult($msg)
+    {
+        $msg = trim((string)$msg);
+        if ($msg === '') {
+            $msg = '审批失败，请稍后重试。';
+        }
+        if (preg_match('/SQLSTATE|Duplicate entry|Integrity constraint|PDOException/i', $msg)) {
+            $msg = '审批失败，请稍后重试。';
+        }
+        return ['code' => -200, 'msg' => $msg, 'data' => []];
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $taskId
+     * @return array
+     */
+    protected function buildApprovalUncertainResult($applyId, $taskId)
+    {
+        return [
+            'code' => -200,
+            'msg' => '审批结果待确认，请刷新后查看或联系管理员',
+            'data' => [
+                'apply_id' => (int)$applyId,
+                'task_id' => (int)$taskId,
+                'result_uncertain' => true,
+            ],
+        ];
+    }
+
+    /**
+     * @param int $taskStatus
+     * @param string $decision
+     * @return string
+     */
+    protected function describeApprovalConflictMessage($taskStatus, $decision)
+    {
+        $taskStatus = (int)$taskStatus;
+        $decision = (string)$decision;
+        if ($taskStatus === 0) {
+            return '审批任务尚未激活，不能审批';
+        }
+        if ($taskStatus === 4) {
+            return '审批任务已失效，不能重复操作';
+        }
+        if ($taskStatus === 2 && $decision === self::APPROVAL_ACTION_REJECT) {
+            return '该任务已通过，不能再驳回';
+        }
+        if ($taskStatus === 3 && $decision === self::APPROVAL_ACTION_APPROVE) {
+            return '该任务已驳回，不能再通过';
+        }
+        if ($taskStatus === 2) {
+            return '审批结果无法确认为相同请求，请刷新后核对';
+        }
+        if ($taskStatus === 3) {
+            return '审批结果无法确认为相同请求，请刷新后核对';
+        }
+        return '审批任务状态冲突，请刷新后重试';
+    }
+
+    /**
+     * @param int[] $a
+     * @param int[] $b
+     * @return bool
+     */
+    public function isSamePositiveIntSet(array $a, array $b)
+    {
+        $aa = [];
+        foreach ($a as $v) {
+            $v = (int)$v;
+            if ($v <= 0) {
+                return false;
+            }
+            $aa[$v] = $v;
+        }
+        $bb = [];
+        foreach ($b as $v) {
+            $v = (int)$v;
+            if ($v <= 0) {
+                return false;
+            }
+            $bb[$v] = $v;
+        }
+        if (count($aa) !== count($bb)) {
+            return false;
+        }
+        foreach ($aa as $id => $_) {
+            if (!isset($bb[$id])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * @param string $scene
+     * @param \Throwable $e
+     * @return void
+     */
+    protected function logApprovalError($scene, $e)
+    {
+        if (class_exists('\\think\\facade\\Log')) {
+            \think\facade\Log::write(
+                '[ShippingApplyService::' . $scene . '] ' . $e->getMessage(),
+                'error'
+            );
+        }
     }
 }
