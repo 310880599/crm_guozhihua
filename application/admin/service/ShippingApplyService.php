@@ -6458,6 +6458,19 @@ class ShippingApplyService
     /** 列表分页上限 */
     const MY_APPLY_LIST_LIMIT_MAX = 100;
 
+    /**
+     * 「我的发货申请」列表专用状态白名单（M4-2C-1B）
+     * 排除草稿 0、产品经理驳回 20、产品总监驳回 40。
+     * 禁止改写 HISTORICAL_SUBMIT_SUCCESS_STATUSES（历史正式提交语义仍含 20/40）。
+     */
+    const MY_APPLY_LIST_STATUSES = [10, 30, 50, 60];
+
+    /**
+     * 「审核失败」列表专用状态白名单（M4-2C-1B）
+     * 仅当前主表状态为产品经理驳回 / 产品总监驳回。
+     */
+    const FAILED_APPLY_LIST_STATUSES = [20, 40];
+
     /** 统一详情拒绝文案（无权限 / 不存在 / 已删 / 非正式申请统一） */
     const APPLY_VIEW_DENY_MSG = '无权查看或记录不存在';
 
@@ -6466,6 +6479,7 @@ class ShippingApplyService
      *
      * P0：任意登录身份（含超管）仅查询 applicant_id = session('aid')。
      * 禁止信任前端 applicant_id / user_id / is_admin 等扩大范围。
+     * M4-2C-1B：列表状态强制 IN (10,30,50,60)，驳回申请改由 listFailedApplies 承接。
      *
      * @param array $params
      * @return array{code:int,msg:string,count:int,data:array}
@@ -6525,7 +6539,7 @@ class ShippingApplyService
             } else {
                 return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
             }
-            if (!in_array($statusFilter, self::HISTORICAL_SUBMIT_SUCCESS_STATUSES, true)) {
+            if (!in_array($statusFilter, self::MY_APPLY_LIST_STATUSES, true)) {
                 return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
             }
         }
@@ -6550,11 +6564,11 @@ class ShippingApplyService
             return ['code' => -200, 'msg' => '开始日期不能晚于结束日期', 'count' => 0, 'data' => []];
         }
 
-        // P0：本人过滤对超管同样强制；仅正式提交成功状态白名单；排除软删
+        // P0：本人过滤对超管同样强制；我的申请列表白名单（不含驳回）；排除软删
         $query = Db::name('crm_shipping_apply')
             ->where('applicant_id', $adminId)
             ->where('is_deleted', 0)
-            ->whereIn('status', self::HISTORICAL_SUBMIT_SUCCESS_STATUSES);
+            ->whereIn('status', self::MY_APPLY_LIST_STATUSES);
 
         if ($statusFilter !== null) {
             $query->where('status', $statusFilter);
@@ -6637,6 +6651,184 @@ class ShippingApplyService
                 'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
                 'current_approver_text' => (string)($approverInfo['current_approver_text'] ?? ''),
                 'next_stage_text' => (string)($approverInfo['next_stage_text'] ?? ''),
+            ];
+        }
+
+        return [
+            'code' => 0,
+            'msg' => '获取成功',
+            'count' => $count,
+            'data' => $data,
+        ];
+    }
+
+    /**
+     * 审核失败列表（M4-2C-1B；Layui 分页；只读）
+     *
+     * P0：任意登录身份（含超管 / 经理 / 总监）仅查询本人提交且当前状态为 20/40 的申请。
+     * 禁止信任前端 applicant_id / user_id / is_admin / group_id 等扩大范围。
+     * 以主表当前 status 为准，不根据历史驳回日志决定可见性。
+     *
+     * @param array $params
+     * @return array{code:int,msg:string,count:int,data:array}
+     */
+    public function listFailedApplies($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        // 显式丢弃前端伪造身份 / 角色字段，避免后续误用
+        unset(
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['can_view'],
+            $params['viewer_role'],
+            $params['can_approve']
+        );
+
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'count' => 0, 'data' => []];
+        }
+
+        $page = (int)($params['page'] ?? 1);
+        if ($page < 1) {
+            $page = 1;
+        }
+        $limit = (int)($params['limit'] ?? 10);
+        if ($limit < 1) {
+            $limit = 10;
+        }
+        if ($limit > self::MY_APPLY_LIST_LIMIT_MAX) {
+            $limit = self::MY_APPLY_LIST_LIMIT_MAX;
+        }
+
+        $keyword = trim((string)($params['keyword'] ?? ''));
+        if (mb_strlen($keyword, 'UTF-8') > self::MY_APPLY_KEYWORD_MAX) {
+            return ['code' => -200, 'msg' => '关键字过长', 'count' => 0, 'data' => []];
+        }
+
+        $statusFilter = null;
+        if (array_key_exists('status', $params) && $params['status'] !== '' && $params['status'] !== null) {
+            $statusRaw = $params['status'];
+            if (is_bool($statusRaw) || is_array($statusRaw) || is_object($statusRaw) || is_float($statusRaw)) {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+            if (is_string($statusRaw)) {
+                $statusRaw = trim($statusRaw);
+                if ($statusRaw === '' || !preg_match('/^(0|[1-9]\d*)$/', $statusRaw)) {
+                    return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+                }
+                $statusFilter = (int)$statusRaw;
+            } elseif (is_int($statusRaw)) {
+                $statusFilter = $statusRaw;
+            } else {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+            if (!in_array($statusFilter, self::FAILED_APPLY_LIST_STATUSES, true)) {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+        }
+
+        $startTime = trim((string)($params['start_time'] ?? ''));
+        $endTime = trim((string)($params['end_time'] ?? ''));
+        $startBound = null;
+        $endBound = null;
+        if ($startTime !== '') {
+            $startBound = $this->parseMyApplyDateBound($startTime, true);
+            if ($startBound === null) {
+                return ['code' => -200, 'msg' => '开始日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($endTime !== '') {
+            $endBound = $this->parseMyApplyDateBound($endTime, false);
+            if ($endBound === null) {
+                return ['code' => -200, 'msg' => '结束日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($startBound !== null && $endBound !== null && strcmp($startBound, $endBound) > 0) {
+            return ['code' => -200, 'msg' => '开始日期不能晚于结束日期', 'count' => 0, 'data' => []];
+        }
+
+        // P0：本人过滤对超管同样强制；仅审核失败白名单；排除软删
+        $query = Db::name('crm_shipping_apply')
+            ->where('applicant_id', $adminId)
+            ->where('is_deleted', 0)
+            ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES);
+
+        if ($statusFilter !== null) {
+            $query->where('status', $statusFilter);
+        }
+        if ($keyword !== '') {
+            $query->where(function ($q) use ($keyword) {
+                $q->whereLike('apply_no', '%' . $keyword . '%')
+                    ->whereOr('order_no', 'like', '%' . $keyword . '%')
+                    ->whereOr('customer_name', 'like', '%' . $keyword . '%');
+            });
+        }
+        if ($startBound !== null) {
+            $query->where('submit_time', '>=', $startBound);
+        }
+        if ($endBound !== null) {
+            $query->where('submit_time', '<=', $endBound);
+        }
+
+        try {
+            $count = (int)(clone $query)->count('id');
+            if ($count <= 0) {
+                return [
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'count' => 0,
+                    'data' => [],
+                ];
+            }
+
+            $rows = (clone $query)
+                ->field('id,apply_no,order_no,customer_name,order_amount,shipping_date,submit_time,status,approval_round,approval_route,approval_threshold,applicant_name')
+                ->order('submit_time', 'desc')
+                ->order('id', 'desc')
+                ->page($page, $limit)
+                ->select();
+            $rows = (array)$rows;
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::listFailedApplies] ' . $e->getMessage(), 'error');
+            }
+            return ['code' => -200, 'msg' => '列表加载失败，请稍后重试', 'count' => 0, 'data' => []];
+        }
+
+        $applyIds = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) {
+                $applyIds[] = $id;
+            }
+        }
+
+        $summaryMap = $this->buildDraftProductSummaries($applyIds);
+
+        $data = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            $status = (int)($row['status'] ?? 0);
+            $data[] = [
+                'id' => $id,
+                'apply_no' => trim((string)($row['apply_no'] ?? '')),
+                'order_no' => trim((string)($row['order_no'] ?? '')),
+                'customer_name' => trim((string)($row['customer_name'] ?? '')),
+                'order_amount' => round((float)($row['order_amount'] ?? 0), 2),
+                'shipping_date' => trim((string)($row['shipping_date'] ?? '')),
+                'submit_time' => trim((string)($row['submit_time'] ?? '')),
+                'status' => $status,
+                'status_text' => $this->mapApplyStatusText($status),
+                'approval_round' => (int)($row['approval_round'] ?? 0),
+                'approval_route' => (int)($row['approval_route'] ?? 0),
+                'approval_route_text' => $this->mapApprovalRouteText((int)($row['approval_route'] ?? 0)),
+                'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
             ];
         }
 

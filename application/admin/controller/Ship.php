@@ -175,9 +175,9 @@ class Ship extends Common
     }
 
     /**
-     * 我的发货申请（M4-2A 只读列表）
+     * 我的发货申请（M4-2A 只读列表；M4-2C-1B 排除驳回状态）
      * GET：列表页
-     * POST：op=list → listMyApplies（仅本人正式申请）
+     * POST：op=list → listMyApplies（仅本人非草稿、非驳回正式申请）
      */
     public function myShip()
     {
@@ -200,6 +200,35 @@ class Ship extends Common
         }
 
         return $this->fetch('ship/my_ship');
+    }
+
+    /**
+     * 审核失败（M4-2C-1B 只读列表；匹配菜单 Ship/failedShip）
+     * GET：列表页
+     * POST：op=list → listFailedApplies（仅本人当前 status IN 20/40）
+     * 本轮不提供编辑 / 再次提交 / 审批写操作。
+     */
+    public function failedShip()
+    {
+        $service = $this->getShippingApplyService();
+
+        if (request()->isPost()) {
+            $op = trim((string)Request::param('op', ''));
+            $params = Request::param();
+            if (!is_array($params)) {
+                $params = [];
+            }
+
+            switch ($op) {
+                case '':
+                case 'list':
+                    return json($service->listFailedApplies($params));
+                default:
+                    return json(['code' => -200, 'msg' => '无效的操作', 'count' => 0, 'data' => []]);
+            }
+        }
+
+        return $this->fetch('ship/failed_ship');
     }
 
     /**
