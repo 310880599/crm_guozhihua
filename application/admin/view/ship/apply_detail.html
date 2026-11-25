@@ -141,6 +141,9 @@
     <div class="layui-card">
         <div class="layui-card-header">发货产品明细</div>
         <div class="layui-card-body" style="overflow-x:auto;">
+            <div id="work-data-tip" class="apply-detail-empty" style="display:none; text-align:left; color:#a66b00; margin-bottom:8px;">
+                此处展示当前工作数据。历史正式提交内容以对应审批轮次快照为准。
+            </div>
             <table class="layui-table" lay-size="sm">
                 <thead>
                 <tr>
@@ -267,6 +270,11 @@ layui.use(['layer'], function () {
     var logs = detailPayload.approval_logs || [];
     if (!pageApplyId && apply.id) {
         pageApplyId = parseInt(apply.id, 10) || 0;
+    }
+    // 审核失败：明确当前明细为工作数据，非历史提交快照
+    var applyStatus = parseInt(apply.status, 10);
+    if (applyStatus === 20 || applyStatus === 40) {
+        $('#work-data-tip').show();
     }
 
     var basicHtml = ''

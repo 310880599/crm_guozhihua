@@ -72,6 +72,23 @@
         border-color: #0b83e6 !important;
         color: #fff !important;
     }
+    .failed-ship-wrap .failed-ship-edit-btn {
+        background-color: #FFB800 !important;
+        color: #fff !important;
+        border: 1px solid #FFB800 !important;
+        border-radius: 2px;
+        margin-left: 4px;
+    }
+    .failed-ship-wrap .failed-ship-edit-btn:hover {
+        background-color: #e6a500 !important;
+        border-color: #e6a500 !important;
+        color: #fff !important;
+    }
+    .failed-ship-wrap .failed-ship-edit-disabled {
+        color: #999;
+        font-size: 12px;
+        margin-left: 4px;
+    }
 </style>
 </head>
 <body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
@@ -124,6 +141,11 @@
 
 <script type="text/html" id="failed-ship-action-tpl">
     <a class="layui-btn layui-btn-xs failed-ship-detail-btn" lay-event="viewDetail">查看详情</a>
+    {{# if (d.can_edit_rejected == 1) { }}
+    <a class="layui-btn layui-btn-xs failed-ship-edit-btn" lay-event="editRejected">编辑</a>
+    {{# } else { }}
+    <span class="failed-ship-edit-disabled" title="尚未完成历史审批数据保护，暂时不能编辑">不可编辑</span>
+    {{# } }}
 </script>
 
 {include file="common/foot"/}
@@ -137,6 +159,7 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
 
     var listUrl = '{:url("Ship/failedShip")}';
     var detailUrlBase = '{:url("Ship/applyDetail")}';
+    var editRejectedUrlBase = '{:url("Ship/editRejectedShip")}';
 
     function escapeHtml(str) {
         return String(str == null ? '' : str)
@@ -178,6 +201,23 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
             area: ['92%', '92%'],
             maxmin: true,
             shadeClose: true,
+            content: url
+        });
+    }
+
+    function openEditRejected(id) {
+        id = parseInt(id, 10);
+        if (!id || id <= 0) {
+            layer.msg('申请ID无效', { icon: 2 });
+            return;
+        }
+        var url = editRejectedUrlBase + (editRejectedUrlBase.indexOf('?') >= 0 ? '&' : '?') + 'id=' + id;
+        layer.open({
+            type: 2,
+            title: '编辑审核失败发货申请',
+            area: ['96%', '96%'],
+            maxmin: true,
+            shadeClose: false,
             content: url
         });
     }
@@ -264,7 +304,7 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
             },
             {
                 title: '操作',
-                width: 100,
+                width: 180,
                 fixed: 'right',
                 toolbar: '#failed-ship-action-tpl'
             }
@@ -283,6 +323,11 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
         }
         tableIns.reload(opts);
     }
+
+    /** 供编辑弹层保存成功后刷新列表 */
+    window.refreshFailedShipList = function () {
+        reloadTable(false);
+    };
 
     $('#btn-search').on('click', function () {
         reloadTable(true);
@@ -312,6 +357,12 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
         }
         if (obj.event === 'viewDetail') {
             openDetail(id);
+        } else if (obj.event === 'editRejected') {
+            if (parseInt(obj.data.can_edit_rejected, 10) !== 1) {
+                layer.msg('该申请尚未完成历史审批数据保护，暂时不能编辑', { icon: 0 });
+                return;
+            }
+            openEditRejected(id);
         }
     });
 });

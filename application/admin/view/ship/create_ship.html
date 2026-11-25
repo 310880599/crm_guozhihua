@@ -207,10 +207,15 @@
     </fieldset>
 
     <div class="ship-warn-banner" id="ship-warn-banner"></div>
+    <div class="ship-warn-banner" id="rejected-edit-tip-banner" style="display:none; border-color:#1E9FFF; background:#eef7ff; color:#0b5f9a;">
+        当前为审核失败申请编辑。保存修改后仍为审核失败状态，不等于再次提交审核（再次提交功能尚未开放）。
+    </div>
+    <div class="ship-warn-banner" id="reject-reason-banner" style="display:none;"></div>
 
     <form class="layui-form create-form" lay-filter="ship-create-form" id="ship-create-form">
         <input type="hidden" name="order_id" id="order_id" value="">
         <input type="hidden" name="apply_id" id="apply_id" value="">
+        <input type="hidden" name="expected_work_hash" id="expected_work_hash" value="">
 
         <!-- 区域一：关联订单 -->
         <div class="create-card">
@@ -364,6 +369,7 @@
                 <div class="layui-input-block">
                     <button type="button" class="layui-btn" id="btn-save-draft" lay-submit lay-filter="ship-save-draft">保存草稿</button>
                     <button type="button" class="layui-btn layui-btn-normal" id="btn-submit-apply">提交审核</button>
+                    <button type="button" class="layui-btn layui-btn-normal" id="btn-save-rejected" style="display:none;">保存修改</button>
                     <button type="button" class="layui-btn layui-btn-warm" id="btn-retry-submit" style="display:none;">使用原请求重新确认</button>
                     <button type="button" class="layui-btn layui-btn-primary" id="btn-reopen-draft" style="display:none;">重新打开本草稿</button>
                     <button type="button" class="layui-btn layui-btn-primary" id="btn-back">返回</button>
@@ -409,8 +415,11 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
 
     var apiUrl = '{:url("Ship/createShip")}';
     var submitApiUrl = '{:url("Ship/submitApply")}';
+    var saveRejectedUrl = {$saveRejectedUrlJson|default='""'|raw};
+    var pageMode = {$pageModeJson|default='"create"'|raw};
     var pageSessionAid = {$sessionAidJson|default=0|raw};
     var pageCsrfToken = {$submitCsrfTokenJson|default='""'|raw};
+    var rejectedEditCsrfToken = {$rejectedEditCsrfTokenJson|default='""'|raw};
     var orderSourceItems = [];
     var shippingLines = [];
     var factoryOptions = [];
@@ -419,7 +428,9 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var shippingTableRendered = false;
     var rowKeySeq = 1;
     var savingDraft = false;
+    var savingRejected = false;
     var submittingApply = false;
+    var isRejectedEditMode = (pageMode === 'rejected_edit');
     var formLockedAfterSubmit = false;
     var currentOrderMoney = null;
     var draftOrderAmount = null;
@@ -1085,6 +1096,10 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     }
 
     function openOrderSelectLayer() {
+        if (isRejectedEditMode) {
+            layer.msg('审核失败编辑期间禁止切换关联订单', { icon: 0 });
+            return;
+        }
         var currentApplyId = parseInt($('#apply_id').val(), 10) || 0;
         if (currentApplyId > 0) {
             layer.msg('草稿编辑期间禁止切换关联订单', { icon: 0 });
@@ -1297,6 +1312,10 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
 
     function doSaveDraft(extra) {
         extra = extra || {};
+        if (isRejectedEditMode) {
+            layer.msg('审核失败编辑请使用「保存修改」，不能保存草稿。', { icon: 0 });
+            return;
+        }
         if (formLockedAfterSubmit) {
             layer.msg('该发货申请已提交审核，不能再保存草稿。', { icon: 0 });
             return;
@@ -1531,7 +1550,12 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         openOrderSelectLayer();
     });
 
+    // 返回按钮唯一 click 路径：按 pageMode / isRejectedEditMode 分流，禁止二次绑定
     $('#btn-back').on('click', function () {
+        if (isRejectedEditMode) {
+            closeRejectedEditLayer();
+            return;
+        }
         if (window.history.length > 1) {
             window.history.back();
         } else {
@@ -1554,7 +1578,148 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         window.location.href = draftEditUrl;
     });
 
+    function closeRejectedEditLayer() {
+        try {
+            if (parent && parent.layer && window.name) {
+                var idx = parent.layer.getFrameIndex(window.name);
+                if (idx !== undefined && idx !== null) {
+                    parent.layer.close(idx);
+                    return;
+                }
+            }
+        } catch (e) {}
+        if (window.history.length > 1) {
+            window.history.back();
+        }
+    }
+
+    function doSaveRejectedApply() {
+        if (!isRejectedEditMode) {
+            return;
+        }
+        if (savingRejected) {
+            return;
+        }
+        if (!pageSessionAid || pageSessionAid <= 0) {
+            layer.msg('登录状态无效，请重新登录。', { icon: 2 });
+            return;
+        }
+        if (!rejectedEditCsrfToken) {
+            layer.msg('安全校验信息缺失，请刷新页面后重试。', { icon: 2 });
+            return;
+        }
+        var expectedHash = $.trim($('#expected_work_hash').val() || '');
+        if (!expectedHash) {
+            layer.msg('编辑版本信息缺失，请刷新后重试。', { icon: 2 });
+            return;
+        }
+
+        var built = buildShippingFormData({});
+        if (!built.ok) {
+            layer.msg(built.msg, { icon: 2 });
+            return;
+        }
+
+        var postData = {
+            csrf_token: rejectedEditCsrfToken,
+            order_id: built.data.order_id,
+            apply_id: built.data.apply_id,
+            expected_work_hash: expectedHash,
+            shipping_date: built.data.shipping_date,
+            receiver_name: built.data.receiver_name,
+            receiver_phone: built.data.receiver_phone,
+            receiver_address: built.data.receiver_address,
+            shipping_method: built.data.shipping_method,
+            shipping_remark: built.data.shipping_remark,
+            items: JSON.stringify(built.data.items)
+        };
+
+        savingRejected = true;
+        var $btn = $('#btn-save-rejected');
+        $btn.addClass('layui-btn-disabled').prop('disabled', true).text('保存中...');
+        var loadIndex = layer.load(2);
+        // 禁止自动重试：仅一次 AJAX
+        $.ajax({
+            url: saveRejectedUrl,
+            type: 'POST',
+            data: postData,
+            dataType: 'json',
+            timeout: 60000
+        }).done(function (res) {
+            layer.close(loadIndex);
+            savingRejected = false;
+            $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存修改');
+            if (!res || parseInt(res.code, 10) !== 0) {
+                // 失败保留表单输入
+                var msg = (res && res.msg) ? res.msg : '保存失败';
+                if (res && res.data && res.data.result_uncertain) {
+                    layer.alert(msg + '。请刷新后核对当前内容，勿重复提交。', { icon: 0, title: '保存结果待确认' });
+                    return;
+                }
+                layer.msg(msg, { icon: 2 });
+                return;
+            }
+            var data = res.data || {};
+            if (data.expected_work_hash) {
+                $('#expected_work_hash').val(data.expected_work_hash);
+            }
+            var warnList = data.warnings || [];
+            if (warnList.length) {
+                showWarnBanner(warnList);
+            }
+            var okMsg = data.noop ? '无修改' : (res.msg || '保存修改成功');
+            layer.msg(okMsg, { icon: 1, time: 1200 }, function () {
+                try {
+                    if (parent && typeof parent.refreshFailedShipList === 'function') {
+                        parent.refreshFailedShipList();
+                    }
+                } catch (e2) {}
+                closeRejectedEditLayer();
+            });
+        }).fail(function () {
+            layer.close(loadIndex);
+            savingRejected = false;
+            $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('保存修改');
+            // 断连：不自动重试，保留表单
+            layer.alert('网络异常，保存结果未知。请刷新审核失败列表核对，勿重复提交。', {
+                icon: 0,
+                title: '保存结果待确认'
+            });
+        });
+    }
+
+    function enableRejectedEditMode(editData) {
+        isRejectedEditMode = true;
+        $('#page-mode-title').text('编辑审核失败发货申请');
+        $('#rejected-edit-tip-banner').show();
+        $('#btn-save-draft').hide();
+        $('#btn-submit-apply').hide();
+        $('#btn-retry-submit').hide();
+        $('#btn-reopen-draft').hide();
+        $('#btn-back-to-draft').hide();
+        $('#btn-save-rejected').show();
+        $('#btn-select-order').addClass('layui-btn-disabled').prop('disabled', true).hide();
+        var reason = (editData && editData.reject_reason) ? String(editData.reject_reason) : '';
+        if (reason) {
+            $('#reject-reason-banner').html('最新驳回原因：' + escapeHtml(reason)).show();
+        } else {
+            $('#reject-reason-banner').hide();
+        }
+        if (editData && editData.expected_work_hash) {
+            $('#expected_work_hash').val(editData.expected_work_hash);
+        }
+        // 返回由上方唯一 #btn-back 监听按 isRejectedEditMode 分流，此处不再二次绑定
+    }
+
+    $('#btn-save-rejected').on('click', function () {
+        doSaveRejectedApply();
+    });
+
     form.on('submit(ship-save-draft)', function () {
+        if (isRejectedEditMode) {
+            layer.msg('审核失败编辑请使用「保存修改」。', { icon: 0 });
+            return false;
+        }
         doSaveDraft();
         return false;
     });
@@ -2125,11 +2290,15 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     }
 
     function beginFormalSubmitFlow() {
+        if (isRejectedEditMode) {
+            layer.msg('审核失败编辑不能提交审核，请使用「保存修改」。再次提交功能尚未开放。', { icon: 0 });
+            return;
+        }
         if (formLockedAfterSubmit) {
             layer.msg('该发货申请已提交审核。', { icon: 0 });
             return;
         }
-        if (savingDraft || submittingApply) {
+        if (savingDraft || submittingApply || savingRejected) {
             layer.msg('请等待当前操作完成。', { icon: 0 });
             return;
         }
@@ -2680,9 +2849,30 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         return applyIdNum > 0;
     }
 
-    // 草稿编辑初始化
+    // 草稿编辑 / 审核失败编辑初始化
     var draftDataJson = '{$draftDataJson|raw}';
+    var rejectedEditDataJson = '{$rejectedEditDataJson|raw}';
     ensureFactories(function () {
+        if (isRejectedEditMode) {
+            if (!rejectedEditDataJson) {
+                layer.msg('审核失败申请数据缺失或无权编辑', { icon: 2 });
+                return;
+            }
+            try {
+                var rejectedData = JSON.parse(rejectedEditDataJson);
+                applyDraftData(rejectedData);
+                // applyDraftData 会切入草稿编辑 UI；随后强制切回驳回编辑模式
+                enableRejectedEditMode(rejectedData);
+                $('#btn-reopen-draft').hide();
+                $('#btn-back-to-draft').hide();
+                $('#btn-save-draft').hide();
+                $('#btn-submit-apply').hide();
+                $('#btn-save-rejected').show();
+            } catch (e) {
+                layer.msg('审核失败申请数据解析失败', { icon: 2 });
+            }
+            return;
+        }
         if (draftDataJson) {
             try {
                 var draftData = JSON.parse(draftDataJson);

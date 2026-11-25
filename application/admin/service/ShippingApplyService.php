@@ -12,6 +12,9 @@ class ShippingApplyService
     /** @var int[] 占用订单数量的发货申请状态 */
     protected $occupiedStatuses = [10, 30, 50];
 
+    /** @var ShippingApplyRoundSnapshotService|null 测试可注入 */
+    protected $roundSnapshotService = null;
+
     /**
      * 正式提交成功后的合法业务状态（与占量解耦；不含草稿 0）
      * 依据 V1.6 BR-12：10 待产品经理 / 20·40 驳回 / 30 待总监 / 50 审批通过 / 60 取消
@@ -2749,7 +2752,9 @@ class ShippingApplyService
     }
 
     /**
-     * 草稿保存后：对已不在有效发货行中的 order_item_id 失效替代授权
+     * 保存后：对已不在有效发货行中的 order_item_id 失效替代授权
+     * 仅处理当前 shipping_apply_id 下 status=1 的授权；不改旧审批任务/旧日志/快照。
+     * $scene 仅由服务端调用方传入（draft_edit|rejected_edit），不信任客户端。
      *
      * @param int $applyId
      * @param int[] $keptOrderItemIds
@@ -2757,6 +2762,7 @@ class ShippingApplyService
      * @param string $operatorName
      * @param string $applyNo
      * @param string $now
+     * @param string $scene 内部场景：draft_edit（默认）| rejected_edit
      * @throws Exception
      */
     protected function invalidatePmSubstitutesForRemovedOrderItems(
@@ -2765,7 +2771,8 @@ class ShippingApplyService
         $operatorId,
         $operatorName,
         $applyNo,
-        $now
+        $now,
+        $scene = 'draft_edit'
     ) {
         $applyId = (int)$applyId;
         if ($applyId <= 0) {
@@ -2778,6 +2785,8 @@ class ShippingApplyService
                 $keptMap[$oid] = true;
             }
         }
+
+        $invalidateReason = $this->resolveOrderItemRemovedInvalidateReason($scene);
 
         $rows = Db::name('crm_shipping_pm_substitute')
             ->where('shipping_apply_id', $applyId)
@@ -2795,11 +2804,26 @@ class ShippingApplyService
                 (int)$operatorId,
                 (string)$operatorName,
                 (string)$applyNo,
-                '草稿已移除该原订单产品的全部发货行，替代授权自动失效',
+                $invalidateReason,
                 'order_item_removed',
                 $now
             );
         }
+    }
+
+    /**
+     * 产品行移除导致替代授权失效的审计原因（仅服务端内部 scene）
+     *
+     * @param string $scene draft_edit|rejected_edit；未知值回退草稿文案
+     * @return string
+     */
+    protected function resolveOrderItemRemovedInvalidateReason($scene)
+    {
+        $scene = trim((string)$scene);
+        if ($scene === 'rejected_edit') {
+            return '审核失败申请编辑已移除该原订单产品的全部发货行，替代授权自动失效';
+        }
+        return '草稿已移除该原订单产品的全部发货行，替代授权自动失效';
     }
 
     /**
@@ -5359,6 +5383,10 @@ class ShippingApplyService
                 if ($dupKind === 'approval_task') {
                     return $this->buildSubmitFailResult('审批任务初始化冲突，请稍后重试。');
                 }
+                if ($dupKind === 'round_snapshot') {
+                    // 禁止把快照唯一冲突直接当成功；内容一致冲突应在快照 Service 内消化
+                    return $this->buildSubmitFailResult('提交快照冲突，请确认后重试。');
+                }
 
                 if ($this->isTransientSubmitDbError($e) && $attempt < $maxRetry) {
                     continue;
@@ -5593,7 +5621,28 @@ class ShippingApplyService
             throw new Exception('提交记录不完整，请联系管理员');
         }
 
-        return $this->buildSubmitSuccessResult($applyRow, true);
+        // M4-2C-2B-2A：新机制下成功证据须含本轮有效 submit 快照；旧历史走受控兼容
+        $snapEvidence = $this->getRoundSnapshotService()->evaluateSubmitSnapshotEvidence(
+            $applyRow,
+            $payloadHash,
+            true
+        );
+        $decision = (string)($snapEvidence['decision'] ?? '');
+        if ($decision === ShippingApplyRoundSnapshotService::EVIDENCE_VALID_SNAPSHOT
+            || $decision === ShippingApplyRoundSnapshotService::EVIDENCE_LEGACY_COMPATIBLE
+        ) {
+            return $this->buildSubmitSuccessResult($applyRow, true);
+        }
+
+        $this->logSubmitError(
+            'idempotent.snapshot_evidence',
+            new Exception(
+                'decision=' . $decision
+                . ' apply_id=' . (int)($applyRow['id'] ?? 0)
+                . ' reason=' . (string)($snapEvidence['reason'] ?? '')
+            )
+        );
+        throw new Exception('提交记录不完整，请联系管理员');
     }
 
     /**
@@ -6008,6 +6057,13 @@ class ShippingApplyService
             throw new Exception('发货申请提交状态校验失败，请稍后重试。');
         }
 
+        // M4-2C-2B-2A：同一事务内写入 Round 1 submit 不可变快照（失败则整单回滚）
+        $this->getRoundSnapshotService()->createSubmitRoundSnapshotInCurrentTx(
+            $savedApplyId,
+            $applicantId,
+            $finalRow
+        );
+
         return $this->buildSubmitSuccessResult($finalRow, false);
     }
 
@@ -6382,7 +6438,20 @@ class ShippingApplyService
             if ($rowHash === '' || !hash_equals($rowHash, strtolower(trim((string)$payloadHash)))) {
                 return $this->buildSubmitUncertainResult($submitToken);
             }
-            if ($this->isHistoricalSubmitSuccessRecord($row)) {
+            if (!$this->isHistoricalSubmitSuccessRecord($row)) {
+                return $this->buildSubmitUncertainResult($submitToken);
+            }
+
+            // COMMIT 不确定：只读核验快照证据；新机制缺快照不得冒充成功；旧历史可兼容
+            $snapEvidence = $this->getRoundSnapshotService()->evaluateSubmitSnapshotEvidence(
+                $row,
+                $payloadHash,
+                true
+            );
+            $decision = (string)($snapEvidence['decision'] ?? '');
+            if ($decision === ShippingApplyRoundSnapshotService::EVIDENCE_VALID_SNAPSHOT
+                || $decision === ShippingApplyRoundSnapshotService::EVIDENCE_LEGACY_COMPATIBLE
+            ) {
                 return $this->buildSubmitSuccessResult($row, true);
             }
             return $this->buildSubmitUncertainResult($submitToken);
@@ -6411,7 +6480,24 @@ class ShippingApplyService
         if (stripos($msg, 'uniq_apply_round_type_approver') !== false) {
             return 'approval_task';
         }
+        // 快照唯一键冲突不得在外层当成功；create 路径内已比对内容，此处仅分类便于排查
+        if (stripos($msg, 'uk_apply_round_stage') !== false) {
+            return 'round_snapshot';
+        }
         return '';
+    }
+
+    /**
+     * 审批轮次快照服务（可测替换）
+     *
+     * @return ShippingApplyRoundSnapshotService
+     */
+    protected function getRoundSnapshotService()
+    {
+        if ($this->roundSnapshotService instanceof ShippingApplyRoundSnapshotService) {
+            return $this->roundSnapshotService;
+        }
+        return new ShippingApplyRoundSnapshotService();
     }
 
     /**
@@ -6810,6 +6896,7 @@ class ShippingApplyService
         }
 
         $summaryMap = $this->buildDraftProductSummaries($applyIds);
+        $snapshotEditMap = $this->mapFailedAppliesHasSubmitSnapshot($rows);
 
         $data = [];
         foreach ($rows as $row) {
@@ -6829,6 +6916,8 @@ class ShippingApplyService
                 'approval_route' => (int)($row['approval_route'] ?? 0),
                 'approval_route_text' => $this->mapApprovalRouteText((int)($row['approval_route'] ?? 0)),
                 'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
+                // UX：有本轮 submit 快照才显示编辑入口；服务端保存仍完整校验
+                'can_edit_rejected' => !empty($snapshotEditMap[$id]) ? 1 : 0,
             ];
         }
 
@@ -6839,6 +6928,1440 @@ class ShippingApplyService
             'data' => $data,
         ];
     }
+
+    // -------------------------------------------------------------------------
+    // M4-2C-2B-2C-2：审核失败申请编辑读取 / 独立保存（不放宽 saveDraft；不触发再提）
+    // -------------------------------------------------------------------------
+
+    /** 驳回编辑动作审计 */
+    const REJECTED_EDIT_AUDIT_ACTION = 'edit_rejected';
+
+    /** work_hash 规范化版本（仅哈希载荷内标识；非 DB 字段） */
+    const REJECTED_WORK_HASH_SCHEMA_VERSION = 1;
+
+    /** 无快照 / 损坏快照对业务员的统一安全文案（不泄露 hash 细节） */
+    const REJECTED_EDIT_SNAPSHOT_MISSING_MSG = '该申请尚未完成历史审批数据保护，暂时不能编辑，请联系管理员处理。';
+    const REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG = '该申请历史审批快照已损坏，暂时不能编辑，请联系管理员处理。';
+    const REJECTED_EDIT_CONFLICT_MSG = '数据已被修改，请刷新后重试。';
+    const REJECTED_EDIT_DENY_MSG = '无权编辑该发货申请，或申请当前不可编辑。';
+
+    /**
+     * 读取审核失败发货申请供编辑回填（严格本人；禁止超管代编）
+     *
+     * @param mixed $applyId
+     * @return array{code:int,msg:string,data:array}
+     */
+    public function getRejectedApplyForEdit($applyId)
+    {
+        $applyId = (int)$applyId;
+        if ($applyId <= 0) {
+            return ['code' => -200, 'msg' => self::REJECTED_EDIT_DENY_MSG, 'data' => []];
+        }
+
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => []];
+        }
+
+        try {
+            $apply = Db::name('crm_shipping_apply')->where('id', $applyId)->find();
+            if (empty($apply)) {
+                return ['code' => -200, 'msg' => self::REJECTED_EDIT_DENY_MSG, 'data' => []];
+            }
+            $this->assertRejectedApplyEditableIdentity($apply, $adminId);
+
+            $round = (int)($apply['approval_round'] ?? 0);
+            $this->assertRejectedEditSubmitSnapshotGate($applyId, $round, $apply);
+
+            $detailResult = $this->getOrderDetailForApply((int)($apply['order_id'] ?? 0));
+            if ((int)($detailResult['code'] ?? -1) !== 0) {
+                $msg = trim((string)($detailResult['msg'] ?? ''));
+                if ($msg === '') {
+                    $msg = '原订单不可用，暂时不能编辑。';
+                }
+                return ['code' => -200, 'msg' => $msg, 'data' => []];
+            }
+
+            $assembled = $this->assembleRejectedEditFormData($apply, $detailResult['data'] ?? []);
+            $items = Db::name('crm_shipping_apply_item')
+                ->where('shipping_apply_id', $applyId)
+                ->order('apply_line_no', 'asc')
+                ->order('id', 'asc')
+                ->select();
+            $items = empty($items) ? [] : (array)$items;
+
+            $lastEditLogId = $this->findLatestEditRejectedLogId($applyId);
+            $workHash = $this->computeRejectedWorkHash($apply, $items, $lastEditLogId);
+
+            $rejectReason = $this->loadLatestRejectReasonForRound($applyId, $round, (int)($apply['status'] ?? 0));
+
+            $data = $assembled;
+            $data['expected_work_hash'] = $workHash;
+            $data['reject_reason'] = $rejectReason;
+            $data['page_mode'] = 'rejected_edit';
+            $data['status'] = (int)($apply['status'] ?? 0);
+            $data['status_text'] = $this->mapApplyStatusText((int)($apply['status'] ?? 0));
+            $data['approval_round'] = $round;
+            $data['edit_url'] = (string)url('Ship/editRejectedShip', ['id' => $applyId]);
+
+            return ['code' => 0, 'msg' => '获取成功', 'data' => $data];
+        } catch (Exception $e) {
+            return ['code' => -200, 'msg' => $e->getMessage(), 'data' => []];
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::getRejectedApplyForEdit] ' . $e->getMessage(), 'error');
+            }
+            return ['code' => -200, 'msg' => self::REJECTED_EDIT_DENY_MSG, 'data' => []];
+        }
+    }
+
+    /**
+     * 保存审核失败发货申请修改（独立事务；不改变 status/round；不占量；不改历史快照）
+     *
+     * @param array $params
+     * @return array
+     */
+    public function saveRejectedApply($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        unset(
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['status'],
+            $params['approval_round'],
+            $params['order_amount'],
+            $params['approval_threshold'],
+            $params['approval_route'],
+            $params['submit_token'],
+            $params['submit_payload_hash']
+        );
+
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return $this->buildRejectedEditFailResult('请先登录');
+        }
+
+        $applyId = (int)($params['apply_id'] ?? 0);
+        if ($applyId <= 0) {
+            return $this->buildRejectedEditFailResult(self::REJECTED_EDIT_DENY_MSG);
+        }
+
+        $expectedWorkHash = strtolower(trim((string)($params['expected_work_hash'] ?? '')));
+        if ($expectedWorkHash === '' || strlen($expectedWorkHash) !== 64 || !preg_match('/^[a-f0-9]{64}$/', $expectedWorkHash)) {
+            return $this->buildRejectedEditFailResult('编辑版本校验失效，请刷新后重试。');
+        }
+
+        $orderIdParam = (int)($params['order_id'] ?? 0);
+        $itemsRaw = $params['items'] ?? [];
+        if (is_string($itemsRaw)) {
+            $decoded = json_decode($itemsRaw, true);
+            $itemsRaw = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($itemsRaw)) {
+            $itemsRaw = [];
+        }
+
+        $shippingDate = trim((string)($params['shipping_date'] ?? ''));
+        if ($shippingDate !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $shippingDate)) {
+            return $this->buildRejectedEditFailResult('预计发货日期格式不正确。');
+        }
+        if ($shippingDate === '') {
+            $shippingDate = null;
+        }
+
+        $receiverName = trim((string)($params['receiver_name'] ?? ''));
+        $receiverPhone = trim((string)($params['receiver_phone'] ?? ''));
+        $receiverAddress = trim((string)($params['receiver_address'] ?? ''));
+        $shippingMethod = trim((string)($params['shipping_method'] ?? ''));
+        $shippingRemark = trim((string)($params['shipping_remark'] ?? ''));
+
+        try {
+            $this->assertRejectedEditTextLength($receiverName, self::SUBMIT_RECEIVER_NAME_MAX, '收货人');
+            $this->assertRejectedEditTextLength($receiverPhone, self::SUBMIT_RECEIVER_PHONE_MAX, '收货联系电话');
+            $this->assertRejectedEditTextLength($receiverAddress, self::SUBMIT_RECEIVER_ADDRESS_MAX, '收货地址');
+            $this->assertRejectedEditTextLength($shippingMethod, self::SUBMIT_SHIPPING_METHOD_MAX, '发货方式');
+            $this->assertRejectedEditTextLength($shippingRemark, self::SUBMIT_SHIPPING_REMARK_MAX, '发货备注');
+        } catch (Exception $e) {
+            return $this->buildRejectedEditFailResult($e->getMessage());
+        }
+
+        $headerInput = [
+            'receiver_name' => $receiverName,
+            'receiver_phone' => $receiverPhone,
+            'receiver_address' => $receiverAddress,
+            'shipping_date' => $shippingDate,
+            'shipping_method' => $shippingMethod,
+            'shipping_remark' => $shippingRemark,
+        ];
+
+        // P1-3：无锁预读仅定位锁目标；客户端 order_id 不得决定先锁哪张订单
+        $peek = Db::name('crm_shipping_apply')->where('id', $applyId)->find();
+        if (empty($peek)) {
+            return $this->buildRejectedEditFailResult(self::REJECTED_EDIT_DENY_MSG);
+        }
+        $orderIdForLock = (int)($peek['order_id'] ?? 0);
+        if ($orderIdForLock <= 0) {
+            return $this->buildRejectedEditFailResult('原订单关联无效。');
+        }
+        // 客户端 order_id 仅作一致性校验；伪造目标不得进入加锁
+        if ($orderIdParam > 0 && $orderIdParam !== $orderIdForLock) {
+            return $this->buildRejectedEditFailResult('禁止切换关联订单。');
+        }
+
+        $committed = false;
+        $this->beginRejectedEditTransaction();
+        try {
+            // 1) 按服务端真实 order_id 锁原订单（锁序：订单 → 订单产品 → 申请，与正式提交兼容）
+            $order = Db::name('crm_client_order')
+                ->where('id', $orderIdForLock)
+                ->lock(true)
+                ->find();
+            if (empty($order)) {
+                throw new Exception('订单不存在。');
+            }
+            $this->validateOrderForApply($order, $adminId);
+
+            // 2) 锁原订单产品行
+            Db::name('crm_order_item')
+                ->where('order_id', $orderIdForLock)
+                ->lock(true)
+                ->select();
+
+            // 3) 锁发货申请主表
+            $apply = Db::name('crm_shipping_apply')
+                ->where('id', $applyId)
+                ->lock(true)
+                ->find();
+            if (empty($apply)) {
+                throw new Exception(self::REJECTED_EDIT_DENY_MSG);
+            }
+            $this->assertRejectedApplyEditableIdentity($apply, $adminId);
+
+            // 持锁后二次校验：无锁预读不得作为最终授权；关联变化则拒绝（禁止改锁续跑）
+            if ((int)($apply['order_id'] ?? 0) !== $orderIdForLock) {
+                throw new Exception('禁止切换关联订单。');
+            }
+            if ($orderIdParam > 0 && $orderIdParam !== (int)($apply['order_id'] ?? 0)) {
+                throw new Exception('禁止切换关联订单。');
+            }
+
+            $round = (int)($apply['approval_round'] ?? 0);
+            $status = (int)($apply['status'] ?? -1);
+
+            // 4) 锁本申请工作明细
+            $lockedItems = Db::name('crm_shipping_apply_item')
+                ->where('shipping_apply_id', $applyId)
+                ->order('id', 'asc')
+                ->lock(true)
+                ->select();
+            $lockedItems = empty($lockedItems) ? [] : (array)$lockedItems;
+
+            // 5) 历史快照门禁（只读；禁止写快照）
+            $this->assertRejectedEditSubmitSnapshotGate($applyId, $round, $apply);
+
+            // 6) work_hash
+            $lastEditLogId = $this->findLatestEditRejectedLogId($applyId);
+            $currentHash = $this->computeRejectedWorkHash($apply, $lockedItems, $lastEditLogId);
+            if (!hash_equals($currentHash, $expectedWorkHash)) {
+                throw new Exception(self::REJECTED_EDIT_CONFLICT_MSG);
+            }
+
+            // 金额变化仅提示，不修改 order_amount 快照
+            $warnings = [];
+            $snapOrderAmount = $this->normalizeNullableMoney($apply['order_amount'] ?? null, false);
+            $currentOrderAmount = $this->normalizeNullableMoney($order['money'] ?? null, false);
+            if ($snapOrderAmount !== null && $currentOrderAmount !== null
+                && bccomp((string)$snapOrderAmount, (string)$currentOrderAmount, 2) !== 0) {
+                $warnings[] = '原订单金额已发生变化：申请记录 '
+                    . $snapOrderAmount . ' 元，当前订单金额 '
+                    . $currentOrderAmount . ' 元。保存不会修改原金额快照；再次提交审核时需另行处理。';
+            }
+
+            $orderItems = Db::name('crm_order_item')
+                ->where('order_id', $orderIdForLock)
+                ->order('line_no', 'asc')
+                ->order('id', 'asc')
+                ->select();
+            if (empty($orderItems)) {
+                throw new Exception('订单没有产品明细。');
+            }
+            $orderItemMap = [];
+            foreach ($orderItems as $row) {
+                $orderItemMap[(int)($row['id'] ?? 0)] = $row;
+            }
+
+            $built = $this->buildRejectedEditItemSnapshots($itemsRaw, $orderItemMap, $applyId, $warnings);
+
+            // 无修改：明确返回，不写库、不写审计
+            $contentUnchanged = $this->isRejectedEditContentUnchanged($apply, $lockedItems, $headerInput, $built['item_snapshots']);
+            if ($contentUnchanged) {
+                try {
+                    $this->commitRejectedEditTransaction();
+                    $committed = true;
+                } catch (\Throwable $commitErr) {
+                    return $this->buildRejectedEditUncertainResult($applyId);
+                }
+                return [
+                    'code' => 0,
+                    'msg' => '无修改',
+                    'data' => [
+                        'apply_id' => $applyId,
+                        'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+                        'status' => $status,
+                        'approval_round' => $round,
+                        'noop' => true,
+                        'expected_work_hash' => $currentHash,
+                        'warnings' => $warnings,
+                        'result_uncertain' => false,
+                    ],
+                ];
+            }
+
+            $now = date('Y-m-d H:i:s');
+            $updateData = [
+                'receiver_name' => $headerInput['receiver_name'],
+                'receiver_phone' => $headerInput['receiver_phone'],
+                'receiver_address' => $headerInput['receiver_address'],
+                'shipping_date' => $headerInput['shipping_date'],
+                'shipping_method' => $headerInput['shipping_method'],
+                'shipping_remark' => $headerInput['shipping_remark'],
+                'update_time' => $now,
+            ];
+
+            // 8) 条件更新主表白名单字段
+            // MySQL 默认 affected rows = 实际发生变化的行数；主表字段未变且 update_time 同秒时可为 0。
+            // 不得将 0 直接当冲突，也不得无条件当成功：affected=0 时事务内二次确认原 UPDATE WHERE 仍命中。
+            $affected = (int)Db::name('crm_shipping_apply')
+                ->where('id', $applyId)
+                ->where('applicant_id', $adminId)
+                ->where('is_deleted', 0)
+                ->where('approval_round', $round)
+                ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES)
+                ->update($updateData);
+            $this->assertRejectedEditHeaderUpdateAffectedOrConfirm(
+                $affected,
+                $applyId,
+                $adminId,
+                $round,
+                $orderIdForLock
+            );
+
+            // 9) 删除重建当前工作明细
+            Db::name('crm_shipping_apply_item')->where('shipping_apply_id', $applyId)->delete();
+            foreach ($built['item_snapshots'] as $snapshot) {
+                $snapshot['shipping_apply_id'] = $applyId;
+                $snapshot['create_time'] = $now;
+                $snapshot['update_time'] = $now;
+                Db::name('crm_shipping_apply_item')->insert($snapshot);
+            }
+
+            // 10) 移除产品行时失效替代经理授权（与草稿规则一致；文案区分驳回编辑；不重建审批任务）
+            $this->invalidatePmSubstitutesForRemovedOrderItems(
+                $applyId,
+                array_keys($built['qty_sum_by_order_item']),
+                $adminId,
+                trim((string)($admin['username'] ?? '')),
+                trim((string)($apply['apply_no'] ?? '')),
+                $now,
+                'rejected_edit'
+            );
+
+            // 11) 编辑审计
+            $newItems = Db::name('crm_shipping_apply_item')
+                ->where('shipping_apply_id', $applyId)
+                ->order('apply_line_no', 'asc')
+                ->order('id', 'asc')
+                ->select();
+            $newItems = empty($newItems) ? [] : (array)$newItems;
+            $applyAfter = Db::name('crm_shipping_apply')->where('id', $applyId)->find();
+            if (empty($applyAfter)) {
+                throw new Exception('保存后读取申请失败。');
+            }
+
+            // 审计写入后 version 会变；最终 hash 以新审计 ID 为准
+            $auditId = $this->writeRejectedEditAuditLog([
+                'shipping_apply_id' => $applyId,
+                'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+                'operator_id' => $adminId,
+                'operator_name' => trim((string)($admin['username'] ?? '')),
+                'before_status' => $status,
+                'after_status' => $status,
+                'approval_round' => $round,
+                'before_work_hash' => $currentHash,
+                'changed_categories' => $built['changed_categories'],
+                'item_count' => count($newItems),
+                'now' => $now,
+            ]);
+
+            $finalHash = $this->computeRejectedWorkHash($applyAfter, $newItems, $auditId);
+
+            // 12) 最终一致性
+            if ((int)($applyAfter['status'] ?? -1) !== $status
+                || (int)($applyAfter['approval_round'] ?? 0) !== $round
+                || (int)($applyAfter['order_id'] ?? 0) !== $orderIdForLock
+                || trim((string)($applyAfter['apply_no'] ?? '')) !== trim((string)($apply['apply_no'] ?? ''))
+                || (int)($applyAfter['applicant_id'] ?? 0) !== $adminId
+            ) {
+                throw new Exception('保存后一致性校验失败。');
+            }
+            // 快照仍在且未被改写
+            $this->assertRejectedEditSubmitSnapshotGate($applyId, $round, $applyAfter);
+
+            try {
+                $this->commitRejectedEditTransaction();
+                $committed = true;
+            } catch (\Throwable $commitErr) {
+                // COMMIT 结果不确定：禁止自动重试写库；不 rollback
+                if (class_exists('\\think\\facade\\Log')) {
+                    \think\facade\Log::write(
+                        '[ShippingApplyService::saveRejectedApply.commit_uncertain] ' . $commitErr->getMessage(),
+                        'error'
+                    );
+                }
+                return $this->buildRejectedEditUncertainResult($applyId);
+            }
+
+            return [
+                'code' => 0,
+                'msg' => '保存修改成功',
+                'data' => [
+                    'apply_id' => $applyId,
+                    'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+                    'status' => $status,
+                    'approval_round' => $round,
+                    'noop' => false,
+                    'expected_work_hash' => $finalHash,
+                    'warnings' => $warnings,
+                    'result_uncertain' => false,
+                ],
+            ];
+        } catch (Exception $e) {
+            if (!$committed) {
+                try {
+                    $this->rollbackRejectedEditTransaction();
+                } catch (\Throwable $rollErr) {
+                    // ignore
+                }
+            }
+            return $this->buildRejectedEditFailResult($e->getMessage());
+        } catch (\Throwable $e) {
+            if (!$committed) {
+                try {
+                    $this->rollbackRejectedEditTransaction();
+                } catch (\Throwable $rollErr) {
+                    // ignore
+                }
+            }
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::saveRejectedApply] ' . $e->getMessage(), 'error');
+            }
+            return $this->buildRejectedEditFailResult('保存失败，请稍后重试。');
+        }
+    }
+
+    /**
+     * 批量标记本页审核失败行是否存在当前轮次 submit 快照（禁止 N+1）
+     *
+     * @param array $rows
+     * @return array apply_id => bool
+     */
+    public function mapFailedAppliesHasSubmitSnapshot(array $rows)
+    {
+        $wanted = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $id = (int)($row['id'] ?? 0);
+            $round = (int)($row['approval_round'] ?? 0);
+            if ($id > 0 && $round >= 1) {
+                $wanted[$id] = $round;
+            }
+        }
+        if ($wanted === []) {
+            return [];
+        }
+
+        $ids = array_keys($wanted);
+        $found = [];
+        try {
+            $snapRows = Db::name('crm_shipping_apply_round_snapshot')
+                ->whereIn('shipping_apply_id', $ids)
+                ->where('snapshot_stage', ShippingApplyRoundSnapshotService::SNAPSHOT_STAGE_SUBMIT)
+                ->field('shipping_apply_id,approval_round')
+                ->select();
+            foreach ((array)$snapRows as $snap) {
+                $sid = (int)($snap['shipping_apply_id'] ?? 0);
+                $sround = (int)($snap['approval_round'] ?? 0);
+                if ($sid > 0 && isset($wanted[$sid]) && $wanted[$sid] === $sround) {
+                    $found[$sid] = true;
+                }
+            }
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[ShippingApplyService::mapFailedAppliesHasSubmitSnapshot] ' . $e->getMessage(), 'error');
+            }
+            return [];
+        }
+
+        $map = [];
+        foreach ($wanted as $id => $_round) {
+            $map[$id] = !empty($found[$id]);
+        }
+        return $map;
+    }
+
+    /**
+     * 驳回编辑主表 UPDATE 的 affected rows 边界（P2）。
+     *
+     * - affected=1：命中且字段有变化，按原逻辑继续
+     * - affected=0：可能是 WHERE 命中但值未变（同秒 update_time + 主表未改）；
+     *   在当前事务内按原 UPDATE WHERE 二次确认仍有效，并核对 order_id，才允许继续明细保存
+     * - 其他值：冲突
+     *
+     * 前置：调用方已 FOR UPDATE 持锁，且已通过身份/状态/轮次/快照/work_hash 门禁。
+     * 本方法不绕过、不重放 work_hash；仅区分「无字段变化」与「WHERE 未命中」。
+     *
+     * @param int $affected
+     * @param int $applyId
+     * @param int $adminId
+     * @param int $expectedRound
+     * @param int $expectedOrderId
+     * @throws Exception
+     */
+    public function assertRejectedEditHeaderUpdateAffectedOrConfirm(
+        $affected,
+        $applyId,
+        $adminId,
+        $expectedRound,
+        $expectedOrderId
+    ) {
+        $affected = (int)$affected;
+        if ($affected === 1) {
+            return;
+        }
+        if ($affected !== 0) {
+            throw new Exception(self::REJECTED_EDIT_CONFLICT_MSG);
+        }
+
+        $row = $this->findRejectedEditHeaderUpdateMatchedRow($applyId, $adminId, $expectedRound);
+        if (empty($row)) {
+            throw new Exception(self::REJECTED_EDIT_CONFLICT_MSG);
+        }
+
+        // 与 UPDATE WHERE 语义对齐的显式复核（防漏检 / 语义漂移）
+        if ((int)($row['id'] ?? 0) !== (int)$applyId
+            || (int)($row['applicant_id'] ?? 0) !== (int)$adminId
+            || (int)($row['is_deleted'] ?? 1) !== 0
+            || (int)($row['approval_round'] ?? 0) !== (int)$expectedRound
+            || !in_array((int)($row['status'] ?? -1), self::FAILED_APPLY_LIST_STATUSES, true)
+        ) {
+            throw new Exception(self::REJECTED_EDIT_CONFLICT_MSG);
+        }
+
+        // 原订单关联变化视为冲突（UPDATE WHERE 未含 order_id，二次确认补齐）
+        if ((int)($row['order_id'] ?? 0) !== (int)$expectedOrderId) {
+            throw new Exception(self::REJECTED_EDIT_CONFLICT_MSG);
+        }
+    }
+
+    /**
+     * 与 saveRejectedApply 主表 UPDATE 相同 WHERE，用于 affected=0 事务内二次确认。
+     *
+     * @param int $applyId
+     * @param int $adminId
+     * @param int $round
+     * @return array|null
+     */
+    protected function findRejectedEditHeaderUpdateMatchedRow($applyId, $adminId, $round)
+    {
+        $row = Db::name('crm_shipping_apply')
+            ->where('id', (int)$applyId)
+            ->where('applicant_id', (int)$adminId)
+            ->where('is_deleted', 0)
+            ->where('approval_round', (int)$round)
+            ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES)
+            ->find();
+        return empty($row) ? null : (array)$row;
+    }
+
+    /**
+     * @param array $apply
+     * @param int $adminId
+     * @throws Exception
+     */
+    public function assertRejectedApplyEditableIdentity(array $apply, $adminId)
+    {
+        $adminId = (int)$adminId;
+        if ($adminId <= 0) {
+            throw new Exception('请先登录');
+        }
+        if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+            throw new Exception(self::REJECTED_EDIT_DENY_MSG);
+        }
+        $status = (int)($apply['status'] ?? -1);
+        if (!in_array($status, self::FAILED_APPLY_LIST_STATUSES, true)) {
+            throw new Exception(self::REJECTED_EDIT_DENY_MSG);
+        }
+        // 严格本人；超管也不能代编
+        if ((int)($apply['applicant_id'] ?? 0) !== $adminId) {
+            throw new Exception(self::REJECTED_EDIT_DENY_MSG);
+        }
+        if ((int)($apply['approval_round'] ?? 0) < 1) {
+            throw new Exception('当前审批轮次无效，暂时不能编辑。');
+        }
+        if ((int)($apply['order_id'] ?? 0) <= 0) {
+            throw new Exception('原订单关联无效。');
+        }
+    }
+
+    /**
+     * 本轮 submit 快照存在且完整、身份/轮次一致
+     *
+     * @param int $applyId
+     * @param int $round
+     * @param array $apply
+     * @throws Exception
+     */
+    public function assertRejectedEditSubmitSnapshotGate($applyId, $round, array $apply)
+    {
+        $applyId = (int)$applyId;
+        $round = (int)$round;
+        if ($applyId <= 0 || $round < 1) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_MISSING_MSG);
+        }
+
+        $snapSvc = $this->getRoundSnapshotService();
+        $snapshot = $snapSvc->findSubmitRoundSnapshot($applyId, $round);
+        if (empty($snapshot)) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_MISSING_MSG);
+        }
+
+        try {
+            $snapSvc->assertStoredSnapshotIntegrity($snapshot);
+        } catch (\Throwable $e) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG);
+        }
+
+        $verified = $snapSvc->verifyStoredSnapshotIntegrity($snapshot);
+        if (empty($verified['ok']) || !is_array($verified['header'])) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        $header = $verified['header'];
+
+        if ((int)($header['shipping_apply_id'] ?? 0) !== $applyId
+            || (int)($header['approval_round'] ?? 0) !== $round
+        ) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if ((int)($header['applicant_id'] ?? 0) !== (int)($apply['applicant_id'] ?? 0)) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if (trim((string)($header['apply_no'] ?? '')) !== trim((string)($apply['apply_no'] ?? ''))) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if ((int)($header['order_id'] ?? 0) !== (int)($apply['order_id'] ?? 0)) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if ((int)($header['status_at_submit'] ?? -1) !== 10) {
+            throw new Exception(self::REJECTED_EDIT_SNAPSHOT_CORRUPT_MSG);
+        }
+    }
+
+    /**
+     * 计算驳回编辑 work_hash（含版本辅料 last_edit_rejected_log_id）
+     *
+     * @param array $apply
+     * @param array $items
+     * @param int $lastEditRejectedLogId
+     * @return string
+     * @throws Exception
+     */
+    public function computeRejectedWorkHash(array $apply, array $items, $lastEditRejectedLogId = 0)
+    {
+        $payload = $this->buildRejectedWorkHashPayload($apply, $items, (int)$lastEditRejectedLogId, true);
+        $pack = $this->getRoundSnapshotService()->computePayloadHashFromCanonical($payload);
+        return (string)$pack['hash'];
+    }
+
+    /**
+     * @param array $apply
+     * @param array $items
+     * @param int $lastEditRejectedLogId
+     * @param bool $includeVersion
+     * @return array
+     */
+    public function buildRejectedWorkHashPayload(array $apply, array $items, $lastEditRejectedLogId = 0, $includeVersion = true)
+    {
+        $header = [
+            'receiver_name' => trim((string)($apply['receiver_name'] ?? '')),
+            'receiver_phone' => trim((string)($apply['receiver_phone'] ?? '')),
+            'receiver_address' => trim((string)($apply['receiver_address'] ?? '')),
+            'shipping_date' => $this->normalizeRejectedEditDate($apply['shipping_date'] ?? null),
+            'shipping_method' => trim((string)($apply['shipping_method'] ?? '')),
+            'shipping_remark' => trim((string)($apply['shipping_remark'] ?? '')),
+        ];
+
+        $normItems = [];
+        foreach ($items as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $normItems[] = [
+                'id' => (int)($row['id'] ?? 0),
+                'apply_line_no' => (int)($row['apply_line_no'] ?? 0),
+                'order_item_id' => (int)($row['order_item_id'] ?? 0),
+                'apply_product_name' => trim((string)($row['apply_product_name'] ?? '')),
+                'apply_spec_model' => trim((string)($row['apply_spec_model'] ?? '')),
+                'apply_qty' => (int)($row['apply_qty'] ?? 0),
+                'apply_unit_price' => $this->normalizeNullableMoney($row['apply_unit_price'] ?? null, false),
+                'apply_purchase_unit_price' => $this->normalizeNullableMoney($row['apply_purchase_unit_price'] ?? null, false),
+                'factory_id' => isset($row['factory_id']) && $row['factory_id'] !== null && $row['factory_id'] !== ''
+                    ? (int)$row['factory_id']
+                    : null,
+                'remark' => trim((string)($row['remark'] ?? '')),
+            ];
+        }
+        usort($normItems, function ($a, $b) {
+            if ($a['apply_line_no'] !== $b['apply_line_no']) {
+                return $a['apply_line_no'] < $b['apply_line_no'] ? -1 : 1;
+            }
+            if ($a['order_item_id'] !== $b['order_item_id']) {
+                return $a['order_item_id'] < $b['order_item_id'] ? -1 : 1;
+            }
+            if ($a['id'] !== $b['id']) {
+                return $a['id'] < $b['id'] ? -1 : 1;
+            }
+            return 0;
+        });
+
+        $payload = [
+            'schema_version' => self::REJECTED_WORK_HASH_SCHEMA_VERSION,
+            'apply_id' => (int)($apply['id'] ?? 0),
+            'applicant_id' => (int)($apply['applicant_id'] ?? 0),
+            'status' => (int)($apply['status'] ?? 0),
+            'approval_round' => (int)($apply['approval_round'] ?? 0),
+            'header' => $header,
+            'items' => $normItems,
+        ];
+        if ($includeVersion) {
+            $payload['version'] = [
+                'last_edit_rejected_log_id' => (int)$lastEditRejectedLogId,
+            ];
+        }
+        return $payload;
+    }
+
+    /**
+     * @param mixed $raw
+     * @return string
+     */
+    public function normalizeRejectedEditDate($raw)
+    {
+        if ($raw === null || $raw === '') {
+            return '';
+        }
+        $text = trim((string)$raw);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}/', $text, $m)) {
+            return substr($text, 0, 10);
+        }
+        return $text;
+    }
+
+    /**
+     * @param int $applyId
+     * @return int
+     */
+    public function findLatestEditRejectedLogId($applyId)
+    {
+        $applyId = (int)$applyId;
+        if ($applyId <= 0) {
+            return 0;
+        }
+        $id = Db::name('crm_shipping_approval_log')
+            ->where('shipping_apply_id', $applyId)
+            ->where('action', self::REJECTED_EDIT_AUDIT_ACTION)
+            ->order('id', 'desc')
+            ->value('id');
+        return (int)$id;
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $round
+     * @param int $status
+     * @return string
+     */
+    protected function loadLatestRejectReasonForRound($applyId, $round, $status)
+    {
+        $applyId = (int)$applyId;
+        $round = (int)$round;
+        if ($applyId <= 0) {
+            return '';
+        }
+        try {
+            $rows = Db::name('crm_shipping_approval_log')
+                ->where('shipping_apply_id', $applyId)
+                ->whereIn('action', ['reject', 'pm_reject', 'director_reject'])
+                ->order('id', 'desc')
+                ->limit(30)
+                ->select();
+        } catch (\Throwable $e) {
+            return '';
+        }
+        $fallback = '';
+        foreach ((array)$rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $text = $this->extractPlainOpinionText((string)($row['opinion'] ?? ''));
+            $opinionRound = null;
+            $raw = trim((string)($row['opinion'] ?? ''));
+            if ($raw !== '' && $raw[0] === '{') {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded) && isset($decoded['approval_round'])) {
+                    $opinionRound = (int)$decoded['approval_round'];
+                }
+            }
+            $afterStatus = isset($row['after_status']) ? (int)$row['after_status'] : null;
+            if ($opinionRound !== null && $opinionRound === $round) {
+                return $text;
+            }
+            if ($afterStatus !== null && $afterStatus === (int)$status && $fallback === '') {
+                $fallback = $text;
+            }
+            if ($fallback === '' && $text !== '') {
+                $fallback = $text;
+            }
+        }
+        return $fallback;
+    }
+
+    /**
+     * 复用草稿回填组装，但权限/模式字段由调用方覆盖
+     *
+     * @param array $apply
+     * @param array $detailData
+     * @return array
+     */
+    protected function assembleRejectedEditFormData(array $apply, array $detailData)
+    {
+        $applyId = (int)($apply['id'] ?? 0);
+        $orderSourceItems = isset($detailData['items']) && is_array($detailData['items']) ? $detailData['items'] : [];
+        $orderItemMap = [];
+        foreach ($orderSourceItems as $src) {
+            $orderItemMap[(int)($src['order_item_id'] ?? 0)] = $src;
+        }
+
+        $savedItems = Db::name('crm_shipping_apply_item')
+            ->where('shipping_apply_id', $applyId)
+            ->order('apply_line_no', 'asc')
+            ->order('id', 'asc')
+            ->select();
+
+        $shippingLines = [];
+        $hasInvalidLines = false;
+        $warnings = [];
+        foreach ((array)($detailData['warnings'] ?? []) as $detailWarn) {
+            $detailWarn = trim((string)$detailWarn);
+            if ($detailWarn === '') {
+                continue;
+            }
+            if (mb_strpos($detailWarn, '请联系超级管理员指定替代经理') !== false) {
+                continue;
+            }
+            $warnings[] = $detailWarn;
+        }
+
+        foreach ((array)$savedItems as $row) {
+            $orderItemId = (int)($row['order_item_id'] ?? 0);
+            $src = isset($orderItemMap[$orderItemId]) ? $orderItemMap[$orderItemId] : null;
+            $isInvalid = empty($src);
+            if ($isInvalid) {
+                $hasInvalidLines = true;
+            }
+
+            $snapProductName = trim((string)($row['product_name'] ?? ''));
+            $snapSpecModel = trim((string)($row['spec_model'] ?? ''));
+            $snapOrderQty = (int)($row['order_qty'] ?? 0);
+            $snapUnitPrice = $this->normalizeNullableMoney($row['unit_price'] ?? null, false);
+            $snapTotalPrice = $this->normalizeNullableMoney($row['total_price'] ?? null, false);
+            $snapSupplierId = trim((string)($row['supplier_id'] ?? ''));
+            $snapSupplierName = trim((string)($row['supplier_name'] ?? ''));
+            $snapManagerIdRaw = $row['product_manager_id'] ?? null;
+            $snapManagerId = ($snapManagerIdRaw === null || $snapManagerIdRaw === '')
+                ? null
+                : ((int)$snapManagerIdRaw > 0 ? (int)$snapManagerIdRaw : null);
+            $snapManagerName = trim((string)($row['product_manager_name'] ?? ''));
+
+            $orderPurchaseAmount = $this->readNullableDbMoney($row['order_purchase_amount'] ?? null);
+            if ($orderPurchaseAmount === null && !$isInvalid && array_key_exists('order_purchase_amount', $src)) {
+                $orderPurchaseAmount = $src['order_purchase_amount'];
+            }
+
+            $applyProductNameRaw = $row['apply_product_name'] ?? null;
+            $applySpecModelRaw = $row['apply_spec_model'] ?? null;
+            $applyUnitPrice = $this->readNullableDbMoney($row['apply_unit_price'] ?? null);
+            $applyPurchaseUnitPrice = $this->readNullableDbMoney($row['apply_purchase_unit_price'] ?? null);
+            $applySalesAmount = $this->readNullableDbMoney($row['apply_sales_amount'] ?? null);
+            $applyPurchaseAmount = $this->readNullableDbMoney($row['apply_purchase_amount'] ?? null);
+
+            $applyProductName = $this->compatApplyText($applyProductNameRaw, $isInvalid ? $snapProductName : ($src['product_name'] ?? $snapProductName));
+            $applySpecModel = $this->compatApplyText($applySpecModelRaw, $isInvalid ? $snapSpecModel : ($src['spec_model'] ?? $snapSpecModel));
+            $suggestPurchaseUnitPrice = null;
+            if ($applyPurchaseUnitPrice === null) {
+                if (!$isInvalid && isset($src['suggest_purchase_unit_price'])) {
+                    $suggestPurchaseUnitPrice = $src['suggest_purchase_unit_price'];
+                } else {
+                    $suggestPurchaseUnitPrice = $this->calcSuggestPurchaseUnitPrice(
+                        $orderPurchaseAmount,
+                        $snapOrderQty > 0 ? $snapOrderQty : (int)($src['order_qty'] ?? 0)
+                    );
+                }
+            }
+
+            $displayApplyUnitPrice = $applyUnitPrice;
+            $isSuggestUnitPrice = false;
+            if ($displayApplyUnitPrice === null && !$isInvalid && isset($src['unit_price'])) {
+                $displayApplyUnitPrice = $src['unit_price'];
+                $isSuggestUnitPrice = true;
+            }
+
+            $displayPurchaseUnitPrice = $applyPurchaseUnitPrice;
+            $isSuggestPurchaseUnitPrice = false;
+            if ($displayPurchaseUnitPrice === null && $suggestPurchaseUnitPrice !== null) {
+                $displayPurchaseUnitPrice = $suggestPurchaseUnitPrice;
+                $isSuggestPurchaseUnitPrice = true;
+            }
+
+            $managerInvalid = false;
+            $managerInvalidReason = '';
+            $managerStatus = '';
+            $liveManagerId = $snapManagerId;
+            $liveManagerName = $snapManagerName;
+            if (!$isInvalid) {
+                $managerInvalid = !empty($src['manager_invalid']);
+                $managerInvalidReason = (string)($src['manager_invalid_reason'] ?? '');
+                $managerStatus = (string)($src['manager_status'] ?? 'valid');
+                $liveManagerId = array_key_exists('product_manager_id', $src)
+                    ? $src['product_manager_id']
+                    : $snapManagerId;
+                $liveManagerName = (string)($src['product_manager_name'] ?? $snapManagerName);
+            }
+
+            $line = [
+                'item_id' => (int)($row['id'] ?? 0),
+                'client_row_key' => '',
+                'order_item_id' => $orderItemId,
+                'apply_line_no' => (int)($row['apply_line_no'] ?? 0),
+                'is_invalid_order_item' => $isInvalid,
+                'invalid_tip' => $isInvalid ? '原订单产品行已失效，请重新选择当前有效产品行后再保存。' : '',
+                'product_name' => $isInvalid ? $snapProductName : (string)($src['product_name'] ?? $snapProductName),
+                'spec_model' => $isInvalid ? $snapSpecModel : (string)($src['spec_model'] ?? $snapSpecModel),
+                'unit' => $isInvalid ? trim((string)($row['unit'] ?? '')) : (string)($src['unit'] ?? ''),
+                'order_qty' => $isInvalid ? $snapOrderQty : (int)($src['order_qty'] ?? $snapOrderQty),
+                'applied_qty' => $isInvalid ? 0 : (int)($src['applied_qty'] ?? 0),
+                'remaining_qty' => $isInvalid ? 0 : (int)($src['remaining_qty'] ?? 0),
+                'unit_price' => $isInvalid ? $snapUnitPrice : ($src['unit_price'] ?? $snapUnitPrice),
+                'total_price' => $isInvalid ? $snapTotalPrice : ($src['total_price'] ?? $snapTotalPrice),
+                'order_purchase_amount' => $orderPurchaseAmount,
+                'supplier_id' => $isInvalid ? $snapSupplierId : (string)($src['supplier_id'] ?? $snapSupplierId),
+                'supplier_name' => $isInvalid ? $snapSupplierName : (string)($src['supplier_name'] ?? $snapSupplierName),
+                'product_manager_id' => $liveManagerId,
+                'product_manager_name' => $liveManagerName,
+                'manager_invalid' => $managerInvalid,
+                'manager_invalid_reason' => $managerInvalidReason,
+                'manager_status' => $managerStatus,
+                'apply_product_name' => $applyProductName,
+                'apply_spec_model' => $applySpecModel,
+                'apply_qty' => (int)($row['apply_qty'] ?? 0),
+                'apply_unit_price' => $applyUnitPrice,
+                'apply_purchase_unit_price' => $applyPurchaseUnitPrice,
+                'display_apply_unit_price' => $displayApplyUnitPrice,
+                'display_apply_purchase_unit_price' => $displayPurchaseUnitPrice,
+                'is_suggest_unit_price' => $isSuggestUnitPrice,
+                'is_suggest_purchase_unit_price' => $isSuggestPurchaseUnitPrice,
+                'suggest_purchase_unit_price' => $suggestPurchaseUnitPrice,
+                'apply_sales_amount' => $applySalesAmount,
+                'apply_purchase_amount' => $applyPurchaseAmount,
+                'factory_id' => isset($row['factory_id']) && $row['factory_id'] !== null && $row['factory_id'] !== ''
+                    ? (int)$row['factory_id']
+                    : null,
+                'factory_name' => trim((string)($row['factory_name'] ?? '')),
+                'remark' => trim((string)($row['remark'] ?? '')),
+            ];
+
+            if ($isInvalid) {
+                $warnings[] = '发货行「' . ($snapProductName !== '' ? $snapProductName : ('明细#' . $line['item_id'])) . '」原订单产品行已失效，请重新选择。';
+            }
+            $shippingLines[] = $line;
+        }
+
+        $substituteMap = $this->loadPmSubstituteMapByApplyId($applyId);
+        $substituteWarnKeys = [];
+        foreach ($shippingLines as &$shippingLineRef) {
+            $oid = (int)($shippingLineRef['order_item_id'] ?? 0);
+            $subRow = ($oid > 0 && isset($substituteMap[$oid])) ? $substituteMap[$oid] : null;
+            $managerResolve = [
+                'manager_invalid' => !empty($shippingLineRef['manager_invalid']),
+                'manager_status' => (string)($shippingLineRef['manager_status'] ?? ''),
+                'admin_id' => $shippingLineRef['product_manager_id'] ?? null,
+                'username' => (string)($shippingLineRef['product_manager_name'] ?? ''),
+            ];
+            $subState = $this->buildPmSubstituteDisplayState($subRow, $managerResolve);
+            $shippingLineRef = array_merge($shippingLineRef, $subState);
+            $tip = trim((string)($subState['pm_substitute_tip'] ?? ''));
+            if ($tip !== '' && empty($shippingLineRef['is_invalid_order_item'])) {
+                $warnKey = $oid . '|' . $tip;
+                if (!isset($substituteWarnKeys[$warnKey])) {
+                    $substituteWarnKeys[$warnKey] = true;
+                    $productLabel = trim((string)($shippingLineRef['product_name'] ?? ''));
+                    if ($productLabel === '') {
+                        $productLabel = '产品';
+                    }
+                    $warnings[] = '产品【' . $productLabel . '】' . $tip;
+                }
+            }
+        }
+        unset($shippingLineRef);
+
+        foreach ($orderSourceItems as &$srcItemRef) {
+            $oid = (int)($srcItemRef['order_item_id'] ?? 0);
+            $subRow = ($oid > 0 && isset($substituteMap[$oid])) ? $substituteMap[$oid] : null;
+            $managerResolve = [
+                'manager_invalid' => !empty($srcItemRef['manager_invalid']),
+                'manager_status' => (string)($srcItemRef['manager_status'] ?? ''),
+                'admin_id' => $srcItemRef['product_manager_id'] ?? null,
+                'username' => (string)($srcItemRef['product_manager_name'] ?? ''),
+            ];
+            $srcItemRef = array_merge($srcItemRef, $this->buildPmSubstituteDisplayState($subRow, $managerResolve));
+        }
+        unset($srcItemRef);
+
+        $draftOrderAmount = $this->normalizeNullableMoney($apply['order_amount'] ?? null, false);
+        $currentOrderAmount = $this->normalizeNullableMoney(($detailData['order']['money'] ?? null), false);
+        $orderAmountChanged = false;
+        $orderAmountChangeMessage = '';
+        if ($draftOrderAmount !== null && $currentOrderAmount !== null
+            && bccomp((string)$draftOrderAmount, (string)$currentOrderAmount, 2) !== 0) {
+            $orderAmountChanged = true;
+            $orderAmountChangeMessage = '原订单金额已发生变化：申请记录 '
+                . $draftOrderAmount . ' 元，当前订单金额 '
+                . $currentOrderAmount . ' 元。编辑保存不会修改原金额快照；再次提交审核时需另行处理。';
+            $warnings[] = $orderAmountChangeMessage;
+        }
+
+        return [
+            'apply_id' => $applyId,
+            'apply_no' => trim((string)($apply['apply_no'] ?? '')),
+            'order_id' => (int)($apply['order_id'] ?? 0),
+            'shipping_date' => $this->normalizeRejectedEditDate($apply['shipping_date'] ?? null),
+            'receiver_name' => trim((string)($apply['receiver_name'] ?? '')),
+            'receiver_phone' => trim((string)($apply['receiver_phone'] ?? '')),
+            'receiver_address' => trim((string)($apply['receiver_address'] ?? '')),
+            'shipping_method' => trim((string)($apply['shipping_method'] ?? '')),
+            'shipping_remark' => trim((string)($apply['shipping_remark'] ?? '')),
+            'order' => $detailData['order'] ?? [],
+            'items' => $orderSourceItems,
+            'order_source_items' => $orderSourceItems,
+            'shipping_lines' => $shippingLines,
+            'has_invalid_lines' => $hasInvalidLines,
+            'draft_order_amount' => $draftOrderAmount,
+            'current_order_amount' => $currentOrderAmount,
+            'order_amount_changed' => $orderAmountChanged,
+            'order_amount_change_message' => $orderAmountChangeMessage,
+            'warnings' => $warnings,
+        ];
+    }
+
+    /**
+     * 构建待写入明细；数量：正整数；同行拆分合计不得超过原订单产品总数量；
+     * 其他申请占量仅产生提示，不因占量不足而禁止保存。
+     *
+     * @param array $itemsRaw
+     * @param array $orderItemMap
+     * @param int $excludeApplyId
+     * @param array $warnings
+     * @return array{item_snapshots:array,qty_sum_by_order_item:array,changed_categories:array}
+     * @throws Exception
+     */
+    protected function buildRejectedEditItemSnapshots(array $itemsRaw, array $orderItemMap, $excludeApplyId, array &$warnings)
+    {
+        $pendingLines = [];
+        $qtySumByOrderItem = [];
+        $applyLineNo = 0;
+        $changedCategories = ['items' => true];
+
+        foreach ($itemsRaw as $inputItem) {
+            if (!is_array($inputItem)) {
+                continue;
+            }
+            $orderItemId = $this->parsePositiveInt(
+                $inputItem['order_item_id'] ?? null,
+                '产品明细参数异常，请刷新页面后重新提交。'
+            );
+            $applyQty = $this->parseNonNegativeInt(
+                $inputItem['apply_qty'] ?? null,
+                '本次申请发货数量必须是正整数。'
+            );
+            // 零数量临时行不落库；落库行必须为正整数
+            if ($applyQty === 0) {
+                continue;
+            }
+
+            if (!isset($orderItemMap[$orderItemId])) {
+                throw new Exception('存在已失效或不属于当前订单的产品行，请重新选择有效原订单产品后再保存。');
+            }
+            if (!isset($qtySumByOrderItem[$orderItemId])) {
+                $qtySumByOrderItem[$orderItemId] = 0;
+            }
+            $qtySumByOrderItem[$orderItemId] += $applyQty;
+            if ($qtySumByOrderItem[$orderItemId] > 2147483647) {
+                throw new Exception('本次申请发货数量过大。');
+            }
+
+            $applyLineNo++;
+            $pendingLines[] = [
+                'order_item_id' => $orderItemId,
+                'apply_qty' => $applyQty,
+                'apply_line_no' => $applyLineNo,
+                'input' => $inputItem,
+            ];
+        }
+
+        if (empty($pendingLines)) {
+            throw new Exception('至少需要一条正整数数量的发货行。');
+        }
+
+        $orderItemIds = array_keys($qtySumByOrderItem);
+        $appliedMap = $this->calcAppliedQtyMap($orderItemIds, (int)$excludeApplyId);
+
+        foreach ($qtySumByOrderItem as $orderItemId => $sumQty) {
+            $orderItem = $orderItemMap[$orderItemId];
+            $productName = trim((string)($orderItem['product_name'] ?? ''));
+            if ($productName === '') {
+                $productName = '未命名产品';
+            }
+            $orderQty = (int)($orderItem['qty'] ?? 0);
+            // 硬规则：拆分合计不得超过原订单产品总数量
+            if ($sumQty > $orderQty) {
+                throw new Exception('产品【' . $productName . '】本次合计数量（'
+                    . $sumQty . '）不得超过原订单产品总数量（' . $orderQty . '）。');
+            }
+            // 软提示：其他申请占量可能导致再次提交不足
+            $appliedQty = (int)($appliedMap[$orderItemId] ?? 0);
+            $remainingForResubmit = $orderQty - $appliedQty;
+            if ($remainingForResubmit < 0) {
+                $remainingForResubmit = 0;
+            }
+            if ($sumQty > $remainingForResubmit) {
+                $warnings[] = '产品【' . $productName . '】修改可保存，但再次提交审核时可能数量不足（本次合计 '
+                    . $sumQty . '，扣除其他占用后剩余 ' . $remainingForResubmit . '）。';
+            }
+        }
+
+        $itemSnapshots = [];
+        foreach ($pendingLines as $pending) {
+            $orderItem = $orderItemMap[$pending['order_item_id']];
+            $productName = trim((string)($orderItem['product_name'] ?? ''));
+            if ($productName === '') {
+                $productName = '未命名产品';
+            }
+            $managerInfo = $this->resolveProductManagerForDraft($orderItem['manager_id'] ?? '', $productName);
+            $inputItem = $pending['input'];
+
+            $applyProductName = $this->parseOptionalApplyText(
+                $inputItem['apply_product_name'] ?? null,
+                $productName,
+                self::SUBMIT_APPLY_PRODUCT_NAME_MAX,
+                '本次发货产品名称'
+            );
+            $applySpecModel = $this->parseOptionalApplyText(
+                $inputItem['apply_spec_model'] ?? null,
+                trim((string)($orderItem['spec_model'] ?? '')),
+                self::SUBMIT_APPLY_SPEC_MODEL_MAX,
+                '本次发货规格型号'
+            );
+            $itemRemark = trim((string)($inputItem['remark'] ?? ''));
+            if (mb_strlen($itemRemark, 'UTF-8') > self::SUBMIT_ITEM_REMARK_MAX) {
+                throw new Exception('行备注长度不能超过' . self::SUBMIT_ITEM_REMARK_MAX . '个字符。');
+            }
+
+            $factoryId = $this->parseOptionalFactoryId($inputItem['factory_id'] ?? null);
+            $factoryName = null;
+            if ($factoryId !== null) {
+                $factory = $this->assertFactoryValid($factoryId);
+                $factoryName = $factory['factory_name'];
+            }
+
+            $applyUnitPrice = $this->parseOptionalMoney(
+                array_key_exists('apply_unit_price', $inputItem) ? $inputItem['apply_unit_price'] : null,
+                '本次销售单价格式不正确。'
+            );
+            $applyPurchaseUnitPrice = $this->parseOptionalMoney(
+                array_key_exists('apply_purchase_unit_price', $inputItem) ? $inputItem['apply_purchase_unit_price'] : null,
+                '本次采购单价格式不正确。'
+            );
+
+            $applySalesAmount = null;
+            if ($applyUnitPrice !== null) {
+                $applySalesAmount = $this->bcmulMoney((string)$pending['apply_qty'], (string)$applyUnitPrice);
+            }
+            $applyPurchaseAmount = null;
+            if ($applyPurchaseUnitPrice !== null) {
+                $applyPurchaseAmount = $this->bcmulMoney((string)$pending['apply_qty'], (string)$applyPurchaseUnitPrice);
+            }
+
+            $orderPurchaseAmount = $this->normalizeNullableMoney($orderItem['purchase_price'] ?? null);
+
+            $itemSnapshots[] = $this->buildShippingItemSnapshot(
+                $orderItem,
+                $managerInfo,
+                $pending['apply_qty'],
+                $itemRemark,
+                [
+                    'apply_line_no' => $pending['apply_line_no'],
+                    'apply_product_name' => $applyProductName,
+                    'apply_spec_model' => $applySpecModel,
+                    'factory_id' => $factoryId,
+                    'factory_name' => $factoryName,
+                    'order_purchase_amount' => $orderPurchaseAmount,
+                    'apply_unit_price' => $applyUnitPrice,
+                    'apply_purchase_unit_price' => $applyPurchaseUnitPrice,
+                    'apply_sales_amount' => $applySalesAmount,
+                    'apply_purchase_amount' => $applyPurchaseAmount,
+                ]
+            );
+        }
+
+        return [
+            'item_snapshots' => $itemSnapshots,
+            'qty_sum_by_order_item' => $qtySumByOrderItem,
+            'changed_categories' => $changedCategories,
+        ];
+    }
+
+    /**
+     * 比较可编辑内容是否完全未变化（忽略明细自增 id / 版本辅料）
+     *
+     * @param array $apply
+     * @param array $oldItems
+     * @param array $headerInput
+     * @param array $newSnapshots
+     * @return bool
+     */
+    public function isRejectedEditContentUnchanged(array $apply, array $oldItems, array $headerInput, array $newSnapshots)
+    {
+        $oldHeader = [
+            'receiver_name' => trim((string)($apply['receiver_name'] ?? '')),
+            'receiver_phone' => trim((string)($apply['receiver_phone'] ?? '')),
+            'receiver_address' => trim((string)($apply['receiver_address'] ?? '')),
+            'shipping_date' => $this->normalizeRejectedEditDate($apply['shipping_date'] ?? null),
+            'shipping_method' => trim((string)($apply['shipping_method'] ?? '')),
+            'shipping_remark' => trim((string)($apply['shipping_remark'] ?? '')),
+        ];
+        $newHeader = [
+            'receiver_name' => trim((string)($headerInput['receiver_name'] ?? '')),
+            'receiver_phone' => trim((string)($headerInput['receiver_phone'] ?? '')),
+            'receiver_address' => trim((string)($headerInput['receiver_address'] ?? '')),
+            'shipping_date' => $this->normalizeRejectedEditDate($headerInput['shipping_date'] ?? null),
+            'shipping_method' => trim((string)($headerInput['shipping_method'] ?? '')),
+            'shipping_remark' => trim((string)($headerInput['shipping_remark'] ?? '')),
+        ];
+        if ($oldHeader !== $newHeader) {
+            return false;
+        }
+
+        $normalize = function (array $rows, $fromDb) {
+            $out = [];
+            foreach ($rows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $out[] = [
+                    'apply_line_no' => (int)($row['apply_line_no'] ?? 0),
+                    'order_item_id' => (int)($row['order_item_id'] ?? 0),
+                    'apply_product_name' => trim((string)($row['apply_product_name'] ?? '')),
+                    'apply_spec_model' => trim((string)($row['apply_spec_model'] ?? '')),
+                    'apply_qty' => (int)($row['apply_qty'] ?? 0),
+                    'apply_unit_price' => $this->normalizeNullableMoney($row['apply_unit_price'] ?? null, false),
+                    'apply_purchase_unit_price' => $this->normalizeNullableMoney($row['apply_purchase_unit_price'] ?? null, false),
+                    'factory_id' => isset($row['factory_id']) && $row['factory_id'] !== null && $row['factory_id'] !== ''
+                        ? (int)$row['factory_id']
+                        : null,
+                    'remark' => trim((string)($row['remark'] ?? '')),
+                ];
+            }
+            usort($out, function ($a, $b) {
+                if ($a['apply_line_no'] !== $b['apply_line_no']) {
+                    return $a['apply_line_no'] < $b['apply_line_no'] ? -1 : 1;
+                }
+                if ($a['order_item_id'] !== $b['order_item_id']) {
+                    return $a['order_item_id'] < $b['order_item_id'] ? -1 : 1;
+                }
+                return strcmp(
+                    (string)$a['apply_product_name'] . '|' . (string)$a['factory_id'] . '|' . (string)$a['remark'],
+                    (string)$b['apply_product_name'] . '|' . (string)$b['factory_id'] . '|' . (string)$b['remark']
+                );
+            });
+            return $out;
+        };
+
+        $oldNorm = $normalize($oldItems, true);
+        $newNorm = $normalize($newSnapshots, false);
+        return $oldNorm === $newNorm;
+    }
+
+    /**
+     * @param array $payload
+     * @return int
+     * @throws Exception
+     */
+    protected function writeRejectedEditAuditLog(array $payload)
+    {
+        $applyId = (int)($payload['shipping_apply_id'] ?? 0);
+        if ($applyId <= 0) {
+            throw new Exception('编辑审计关联申请无效');
+        }
+        $beforeHash = strtolower(trim((string)($payload['before_work_hash'] ?? '')));
+        $beforeShort = $beforeHash !== '' ? substr($beforeHash, 0, 12) : '';
+        $opinion = [
+            'apply_no' => (string)($payload['apply_no'] ?? ''),
+            'approval_round' => (int)($payload['approval_round'] ?? 0),
+            'action' => self::REJECTED_EDIT_AUDIT_ACTION,
+            'note' => '审核失败申请已修改',
+            'item_count' => (int)($payload['item_count'] ?? 0),
+            'before_work_hash_prefix' => $beforeShort,
+            'edited_at' => (string)($payload['now'] ?? date('Y-m-d H:i:s')),
+        ];
+        // 不写入电话/地址/采购明细
+        $opinionJson = json_encode($opinion, JSON_UNESCAPED_UNICODE);
+        if ($opinionJson === false) {
+            throw new Exception('编辑审计信息编码失败');
+        }
+        if (strlen($opinionJson) > self::APPROVAL_LOG_OPINION_MAX) {
+            // 压缩：去掉可选摘要
+            unset($opinion['before_work_hash_prefix'], $opinion['item_count']);
+            $opinionJson = json_encode($opinion, JSON_UNESCAPED_UNICODE);
+            if ($opinionJson === false || strlen($opinionJson) > self::APPROVAL_LOG_OPINION_MAX) {
+                throw new Exception('编辑审计信息过长');
+            }
+        }
+
+        $logId = (int)Db::name('crm_shipping_approval_log')->insertGetId([
+            'shipping_apply_id' => $applyId,
+            'task_id' => null,
+            'operator_id' => (int)($payload['operator_id'] ?? 0),
+            'operator_name' => mb_substr((string)($payload['operator_name'] ?? ''), 0, 100, 'UTF-8'),
+            'operator_role' => 'applicant',
+            'action' => self::REJECTED_EDIT_AUDIT_ACTION,
+            'before_status' => (int)($payload['before_status'] ?? 0),
+            'after_status' => (int)($payload['after_status'] ?? 0),
+            'opinion' => $opinionJson,
+            'create_time' => (string)($payload['now'] ?? date('Y-m-d H:i:s')),
+        ]);
+        if ($logId <= 0) {
+            throw new Exception('编辑审计日志写入失败');
+        }
+        return $logId;
+    }
+
+    /**
+     * @param string $text
+     * @param int $max
+     * @param string $label
+     * @throws Exception
+     */
+    protected function assertRejectedEditTextLength($text, $max, $label)
+    {
+        if (mb_strlen((string)$text, 'UTF-8') > (int)$max) {
+            throw new Exception($label . '长度不能超过' . (int)$max . '个字符。');
+        }
+    }
+
+    /**
+     * @param string $msg
+     * @return array
+     */
+    protected function buildRejectedEditFailResult($msg)
+    {
+        $msg = trim((string)$msg);
+        if ($msg === '') {
+            $msg = '保存失败，请稍后重试。';
+        }
+        if (preg_match('/SQLSTATE|Duplicate entry|Integrity constraint|PDOException/i', $msg)) {
+            $msg = '保存失败，请稍后重试。';
+        }
+        return ['code' => -200, 'msg' => $msg, 'data' => []];
+    }
+
+    /**
+     * COMMIT 结果不确定：不自动重试写库
+     *
+     * @param int $applyId
+     * @return array
+     */
+    protected function buildRejectedEditUncertainResult($applyId)
+    {
+        return [
+            'code' => -200,
+            'msg' => '保存结果待确认，请刷新后核对，勿重复提交',
+            'data' => [
+                'apply_id' => (int)$applyId,
+                'result_uncertain' => true,
+            ],
+        ];
+    }
+
+    /**
+     * @param \Throwable $e
+     * @return bool
+     */
+    protected function isRejectedEditCommitUncertaintyError($e)
+    {
+        $msg = (string)$e->getMessage();
+        if (stripos($msg, 'server has gone away') !== false) {
+            return true;
+        }
+        if (stripos($msg, 'Lost connection') !== false) {
+            return true;
+        }
+        if (stripos($msg, '2006') !== false) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * @return void
+     */
+    protected function beginRejectedEditTransaction()
+    {
+        Db::startTrans();
+    }
+
+    /**
+     * @return void
+     */
+    protected function commitRejectedEditTransaction()
+    {
+        Db::commit();
+    }
+
+    /**
+     * @return void
+     */
+    protected function rollbackRejectedEditTransaction()
+    {
+        Db::rollback();
+    }
+
 
     /**
      * 待我审核列表（M4-2B-2A 只读；Layui 分页）
@@ -7839,6 +9362,16 @@ class ShippingApplyService
             $text = $this->extractPlainOpinionText($opinionRaw);
             return [
                 'action_text' => '审核驳回',
+                'opinion_text' => $text,
+            ];
+        }
+        if ($action === self::REJECTED_EDIT_AUDIT_ACTION || $action === 'edit_rejected') {
+            $text = $this->extractPlainOpinionText($opinionRaw);
+            if ($text === '') {
+                $text = '审核失败申请已修改';
+            }
+            return [
+                'action_text' => '审核失败申请已修改',
                 'opinion_text' => $text,
             ];
         }
