@@ -2823,6 +2823,9 @@ class ShippingApplyService
         if ($scene === 'rejected_edit') {
             return '审核失败申请编辑已移除该原订单产品的全部发货行，替代授权自动失效';
         }
+        if ($scene === 'resubmit') {
+            return '再次提交审核已移除该原订单产品的全部发货行，替代授权自动失效';
+        }
         return '草稿已移除该原订单产品的全部发货行，替代授权自动失效';
     }
 
@@ -7371,6 +7374,2327 @@ class ShippingApplyService
      * @param array $rows
      * @return array apply_id => bool
      */
+    // -------------------------------------------------------------------------
+    // M4-2C-3-2：审核失败申请再次提交审批（独立入口；不放宽 submitApply status=0 门禁）
+    // -------------------------------------------------------------------------
+
+    /** 再次提交审计 action */
+    const RESUBMIT_AUDIT_ACTION = 'resubmit';
+
+    /** 再次提交载荷哈希规范版本（独立于首次提交 schema） */
+    const RESUBMIT_PAYLOAD_HASH_SCHEMA_VERSION = 1;
+
+    /** 再次提交已提交证据核验三态 */
+    const RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS = 'confirmed_success';
+    const RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT = 'confirmed_conflict';
+    const RESUBMIT_EVIDENCE_INSUFFICIENT = 'insufficient_evidence';
+
+    const RESUBMIT_SNAPSHOT_MISSING_MSG = '该申请尚未完成历史审批数据保护，暂时不能再次提交，请联系管理员处理。';
+    const RESUBMIT_SNAPSHOT_CORRUPT_MSG = '该申请历史审批快照已损坏，暂时不能再次提交，请联系管理员处理。';
+    const RESUBMIT_DENY_MSG = '无权再次提交该发货申请，或申请当前不可再次提交。';
+    const RESUBMIT_CONFLICT_MSG = '数据已被修改，请刷新后重试。';
+    const RESUBMIT_UNSAVED_HINT = '请先保存修改，再次提交审核';
+    const RESUBMIT_EVIDENCE_INCOMPLETE_MSG = '再次提交记录不完整或结果待核验，请刷新后核对，勿重复提交。';
+
+    /**
+     * 审核失败申请再次正式提交（独立事务；Round N → N+1；不改旧任务/旧快照/旧日志）
+     *
+     * @param array $params
+     * @return array
+     */
+    public function resubmitRejectedApply(array $params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        unset(
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['status'],
+            $params['approval_round'],
+            $params['order_amount'],
+            $params['approval_threshold'],
+            $params['approval_route'],
+            $params['submit_token'],
+            $params['submit_payload_hash'],
+            $params['current_stage'],
+            $params['product_director_id'],
+            $params['product_director_name'],
+            $params['items'],
+            $params['order_id']
+        );
+
+        try {
+            $applicant = $this->assertApplicantActiveForSubmit();
+            $applicantId = (int)$applicant['admin_id'];
+            $applicantName = (string)$applicant['username'];
+
+            $applyId = $this->parseStrictPositiveInt(
+                array_key_exists('apply_id', $params) ? $params['apply_id'] : null,
+                '发货申请ID无效'
+            );
+            $expectedRound = $this->parseStrictPositiveInt(
+                array_key_exists('expected_round', $params) ? $params['expected_round'] : null,
+                '审批轮次无效'
+            );
+            $resubmitToken = $this->parseStrictSubmitToken(
+                array_key_exists('resubmit_token', $params) ? $params['resubmit_token'] : null
+            );
+            $expectedWorkHash = $this->normalizeResubmitExpectedWorkHash(
+                array_key_exists('expected_work_hash', $params) ? $params['expected_work_hash'] : ''
+            );
+            if ($expectedWorkHash === '') {
+                return $this->buildResubmitFailResult('编辑版本校验失效，请刷新后重试。');
+            }
+
+            $orderAmountConfirmed = $this->parseSubmitConfirmationFlag(
+                array_key_exists('order_amount_confirmed', $params) ? $params['order_amount_confirmed'] : null,
+                '原订单金额变化确认标志'
+            );
+            $confirmedOrderAmount = null;
+            if ($orderAmountConfirmed) {
+                $confirmedOrderAmount = $this->parseRequiredSubmitMoney(
+                    array_key_exists('confirmed_order_amount', $params) ? $params['confirmed_order_amount'] : null,
+                    '确认的原订单金额格式不正确。'
+                );
+            }
+            $historyConfirmed = $this->parseSubmitConfirmationFlag(
+                array_key_exists('shipping_date_history_confirmed', $params)
+                    ? $params['shipping_date_history_confirmed']
+                    : null,
+                '历史发货日期确认标志'
+            );
+
+            // 无锁预读 order_id（仅定位锁目标）
+            $peek = Db::name('crm_shipping_apply')
+                ->where('id', $applyId)
+                ->field('id,order_id,applicant_id,status,is_deleted,approval_round,submit_token,submit_payload_hash')
+                ->find();
+            if (empty($peek)) {
+                return $this->buildResubmitFailResult(self::RESUBMIT_DENY_MSG);
+            }
+            $orderId = (int)($peek['order_id'] ?? 0);
+            if ($orderId <= 0) {
+                return $this->buildResubmitFailResult('原订单关联无效。');
+            }
+        } catch (Exception $e) {
+            return $this->buildResubmitFailResult($e->getMessage());
+        } catch (\Throwable $e) {
+            $this->logSubmitError('resubmitRejectedApply.precheck', $e);
+            return $this->buildResubmitFailResult('再次提交失败，请稍后重试。');
+        }
+
+        $ctrl = [
+            'apply_id' => $applyId,
+            'expected_round' => $expectedRound,
+            'resubmit_token' => $resubmitToken,
+            'expected_work_hash' => $expectedWorkHash,
+            'order_amount_confirmed' => $orderAmountConfirmed ? 1 : 0,
+            'confirmed_order_amount' => $confirmedOrderAmount,
+            'shipping_date_history_confirmed' => $historyConfirmed ? 1 : 0,
+            'applicant_id' => $applicantId,
+            'applicant_name' => $applicantName,
+            'order_id' => $orderId,
+        ];
+
+        $maxRetry = self::SUBMIT_TX_TRANSIENT_MAX_RETRY;
+        for ($attempt = 1; $attempt <= $maxRetry; $attempt++) {
+            $txStarted = false;
+            $commitAttempted = false;
+            $payloadHashForRecovery = '';
+            try {
+                $this->beginSubmitTransaction();
+                $txStarted = true;
+
+                // 幂等：按本轮 resubmit_token 锁读（必须带本请求意图，禁止仅凭 token 成功）
+                $byToken = $this->findApplyBySubmitTokenForUpdate($resubmitToken);
+                if ($byToken !== null) {
+                    $idempotent = $this->resolveIdempotentResubmitResult(
+                        $byToken,
+                        $applicantId,
+                        $applyId,
+                        $expectedRound,
+                        null,
+                        $this->buildResubmitRequestIntentFromCtrl($ctrl)
+                    );
+                    if ($idempotent !== null) {
+                        $payloadHashForRecovery = (string)($idempotent['_payload_hash'] ?? '');
+                        unset($idempotent['_payload_hash']);
+                        $commitAttempted = true;
+                        $this->commitSubmitTransaction();
+                        $txStarted = false;
+                        return $idempotent;
+                    }
+                }
+
+                $result = $this->executeResubmitRejectedApplyInTransaction($ctrl);
+                $payloadHashForRecovery = (string)($result['_payload_hash'] ?? '');
+                unset($result['_payload_hash']);
+
+                $commitAttempted = true;
+                $this->commitSubmitTransaction();
+                $txStarted = false;
+                return $result;
+            } catch (\Throwable $e) {
+                $rollbackFailed = false;
+                if ($txStarted) {
+                    try {
+                        $this->rollbackSubmitTransaction();
+                    } catch (\Throwable $rollbackEx) {
+                        $rollbackFailed = true;
+                        $this->logSubmitError('resubmitRejectedApply.rollback', $rollbackEx);
+                    }
+                    $txStarted = false;
+                }
+
+                if ($commitAttempted) {
+                    return $this->finalizeResubmitAfterCommitUncertainty(
+                        $e,
+                        $resubmitToken,
+                        $applicantId,
+                        $applyId,
+                        $expectedRound,
+                        $payloadHashForRecovery,
+                        $this->buildResubmitRequestIntentFromCtrl($ctrl)
+                    );
+                }
+
+                if ($rollbackFailed) {
+                    $this->logSubmitError('resubmitRejectedApply.rollback_failed_pre_commit', $e);
+                    return $this->buildResubmitUncertainResult($resubmitToken);
+                }
+
+                $dupKind = $this->classifySubmitDuplicateKeyError($e);
+                if ($dupKind === 'submit_token') {
+                    try {
+                        $replay = $this->recoverIdempotentResubmitAfterTokenConflict(
+                            $resubmitToken,
+                            $applicantId,
+                            $applyId,
+                            $expectedRound,
+                            $this->buildResubmitRequestIntentFromCtrl($ctrl)
+                        );
+                        if ($replay !== null) {
+                            return $replay;
+                        }
+                    } catch (Exception $idemEx) {
+                        return $this->buildResubmitFailResult($idemEx->getMessage());
+                    } catch (\Throwable $idemEx) {
+                        $this->logSubmitError('recoverIdempotentResubmitAfterTokenConflict', $idemEx);
+                    }
+                    return $this->buildResubmitFailResult('再次提交标识冲突，请确认后重试。');
+                }
+                if ($dupKind === 'approval_task') {
+                    return $this->buildResubmitFailResult('审批任务初始化冲突，请稍后重试。');
+                }
+                if ($dupKind === 'round_snapshot') {
+                    return $this->buildResubmitFailResult('提交快照冲突，请确认后重试。');
+                }
+
+                if ($this->isTransientSubmitDbError($e) && $attempt < $maxRetry) {
+                    continue;
+                }
+
+                if ($e instanceof Exception) {
+                    return $this->buildResubmitFailResult($e->getMessage());
+                }
+                $this->logSubmitError('resubmitRejectedApply', $e);
+                return $this->buildResubmitFailResult('再次提交失败，请稍后重试。');
+            }
+        }
+
+        return $this->buildResubmitFailResult('再次提交失败，请稍后重试。');
+    }
+
+    /**
+     * 事务内再次提交写库主体
+     *
+     * @param array $ctrl
+     * @return array
+     * @throws Exception
+     */
+    protected function executeResubmitRejectedApplyInTransaction(array $ctrl)
+    {
+        $applyId = (int)$ctrl['apply_id'];
+        $expectedRound = (int)$ctrl['expected_round'];
+        $resubmitToken = (string)$ctrl['resubmit_token'];
+        $expectedWorkHash = (string)$ctrl['expected_work_hash'];
+        $applicantId = (int)$ctrl['applicant_id'];
+        $applicantName = (string)$ctrl['applicant_name'];
+        $orderId = (int)$ctrl['order_id'];
+        $newRound = $expectedRound + 1;
+
+        $order = $this->lockOrderForShippingSubmit($orderId);
+        $this->validateOrderForApply($order, $applicantId);
+
+        // 锁序：订单 → 订单全部产品行 → 申请主表 → 明细 → 替代授权（与驳回编辑兼容）
+        Db::name('crm_order_item')
+            ->where('order_id', $orderId)
+            ->order('id', 'asc')
+            ->lock(true)
+            ->select();
+
+        $apply = Db::name('crm_shipping_apply')
+            ->where('id', $applyId)
+            ->lock(true)
+            ->find();
+        if (empty($apply)) {
+            throw new Exception(self::RESUBMIT_DENY_MSG);
+        }
+
+        // 同 token 已成功写入新轮：幂等返回（必须核对本请求意图，禁止仅凭 token）
+        $existingToken = trim((string)($apply['submit_token'] ?? ''));
+        if ($existingToken !== '' && hash_equals($existingToken, $resubmitToken)) {
+            $idempotent = $this->resolveIdempotentResubmitResult(
+                $apply,
+                $applicantId,
+                $applyId,
+                $expectedRound,
+                null,
+                $this->buildResubmitRequestIntentFromCtrl($ctrl)
+            );
+            if ($idempotent !== null) {
+                return $idempotent;
+            }
+            throw new Exception('相同再次提交标识与当前业务状态不一致，拒绝继续。');
+        }
+
+        // 旧 token 重放：主表 token 已是其他值且状态已非 20/40
+        if ($existingToken !== '' && !hash_equals($existingToken, $resubmitToken)) {
+            $st = (int)($apply['status'] ?? -1);
+            if (!in_array($st, self::FAILED_APPLY_LIST_STATUSES, true)) {
+                throw new Exception('该发货申请当前不可再次提交，请刷新后核对。');
+            }
+            // 仍为驳回态但 token 已被其他意图占用：视为并发冲突
+            // （本事务将覆盖为新 token；若另一事务已推进则下面状态/轮次门禁拦截）
+        }
+
+        $this->assertResubmitIdentityAndState($apply, $applicantId, $expectedRound);
+
+        if ((int)($apply['order_id'] ?? 0) !== $orderId) {
+            throw new Exception('禁止切换关联订单。');
+        }
+
+        $lockedItems = Db::name('crm_shipping_apply_item')
+            ->where('shipping_apply_id', $applyId)
+            ->order('id', 'asc')
+            ->lock(true)
+            ->select();
+        $lockedItems = empty($lockedItems) ? [] : (array)$lockedItems;
+        if ($lockedItems === []) {
+            throw new Exception('至少需要一条正整数数量的发货行。');
+        }
+
+        $requestOrderItemIds = [];
+        foreach ($lockedItems as $itemRow) {
+            $oid = (int)($itemRow['order_item_id'] ?? 0);
+            if ($oid > 0) {
+                $requestOrderItemIds[$oid] = $oid;
+            }
+        }
+        $orderItemMap = $this->lockOrderItemsForShippingSubmit(
+            $orderId,
+            array_values($requestOrderItemIds)
+        );
+
+        $pmSubstituteMap = [];
+        $authRows = Db::name('crm_shipping_pm_substitute')
+            ->where('shipping_apply_id', $applyId)
+            ->order('id', 'asc')
+            ->lock(true)
+            ->select();
+        foreach ((array)$authRows as $authRow) {
+            $oid = (int)($authRow['order_item_id'] ?? 0);
+            if ($oid > 0) {
+                $pmSubstituteMap[$oid] = $authRow;
+            }
+        }
+
+        // 旧轮 submit 快照门禁（只读；禁止改写）
+        $this->assertResubmitOldRoundSubmitSnapshotGate($applyId, $expectedRound, $apply);
+
+        $lastEditLogId = $this->findLatestEditRejectedLogId($applyId);
+        $currentHash = $this->computeRejectedWorkHash($apply, $lockedItems, $lastEditLogId);
+        if (!hash_equals($currentHash, $expectedWorkHash)) {
+            throw new Exception(self::RESUBMIT_CONFLICT_MSG);
+        }
+
+        $beforeStatus = (int)($apply['status'] ?? -1);
+        $paramsFromDb = $this->buildResubmitParamsFromSavedWork(
+            $apply,
+            $lockedItems,
+            (int)$ctrl['order_amount_confirmed'] === 1,
+            $ctrl['confirmed_order_amount'],
+            (int)$ctrl['shipping_date_history_confirmed'] === 1
+        );
+
+        $appliedQtyMap = $this->calcAppliedQtyMapForSubmit(
+            array_keys($orderItemMap),
+            $applyId
+        );
+
+        $validated = $this->validateSubmitPayloadForCommit($paramsFromDb, [
+            'applicant_id' => $applicantId,
+            'order' => $order,
+            'order_item_map' => $orderItemMap,
+            'applied_qty_map' => $appliedQtyMap,
+        ]);
+
+        $this->assertResubmitOrderAmountConfirmed(
+            $apply,
+            $order,
+            $validated
+        );
+
+        $managers = $this->resolveSubmitManagersForResubmit([
+            'apply_id' => $applyId,
+            'lines' => $validated['lines'],
+            'order_item_map' => $orderItemMap,
+            'pm_substitute_map' => $pmSubstituteMap,
+        ]);
+
+        $configSnap = $this->buildApprovalConfigSnapshot([
+            'order' => $order,
+            'applicant_id' => $applicantId,
+        ]);
+
+        $normalized = $this->normalizeResubmitPayload(
+            $this->normalizeSubmitPayload($validated),
+            $expectedRound
+        );
+        $hashPack = $this->computeSubmitPayloadHash($normalized);
+        $payloadHash = (string)$hashPack['hash'];
+
+        $now = date('Y-m-d H:i:s');
+        $orderAmountToSave = $this->normalizeNullableMoney($order['money'] ?? null, false);
+        if ($orderAmountToSave === null) {
+            $orderAmountToSave = $this->formatMoneyHalfUp((string)($order['money'] ?? '0'));
+        }
+
+        $header = $validated['header'];
+        $lineManagersByOrderItem = [];
+        foreach ((array)$managers['line_managers'] as $lm) {
+            if (!is_array($lm)) {
+                continue;
+            }
+            $loid = (int)($lm['order_item_id'] ?? 0);
+            if ($loid > 0) {
+                $lineManagersByOrderItem[$loid] = $lm;
+            }
+        }
+
+        $itemSnapshots = [];
+        $applyLineNo = 0;
+        $keptOrderItemIds = [];
+        foreach ($validated['lines'] as $line) {
+            $orderItemId = (int)$line['order_item_id'];
+            if (!isset($orderItemMap[$orderItemId])) {
+                throw new Exception('存在已失效或不属于当前订单的产品行，请重新选择有效原订单产品后再提交。');
+            }
+            if (!isset($lineManagersByOrderItem[$orderItemId])) {
+                throw new Exception('存在无法解析的产品经理审批人，拒绝继续。');
+            }
+            $lm = $lineManagersByOrderItem[$orderItemId];
+            $orderItem = $orderItemMap[$orderItemId];
+            $applyLineNo++;
+            $keptOrderItemIds[$orderItemId] = $orderItemId;
+
+            $applyQty = (int)$line['apply_qty'];
+            $sale = (string)$line['apply_unit_price'];
+            $purchase = (string)$line['apply_purchase_unit_price'];
+            $salesAmount = $this->bcmulMoney((string)$applyQty, $sale);
+            $purchaseAmount = $this->bcmulMoney((string)$applyQty, $purchase);
+            $orderPurchaseAmount = $this->normalizeNullableMoney($orderItem['purchase_price'] ?? null);
+
+            $managerInfo = [
+                'product_manager_id' => (int)$lm['resolved_manager_id'],
+                'product_manager_name' => (string)$lm['resolved_manager_name'],
+            ];
+
+            $itemSnapshots[] = $this->buildShippingItemSnapshot(
+                $orderItem,
+                $managerInfo,
+                $applyQty,
+                (string)($line['remark'] ?? ''),
+                [
+                    'apply_line_no' => $applyLineNo,
+                    'apply_product_name' => (string)$line['apply_product_name'],
+                    'apply_spec_model' => (string)$line['apply_spec_model'],
+                    'factory_id' => (int)$line['factory_id'],
+                    'factory_name' => (string)($line['factory_name'] ?? ''),
+                    'order_purchase_amount' => $orderPurchaseAmount,
+                    'apply_unit_price' => $sale,
+                    'apply_purchase_unit_price' => $purchase,
+                    'apply_sales_amount' => $salesAmount,
+                    'apply_purchase_amount' => $purchaseAmount,
+                ]
+            );
+        }
+        if (empty($itemSnapshots)) {
+            throw new Exception('至少需要一条正整数数量的发货行。');
+        }
+
+        $applyNo = trim((string)($apply['apply_no'] ?? ''));
+        $mainData = [
+            'order_no' => trim((string)($order['order_no'] ?? '')),
+            'order_amount' => $orderAmountToSave,
+            'approval_threshold' => (string)$configSnap['approval_threshold'],
+            'approval_route' => (int)$configSnap['approval_route'],
+            'approval_round' => $newRound,
+            'team_name' => trim((string)($order['team_name'] ?? '')),
+            'team_leader_id' => $configSnap['team_leader_id'],
+            'team_leader_name' => (string)($configSnap['team_leader_name'] ?? ''),
+            'customer_name' => trim((string)($order['cname'] ?? '')),
+            'customer_phone' => trim((string)($order['contact'] ?? '')),
+            'receiver_name' => (string)$header['receiver_name'],
+            'receiver_phone' => (string)$header['receiver_phone'],
+            'receiver_address' => (string)$header['receiver_address'],
+            'shipping_date' => (string)$header['shipping_date'],
+            'shipping_method' => (string)$header['shipping_method'],
+            'shipping_remark' => (string)$header['shipping_remark'],
+            'product_director_id' => $configSnap['product_director_id'],
+            'product_director_name' => (string)($configSnap['product_director_name'] ?? ''),
+            'finance_cc_user_id' => $configSnap['finance_cc_user_id'],
+            'finance_cc_user_name' => (string)($configSnap['finance_cc_user_name'] ?? ''),
+            'submit_token' => $resubmitToken,
+            'submit_payload_hash' => $payloadHash,
+            'status' => 10,
+            'current_stage' => 1,
+            'submit_time' => $now,
+            'update_time' => $now,
+            'approved_time' => null,
+        ];
+
+        $affected = Db::name('crm_shipping_apply')
+            ->where('id', $applyId)
+            ->where('applicant_id', $applicantId)
+            ->where('is_deleted', 0)
+            ->where('approval_round', $expectedRound)
+            ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES)
+            ->update($mainData);
+        if ((int)$affected !== 1) {
+            throw new Exception(self::RESUBMIT_CONFLICT_MSG);
+        }
+
+        // 重建本轮工作明细（业务内容来自已保存校验行；经理为本轮解析结果）
+        Db::name('crm_shipping_apply_item')->where('shipping_apply_id', $applyId)->delete();
+        foreach ($itemSnapshots as $snapshot) {
+            $snapshot['shipping_apply_id'] = $applyId;
+            $snapshot['create_time'] = $now;
+            $snapshot['update_time'] = $now;
+            $itemId = (int)Db::name('crm_shipping_apply_item')->insertGetId($snapshot);
+            if ($itemId <= 0) {
+                throw new Exception('发货明细写入失败，请稍后重试。');
+            }
+        }
+
+        foreach ((array)$managers['freeze_authorizations'] as $freezePlan) {
+            if (!is_array($freezePlan)) {
+                continue;
+            }
+            $this->executeFreezePmSubstituteForSubmit(
+                $freezePlan,
+                $pmSubstituteMap,
+                $applicantId,
+                $applicantName,
+                $applyNo,
+                $now
+            );
+        }
+
+        foreach ((array)$managers['invalidate_authorizations'] as $invPlan) {
+            if (!is_array($invPlan)) {
+                continue;
+            }
+            $authId = (int)($invPlan['auth_id'] ?? 0);
+            $oid = (int)($invPlan['order_item_id'] ?? 0);
+            $row = null;
+            if ($oid > 0 && isset($pmSubstituteMap[$oid]) && (int)($pmSubstituteMap[$oid]['id'] ?? 0) === $authId) {
+                $row = $pmSubstituteMap[$oid];
+            }
+            if ($row === null) {
+                throw new Exception('待失效替代授权未锁定，拒绝继续。');
+            }
+            if ((int)($row['auth_version'] ?? 0) !== (int)($invPlan['expected_auth_version'] ?? -1)) {
+                throw new Exception('授权信息已被他人修改，请刷新后重试');
+            }
+            $this->markPmSubstituteInvalid(
+                $row,
+                $applicantId,
+                $applicantName,
+                $applyNo,
+                (string)($invPlan['reason'] ?? '原产品经理已恢复正常，再次提交时失效旧替代授权'),
+                (string)($invPlan['invalidate_type'] ?? 'original_restored'),
+                $now
+            );
+            $pmSubstituteMap[$oid]['status'] = 0;
+        }
+
+        $this->invalidatePmSubstitutesForRemovedOrderItems(
+            $applyId,
+            array_values($keptOrderItemIds),
+            $applicantId,
+            $applicantName,
+            $applyNo,
+            $now,
+            'resubmit'
+        );
+
+        // 新轮经理任务（不改旧轮任务）
+        foreach ((array)$managers['approvers'] as $approver) {
+            if (!is_array($approver)) {
+                continue;
+            }
+            $taskId = (int)Db::name('crm_shipping_approval_task')->insertGetId([
+                'shipping_apply_id' => $applyId,
+                'approval_type' => 1,
+                'approver_id' => (int)$approver['approver_id'],
+                'approver_name' => (string)($approver['approver_name'] ?? ''),
+                'approval_round' => $newRound,
+                'status' => 1,
+                'opinion' => '',
+                'activate_time' => $now,
+                'audit_time' => null,
+                'create_time' => $now,
+                'update_time' => $now,
+            ]);
+            if ($taskId <= 0) {
+                throw new Exception('审批任务初始化失败，请稍后重试。');
+            }
+        }
+
+        $directorPlan = $configSnap['product_director_task_plan'] ?? null;
+        if (is_array($directorPlan) && (int)($configSnap['approval_route'] ?? 0) === 2) {
+            $taskId = (int)Db::name('crm_shipping_approval_task')->insertGetId([
+                'shipping_apply_id' => $applyId,
+                'approval_type' => 2,
+                'approver_id' => (int)$directorPlan['approver_id'],
+                'approver_name' => (string)($directorPlan['approver_name'] ?? ''),
+                'approval_round' => $newRound,
+                'status' => 0,
+                'opinion' => '',
+                'activate_time' => null,
+                'audit_time' => null,
+                'create_time' => $now,
+                'update_time' => $now,
+            ]);
+            if ($taskId <= 0) {
+                throw new Exception('产品总监审批任务初始化失败，请稍后重试。');
+            }
+        }
+
+        $this->writeResubmitAuditLog([
+            'shipping_apply_id' => $applyId,
+            'apply_no' => $applyNo,
+            'operator_id' => $applicantId,
+            'operator_name' => $applicantName,
+            'before_status' => $beforeStatus,
+            'after_status' => 10,
+            'old_round' => $expectedRound,
+            'new_round' => $newRound,
+            'payload_hash' => $payloadHash,
+            'token_fingerprint' => $this->fingerprintResubmitToken($resubmitToken),
+            // 原请求工作版本（已通过格式校验与持锁当前 work_hash 比对）；不得用提交后状态重算
+            'expected_work_hash' => $expectedWorkHash,
+            'now' => $now,
+        ]);
+
+        if (!empty($configSnap['finance_cc_anomaly']) && is_array($configSnap['finance_cc_anomaly'])) {
+            $this->writeSubmitFinanceCcAnomalyAuditLog([
+                'shipping_apply_id' => $applyId,
+                'apply_no' => $applyNo,
+                'operator_id' => $applicantId,
+                'operator_name' => $applicantName,
+                'before_status' => $beforeStatus,
+                'after_status' => 10,
+                'approval_round' => $newRound,
+                'anomaly' => $configSnap['finance_cc_anomaly'],
+                'now' => $now,
+            ]);
+        }
+
+        $finalRow = Db::name('crm_shipping_apply')->where('id', $applyId)->find();
+        if (empty($finalRow)
+            || (int)($finalRow['status'] ?? -1) !== 10
+            || (int)($finalRow['current_stage'] ?? -1) !== 1
+            || (int)($finalRow['approval_round'] ?? 0) !== $newRound
+            || trim((string)($finalRow['submit_token'] ?? '')) !== $resubmitToken
+            || strtolower(trim((string)($finalRow['submit_payload_hash'] ?? ''))) !== strtolower($payloadHash)
+            || (int)($finalRow['applicant_id'] ?? 0) !== $applicantId
+            || (int)($finalRow['is_deleted'] ?? 1) !== 0
+        ) {
+            throw new Exception('再次提交状态校验失败，请稍后重试。');
+        }
+
+        // 旧轮快照仍在且未被改写
+        $this->assertResubmitOldRoundSubmitSnapshotGate($applyId, $expectedRound, $apply);
+
+        // 新轮 submit 快照（要求主表已是 10/1）
+        $this->getRoundSnapshotService()->createSubmitRoundSnapshotInCurrentTx(
+            $applyId,
+            $applicantId,
+            $finalRow
+        );
+
+        // 本轮任务齐全性
+        $this->assertResubmitNewRoundTasksConsistent($applyId, $newRound, $managers, $configSnap);
+
+        $success = $this->buildResubmitSuccessResult($finalRow, false);
+        $success['_payload_hash'] = $payloadHash;
+        return $success;
+    }
+
+    /**
+     * @param array $apply
+     * @param int $applicantId
+     * @param int $expectedRound
+     * @throws Exception
+     */
+    public function assertResubmitIdentityAndState(array $apply, $applicantId, $expectedRound)
+    {
+        $applicantId = (int)$applicantId;
+        $expectedRound = (int)$expectedRound;
+        if ($applicantId <= 0) {
+            throw new Exception('请先登录');
+        }
+        if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+            throw new Exception(self::RESUBMIT_DENY_MSG);
+        }
+        $status = (int)($apply['status'] ?? -1);
+        if (!in_array($status, self::FAILED_APPLY_LIST_STATUSES, true)) {
+            throw new Exception(self::RESUBMIT_DENY_MSG);
+        }
+        // 严格本人；超管不得代提
+        if ((int)($apply['applicant_id'] ?? 0) !== $applicantId) {
+            throw new Exception(self::RESUBMIT_DENY_MSG);
+        }
+        if ((int)($apply['approval_round'] ?? 0) !== $expectedRound) {
+            throw new Exception('审批轮次已变化，请刷新后重试。');
+        }
+        if ($expectedRound < 1) {
+            throw new Exception('当前审批轮次无效，暂时不能再次提交。');
+        }
+        if ((int)($apply['order_id'] ?? 0) <= 0) {
+            throw new Exception('原订单关联无效。');
+        }
+    }
+
+    /**
+     * 旧轮 submit 快照存在且完整（再次提交门禁；文案独立）
+     *
+     * @param int $applyId
+     * @param int $round
+     * @param array $apply
+     * @throws Exception
+     */
+    public function assertResubmitOldRoundSubmitSnapshotGate($applyId, $round, array $apply)
+    {
+        $applyId = (int)$applyId;
+        $round = (int)$round;
+        if ($applyId <= 0 || $round < 1) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_MISSING_MSG);
+        }
+
+        $snapSvc = $this->getRoundSnapshotService();
+        $snapshot = $snapSvc->findSubmitRoundSnapshot($applyId, $round);
+        if (empty($snapshot)) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_MISSING_MSG);
+        }
+
+        try {
+            $snapSvc->assertStoredSnapshotIntegrity($snapshot);
+        } catch (\Throwable $e) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_CORRUPT_MSG);
+        }
+
+        $verified = $snapSvc->verifyStoredSnapshotIntegrity($snapshot);
+        if (empty($verified['ok']) || !is_array($verified['header'])) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        $header = $verified['header'];
+
+        if ((int)($header['shipping_apply_id'] ?? 0) !== $applyId
+            || (int)($header['approval_round'] ?? 0) !== $round
+        ) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if ((int)($header['applicant_id'] ?? 0) !== (int)($apply['applicant_id'] ?? 0)) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if (trim((string)($header['apply_no'] ?? '')) !== trim((string)($apply['apply_no'] ?? ''))) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if ((int)($header['order_id'] ?? 0) !== (int)($apply['order_id'] ?? 0)) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_CORRUPT_MSG);
+        }
+        if ((int)($header['status_at_submit'] ?? -1) !== 10) {
+            throw new Exception(self::RESUBMIT_SNAPSHOT_CORRUPT_MSG);
+        }
+    }
+
+    /**
+     * 从已保存工作明细组装正式提交校验参数（不信任客户端产品行）
+     *
+     * @param array $apply
+     * @param array $lockedItems
+     * @param bool $orderAmountConfirmed
+     * @param mixed $confirmedOrderAmount
+     * @param bool $historyConfirmed
+     * @return array
+     * @throws Exception
+     */
+    public function buildResubmitParamsFromSavedWork(
+        array $apply,
+        array $lockedItems,
+        $orderAmountConfirmed,
+        $confirmedOrderAmount,
+        $historyConfirmed
+    ) {
+        $items = [];
+        foreach ($lockedItems as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $qty = (int)($row['apply_qty'] ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+            $factoryId = isset($row['factory_id']) && $row['factory_id'] !== null && $row['factory_id'] !== ''
+                ? (int)$row['factory_id']
+                : 0;
+            if ($factoryId <= 0) {
+                throw new Exception('存在未指定厂家的发货行，请先保存修改后再再次提交。');
+            }
+            $items[] = [
+                'order_item_id' => (int)($row['order_item_id'] ?? 0),
+                'apply_product_name' => trim((string)($row['apply_product_name'] ?? '')),
+                'apply_spec_model' => trim((string)($row['apply_spec_model'] ?? '')),
+                'apply_qty' => $qty,
+                'factory_id' => $factoryId,
+                'apply_unit_price' => $row['apply_unit_price'] ?? null,
+                'apply_purchase_unit_price' => $row['apply_purchase_unit_price'] ?? null,
+                'remark' => trim((string)($row['remark'] ?? '')),
+            ];
+        }
+        if ($items === []) {
+            throw new Exception('至少需要一条正整数数量的发货行。');
+        }
+
+        $shippingDate = $this->normalizeRejectedEditDate($apply['shipping_date'] ?? null);
+        $params = [
+            'apply_id' => (int)($apply['id'] ?? 0),
+            'order_id' => (int)($apply['order_id'] ?? 0),
+            'shipping_date' => $shippingDate,
+            'receiver_name' => trim((string)($apply['receiver_name'] ?? '')),
+            'receiver_phone' => trim((string)($apply['receiver_phone'] ?? '')),
+            'receiver_address' => trim((string)($apply['receiver_address'] ?? '')),
+            'shipping_method' => trim((string)($apply['shipping_method'] ?? '')),
+            'shipping_remark' => trim((string)($apply['shipping_remark'] ?? '')),
+            'items' => $items,
+            'order_amount_confirmed' => $orderAmountConfirmed ? 1 : 0,
+            'shipping_date_history_confirmed' => $historyConfirmed ? 1 : 0,
+        ];
+        if ($orderAmountConfirmed) {
+            $params['confirmed_order_amount'] = $confirmedOrderAmount;
+        }
+        return $params;
+    }
+
+    /**
+     * 再次提交：原订单金额相对上一轮申请记录变化时强制确认
+     *
+     * @param array $apply
+     * @param array $order
+     * @param array $validated
+     * @throws Exception
+     */
+    public function assertResubmitOrderAmountConfirmed(array $apply, array $order, array $validated)
+    {
+        $currentOrderAmount = $this->normalizeNullableMoney($order['money'] ?? null, false);
+        $prevApplyAmount = $this->normalizeNullableMoney($apply['order_amount'] ?? null, false);
+        if ($prevApplyAmount === null || $currentOrderAmount === null) {
+            // 任一不可解析时仍强制要求与锁内金额确认（若调用方已确认）
+            if ($currentOrderAmount === null) {
+                throw new Exception('原订单金额无效，拒绝继续。');
+            }
+            return;
+        }
+        if (bccomp((string)$prevApplyAmount, (string)$currentOrderAmount, 2) === 0) {
+            return;
+        }
+
+        $header = isset($validated['header']) && is_array($validated['header']) ? $validated['header'] : [];
+        if ((int)($header['order_amount_confirmed'] ?? 0) !== 1) {
+            throw new Exception(
+                '原订单金额已发生变化：申请记录 ' . $prevApplyAmount
+                . ' 元，当前订单金额 ' . $currentOrderAmount
+                . ' 元，请重新核对并确认后再再次提交。'
+            );
+        }
+        $confirmed = $header['confirmed_order_amount'] ?? null;
+        if ($confirmed === null || bccomp((string)$confirmed, (string)$currentOrderAmount, 2) !== 0) {
+            throw new Exception('原订单金额确认与当前锁定订单金额不一致，请刷新后重新确认。');
+        }
+    }
+
+    /**
+     * 再次提交经理解析：允许复用本申请已冻结(status=2)的替代授权，不改写冻结历史
+     *
+     * @param array $context
+     * @return array
+     * @throws Exception
+     */
+    public function resolveSubmitManagersForResubmit(array $context)
+    {
+        $applyId = (int)($context['apply_id'] ?? 0);
+        if ($applyId <= 0) {
+            throw new Exception('发货申请ID无效。');
+        }
+        if (!isset($context['lines']) || !is_array($context['lines']) || empty($context['lines'])) {
+            throw new Exception('至少需要一条正整数数量的发货行。');
+        }
+        if (!isset($context['order_item_map']) || !is_array($context['order_item_map'])) {
+            throw new Exception('正式提交缺少事务内锁定的原订单产品行，拒绝继续。');
+        }
+        $orderItemMap = $context['order_item_map'];
+        $authMap = isset($context['pm_substitute_map']) && is_array($context['pm_substitute_map'])
+            ? $context['pm_substitute_map']
+            : [];
+
+        $uniqueOrderItemIds = [];
+        foreach ($context['lines'] as $line) {
+            if (!is_array($line)) {
+                continue;
+            }
+            $oid = $this->parseStrictPositiveInt(
+                $line['order_item_id'] ?? null,
+                '产品明细参数异常，请刷新页面后重新提交。'
+            );
+            $uniqueOrderItemIds[$oid] = $oid;
+        }
+        if (empty($uniqueOrderItemIds)) {
+            throw new Exception('至少需要一条正整数数量的发货行。');
+        }
+        $ids = array_values($uniqueOrderItemIds);
+        sort($ids, SORT_NUMERIC);
+
+        $lineManagers = [];
+        $freezeList = [];
+        $invalidateList = [];
+
+        foreach ($ids as $orderItemId) {
+            if (!isset($orderItemMap[$orderItemId]) || !is_array($orderItemMap[$orderItemId])) {
+                throw new Exception('存在已失效或不属于当前订单的产品行，请重新选择有效原订单产品后再提交。');
+            }
+            $authRow = array_key_exists($orderItemId, $authMap) ? $authMap[$orderItemId] : null;
+            $resolved = $this->resolveApproverManagerForResubmit([
+                'apply_id' => $applyId,
+                'order_item_id' => $orderItemId,
+                'order_item' => $orderItemMap[$orderItemId],
+                'auth_row' => $authRow,
+            ]);
+            $lineManagers[] = $resolved;
+            if (!empty($resolved['freeze_authorization']) && is_array($resolved['freeze_authorization'])) {
+                $freezeList[] = $resolved['freeze_authorization'];
+            }
+            if (!empty($resolved['invalidate_authorization']) && is_array($resolved['invalidate_authorization'])) {
+                $invalidateList[] = $resolved['invalidate_authorization'];
+            }
+        }
+
+        $approvers = $this->buildDedupedPmApprovers($lineManagers);
+
+        return [
+            'apply_id' => $applyId,
+            'line_managers' => $lineManagers,
+            'approvers' => $approvers,
+            'freeze_authorizations' => $freezeList,
+            'invalidate_authorizations' => $invalidateList,
+            'writes_executed' => false,
+        ];
+    }
+
+    /**
+     * 再次提交单行审批人：status=1 可冻；status=2 复用且不改写
+     *
+     * @param array $context
+     * @return array
+     * @throws Exception
+     */
+    public function resolveApproverManagerForResubmit(array $context)
+    {
+        $applyId = (int)($context['apply_id'] ?? 0);
+        if ($applyId <= 0) {
+            throw new Exception('发货申请ID无效。');
+        }
+        $orderItemId = $this->parseStrictPositiveInt(
+            $context['order_item_id'] ?? null,
+            '原订单产品行无效。'
+        );
+        if (!isset($context['order_item']) || !is_array($context['order_item']) || empty($context['order_item'])) {
+            throw new Exception('正式提交缺少锁定的原订单产品行，拒绝继续。');
+        }
+        $orderItem = $context['order_item'];
+        if ((int)($orderItem['id'] ?? 0) !== $orderItemId) {
+            throw new Exception('存在已失效或不属于当前订单的产品行，请重新选择有效原订单产品后再提交。');
+        }
+
+        $productName = trim((string)($orderItem['product_name'] ?? ''));
+        if ($productName === '') {
+            $productName = '未命名产品';
+        }
+        $classified = $this->classifyOrderItemManagerForSubmit($orderItem['manager_id'] ?? null, $productName);
+        $authRow = array_key_exists('auth_row', $context) ? $context['auth_row'] : null;
+        if ($authRow !== null && !is_array($authRow)) {
+            throw new Exception('替代授权锁内数据非法，拒绝继续。');
+        }
+
+        if (empty($classified['manager_invalid']) && (string)$classified['manager_status'] === 'valid') {
+            $invalidate = null;
+            if (is_array($authRow) && in_array((int)($authRow['status'] ?? 0), [1, 2], true)) {
+                // 原经理已恢复：status=1 失效；status=2 冻结历史保留但本轮改用原经理（不改写冻结行）
+                if ((int)($authRow['status'] ?? 0) === 1) {
+                    $trusted = $this->assertPmSubstituteAuthOwnershipForSubmit($authRow, $applyId, $orderItemId);
+                    $invalidate = [
+                        'auth_id' => $trusted['auth_id'],
+                        'apply_id' => $trusted['apply_id'],
+                        'order_item_id' => $trusted['order_item_id'],
+                        'expected_auth_version' => $trusted['auth_version'],
+                        'expected_status' => 1,
+                        'target_status' => 0,
+                        'invalidate_type' => 'original_restored',
+                        'reason' => '原产品经理已恢复正常，再次提交时失效旧替代授权',
+                    ];
+                }
+            }
+            return [
+                'order_item_id' => $orderItemId,
+                'resolved_manager_id' => (int)$classified['original_manager_id'],
+                'resolved_manager_name' => (string)$classified['original_manager_name'],
+                'manager_source' => 'original',
+                'manager_status' => 'valid',
+                'original_manager_id' => (int)$classified['original_manager_id'],
+                'original_manager_name' => (string)$classified['original_manager_name'],
+                'auth_id' => null,
+                'auth_version' => null,
+                'freeze_authorization' => null,
+                'invalidate_authorization' => $invalidate,
+            ];
+        }
+
+        $usable = $this->assertPmSubstituteUsableForResubmit([
+            'apply_id' => $applyId,
+            'order_item_id' => $orderItemId,
+            'order_item' => $orderItem,
+            'classified' => $classified,
+            'auth_row' => $authRow,
+        ]);
+
+        $freeze = null;
+        if ((int)($usable['status'] ?? 0) === 1) {
+            $freeze = $this->assertPmSubstituteReadyToFreeze($usable);
+        }
+
+        return [
+            'order_item_id' => $orderItemId,
+            'resolved_manager_id' => (int)$usable['substitute_manager_id'],
+            'resolved_manager_name' => (string)$usable['substitute_manager_name'],
+            'manager_source' => 'substitute',
+            'manager_status' => (string)$classified['manager_status'],
+            'original_manager_id' => $classified['original_manager_id'],
+            'original_manager_name' => (string)$classified['original_manager_name'],
+            'auth_id' => (int)$usable['auth_id'],
+            'auth_version' => (int)$usable['auth_version'],
+            'freeze_authorization' => $freeze,
+            'invalidate_authorization' => null,
+            'reuse_frozen_authorization' => ((int)($usable['status'] ?? 0) === 2),
+        ];
+    }
+
+    /**
+     * 再次提交替代授权：允许 status=1（待冻）或 status=2（已冻复用）；拒绝 status=0
+     *
+     * @param array $context
+     * @return array
+     * @throws Exception
+     */
+    public function assertPmSubstituteUsableForResubmit(array $context)
+    {
+        $applyId = $this->parseStrictPositiveInt($context['apply_id'] ?? null, '发货申请ID无效。');
+        $orderItemId = $this->parseStrictPositiveInt($context['order_item_id'] ?? null, '原订单产品行无效。');
+        $classified = isset($context['classified']) && is_array($context['classified'])
+            ? $context['classified']
+            : null;
+        if ($classified === null) {
+            throw new Exception('正式提交缺少原经理状态分类结果，拒绝继续。');
+        }
+        $managerStatus = (string)($classified['manager_status'] ?? '');
+        if (!in_array($managerStatus, ['missing', 'disabled', 'invalid_id'], true)) {
+            throw new Exception('原产品经理当前状态不需要替代授权。');
+        }
+
+        $authRow = $context['auth_row'] ?? null;
+        if ($authRow === null || !is_array($authRow) || empty($authRow)) {
+            throw new Exception('请联系超级管理员指定替代产品经理后再再次提交。');
+        }
+
+        $trusted = $this->assertPmSubstituteAuthOwnershipForSubmit($authRow, $applyId, $orderItemId);
+        $authId = $trusted['auth_id'];
+        $authVersion = $trusted['auth_version'];
+
+        $status = (int)($authRow['status'] ?? -1);
+        if ($status === 0) {
+            throw new Exception('替代授权已撤销或失效，请联系超级管理员重新指定。');
+        }
+        if ($status !== 1 && $status !== 2) {
+            throw new Exception('替代授权状态无效，拒绝继续。');
+        }
+
+        if (!array_key_exists('invalid_reason', $authRow)) {
+            throw new Exception('替代授权缺少异常原因，拒绝继续。');
+        }
+        $authInvalidReason = $this->parseStrictAuthInvalidReason($authRow['invalid_reason']);
+        $expectedInvalidReason = (int)$this->mapManagerStatusToInvalidReason($managerStatus);
+        if ($authInvalidReason !== $expectedInvalidReason) {
+            throw new Exception('替代授权异常原因与当前原经理状态不一致，拒绝继续。');
+        }
+
+        $authOriginalRaw = $authRow['original_manager_id'] ?? null;
+        if ($managerStatus === 'invalid_id') {
+            if ($authOriginalRaw !== null && $authOriginalRaw !== '') {
+                throw new Exception('替代授权原经理信息不匹配（invalid_id 授权原经理应为空），拒绝继续。');
+            }
+            if ($authOriginalRaw === 0 || $authOriginalRaw === '0') {
+                throw new Exception('替代授权原经理信息不匹配（invalid_id 授权原经理应为空），拒绝继续。');
+            }
+        } else {
+            $expectedOriginalId = (int)($classified['original_manager_id'] ?? 0);
+            if ($expectedOriginalId <= 0) {
+                throw new Exception('原产品经理ID异常，拒绝继续。');
+            }
+            if ($authOriginalRaw === null || $authOriginalRaw === '') {
+                throw new Exception('替代授权原经理信息不匹配，拒绝继续。');
+            }
+            if ((int)$authOriginalRaw !== $expectedOriginalId) {
+                throw new Exception('替代授权原经理与当前订单原经理不一致，拒绝继续。');
+            }
+        }
+
+        $substituteId = (int)($authRow['substitute_manager_id'] ?? 0);
+        $candidate = $this->assertValidPmSubstituteCandidate($substituteId);
+
+        return [
+            'auth_id' => $authId,
+            'apply_id' => $applyId,
+            'order_item_id' => $orderItemId,
+            'auth_version' => $authVersion,
+            'status' => $status,
+            'manager_status' => $managerStatus,
+            'original_manager_id' => $classified['original_manager_id'],
+            'substitute_manager_id' => (int)$candidate['admin_id'],
+            'substitute_manager_name' => (string)$candidate['username'],
+            'auth_row_locked' => true,
+        ];
+    }
+
+    /**
+     * 再次提交幂等规范化载荷（含 expected_round，避免跨轮复用同一 hash 语义）
+     *
+     * @param array $normalizedSubmit normalizeSubmitPayload 结果
+     * @param int $expectedRound
+     * @return array
+     * @throws Exception
+     */
+    public function normalizeResubmitPayload(array $normalizedSubmit, $expectedRound)
+    {
+        $expectedRound = (int)$expectedRound;
+        if ($expectedRound < 1) {
+            throw new Exception('再次提交期望轮次无效。');
+        }
+        if (empty($normalizedSubmit) || !isset($normalizedSubmit['items'])) {
+            throw new Exception('再次提交规范化载荷无效。');
+        }
+        // 固定键序；intent 区分首次提交哈希空间
+        return [
+            'hash_schema_version' => self::RESUBMIT_PAYLOAD_HASH_SCHEMA_VERSION,
+            'intent' => 'resubmit',
+            'expected_round' => $expectedRound,
+            'applicant_id' => (int)($normalizedSubmit['applicant_id'] ?? 0),
+            'order_id' => (int)($normalizedSubmit['order_id'] ?? 0),
+            'apply_id' => (int)($normalizedSubmit['apply_id'] ?? 0),
+            'receiver_name' => (string)($normalizedSubmit['receiver_name'] ?? ''),
+            'receiver_phone' => (string)($normalizedSubmit['receiver_phone'] ?? ''),
+            'receiver_address' => (string)($normalizedSubmit['receiver_address'] ?? ''),
+            'shipping_date' => (string)($normalizedSubmit['shipping_date'] ?? ''),
+            'shipping_method' => (string)($normalizedSubmit['shipping_method'] ?? ''),
+            'shipping_remark' => (string)($normalizedSubmit['shipping_remark'] ?? ''),
+            'order_amount_confirmed' => ((int)($normalizedSubmit['order_amount_confirmed'] ?? 0) === 1) ? 1 : 0,
+            'confirmed_order_amount' => $normalizedSubmit['confirmed_order_amount'] ?? null,
+            'shipping_date_history_confirmed' => ((int)($normalizedSubmit['shipping_date_history_confirmed'] ?? 0) === 1) ? 1 : 0,
+            'items' => $normalizedSubmit['items'],
+        ];
+    }
+
+    /**
+     * 从再次提交控制上下文提取本请求意图（确认标志等）；不得用主表已存 hash 冒充。
+     *
+     * @param array $ctrl
+     * @return array
+     */
+    public function buildResubmitRequestIntentFromCtrl(array $ctrl)
+    {
+        return [
+            'resubmit_token' => (string)($ctrl['resubmit_token'] ?? ''),
+            'expected_round' => (int)($ctrl['expected_round'] ?? 0),
+            'order_amount_confirmed' => ((int)($ctrl['order_amount_confirmed'] ?? 0) === 1) ? 1 : 0,
+            'confirmed_order_amount' => array_key_exists('confirmed_order_amount', $ctrl)
+                ? $ctrl['confirmed_order_amount']
+                : null,
+            'shipping_date_history_confirmed' => ((int)($ctrl['shipping_date_history_confirmed'] ?? 0) === 1) ? 1 : 0,
+            // 必须保留原请求工作版本哈希；不得用库内当前重算值替换
+            'expected_work_hash' => $this->normalizeResubmitExpectedWorkHash(
+                array_key_exists('expected_work_hash', $ctrl) ? $ctrl['expected_work_hash'] : ''
+            ),
+        ];
+    }
+
+    /**
+     * 规范化并校验再次提交 expected_work_hash（原请求工作版本）。
+     * 合法：64 位 hex（大小写均可）→ 返回小写；非法/空 → 返回空串。
+     * 不得用主表当前状态重算值冒充请求值。
+     *
+     * @param mixed $raw
+     * @return string
+     */
+    public function normalizeResubmitExpectedWorkHash($raw)
+    {
+        if (!is_string($raw)) {
+            return '';
+        }
+        $hash = strtolower(trim($raw));
+        if ($hash === '' || strlen($hash) !== 64 || !preg_match('/^[a-f0-9]{64}$/', $hash)) {
+            return '';
+        }
+        return $hash;
+    }
+
+    /**
+     * 比对本请求 expected_work_hash 与本轮 resubmit 审计 opinion 中持久化的原请求工作版本。
+     * 缺字段 / 格式非法 → insufficient_evidence；一致 → confirmed_success；不一致 → confirmed_conflict。
+     *
+     * @param array|null $auditOpinion 已 json_decode 的 opinion
+     * @param mixed $requestExpectedWorkHash 本请求意图中的原 expected_work_hash
+     * @return array{verdict:string,reason_code:string,message:string}
+     */
+    public function evaluateResubmitExpectedWorkHashEvidence($auditOpinion, $requestExpectedWorkHash)
+    {
+        $requestHash = $this->normalizeResubmitExpectedWorkHash($requestExpectedWorkHash);
+        if ($requestHash === '') {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'reason_code' => 'missing_or_invalid_request_work_hash',
+                'message' => '',
+            ];
+        }
+        if (!is_array($auditOpinion)) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'reason_code' => 'audit_opinion_invalid',
+                'message' => '',
+            ];
+        }
+        if (!array_key_exists('expected_work_hash', $auditOpinion)) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'reason_code' => 'audit_work_hash_missing',
+                'message' => '',
+            ];
+        }
+        $storedHash = $this->normalizeResubmitExpectedWorkHash($auditOpinion['expected_work_hash']);
+        if ($storedHash === '') {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'reason_code' => 'audit_work_hash_invalid',
+                'message' => '',
+            ];
+        }
+        if (!hash_equals($storedHash, $requestHash)) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                'reason_code' => 'work_hash_mismatch',
+                'message' => '相同再次提交标识与工作版本不一致，拒绝继续。',
+            ];
+        }
+        return [
+            'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS,
+            'reason_code' => 'ok',
+            'message' => '',
+        ];
+    }
+
+    /**
+     * @param array|null $applyRow
+     * @param int $applicantId
+     * @param int $applyId
+     * @param int $expectedRound
+     * @param string|null $payloadHash 本请求已计算的 submit_payload_hash；不得传入主表自匹配 hash 冒充
+     * @param array|null $requestIntent 本请求确认意图（payloadHash 为空时用于从冻结快照重建）
+     * @return array|null
+     * @throws Exception
+     */
+    public function resolveIdempotentResubmitResult(
+        $applyRow,
+        $applicantId,
+        $applyId,
+        $expectedRound,
+        $payloadHash = null,
+        $requestIntent = null
+    ) {
+        if ($applyRow === null || !is_array($applyRow) || empty($applyRow)) {
+            return null;
+        }
+        $applicantId = (int)$applicantId;
+        $applyId = (int)$applyId;
+        $expectedRound = (int)$expectedRound;
+        $newRound = $expectedRound + 1;
+
+        if ((int)($applyRow['id'] ?? 0) !== $applyId) {
+            throw new Exception('再次提交标识不可用');
+        }
+        if ((int)($applyRow['applicant_id'] ?? 0) !== $applicantId) {
+            throw new Exception('再次提交标识不可用');
+        }
+        if ((int)($applyRow['is_deleted'] ?? 0) !== 0) {
+            throw new Exception('提交记录状态异常，请联系管理员');
+        }
+
+        $rowRound = (int)($applyRow['approval_round'] ?? 0);
+        if ($rowRound !== $newRound) {
+            // token 落在非目标新轮：不得当成功
+            if (in_array((int)($applyRow['status'] ?? -1), self::FAILED_APPLY_LIST_STATUSES, true)
+                && $rowRound === $expectedRound
+            ) {
+                // 仍停在旧轮驳回：视为尚未成功，交给写路径（或冲突）
+                return null;
+            }
+            throw new Exception('再次提交标识与审批轮次不一致，拒绝继续。');
+        }
+
+        $eval = $this->evaluateResubmitCommittedEvidence([
+            'apply_row' => $applyRow,
+            'applicant_id' => $applicantId,
+            'apply_id' => $applyId,
+            'expected_round' => $expectedRound,
+            'request_payload_hash' => $payloadHash,
+            'request_intent' => is_array($requestIntent) ? $requestIntent : null,
+            'require_tasks' => true,
+            'require_audit' => true,
+        ]);
+        $verdict = (string)($eval['verdict'] ?? self::RESUBMIT_EVIDENCE_INSUFFICIENT);
+        if ($verdict === self::RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS) {
+            $success = $this->buildResubmitSuccessResult($applyRow, true);
+            $provenHash = strtolower(trim((string)($eval['proven_payload_hash'] ?? '')));
+            if ($provenHash === '') {
+                $provenHash = strtolower(trim((string)($applyRow['submit_payload_hash'] ?? '')));
+            }
+            $success['_payload_hash'] = $provenHash;
+            return $success;
+        }
+        if ($verdict === self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT) {
+            $msg = trim((string)($eval['message'] ?? ''));
+            throw new Exception($msg !== '' ? $msg : '相同再次提交标识与业务载荷不一致，拒绝继续。');
+        }
+        throw new Exception(self::RESUBMIT_EVIDENCE_INCOMPLETE_MSG);
+    }
+
+    /**
+     * @param string $submitToken
+     * @param int $applicantId
+     * @param int $applyId
+     * @param int $expectedRound
+     * @param array|null $requestIntent
+     * @return array|null
+     */
+    protected function recoverIdempotentResubmitAfterTokenConflict(
+        $submitToken,
+        $applicantId,
+        $applyId,
+        $expectedRound,
+        $requestIntent = null
+    ) {
+        $row = $this->findApplyBySubmitTokenCurrentRead($submitToken);
+        if ($row === null) {
+            return null;
+        }
+        return $this->resolveIdempotentResubmitResult(
+            $row,
+            $applicantId,
+            $applyId,
+            $expectedRound,
+            null,
+            is_array($requestIntent) ? $requestIntent : null
+        );
+    }
+
+    /**
+     * @param \Throwable $e
+     * @param string $resubmitToken
+     * @param int $applicantId
+     * @param int $applyId
+     * @param int $expectedRound
+     * @param string $payloadHash 仅允许本请求在事务内算出的 hash；空则不得用主表 hash 自证
+     * @param array|null $requestIntent
+     * @return array
+     */
+    protected function finalizeResubmitAfterCommitUncertainty(
+        $e,
+        $resubmitToken,
+        $applicantId,
+        $applyId,
+        $expectedRound,
+        $payloadHash,
+        $requestIntent = null
+    ) {
+        $this->logSubmitError('resubmitRejectedApply.commit_uncertain', $e);
+        try {
+            $row = $this->findApplyBySubmitTokenCurrentRead($resubmitToken);
+            if ($row === null) {
+                return $this->buildResubmitUncertainResult($resubmitToken);
+            }
+            $eval = $this->evaluateResubmitCommittedEvidence([
+                'apply_row' => $row,
+                'applicant_id' => (int)$applicantId,
+                'apply_id' => (int)$applyId,
+                'expected_round' => (int)$expectedRound,
+                'request_payload_hash' => $payloadHash,
+                'request_intent' => is_array($requestIntent) ? $requestIntent : null,
+                'require_tasks' => true,
+                'require_audit' => true,
+            ]);
+            $verdict = (string)($eval['verdict'] ?? self::RESUBMIT_EVIDENCE_INSUFFICIENT);
+            if ($verdict === self::RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS) {
+                return $this->buildResubmitSuccessResult($row, true);
+            }
+            // 冲突与证据不足：COMMIT 不确定场景一律不自动重试写库，返回待核验
+            return $this->buildResubmitUncertainResult($resubmitToken);
+        } catch (\Throwable $ex) {
+            $this->logSubmitError('finalizeResubmitAfterCommitUncertainty', $ex);
+            return $this->buildResubmitUncertainResult($resubmitToken);
+        }
+    }
+
+    /**
+     * 再次提交幂等与 COMMIT 不确定恢复共用的只读证据核验。
+     * 不得把“未发现矛盾”直接当成成功；缺少本请求意图证明时返回 insufficient_evidence。
+     *
+     * @param array $context
+     * @return array{verdict:string,message:string,proven_payload_hash:string,reason_code:string}
+     */
+    public function evaluateResubmitCommittedEvidence(array $context)
+    {
+        $failInsufficient = function ($reasonCode, $message = '') {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'message' => (string)$message,
+                'proven_payload_hash' => '',
+                'reason_code' => (string)$reasonCode,
+            ];
+        };
+        $failConflict = function ($reasonCode, $message) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                'message' => (string)$message,
+                'proven_payload_hash' => '',
+                'reason_code' => (string)$reasonCode,
+            ];
+        };
+
+        $applyRow = isset($context['apply_row']) && is_array($context['apply_row']) ? $context['apply_row'] : null;
+        if ($applyRow === null || empty($applyRow)) {
+            return $failInsufficient('missing_apply_row');
+        }
+
+        $applicantId = (int)($context['applicant_id'] ?? 0);
+        $applyId = (int)($context['apply_id'] ?? 0);
+        $expectedRound = (int)($context['expected_round'] ?? 0);
+        $newRound = $expectedRound + 1;
+        $requireTasks = !array_key_exists('require_tasks', $context) || (bool)$context['require_tasks'];
+        $requireAudit = !array_key_exists('require_audit', $context) || (bool)$context['require_audit'];
+        $requestIntent = isset($context['request_intent']) && is_array($context['request_intent'])
+            ? $context['request_intent']
+            : null;
+        $requestPayloadHash = array_key_exists('request_payload_hash', $context) && $context['request_payload_hash'] !== null
+            ? strtolower(trim((string)$context['request_payload_hash']))
+            : '';
+        if ($requestPayloadHash !== '' && (strlen($requestPayloadHash) !== 64 || !preg_match('/^[a-f0-9]{64}$/', $requestPayloadHash))) {
+            return $failConflict('invalid_request_payload_hash', '相同再次提交标识与业务载荷不一致，拒绝继续。');
+        }
+
+        if ($applyId <= 0 || $applicantId <= 0 || $expectedRound < 1) {
+            return $failInsufficient('invalid_context_ids');
+        }
+        if ((int)($applyRow['id'] ?? 0) !== $applyId) {
+            return $failConflict('apply_id_mismatch', '再次提交标识不可用');
+        }
+        if ((int)($applyRow['applicant_id'] ?? 0) !== $applicantId) {
+            return $failConflict('applicant_mismatch', '再次提交标识不可用');
+        }
+        if ((int)($applyRow['is_deleted'] ?? 0) !== 0) {
+            return $failConflict('soft_deleted', '提交记录状态异常，请联系管理员');
+        }
+        if ((int)($applyRow['approval_round'] ?? 0) !== $newRound) {
+            return $failConflict('round_mismatch', '再次提交标识与审批轮次不一致，拒绝继续。');
+        }
+
+        $resubmitToken = '';
+        if ($requestIntent !== null) {
+            $resubmitToken = trim((string)($requestIntent['resubmit_token'] ?? ''));
+        }
+        if ($resubmitToken !== '') {
+            $rowToken = trim((string)($applyRow['submit_token'] ?? ''));
+            if ($rowToken === '' || !hash_equals($rowToken, $resubmitToken)) {
+                return $failConflict('token_mismatch', '再次提交标识不可用');
+            }
+        }
+
+        if (!$this->isHistoricalSubmitSuccessRecord($applyRow)) {
+            return $failInsufficient('not_historical_success');
+        }
+
+        $rowHash = strtolower(trim((string)($applyRow['submit_payload_hash'] ?? '')));
+        if ($rowHash === '' || strlen($rowHash) !== 64 || !preg_match('/^[a-f0-9]{64}$/', $rowHash)) {
+            return $failInsufficient('missing_row_payload_hash');
+        }
+
+        // 先取新轮快照（禁止用当前可变订单经理/金额冒充提交时集合）
+        $snapEvidence = $this->getRoundSnapshotService()->evaluateSubmitSnapshotEvidence(
+            $applyRow,
+            null,
+            false
+        );
+        $decision = (string)($snapEvidence['decision'] ?? '');
+        if ($decision !== ShippingApplyRoundSnapshotService::EVIDENCE_VALID_SNAPSHOT) {
+            return $failInsufficient('snapshot_invalid', self::RESUBMIT_EVIDENCE_INCOMPLETE_MSG);
+        }
+        $snapshotRow = isset($snapEvidence['snapshot']) && is_array($snapEvidence['snapshot'])
+            ? $snapEvidence['snapshot']
+            : null;
+        if ($snapshotRow === null) {
+            return $failInsufficient('snapshot_missing');
+        }
+        $integrity = $this->getRoundSnapshotService()->verifyStoredSnapshotIntegrity($snapshotRow);
+        if (empty($integrity['ok']) || !is_array($integrity['header']) || !is_array($integrity['items'])) {
+            return $failInsufficient('snapshot_corrupt');
+        }
+        $header = $integrity['header'];
+        $items = $integrity['items'];
+        if ((int)($header['shipping_apply_id'] ?? 0) !== $applyId
+            || (int)($header['approval_round'] ?? 0) !== $newRound
+            || (int)($header['applicant_id'] ?? 0) !== $applicantId
+        ) {
+            return $failConflict('snapshot_identity_mismatch', '再次提交记录与申请身份不一致，拒绝继续。');
+        }
+        $snapSubmitHash = strtolower(trim((string)($header['submit_payload_hash'] ?? '')));
+        if ($snapSubmitHash === '' || !hash_equals($snapSubmitHash, $rowHash)) {
+            return $failConflict('snapshot_hash_mismatch', '再次提交快照与主表载荷不一致，拒绝继续。');
+        }
+
+        // 本请求意图证明：优先用调用方传入的本请求 hash；否则从冻结快照 + 请求确认字段重建
+        $provenHash = '';
+        if ($requestPayloadHash !== '') {
+            if (!hash_equals($rowHash, $requestPayloadHash)) {
+                return $failConflict('intent_hash_mismatch', '相同再次提交标识与业务载荷不一致，拒绝继续。');
+            }
+            $provenHash = $requestPayloadHash;
+        } elseif ($requestIntent !== null) {
+            try {
+                $rebuilt = $this->rebuildResubmitPayloadHashFromFrozenEvidence(
+                    $header,
+                    $items,
+                    $expectedRound,
+                    $requestIntent
+                );
+            } catch (Exception $ex) {
+                return $failInsufficient('intent_rebuild_failed', $ex->getMessage());
+            } catch (\Throwable $ex) {
+                return $failInsufficient('intent_rebuild_failed');
+            }
+            $rebuiltHash = strtolower(trim((string)($rebuilt['hash'] ?? '')));
+            if ($rebuiltHash === '' || !hash_equals($rowHash, $rebuiltHash)) {
+                return $failConflict('intent_hash_mismatch', '相同再次提交标识与业务载荷不一致，拒绝继续。');
+            }
+            $provenHash = $rebuiltHash;
+        } else {
+            // 无本请求 hash、无意图字段：不得用主表自有 hash 宣称同意图成功
+            return $failInsufficient('missing_request_intent');
+        }
+
+        // 用已证明的本请求 hash 再跑一遍快照交叉校验
+        $snapEvidence2 = $this->getRoundSnapshotService()->evaluateSubmitSnapshotEvidence(
+            $applyRow,
+            $provenHash,
+            false
+        );
+        if ((string)($snapEvidence2['decision'] ?? '') !== ShippingApplyRoundSnapshotService::EVIDENCE_VALID_SNAPSHOT) {
+            return $failInsufficient('snapshot_request_hash_mismatch');
+        }
+
+        if ($requireAudit) {
+            $audit = $this->findResubmitAuditForRound($applyId, $expectedRound, $newRound, [
+                'payload_hash' => $provenHash,
+                'token_fingerprint' => $resubmitToken !== ''
+                    ? $this->fingerprintResubmitToken($resubmitToken)
+                    : '',
+            ]);
+            if ($audit === null) {
+                return $failInsufficient('audit_missing_or_mismatch');
+            }
+            // 原请求工作版本必须与本轮 resubmit 审计持久化值严格一致（禁止缺字段当成功）
+            $auditOpinionRaw = trim((string)($audit['opinion'] ?? ''));
+            $auditOpinion = ($auditOpinionRaw !== '' && $auditOpinionRaw[0] === '{')
+                ? json_decode($auditOpinionRaw, true)
+                : null;
+            $requestWorkHash = ($requestIntent !== null && array_key_exists('expected_work_hash', $requestIntent))
+                ? $requestIntent['expected_work_hash']
+                : '';
+            $workHashEval = $this->evaluateResubmitExpectedWorkHashEvidence(
+                is_array($auditOpinion) ? $auditOpinion : null,
+                $requestWorkHash
+            );
+            $workHashVerdict = (string)($workHashEval['verdict'] ?? self::RESUBMIT_EVIDENCE_INSUFFICIENT);
+            if ($workHashVerdict === self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT) {
+                return $failConflict(
+                    (string)($workHashEval['reason_code'] ?? 'work_hash_mismatch'),
+                    (string)($workHashEval['message'] ?? '相同再次提交标识与工作版本不一致，拒绝继续。')
+                );
+            }
+            if ($workHashVerdict !== self::RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS) {
+                return $failInsufficient(
+                    (string)($workHashEval['reason_code'] ?? 'work_hash_insufficient'),
+                    (string)($workHashEval['message'] ?? '')
+                );
+            }
+        }
+
+        if ($requireTasks) {
+            $taskEval = $this->evaluateResubmitNewRoundTasksAgainstSnapshot(
+                $applyId,
+                $newRound,
+                $header,
+                $items
+            );
+            $taskVerdict = (string)($taskEval['verdict'] ?? self::RESUBMIT_EVIDENCE_INSUFFICIENT);
+            if ($taskVerdict === self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT) {
+                return $failConflict(
+                    (string)($taskEval['reason_code'] ?? 'task_conflict'),
+                    (string)($taskEval['message'] ?? '审批任务与提交快照不一致，拒绝继续。')
+                );
+            }
+            if ($taskVerdict !== self::RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS) {
+                return $failInsufficient(
+                    (string)($taskEval['reason_code'] ?? 'task_insufficient'),
+                    (string)($taskEval['message'] ?? '')
+                );
+            }
+        }
+
+        return [
+            'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS,
+            'message' => '',
+            'proven_payload_hash' => $provenHash,
+            'reason_code' => 'ok',
+        ];
+    }
+
+    /**
+     * 用新轮 submit 冻结快照 + 本请求确认字段重建 resubmit payload hash。
+     * 不得使用恢复时可变的实时订单金额/经理配置。
+     *
+     * @param array $snapshotHeader
+     * @param array $snapshotItems
+     * @param int $expectedRound
+     * @param array $requestIntent
+     * @return array{hash:string,canonical_json:string,normalized:array}
+     * @throws Exception
+     */
+    public function rebuildResubmitPayloadHashFromFrozenEvidence(
+        array $snapshotHeader,
+        array $snapshotItems,
+        $expectedRound,
+        array $requestIntent
+    ) {
+        $expectedRound = (int)$expectedRound;
+        if ($expectedRound < 1) {
+            throw new Exception('再次提交期望轮次无效。');
+        }
+        if (isset($requestIntent['expected_round']) && (int)$requestIntent['expected_round'] > 0
+            && (int)$requestIntent['expected_round'] !== $expectedRound
+        ) {
+            throw new Exception('相同再次提交标识与业务载荷不一致，拒绝继续。');
+        }
+
+        $orderAmountConfirmed = ((int)($requestIntent['order_amount_confirmed'] ?? 0) === 1) ? 1 : 0;
+        $historyConfirmed = ((int)($requestIntent['shipping_date_history_confirmed'] ?? 0) === 1) ? 1 : 0;
+        $confirmedAmount = null;
+        if ($orderAmountConfirmed === 1) {
+            if (!array_key_exists('confirmed_order_amount', $requestIntent)
+                || $requestIntent['confirmed_order_amount'] === null
+                || $requestIntent['confirmed_order_amount'] === ''
+            ) {
+                throw new Exception('确认的原订单金额格式不正确。');
+            }
+            $confirmedAmount = $this->parseRequiredSubmitMoney(
+                $requestIntent['confirmed_order_amount'],
+                '确认的原订单金额格式不正确。'
+            );
+        }
+
+        $lines = [];
+        foreach ($snapshotItems as $item) {
+            if (!is_array($item)) {
+                throw new Exception('快照明细无效，无法核验提交意图。');
+            }
+            $lines[] = [
+                'order_item_id' => (int)($item['order_item_id'] ?? 0),
+                'apply_product_name' => (string)($item['apply_product_name'] ?? ''),
+                'apply_spec_model' => (string)($item['apply_spec_model'] ?? ''),
+                'apply_qty' => (int)($item['apply_qty'] ?? 0),
+                'factory_id' => (int)($item['factory_id'] ?? 0),
+                'apply_unit_price' => $item['apply_unit_price'] ?? null,
+                'apply_purchase_unit_price' => $item['apply_purchase_unit_price'] ?? null,
+                'remark' => (string)($item['remark'] ?? ''),
+            ];
+        }
+        if ($lines === []) {
+            throw new Exception('快照明细为空，无法核验提交意图。');
+        }
+
+        $validated = [
+            'applicant_id' => (int)($snapshotHeader['applicant_id'] ?? 0),
+            'order_id' => (int)($snapshotHeader['order_id'] ?? 0),
+            'apply_id' => (int)($snapshotHeader['shipping_apply_id'] ?? 0),
+            'header' => [
+                'receiver_name' => (string)($snapshotHeader['receiver_name'] ?? ''),
+                'receiver_phone' => (string)($snapshotHeader['receiver_phone'] ?? ''),
+                'receiver_address' => (string)($snapshotHeader['receiver_address'] ?? ''),
+                'shipping_date' => (string)($snapshotHeader['shipping_date'] ?? ''),
+                'shipping_method' => (string)($snapshotHeader['shipping_method'] ?? ''),
+                'shipping_remark' => (string)($snapshotHeader['shipping_remark'] ?? ''),
+                'order_amount_confirmed' => $orderAmountConfirmed,
+                'confirmed_order_amount' => $confirmedAmount,
+                'shipping_date_history_confirmed' => $historyConfirmed,
+            ],
+            'lines' => $lines,
+        ];
+        $normalized = $this->normalizeResubmitPayload(
+            $this->normalizeSubmitPayload($validated),
+            $expectedRound
+        );
+        return $this->computeSubmitPayloadHash($normalized);
+    }
+
+    /**
+     * 从冻结快照推导应有经理集合（去重升序），并核验 route/总监。
+     *
+     * @param array $snapshotHeader
+     * @param array $snapshotItems
+     * @return array{pm_ids:int[],approval_route:int,director_id:int,need_director:bool}
+     * @throws Exception
+     */
+    public function extractExpectedResubmitApproversFromSnapshot(array $snapshotHeader, array $snapshotItems)
+    {
+        $pmMap = [];
+        foreach ($snapshotItems as $item) {
+            if (!is_array($item)) {
+                throw new Exception('快照明细无效');
+            }
+            $pmid = (int)($item['product_manager_id'] ?? 0);
+            if ($pmid <= 0) {
+                throw new Exception('快照缺少有效产品经理');
+            }
+            $pmMap[$pmid] = $pmid;
+        }
+        if ($pmMap === []) {
+            throw new Exception('快照产品经理集合为空');
+        }
+        $pmIds = array_values($pmMap);
+        sort($pmIds, SORT_NUMERIC);
+
+        $route = (int)($snapshotHeader['approval_route'] ?? 0);
+        if ($route !== 1 && $route !== 2) {
+            throw new Exception('快照审批路线无效');
+        }
+        $directorId = (int)($snapshotHeader['product_director_id'] ?? 0);
+        $needDirector = ($route === 2);
+        if ($needDirector && $directorId <= 0) {
+            throw new Exception('快照缺少产品总监');
+        }
+        if (!$needDirector) {
+            $directorId = 0;
+        }
+
+        return [
+            'pm_ids' => $pmIds,
+            'approval_route' => $route,
+            'director_id' => $directorId,
+            'need_director' => $needDirector,
+        ];
+    }
+
+    /**
+     * 纯函数：比较应有任务集合与已存在任务（允许后续合法审批状态演进）。
+     *
+     * @param array $expected extractExpectedResubmitApproversFromSnapshot 结果
+     * @param array $taskRows
+     * @param int $applyId
+     * @param int $newRound
+     * @return array{verdict:string,message:string,reason_code:string}
+     */
+    public function evaluateResubmitTaskSetEvidence(array $expected, array $taskRows, $applyId, $newRound)
+    {
+        $applyId = (int)$applyId;
+        $newRound = (int)$newRound;
+        $expectedPm = isset($expected['pm_ids']) && is_array($expected['pm_ids'])
+            ? array_map('intval', $expected['pm_ids'])
+            : [];
+        $needDirector = !empty($expected['need_director']);
+        $directorId = (int)($expected['director_id'] ?? 0);
+
+        if ($applyId <= 0 || $newRound < 1 || $expectedPm === []) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'message' => '',
+                'reason_code' => 'task_expected_invalid',
+            ];
+        }
+
+        $pmTasks = [];
+        $dirTasks = [];
+        foreach ($taskRows as $row) {
+            if (!is_array($row)) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                    'message' => '',
+                    'reason_code' => 'task_row_invalid',
+                ];
+            }
+            if ((int)($row['shipping_apply_id'] ?? 0) !== $applyId) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                    'message' => '审批任务申请标识不一致，拒绝继续。',
+                    'reason_code' => 'task_apply_mismatch',
+                ];
+            }
+            if ((int)($row['approval_round'] ?? 0) !== $newRound) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                    'message' => '审批任务轮次不一致，拒绝继续。',
+                    'reason_code' => 'task_round_mismatch',
+                ];
+            }
+            $type = (int)($row['approval_type'] ?? 0);
+            if ($type === 1) {
+                $pmTasks[] = $row;
+            } elseif ($type === 2) {
+                $dirTasks[] = $row;
+            } else {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                    'message' => '存在非法审批任务类型，拒绝继续。',
+                    'reason_code' => 'task_type_invalid',
+                ];
+            }
+        }
+
+        $actualPmIds = [];
+        foreach ($pmTasks as $row) {
+            $aid = (int)($row['approver_id'] ?? 0);
+            if ($aid <= 0) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                    'message' => '',
+                    'reason_code' => 'pm_approver_invalid',
+                ];
+            }
+            if (isset($actualPmIds[$aid])) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                    'message' => '产品经理审批任务重复，拒绝继续。',
+                    'reason_code' => 'pm_task_duplicate',
+                ];
+            }
+            $st = (int)($row['status'] ?? -1);
+            // 提交完成时为 1；后续允许 2/3；不得为未激活/失效冒充提交成功集合
+            if (!in_array($st, [1, 2, 3], true)) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                    'message' => '',
+                    'reason_code' => 'pm_task_status_unexpected',
+                ];
+            }
+            $actualPmIds[$aid] = $aid;
+        }
+        $actualPmList = array_values($actualPmIds);
+        sort($actualPmList, SORT_NUMERIC);
+        $expectedSorted = array_values($expectedPm);
+        sort($expectedSorted, SORT_NUMERIC);
+
+        if (count($actualPmList) < count($expectedSorted)) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'message' => '',
+                'reason_code' => 'pm_task_missing',
+            ];
+        }
+        if (count($actualPmList) > count($expectedSorted)) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                'message' => '产品经理审批任务多于提交快照，拒绝继续。',
+                'reason_code' => 'pm_task_extra',
+            ];
+        }
+        if (!$this->isSamePositiveIntSet($expectedSorted, $actualPmList)) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                'message' => '产品经理审批任务与提交快照不一致，拒绝继续。',
+                'reason_code' => 'pm_task_id_mismatch',
+            ];
+        }
+
+        if ($needDirector) {
+            if (count($dirTasks) !== 1) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                    'message' => '',
+                    'reason_code' => 'director_task_count',
+                ];
+            }
+            $dir = $dirTasks[0];
+            if ((int)($dir['approver_id'] ?? 0) !== $directorId) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                    'message' => '产品总监审批任务与提交快照不一致，拒绝继续。',
+                    'reason_code' => 'director_id_mismatch',
+                ];
+            }
+            $dst = (int)($dir['status'] ?? -1);
+            // 提交完成时为 0；后续激活/通过/驳回允许 1/2/3
+            if (!in_array($dst, [0, 1, 2, 3], true)) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                    'message' => '',
+                    'reason_code' => 'director_status_unexpected',
+                ];
+            }
+        } else {
+            if (count($dirTasks) !== 0) {
+                return [
+                    'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_CONFLICT,
+                    'message' => '审批路线无需总监却存在总监任务，拒绝继续。',
+                    'reason_code' => 'director_unexpected',
+                ];
+            }
+        }
+
+        return [
+            'verdict' => self::RESUBMIT_EVIDENCE_CONFIRMED_SUCCESS,
+            'message' => '',
+            'reason_code' => 'ok',
+        ];
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $newRound
+     * @param array $snapshotHeader
+     * @param array $snapshotItems
+     * @return array{verdict:string,message:string,reason_code:string}
+     */
+    public function evaluateResubmitNewRoundTasksAgainstSnapshot(
+        $applyId,
+        $newRound,
+        array $snapshotHeader,
+        array $snapshotItems
+    ) {
+        try {
+            $expected = $this->extractExpectedResubmitApproversFromSnapshot($snapshotHeader, $snapshotItems);
+        } catch (\Throwable $e) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'message' => '',
+                'reason_code' => 'snapshot_approver_extract_failed',
+            ];
+        }
+
+        $applyId = (int)$applyId;
+        $newRound = (int)$newRound;
+        try {
+            $taskRows = Db::name('crm_shipping_approval_task')
+                ->where('shipping_apply_id', $applyId)
+                ->where('approval_round', $newRound)
+                ->field('id,shipping_apply_id,approval_round,approval_type,approver_id,approver_name,status')
+                ->select();
+        } catch (\Throwable $e) {
+            return [
+                'verdict' => self::RESUBMIT_EVIDENCE_INSUFFICIENT,
+                'message' => '',
+                'reason_code' => 'task_query_failed',
+            ];
+        }
+        $taskRows = empty($taskRows) ? [] : (array)$taskRows;
+        return $this->evaluateResubmitTaskSetEvidence($expected, $taskRows, $applyId, $newRound);
+    }
+
+    /**
+     * 精确匹配 opinion JSON 中的 old_round/new_round（禁止模糊字符串把 Round12 认成 Round2）
+     *
+     * @param array $decoded
+     * @param int $oldRound
+     * @param int $newRound
+     * @return bool
+     */
+    public function matchResubmitAuditOpinionRounds(array $decoded, $oldRound, $newRound)
+    {
+        $oldRound = (int)$oldRound;
+        $newRound = (int)$newRound;
+        if ($oldRound < 1 || $newRound !== $oldRound + 1) {
+            return false;
+        }
+        if (!array_key_exists('old_round', $decoded) || !array_key_exists('new_round', $decoded)) {
+            return false;
+        }
+        // 仅接受整型或纯十进制数字字符串，避免 "2abc" / 布尔被松散转换
+        $rawOld = $decoded['old_round'];
+        $rawNew = $decoded['new_round'];
+        if (is_int($rawOld)) {
+            $gotOld = $rawOld;
+        } elseif (is_string($rawOld) && preg_match('/^(0|[1-9]\d*)$/', trim($rawOld))) {
+            $gotOld = (int)trim($rawOld);
+        } else {
+            return false;
+        }
+        if (is_int($rawNew)) {
+            $gotNew = $rawNew;
+        } elseif (is_string($rawNew) && preg_match('/^(0|[1-9]\d*)$/', trim($rawNew))) {
+            $gotNew = (int)trim($rawNew);
+        } else {
+            return false;
+        }
+        return $gotOld === $oldRound && $gotNew === $newRound;
+    }
+
+    /**
+     * 在已按 apply_id+action 过滤的审计行中定位目标轮次（供 Mock / SQL 回退共用）
+     *
+     * @param array $rows
+     * @param int $oldRound
+     * @param int $newRound
+     * @param array $extra payload_hash / token_fingerprint 可选交叉验证
+     * @return array|null
+     */
+    public function findResubmitAuditRowInList(array $rows, $oldRound, $newRound, array $extra = [])
+    {
+        $wantHash = strtolower(trim((string)($extra['payload_hash'] ?? '')));
+        $wantFp = trim((string)($extra['token_fingerprint'] ?? ''));
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            if ((int)($row['after_status'] ?? -1) !== 10) {
+                continue;
+            }
+            $raw = trim((string)($row['opinion'] ?? ''));
+            if ($raw === '' || $raw[0] !== '{') {
+                continue;
+            }
+            $decoded = json_decode($raw, true);
+            if (!is_array($decoded)) {
+                continue;
+            }
+            if (!$this->matchResubmitAuditOpinionRounds($decoded, $oldRound, $newRound)) {
+                continue;
+            }
+            if ($wantHash !== '') {
+                $auditHash = strtolower(trim((string)($decoded['payload_hash'] ?? '')));
+                if ($auditHash === '' || !hash_equals($auditHash, $wantHash)) {
+                    continue;
+                }
+            }
+            if ($wantFp !== '') {
+                $auditFp = trim((string)($decoded['token_fingerprint'] ?? ''));
+                if ($auditFp === '' || !hash_equals($auditFp, $wantFp)) {
+                    continue;
+                }
+            }
+            return $row;
+        }
+        return null;
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $oldRound
+     * @param int $newRound
+     * @param array $extra
+     * @return array|null
+     */
+    public function findResubmitAuditForRound($applyId, $oldRound, $newRound, array $extra = [])
+    {
+        $applyId = (int)$applyId;
+        $oldRound = (int)$oldRound;
+        $newRound = (int)$newRound;
+        if ($applyId <= 0 || $oldRound < 1 || $newRound !== $oldRound + 1) {
+            return null;
+        }
+
+        // 优先：申请 ID + action + JSON 精确轮次（避免 limit20 漏掉旧轮，避免 Round12/2 模糊匹配）
+        try {
+            $rows = Db::name('crm_shipping_approval_log')
+                ->where('shipping_apply_id', $applyId)
+                ->where('action', self::RESUBMIT_AUDIT_ACTION)
+                ->where('after_status', 10)
+                ->whereRaw(
+                    "CAST(JSON_UNQUOTE(JSON_EXTRACT(`opinion`, '$.old_round')) AS UNSIGNED) = "
+                    . (int)$oldRound
+                    . " AND CAST(JSON_UNQUOTE(JSON_EXTRACT(`opinion`, '$.new_round')) AS UNSIGNED) = "
+                    . (int)$newRound
+                )
+                ->order('id', 'desc')
+                ->limit(5)
+                ->select();
+            $hit = $this->findResubmitAuditRowInList(empty($rows) ? [] : (array)$rows, $oldRound, $newRound, $extra);
+            if ($hit !== null) {
+                return $hit;
+            }
+            // JSON 条件已命中轮次但 extra 交叉失败 → 视为无证据（不回退模糊扫描）
+            if (!empty($rows)) {
+                return null;
+            }
+        } catch (\Throwable $e) {
+            // JSON 函数不可用时走有界回退
+        }
+
+        // 回退：仅按 apply_id+action 取有界窗口再精确 JSON 解码匹配（仍禁止无边界全表）
+        try {
+            $rows = Db::name('crm_shipping_approval_log')
+                ->where('shipping_apply_id', $applyId)
+                ->where('action', self::RESUBMIT_AUDIT_ACTION)
+                ->where('after_status', 10)
+                ->order('id', 'desc')
+                ->limit(200)
+                ->select();
+        } catch (\Throwable $e) {
+            return null;
+        }
+        return $this->findResubmitAuditRowInList(empty($rows) ? [] : (array)$rows, $oldRound, $newRound, $extra);
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $oldRound
+     * @param int $newRound
+     * @return bool
+     */
+    public function hasResubmitAuditForRound($applyId, $oldRound, $newRound)
+    {
+        return $this->findResubmitAuditForRound($applyId, $oldRound, $newRound) !== null;
+    }
+
+    /**
+     * 构建再次提交审计 opinion JSON（含原请求 expected_work_hash）。
+     * INSERT 前校验长度；超限必须拒绝（禁止截断、禁止删减幂等关键证据腾空间）。
+     *
+     * @param array $payload
+     * @return array{opinion:array,json:string}
+     * @throws Exception
+     */
+    public function buildResubmitAuditOpinionPayload(array $payload)
+    {
+        $expectedWorkHash = $this->normalizeResubmitExpectedWorkHash(
+            array_key_exists('expected_work_hash', $payload) ? $payload['expected_work_hash'] : ''
+        );
+        if ($expectedWorkHash === '') {
+            throw new Exception('再次提交工作版本校验失效，请刷新后重试。');
+        }
+        $payloadHash = strtolower(trim((string)($payload['payload_hash'] ?? '')));
+        if ($payloadHash === '' || strlen($payloadHash) !== 64 || !preg_match('/^[a-f0-9]{64}$/', $payloadHash)) {
+            throw new Exception('再次提交审计载荷哈希无效');
+        }
+        $opinion = [
+            'apply_no' => (string)($payload['apply_no'] ?? ''),
+            'old_round' => (int)($payload['old_round'] ?? 0),
+            'new_round' => (int)($payload['new_round'] ?? 0),
+            'approval_round' => (int)($payload['new_round'] ?? 0),
+            'action' => self::RESUBMIT_AUDIT_ACTION,
+            'payload_hash' => $payloadHash,
+            'token_fingerprint' => (string)($payload['token_fingerprint'] ?? ''),
+            'expected_work_hash' => $expectedWorkHash,
+            'note' => '发货申请再次提交审核',
+        ];
+        $opinionJson = json_encode($opinion, JSON_UNESCAPED_UNICODE);
+        if ($opinionJson === false) {
+            throw new Exception('再次提交审计信息编码失败');
+        }
+        // opinion VARCHAR(1000)：以字节长度做保守上限（与既有 submit/resubmit 审计一致）
+        if (strlen($opinionJson) > self::APPROVAL_LOG_OPINION_MAX) {
+            throw new Exception('再次提交审计信息过长');
+        }
+        if (mb_strlen($opinionJson, 'UTF-8') > self::APPROVAL_LOG_OPINION_MAX) {
+            throw new Exception('再次提交审计信息过长');
+        }
+        return [
+            'opinion' => $opinion,
+            'json' => $opinionJson,
+        ];
+    }
+
+    /**
+     * @param array $payload
+     * @throws Exception
+     */
+    protected function writeResubmitAuditLog(array $payload)
+    {
+        $applyId = (int)($payload['shipping_apply_id'] ?? 0);
+        if ($applyId <= 0) {
+            throw new Exception('再次提交审计关联申请无效');
+        }
+        $built = $this->buildResubmitAuditOpinionPayload($payload);
+        $opinionJson = (string)$built['json'];
+        $logId = (int)Db::name('crm_shipping_approval_log')->insertGetId([
+            'shipping_apply_id' => $applyId,
+            'task_id' => null,
+            'operator_id' => (int)($payload['operator_id'] ?? 0),
+            'operator_name' => mb_substr((string)($payload['operator_name'] ?? ''), 0, 100, 'UTF-8'),
+            'operator_role' => 'applicant',
+            'action' => self::RESUBMIT_AUDIT_ACTION,
+            'before_status' => (int)($payload['before_status'] ?? 0),
+            'after_status' => (int)($payload['after_status'] ?? 10),
+            'opinion' => $opinionJson,
+            'create_time' => (string)($payload['now'] ?? date('Y-m-d H:i:s')),
+        ]);
+        if ($logId <= 0) {
+            throw new Exception('再次提交审计日志写入失败');
+        }
+    }
+
+    /**
+     * 完整 token 权威持久化在主表 submit_token；审计仅存指纹
+     *
+     * @param string $token
+     * @return string
+     */
+    public function fingerprintResubmitToken($token)
+    {
+        $token = trim((string)$token);
+        if ($token === '') {
+            return '';
+        }
+        return substr(hash('sha256', 'yg_crm_resubmit_fp_v1|' . $token), 0, 16);
+    }
+
+    /**
+     * @param int $applyId
+     * @param int $newRound
+     * @param array $managers
+     * @param array $configSnap
+     * @throws Exception
+     */
+    protected function assertResubmitNewRoundTasksConsistent($applyId, $newRound, array $managers, array $configSnap)
+    {
+        $applyId = (int)$applyId;
+        $newRound = (int)$newRound;
+        $expectedPm = count((array)($managers['approvers'] ?? []));
+        if ($expectedPm < 1) {
+            throw new Exception('审批任务初始化失败，请稍后重试。');
+        }
+        $pmRows = Db::name('crm_shipping_approval_task')
+            ->where('shipping_apply_id', $applyId)
+            ->where('approval_round', $newRound)
+            ->where('approval_type', 1)
+            ->select();
+        $pmRows = empty($pmRows) ? [] : (array)$pmRows;
+        if (count($pmRows) !== $expectedPm) {
+            throw new Exception('审批任务初始化校验失败，请稍后重试。');
+        }
+        foreach ($pmRows as $row) {
+            if ((int)($row['status'] ?? -1) !== 1) {
+                throw new Exception('审批任务初始化校验失败，请稍后重试。');
+            }
+        }
+
+        $needDirector = ((int)($configSnap['approval_route'] ?? 0) === 2);
+        $dirCount = (int)Db::name('crm_shipping_approval_task')
+            ->where('shipping_apply_id', $applyId)
+            ->where('approval_round', $newRound)
+            ->where('approval_type', 2)
+            ->count();
+        if ($needDirector && $dirCount !== 1) {
+            throw new Exception('产品总监审批任务初始化校验失败，请稍后重试。');
+        }
+        if (!$needDirector && $dirCount !== 0) {
+            throw new Exception('产品总监审批任务初始化校验失败，请稍后重试。');
+        }
+    }
+
+    /**
+     * @param array $applyRow
+     * @param bool $idempotentReplay
+     * @return array
+     */
+    protected function buildResubmitSuccessResult(array $applyRow, $idempotentReplay)
+    {
+        $status = (int)($applyRow['status'] ?? 10);
+        return [
+            'code' => 0,
+            'msg' => $idempotentReplay ? '该发货申请此前已再次提交成功' : '再次提交审核成功',
+            'data' => [
+                'apply_id' => (int)($applyRow['id'] ?? 0),
+                'apply_no' => trim((string)($applyRow['apply_no'] ?? '')),
+                'status' => $status,
+                'approval_round' => (int)($applyRow['approval_round'] ?? 0),
+                'current_stage' => (int)($applyRow['current_stage'] ?? 0),
+                'submission_succeeded' => true,
+                'resubmit_succeeded' => true,
+                'idempotent_replay' => $idempotentReplay ? true : false,
+                'result_uncertain' => false,
+            ],
+        ];
+    }
+
+    /**
+     * @param string $msg
+     * @return array
+     */
+    protected function buildResubmitFailResult($msg)
+    {
+        $msg = trim((string)$msg);
+        if ($msg === '') {
+            $msg = '再次提交失败，请稍后重试。';
+        }
+        if (preg_match('/SQLSTATE|Duplicate entry|Integrity constraint|PDOException/i', $msg)) {
+            $msg = '再次提交失败，请稍后重试。';
+        }
+        return ['code' => -200, 'msg' => $msg, 'data' => ['result_uncertain' => false]];
+    }
+
+    /**
+     * @param string $resubmitToken
+     * @return array
+     */
+    protected function buildResubmitUncertainResult($resubmitToken)
+    {
+        return [
+            'code' => -200,
+            'msg' => '再次提交结果待确认，请刷新后核对，勿重复提交',
+            'data' => [
+                'resubmit_token' => (string)$resubmitToken,
+                'result_uncertain' => true,
+            ],
+        ];
+    }
+
     public function mapFailedAppliesHasSubmitSnapshot(array $rows)
     {
         $wanted = [];

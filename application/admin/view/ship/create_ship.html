@@ -208,7 +208,7 @@
 
     <div class="ship-warn-banner" id="ship-warn-banner"></div>
     <div class="ship-warn-banner" id="rejected-edit-tip-banner" style="display:none; border-color:#1E9FFF; background:#eef7ff; color:#0b5f9a;">
-        当前为审核失败申请编辑。保存修改后仍为审核失败状态，不等于再次提交审核（再次提交功能尚未开放）。
+        当前为审核失败申请编辑。「保存修改」仅更新内容，仍为审核失败；确认无误后请点击「再次提交审核」进入新一轮审批。
     </div>
     <div class="ship-warn-banner" id="reject-reason-banner" style="display:none;"></div>
 
@@ -370,7 +370,9 @@
                     <button type="button" class="layui-btn" id="btn-save-draft" lay-submit lay-filter="ship-save-draft">保存草稿</button>
                     <button type="button" class="layui-btn layui-btn-normal" id="btn-submit-apply">提交审核</button>
                     <button type="button" class="layui-btn layui-btn-normal" id="btn-save-rejected" style="display:none;">保存修改</button>
+                    <button type="button" class="layui-btn layui-btn-danger" id="btn-resubmit-rejected" style="display:none;">再次提交审核</button>
                     <button type="button" class="layui-btn layui-btn-warm" id="btn-retry-submit" style="display:none;">使用原请求重新确认</button>
+                    <button type="button" class="layui-btn layui-btn-warm" id="btn-retry-resubmit" style="display:none;">使用原再次提交请求重新确认</button>
                     <button type="button" class="layui-btn layui-btn-primary" id="btn-reopen-draft" style="display:none;">重新打开本草稿</button>
                     <button type="button" class="layui-btn layui-btn-primary" id="btn-back">返回</button>
                 </div>
@@ -416,10 +418,12 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var apiUrl = '{:url("Ship/createShip")}';
     var submitApiUrl = '{:url("Ship/submitApply")}';
     var saveRejectedUrl = {$saveRejectedUrlJson|default='""'|raw};
+    var resubmitRejectedUrl = {$resubmitRejectedUrlJson|default='""'|raw};
     var pageMode = {$pageModeJson|default='"create"'|raw};
     var pageSessionAid = {$sessionAidJson|default=0|raw};
     var pageCsrfToken = {$submitCsrfTokenJson|default='""'|raw};
     var rejectedEditCsrfToken = {$rejectedEditCsrfTokenJson|default='""'|raw};
+    var resubmitCsrfToken = {$resubmitCsrfTokenJson|default='""'|raw};
     var orderSourceItems = [];
     var shippingLines = [];
     var factoryOptions = [];
@@ -430,8 +434,10 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var savingDraft = false;
     var savingRejected = false;
     var submittingApply = false;
+    var resubmittingApply = false;
     var isRejectedEditMode = (pageMode === 'rejected_edit');
     var formLockedAfterSubmit = false;
+    var formLockedAfterResubmit = false;
     var currentOrderMoney = null;
     var draftOrderAmount = null;
     var orderAmountChanged = false;
@@ -442,8 +448,10 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     var isLegitimateDraftEdit = false;
     var draftBaselineSnapshot = null;
     var activeSubmitIntent = null;
+    var activeResubmitIntent = null;
     var submitLoadIndex = null;
     var submitChannel = null;
+    var rejectedExpectedRound = 0;
 
     laydate.render({
         elem: '#shipping_date',
@@ -1698,6 +1706,7 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         $('#btn-reopen-draft').hide();
         $('#btn-back-to-draft').hide();
         $('#btn-save-rejected').show();
+        $('#btn-resubmit-rejected').show();
         $('#btn-select-order').addClass('layui-btn-disabled').prop('disabled', true).hide();
         var reason = (editData && editData.reject_reason) ? String(editData.reject_reason) : '';
         if (reason) {
@@ -1708,6 +1717,7 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         if (editData && editData.expected_work_hash) {
             $('#expected_work_hash').val(editData.expected_work_hash);
         }
+        rejectedExpectedRound = parseInt(editData && editData.approval_round, 10) || 0;
         // 返回由上方唯一 #btn-back 监听按 isRejectedEditMode 分流，此处不再二次绑定
     }
 
@@ -2291,7 +2301,7 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
 
     function beginFormalSubmitFlow() {
         if (isRejectedEditMode) {
-            layer.msg('审核失败编辑不能提交审核，请使用「保存修改」。再次提交功能尚未开放。', { icon: 0 });
+            layer.msg('审核失败编辑请使用「保存修改」或「再次提交审核」，不能走首次正式提交。', { icon: 0 });
             return;
         }
         if (formLockedAfterSubmit) {
@@ -2574,6 +2584,362 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         retryFrozenSubmit();
     });
 
+    // =========================
+    // M4-2C-3-2 再次提交审核（独立意图 / 独立 CSRF / 禁止未保存直提）
+    // =========================
+    var RESUBMIT_INTENT_FULL_KEY = 'yg_crm_ship_resubmit_full_v1';
+    var RESUBMIT_INTENT_INDEX_KEY = 'yg_crm_ship_resubmit_index_v1';
+    var RESUBMIT_INTENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+    function resubmitIntentScopeKey(accountId, applyId, expectedRound) {
+        return 'aid:' + String(accountId || 0)
+            + '|apply:' + String(applyId || 0)
+            + '|round:' + String(expectedRound || 0);
+    }
+
+    function setResubmitButtonsForState(state) {
+        var $btn = $('#btn-resubmit-rejected');
+        var $retry = $('#btn-retry-resubmit');
+        if (formLockedAfterResubmit || state === 'success') {
+            $btn.addClass('layui-btn-disabled').prop('disabled', true).text('已再次提交');
+            $retry.hide().addClass('layui-btn-disabled').prop('disabled', true);
+            return;
+        }
+        if (state === 'sending') {
+            $btn.addClass('layui-btn-disabled').prop('disabled', true).text('再次提交中...');
+            $retry.hide();
+            return;
+        }
+        if (state === 'uncertain') {
+            $btn.addClass('layui-btn-disabled').prop('disabled', true).text('结果待确认');
+            $retry.show().removeClass('layui-btn-disabled').prop('disabled', false);
+            return;
+        }
+        $btn.removeClass('layui-btn-disabled').prop('disabled', false).text('再次提交审核');
+        $retry.hide().addClass('layui-btn-disabled').prop('disabled', true);
+    }
+
+    function persistResubmitIntent(intent) {
+        try {
+            var fullMap = {};
+            try {
+                fullMap = JSON.parse(localStorage.getItem(RESUBMIT_INTENT_FULL_KEY) || '{}') || {};
+            } catch (e1) { fullMap = {}; }
+            var indexMap = {};
+            try {
+                indexMap = JSON.parse(localStorage.getItem(RESUBMIT_INTENT_INDEX_KEY) || '{}') || {};
+            } catch (e2) { indexMap = {}; }
+            var now = Date.now();
+            intent.updatedAt = now;
+            fullMap[intent.scopeKey] = intent;
+            indexMap[intent.scopeKey] = {
+                accountId: intent.accountId,
+                applyId: intent.applyId,
+                expectedRound: intent.expectedRound,
+                resubmitToken: intent.resubmitToken,
+                state: intent.state,
+                updatedAt: now
+            };
+            localStorage.setItem(RESUBMIT_INTENT_FULL_KEY, JSON.stringify(fullMap));
+            localStorage.setItem(RESUBMIT_INTENT_INDEX_KEY, JSON.stringify(indexMap));
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, msg: '无法保存再次提交意图，请检查浏览器存储后重试。' };
+        }
+    }
+
+    function clearResubmitIntent(scopeKey) {
+        try {
+            var fullMap = JSON.parse(localStorage.getItem(RESUBMIT_INTENT_FULL_KEY) || '{}') || {};
+            var indexMap = JSON.parse(localStorage.getItem(RESUBMIT_INTENT_INDEX_KEY) || '{}') || {};
+            delete fullMap[scopeKey];
+            delete indexMap[scopeKey];
+            localStorage.setItem(RESUBMIT_INTENT_FULL_KEY, JSON.stringify(fullMap));
+            localStorage.setItem(RESUBMIT_INTENT_INDEX_KEY, JSON.stringify(indexMap));
+        } catch (e) { /* ignore */ }
+    }
+
+    function loadResubmitIntentForPage() {
+        var applyId = parseInt($('#apply_id').val(), 10) || 0;
+        var scope = resubmitIntentScopeKey(pageSessionAid, applyId, rejectedExpectedRound);
+        try {
+            var fullMap = JSON.parse(localStorage.getItem(RESUBMIT_INTENT_FULL_KEY) || '{}') || {};
+            var intent = fullMap[scope] || null;
+            if (!intent) {
+                return { matched: null, foreignUncertain: false };
+            }
+            if ((intent.accountId || 0) !== pageSessionAid) {
+                if (intent.state === 'sending' || intent.state === 'uncertain') {
+                    return { matched: null, foreignUncertain: true };
+                }
+                return { matched: null, foreignUncertain: false };
+            }
+            var age = Date.now() - (intent.updatedAt || intent.createdAt || 0);
+            if (age > RESUBMIT_INTENT_TTL_MS) {
+                clearResubmitIntent(scope);
+                return { matched: null, foreignUncertain: false };
+            }
+            return { matched: { intent: intent, scopeKey: scope }, foreignUncertain: false };
+        } catch (e) {
+            return { matched: null, foreignUncertain: false };
+        }
+    }
+
+    function lockFormAfterResubmitSuccess(applyNo) {
+        formLockedAfterResubmit = true;
+        setResubmitButtonsForState('success');
+        $('#btn-save-rejected').addClass('layui-btn-disabled').prop('disabled', true);
+        showSubmitIntentBanner(
+            '再次提交成功' + (applyNo ? ('：' + escapeHtml(String(applyNo))) : '') + '。申请已进入新一轮审批。',
+            'success'
+        );
+    }
+
+    function sendFrozenResubmitRequest(intent) {
+        if (!intent || !intent.frozenPayload || !intent.resubmitToken) {
+            layer.msg('再次提交意图不完整，禁止自动重发。', { icon: 2 });
+            return;
+        }
+        if (resubmittingApply) {
+            return;
+        }
+        resubmittingApply = true;
+        activeResubmitIntent = intent;
+        intent.state = 'sending';
+        persistResubmitIntent(intent);
+        setResubmitButtonsForState('sending');
+        var loadIndex = layer.load(2);
+        var postData = {
+            csrf_token: resubmitCsrfToken,
+            apply_id: intent.frozenPayload.apply_id,
+            expected_round: intent.frozenPayload.expected_round,
+            expected_work_hash: intent.frozenPayload.expected_work_hash,
+            resubmit_token: intent.resubmitToken,
+            order_amount_confirmed: intent.frozenPayload.order_amount_confirmed || 0,
+            confirmed_order_amount: intent.frozenPayload.confirmed_order_amount || '',
+            shipping_date_history_confirmed: intent.frozenPayload.shipping_date_history_confirmed || 0
+        };
+        $.ajax({
+            url: resubmitRejectedUrl,
+            type: 'POST',
+            data: postData,
+            dataType: 'json',
+            timeout: 60000
+        }).done(function (res) {
+            layer.close(loadIndex);
+            resubmittingApply = false;
+            if (!res || typeof res !== 'object') {
+                intent.state = 'uncertain';
+                persistResubmitIntent(intent);
+                setResubmitButtonsForState('uncertain');
+                layer.alert('再次提交结果未知，请刷新核对，勿重新生成提交标识。', { icon: 0, title: '结果待确认' });
+                return;
+            }
+            if (parseInt(res.code, 10) === 0 && res.data && (res.data.resubmit_succeeded || res.data.submission_succeeded)) {
+                intent.state = 'success';
+                persistResubmitIntent(intent);
+                lockFormAfterResubmitSuccess(res.data.apply_no || '');
+                clearResubmitIntent(intent.scopeKey);
+                activeResubmitIntent = null;
+                layer.msg(res.msg || '再次提交审核成功', { icon: 1, time: 1200 }, function () {
+                    try {
+                        if (parent && typeof parent.refreshFailedShipList === 'function') {
+                            parent.refreshFailedShipList();
+                        }
+                    } catch (e2) {}
+                    closeRejectedEditLayer();
+                });
+                return;
+            }
+            if (res.data && res.data.result_uncertain) {
+                intent.state = 'uncertain';
+                persistResubmitIntent(intent);
+                setResubmitButtonsForState('uncertain');
+                layer.alert((res.msg || '再次提交结果待确认') + '。请刷新后核对，勿重新生成提交标识。', {
+                    icon: 0,
+                    title: '结果待确认'
+                });
+                return;
+            }
+            // 明确业务失败：释放意图，保留表单，不自动重试
+            clearResubmitIntent(intent.scopeKey);
+            activeResubmitIntent = null;
+            setResubmitButtonsForState('idle');
+            layer.msg((res && res.msg) ? res.msg : '再次提交失败', { icon: 2 });
+        }).fail(function () {
+            layer.close(loadIndex);
+            resubmittingApply = false;
+            intent.state = 'uncertain';
+            persistResubmitIntent(intent);
+            setResubmitButtonsForState('uncertain');
+            layer.alert('网络异常，再次提交结果未知。请刷新核对，勿重新生成提交标识。', {
+                icon: 0,
+                title: '结果待确认'
+            });
+        });
+    }
+
+    function beginResubmitRejectedFlow() {
+        if (!isRejectedEditMode) {
+            return;
+        }
+        if (formLockedAfterResubmit) {
+            layer.msg('该申请已再次提交审核。', { icon: 0 });
+            return;
+        }
+        if (savingRejected || resubmittingApply || submittingApply || savingDraft) {
+            layer.msg('请等待当前操作完成。', { icon: 0 });
+            return;
+        }
+        if (!pageSessionAid || pageSessionAid <= 0) {
+            layer.msg('登录状态无效，请重新登录。', { icon: 2 });
+            return;
+        }
+        if (!resubmitCsrfToken) {
+            layer.msg('安全校验信息缺失，请刷新页面后重试。', { icon: 2 });
+            return;
+        }
+        if (!resubmitRejectedUrl) {
+            layer.msg('再次提交接口地址缺失，请刷新后重试。', { icon: 2 });
+            return;
+        }
+        if (hasUnsavedRejectedChanges()) {
+            layer.msg('请先保存修改，再次提交审核', { icon: 0 });
+            return;
+        }
+
+        var restored = loadResubmitIntentForPage();
+        if (restored.foreignUncertain) {
+            layer.alert('检测到其他账号留下的未确认再次提交意图。请重新登录原账号核查；当前账号不得重发。', {
+                icon: 0,
+                title: '账号切换保护'
+            });
+            return;
+        }
+        if (restored.matched && restored.matched.intent) {
+            var existing = restored.matched.intent;
+            if ((existing.state === 'sending' || existing.state === 'uncertain') && existing.frozenPayload) {
+                activeResubmitIntent = existing;
+                setResubmitButtonsForState('uncertain');
+                showSubmitIntentBanner('存在未确认的再次提交意图，请使用原请求重新确认，不要重新生成提交标识。', 'danger');
+                return;
+            }
+        }
+
+        var applyId = parseInt($('#apply_id').val(), 10) || 0;
+        var expectedHash = $.trim($('#expected_work_hash').val() || '');
+        if (applyId <= 0 || rejectedExpectedRound <= 0) {
+            layer.msg('申请或审批轮次信息缺失，请刷新后重试。', { icon: 2 });
+            return;
+        }
+        if (!expectedHash) {
+            layer.msg('编辑版本信息缺失，请刷新后重试。', { icon: 2 });
+            return;
+        }
+
+        var shippingDate = $.trim($('#shipping_date').val() || '');
+
+        function afterHistoryConfirm(historyConfirmed) {
+            function afterAmountConfirm(amountExtra) {
+                var payload = {
+                    apply_id: applyId,
+                    expected_round: rejectedExpectedRound,
+                    expected_work_hash: expectedHash,
+                    order_amount_confirmed: 0,
+                    confirmed_order_amount: '',
+                    shipping_date_history_confirmed: historyConfirmed ? 1 : 0
+                };
+                if (amountExtra && amountExtra.order_amount_confirmed) {
+                    payload.order_amount_confirmed = 1;
+                    payload.confirmed_order_amount = String(amountExtra.confirmed_order_amount);
+                    orderAmountConfirmed = true;
+                    confirmedOrderAmount = String(amountExtra.confirmed_order_amount);
+                } else if (orderAmountChanged && currentOrderMoney != null && !payload.order_amount_confirmed) {
+                    layer.confirm(
+                        '原订单金额已发生变化，当前订单金额为 '
+                        + escapeHtml(String(currentOrderMoney))
+                        + ' 元。确认采用当前订单金额并继续再次提交审核？',
+                        { icon: 0, title: '原订单金额变化确认' },
+                        function (idx) {
+                            layer.close(idx);
+                            afterAmountConfirm({
+                                order_amount_confirmed: 1,
+                                confirmed_order_amount: String(currentOrderMoney)
+                            });
+                        }
+                    );
+                    return;
+                }
+
+                layer.confirm('确定再次提交该发货申请进入新一轮审批吗？提交成功后将离开审核失败列表。', {
+                    icon: 3,
+                    title: '再次提交确认'
+                }, function (idx) {
+                    layer.close(idx);
+                    var tokenRes = generateSecureSubmitToken();
+                    if (!tokenRes.ok) {
+                        layer.msg(tokenRes.msg, { icon: 2 });
+                        return;
+                    }
+                    var now = Date.now();
+                    var intent = {
+                        version: 1,
+                        accountId: pageSessionAid,
+                        applyId: applyId,
+                        expectedRound: rejectedExpectedRound,
+                        resubmitToken: tokenRes.token,
+                        state: 'prepared',
+                        createdAt: now,
+                        updatedAt: now,
+                        scopeKey: resubmitIntentScopeKey(pageSessionAid, applyId, rejectedExpectedRound),
+                        frozenPayload: payload
+                    };
+                    var saved = persistResubmitIntent(intent);
+                    if (!saved.ok) {
+                        layer.msg(saved.msg, { icon: 2 });
+                        return;
+                    }
+                    sendFrozenResubmitRequest(intent);
+                });
+            }
+
+            afterAmountConfirm(null);
+        }
+
+        var today = getShanghaiTodayYmd();
+        if (shippingDate && shippingDate < today) {
+            layer.confirm('当前选择的发货日期早于今天，是否确认按照该日期再次提交审核？', {
+                icon: 0,
+                title: '历史发货日期确认'
+            }, function (idx) {
+                layer.close(idx);
+                afterHistoryConfirm(true);
+            });
+            return;
+        }
+        afterHistoryConfirm(false);
+    }
+
+    function retryFrozenResubmit() {
+        if (!activeResubmitIntent || !activeResubmitIntent.frozenPayload) {
+            var restored = loadResubmitIntentForPage();
+            if (restored.matched && restored.matched.intent && restored.matched.intent.frozenPayload) {
+                activeResubmitIntent = restored.matched.intent;
+            } else {
+                layer.msg('无法恢复原始再次提交载荷，禁止自动重发。请刷新核对。', { icon: 2 });
+                return;
+            }
+        }
+        sendFrozenResubmitRequest(activeResubmitIntent);
+    }
+
+    $('#btn-resubmit-rejected').on('click', function () {
+        beginResubmitRejectedFlow();
+    });
+    $('#btn-retry-resubmit').on('click', function () {
+        retryFrozenResubmit();
+    });
+
     function normalizeSnapshotText(v) {
         return String(v == null ? '' : v).trim();
     }
@@ -2683,12 +3049,24 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
     }
 
     function hasUnsavedChanges() {
-        if (!isLegitimateDraftEdit || !draftBaselineSnapshot) {
+        // 草稿合法编辑 或 审核失败编辑：均依赖回填后的基准快照
+        if ((!isLegitimateDraftEdit && !isRejectedEditMode) || !draftBaselineSnapshot) {
             return false;
         }
         // 仅 DOM→内存同步；不重绘表格，不覆盖用户输入
         syncLineInputsFromDom();
         return !snapshotsEqual(draftBaselineSnapshot, buildEditableSnapshot());
+    }
+
+    function hasUnsavedRejectedChanges() {
+        if (!isRejectedEditMode) {
+            return false;
+        }
+        if (!draftBaselineSnapshot) {
+            // 基准未建立时宁可拦截，避免静默丢掉未保存改动
+            return true;
+        }
+        return hasUnsavedChanges();
     }
 
     function enableLegitimateDraftEditMode() {
@@ -2868,6 +3246,25 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
                 $('#btn-save-draft').hide();
                 $('#btn-submit-apply').hide();
                 $('#btn-save-rejected').show();
+                $('#btn-resubmit-rejected').show();
+                // 恢复未确认的再次提交意图（不自动重发）
+                var restoredResubmit = loadResubmitIntentForPage();
+                if (restoredResubmit.foreignUncertain) {
+                    showSubmitIntentBanner('检测到其他账号的未确认再次提交意图。请重新登录原账号核查。', 'danger');
+                } else if (restoredResubmit.matched && restoredResubmit.matched.intent) {
+                    var rIntent = restoredResubmit.matched.intent;
+                    if (rIntent.state === 'success') {
+                        lockFormAfterResubmitSuccess('');
+                    } else if (rIntent.state === 'sending' || rIntent.state === 'uncertain') {
+                        activeResubmitIntent = rIntent;
+                        if (rIntent.state === 'sending') {
+                            rIntent.state = 'uncertain';
+                            persistResubmitIntent(rIntent);
+                        }
+                        setResubmitButtonsForState('uncertain');
+                        showSubmitIntentBanner('检测到未确认的再次提交意图，请使用原请求重新确认。', 'danger');
+                    }
+                }
             } catch (e) {
                 layer.msg('审核失败申请数据解析失败', { icon: 2 });
             }

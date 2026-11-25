@@ -41,6 +41,12 @@ class Ship extends Common
     /** 审核失败编辑 CSRF Token 长度 */
     const REJECTED_EDIT_CSRF_TOKEN_HEX_LEN = 64;
 
+    /** 审核失败再次提交 CSRF：Session 键（与 submit / decide / rejected_edit / 业务 token 严格分离） */
+    const RESUBMIT_CSRF_SESSION_KEY = 'ship_resubmit_csrf';
+
+    /** 审核失败再次提交 CSRF Token 长度 */
+    const RESUBMIT_CSRF_TOKEN_HEX_LEN = 64;
+
     /**
      * @return ShippingConfigService
      */
@@ -146,7 +152,9 @@ class Ship extends Common
         $this->assign('pageModeJson', json_encode('create'));
         $this->assign('rejectedEditDataJson', '');
         $this->assign('rejectedEditCsrfTokenJson', json_encode(''));
+        $this->assign('resubmitCsrfTokenJson', json_encode(''));
         $this->assign('saveRejectedUrlJson', json_encode((string)url('Ship/saveRejectedApply'), JSON_UNESCAPED_SLASHES));
+        $this->assign('resubmitRejectedUrlJson', json_encode((string)url('Ship/resubmitRejectedApply'), JSON_UNESCAPED_SLASHES));
 
         return $this->fetch('ship/create_ship');
     }
@@ -278,14 +286,20 @@ class Ship extends Common
         $editData = isset($result['data']) && is_array($result['data']) ? $result['data'] : [];
         $sessionAid = $this->normalizeSubmitSessionAid($this->getSubmitSessionAid());
         $rejectedEditCsrfToken = '';
+        $resubmitCsrfToken = '';
         if ($sessionAid > 0) {
             try {
                 $rejectedEditCsrfToken = $this->ensureRejectedEditCsrfToken($sessionAid);
             } catch (\Throwable $e) {
                 $rejectedEditCsrfToken = '';
             }
+            try {
+                $resubmitCsrfToken = $this->ensureResubmitCsrfToken($sessionAid);
+            } catch (\Throwable $e) {
+                $resubmitCsrfToken = '';
+            }
         }
-        if ($rejectedEditCsrfToken === '') {
+        if ($rejectedEditCsrfToken === '' || $resubmitCsrfToken === '') {
             return $this->error('安全令牌签发失败，请刷新后重试');
         }
 
@@ -302,9 +316,182 @@ class Ship extends Common
         $this->assign('sessionAidJson', json_encode((int)$sessionAid));
         $this->assign('submitCsrfTokenJson', json_encode(''));
         $this->assign('rejectedEditCsrfTokenJson', json_encode((string)$rejectedEditCsrfToken, JSON_UNESCAPED_SLASHES));
+        $this->assign('resubmitCsrfTokenJson', json_encode((string)$resubmitCsrfToken, JSON_UNESCAPED_SLASHES));
         $this->assign('saveRejectedUrlJson', json_encode((string)url('Ship/saveRejectedApply'), JSON_UNESCAPED_SLASHES));
+        $this->assign('resubmitRejectedUrlJson', json_encode((string)url('Ship/resubmitRejectedApply'), JSON_UNESCAPED_SLASHES));
 
         return $this->fetch('ship/create_ship');
+    }
+
+    /**
+     * 审核失败申请再次提交审核（仅 POST；独立 CSRF；不放宽 submitApply）
+     *
+     * @return \think\response\Json
+     */
+    public function resubmitRejectedApply()
+    {
+        // 与首次正式提交共用服务端开关；不得只靠前端按钮
+        if (config('shipping_submit.enabled') !== true) {
+            return json([
+                'code' => -200,
+                'msg'  => '再次提交接口尚未开放',
+                'data' => [],
+            ]);
+        }
+
+        if (!$this->request->isPost()) {
+            return json([
+                'code' => -200,
+                'msg'  => '仅支持 POST 提交',
+                'data' => [],
+            ]);
+        }
+
+        $aidRaw = $this->getSubmitSessionAid();
+        $aid = $this->normalizeSubmitSessionAid($aidRaw);
+        if ($aid <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => ($aidRaw === null || $aidRaw === '' || $aidRaw === false)
+                    ? '请先登录'
+                    : '登录状态无效',
+                'data' => [],
+            ]);
+        }
+
+        $csrfRaw = $this->request->post('csrf_token');
+        $csrfCheck = $this->validateResubmitCsrfToken($csrfRaw, $aid);
+        if ($csrfCheck['ok'] !== true) {
+            return json([
+                'code' => -200,
+                'msg'  => $csrfCheck['msg'],
+                'data' => [],
+            ]);
+        }
+
+        $contentLength = isset($_SERVER['CONTENT_LENGTH']) ? (int)$_SERVER['CONTENT_LENGTH'] : 0;
+        if ($contentLength > self::SUBMIT_HTTP_MAX_BODY_BYTES) {
+            return json([
+                'code' => -200,
+                'msg'  => '请求体过大，已被拒绝',
+                'data' => [],
+            ]);
+        }
+
+        $params = $this->request->post();
+        if (!is_array($params)) {
+            $params = [];
+        }
+        if ($params === [] && $contentLength > 0) {
+            return json([
+                'code' => -200,
+                'msg'  => '请求体无法解析或已超限，已被拒绝',
+                'data' => [],
+            ]);
+        }
+
+        unset(
+            $params['shipping_submit'],
+            $params['enabled'],
+            $params['csrf_token'],
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['status'],
+            $params['approval_round'],
+            $params['order_amount'],
+            $params['approval_threshold'],
+            $params['approval_route'],
+            $params['submit_token'],
+            $params['submit_payload_hash'],
+            $params['current_stage'],
+            $params['product_director_id'],
+            $params['product_director_name'],
+            $params['items'],
+            $params['order_id'],
+            $params['can_edit'],
+            $params['can_approve']
+        );
+
+        $applyIdCheck = $this->parseDecidePositiveInt(
+            array_key_exists('apply_id', $params) ? $params['apply_id'] : null
+        );
+        if ($applyIdCheck <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => '发货申请ID无效',
+                'data' => [],
+            ]);
+        }
+        $expectedRoundCheck = $this->parseDecidePositiveInt(
+            array_key_exists('expected_round', $params) ? $params['expected_round'] : null
+        );
+        if ($expectedRoundCheck <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => '审批轮次无效',
+                'data' => [],
+            ]);
+        }
+
+        $tokenRaw = array_key_exists('resubmit_token', $params) ? $params['resubmit_token'] : null;
+        if ($tokenRaw === null || is_array($tokenRaw) || is_object($tokenRaw) || is_bool($tokenRaw)
+            || is_int($tokenRaw) || is_float($tokenRaw) || !is_string($tokenRaw)
+        ) {
+            return json([
+                'code' => -200,
+                'msg'  => '再次提交标识无效',
+                'data' => [],
+            ]);
+        }
+        $token = trim($tokenRaw);
+        if ($token === '' || strlen($token) < 8 || strlen($token) > 64
+            || !preg_match('/^[A-Za-z0-9_-]+$/', $token)
+        ) {
+            return json([
+                'code' => -200,
+                'msg'  => '再次提交标识格式不正确',
+                'data' => [],
+            ]);
+        }
+
+        $workHash = strtolower(trim((string)(array_key_exists('expected_work_hash', $params) ? $params['expected_work_hash'] : '')));
+        if ($workHash === '' || strlen($workHash) !== 64 || !preg_match('/^[a-f0-9]{64}$/', $workHash)) {
+            return json([
+                'code' => -200,
+                'msg'  => '编辑版本校验失效，请刷新后重试。',
+                'data' => [],
+            ]);
+        }
+
+        $params['apply_id'] = $applyIdCheck;
+        $params['expected_round'] = $expectedRoundCheck;
+        $params['resubmit_token'] = $token;
+        $params['expected_work_hash'] = $workHash;
+
+        try {
+            $result = $this->getShippingApplyService()->resubmitRejectedApply($params);
+            if (!is_array($result)) {
+                return json([
+                    'code' => -200,
+                    'msg'  => '再次提交暂时无法完成，请刷新后核对',
+                    'data' => [],
+                ]);
+            }
+            return json($result);
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[Ship::resubmitRejectedApply] ' . $e->getMessage(), 'error');
+            }
+            return json([
+                'code' => -200,
+                'msg'  => '再次提交暂时无法完成，请刷新后核对',
+                'data' => [],
+            ]);
+        }
     }
 
     /**
@@ -1309,6 +1496,117 @@ class Ship extends Common
         if (!is_array($record)
             || !isset($record['aid'], $record['token'])
             || !$this->isValidRejectedEditCsrfTokenFormat($record['token'])
+        ) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        if ((int)$record['aid'] !== $aid) {
+            return ['ok' => false, 'msg' => '登录身份已变化，请刷新页面后重新打开编辑'];
+        }
+
+        if (!hash_equals((string)$record['token'], $raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        return ['ok' => true, 'msg' => ''];
+    }
+
+    // -------------------------------------------------------------------------
+    // M4-2C-3-2：审核失败再次提交独立 CSRF（Session 键 ship_resubmit_csrf）
+    // -------------------------------------------------------------------------
+
+    /**
+     * @return mixed
+     */
+    protected function getResubmitCsrfSessionRecord()
+    {
+        return session(self::RESUBMIT_CSRF_SESSION_KEY);
+    }
+
+    /**
+     * @param array $record
+     * @return void
+     */
+    protected function setResubmitCsrfSessionRecord(array $record)
+    {
+        session(self::RESUBMIT_CSRF_SESSION_KEY, $record);
+    }
+
+    /**
+     * @param mixed $token
+     * @return bool
+     */
+    protected function isValidResubmitCsrfTokenFormat($token)
+    {
+        if (!is_string($token)) {
+            return false;
+        }
+        if (strlen($token) !== self::RESUBMIT_CSRF_TOKEN_HEX_LEN) {
+            return false;
+        }
+        return (bool)preg_match('/^[a-fA-F0-9]{' . self::RESUBMIT_CSRF_TOKEN_HEX_LEN . '}$/', $token);
+    }
+
+    /**
+     * @param int $aid
+     * @return string
+     * @throws \RuntimeException
+     */
+    protected function ensureResubmitCsrfToken($aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            throw new \RuntimeException('登录状态无效');
+        }
+
+        $record = $this->getResubmitCsrfSessionRecord();
+        if (is_array($record)
+            && isset($record['aid'], $record['token'])
+            && (int)$record['aid'] === $aid
+            && $this->isValidResubmitCsrfTokenFormat($record['token'])
+        ) {
+            return (string)$record['token'];
+        }
+
+        try {
+            $token = bin2hex(random_bytes(32));
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+        if (!$this->isValidResubmitCsrfTokenFormat($token)) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+
+        $this->setResubmitCsrfSessionRecord([
+            'aid'   => $aid,
+            'token' => $token,
+        ]);
+
+        return $token;
+    }
+
+    /**
+     * @param mixed $raw
+     * @param int   $aid
+     * @return array{ok:bool,msg:string}
+     */
+    protected function validateResubmitCsrfToken($raw, $aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            return ['ok' => false, 'msg' => '登录状态无效'];
+        }
+        if ($raw === null || is_array($raw) || is_object($raw) || is_bool($raw) || is_int($raw) || is_float($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+        if (!is_string($raw) || $raw === '' || !$this->isValidResubmitCsrfTokenFormat($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        $record = $this->getResubmitCsrfSessionRecord();
+        if (!is_array($record)
+            || !isset($record['aid'], $record['token'])
+            || !$this->isValidResubmitCsrfTokenFormat($record['token'])
         ) {
             return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
         }
