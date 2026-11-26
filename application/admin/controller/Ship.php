@@ -252,6 +252,85 @@ class Ship extends Common
     }
 
     /**
+     * 审核失败菜单数字角标 COUNT（M4-2C-4-2）
+     * 仅 GET JSON；身份只取 Session aid；不接受客户端 applicant_id。
+     * 成功：code=0，data.admin_id / data.total；查询失败不得伪装成 0。
+     */
+    public function failedShipBadgeCount()
+    {
+        if (!request()->isGet()) {
+            return json(['code' => -200, 'msg' => '仅支持 GET 请求', 'data' => []]);
+        }
+
+        $adminId = $this->resolveFailedShipBadgeAdminId();
+        if ($adminId < 1) {
+            return json(['code' => -200, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+        }
+
+        try {
+            $result = $this->getShippingApplyService()->countFailedAppliesForBadge();
+            if (!is_array($result)) {
+                return json(['code' => -200, 'msg' => '获取失败，请稍后重试', 'data' => []]);
+            }
+            if ((int)($result['code'] ?? -1) !== 0) {
+                $msg = trim((string)($result['msg'] ?? ''));
+                if ($msg === '') {
+                    $msg = '获取失败，请稍后重试';
+                }
+                return json(['code' => -200, 'msg' => $msg, 'data' => []]);
+            }
+
+            $data = isset($result['data']) && is_array($result['data']) ? $result['data'] : [];
+            $serviceAdminId = (int)($data['admin_id'] ?? 0);
+            $total = $data['total'] ?? null;
+            if ($serviceAdminId !== $adminId) {
+                return json(['code' => -200, 'msg' => '登录状态已失效，请重新登录', 'data' => []]);
+            }
+            if (!is_int($total) && !(is_string($total) && preg_match('/^(0|[1-9]\d*)$/', $total))) {
+                return json(['code' => -200, 'msg' => '获取失败，请稍后重试', 'data' => []]);
+            }
+            $total = (int)$total;
+            if ($total < 0) {
+                return json(['code' => -200, 'msg' => '获取失败，请稍后重试', 'data' => []]);
+            }
+
+            return json([
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [
+                    'admin_id' => $adminId,
+                    'total' => $total,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[Ship::failedShipBadgeCount] ' . $e->getMessage(), 'error');
+            }
+            return json(['code' => -200, 'msg' => '获取失败，请稍后重试', 'data' => []]);
+        }
+    }
+
+    /**
+     * 角标接口当前登录管理员 ID：仅接受 Session aid 正整数。
+     *
+     * @return int
+     */
+    protected function resolveFailedShipBadgeAdminId()
+    {
+        $raw = session('aid');
+        if (is_int($raw)) {
+            return $raw > 0 ? $raw : 0;
+        }
+        if (is_string($raw) && preg_match('/\A[1-9]\d*\z/', $raw) === 1) {
+            $adminId = (int)$raw;
+            if ($adminId > 0 && (string)$adminId === $raw) {
+                return $adminId;
+            }
+        }
+        return 0;
+    }
+
+    /**
      * 编辑审核失败发货申请（M4-2C-2B-2C-2）
      * 仅 GET：复用 create_ship 模板，pageMode=rejected_edit。
      * 禁止 POST；保存走 saveRejectedApply。

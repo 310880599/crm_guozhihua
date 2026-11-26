@@ -68,6 +68,21 @@ layui.config({
             layer: layer
         });
     }
+    // 发货「审核失败」菜单数字角标：仅当真实存在 Ship/failedShip 菜单时启动
+    try {
+        if (window.CrmFailedShipBadge && typeof window.CrmFailedShipBadge.start === 'function') {
+            var hasFailedShipMenu = typeof window.CrmFailedShipBadge.hasFailedShipMenu === 'function'
+                ? window.CrmFailedShipBadge.hasFailedShipMenu()
+                : false;
+            if (hasFailedShipMenu) {
+                window.CrmFailedShipBadge.start({
+                    adminId: (typeof CRM_ADMIN_ID !== 'undefined') ? CRM_ADMIN_ID : 0,
+                    url: (typeof CRM_FAILED_SHIP_BADGE_URL !== 'undefined') ? CRM_FAILED_SHIP_BADGE_URL : '',
+                    jquery: $
+                });
+            }
+        }
+    } catch (crmFailedShipBadgeStartErr) {}
     //清除缓存
     $('#clearCached').on('click', function () {
         navbar.cleanCached();

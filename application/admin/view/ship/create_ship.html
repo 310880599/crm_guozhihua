@@ -1601,6 +1601,32 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
         }
     }
 
+    /**
+     * 通知主框架刷新发货失败角标（辅助操作，异常静默）。
+     * 逐级向上查找 crmRefreshFailedShipBadge，不假设 parent 即最高主框架。
+     */
+    function notifyParentFailedShipBadgeRefresh() {
+        var win = window;
+        var depth = 0;
+        while (win && depth < 8) {
+            try {
+                if (typeof win.crmRefreshFailedShipBadge === 'function') {
+                    win.crmRefreshFailedShipBadge();
+                    return;
+                }
+            } catch (ignoreLevel) {}
+            try {
+                if (!win.parent || win.parent === win) {
+                    break;
+                }
+                win = win.parent;
+            } catch (crossOrigin) {
+                break;
+            }
+            depth++;
+        }
+    }
+
     function doSaveRejectedApply() {
         if (!isRejectedEditMode) {
             return;
@@ -2741,6 +2767,10 @@ layui.use(['form', 'layer', 'table', 'laydate'], function () {
                 lockFormAfterResubmitSuccess(res.data.apply_no || '');
                 clearResubmitIntent(intent.scopeKey);
                 activeResubmitIntent = null;
+                // 角标刷新为辅助操作：失败不得影响再次提交成功结果
+                try {
+                    notifyParentFailedShipBadgeRefresh();
+                } catch (eBadgeIgnore) {}
                 layer.msg(res.msg || '再次提交审核成功', { icon: 1, time: 1200 }, function () {
                     try {
                         if (parent && typeof parent.refreshFailedShipList === 'function') {

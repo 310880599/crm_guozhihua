@@ -6932,6 +6932,54 @@ class ShippingApplyService
         ];
     }
 
+    /**
+     * 审核失败菜单数字角标只读 COUNT（M4-2C-4-2）
+     *
+     * 口径与 listFailedApplies 空筛选总数一致：
+     * applicant_id = 当前 Session 身份；status IN FAILED_APPLY_LIST_STATUSES；is_deleted = 0。
+     * 任意登录身份（含超管）仅统计本人；禁止信任客户端 applicant_id。
+     * 仅执行 COUNT(*)，不加载明细，不写库，不改审计。
+     * 数据库异常不得伪装成 total=0。
+     *
+     * @return array{code:int,msg:string,data:array}
+     */
+    public function countFailedAppliesForBadge()
+    {
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'data' => []];
+        }
+
+        try {
+            $total = (int)Db::name('crm_shipping_apply')
+                ->where('applicant_id', $adminId)
+                ->where('is_deleted', 0)
+                ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES)
+                ->count('id');
+            if ($total < 0) {
+                $total = 0;
+            }
+
+            return [
+                'code' => 0,
+                'msg' => '获取成功',
+                'data' => [
+                    'admin_id' => $adminId,
+                    'total' => $total,
+                ],
+            ];
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::countFailedAppliesForBadge] ' . $e->getMessage(),
+                    'error'
+                );
+            }
+            return ['code' => -200, 'msg' => '获取失败，请稍后重试', 'data' => []];
+        }
+    }
+
     // -------------------------------------------------------------------------
     // M4-2C-2B-2C-2：审核失败申请编辑读取 / 独立保存（不放宽 saveDraft；不触发再提）
     // -------------------------------------------------------------------------

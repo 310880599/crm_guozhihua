@@ -5,6 +5,7 @@
     var organizations = {$organizations| raw};
     var CRM_ADMIN_ID = {:intval($admin_id)};
     var CRM_FAILED_REMINDER_URL = '{:url("index/failedOrderReminderSummary")}';
+    var CRM_FAILED_SHIP_BADGE_URL = '{:url("Ship/failedShipBadgeCount")}';
 </script>
 <style>
     .crm-failed-order-bell.crm-failed-order-hidden { display: none !important; }
@@ -39,6 +40,40 @@
         white-space: nowrap;
     }
     .layui-nav-tree .layui-nav-item a.crm-failed-order-menu-item > cite {
+        flex: 0 0 auto;
+        padding: 0 0 0 10px;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: nowrap;
+    }
+    /* 发货管理「审核失败」菜单数字角标（与订单角标视觉一致，独立 class） */
+    .crm-failed-ship-badge {
+        display: inline-block;
+        min-width: 16px;
+        margin-left: 4px;
+        padding: 0 4px;
+        height: 16px;
+        line-height: 16px;
+        border-radius: 8px;
+        background: #ff5722;
+        color: #fff !important;
+        font-size: 12px;
+        font-style: normal;
+        text-align: center;
+        vertical-align: middle;
+        flex: 0 0 auto;
+    }
+    .crm-failed-ship-badge.crm-failed-ship-hidden { display: none !important; }
+    .layui-nav-tree .layui-nav-item a.crm-failed-ship-menu-item {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        padding-right: 8px;
+        overflow: hidden;
+        text-overflow: clip;
+        white-space: nowrap;
+    }
+    .layui-nav-tree .layui-nav-item a.crm-failed-ship-menu-item > cite {
         flex: 0 0 auto;
         padding: 0 0 0 10px;
         overflow: visible;
@@ -144,7 +179,8 @@
 </div>
 {include file="common/foot"/}
 <script src="/static/admin/js/failed_order_reminder.js?v=20261102-1"></script>
-<script src="/static/admin/js/index.js?v=20261102-1"></script>
+<script src="/static/admin/js/failed_ship_badge.js?v=20261125-1"></script>
+<script src="/static/admin/js/index.js?v=20261125-1"></script>
 <script>
     layui.use('layer', function () {
         var $ = layui.jquery, layer = layui.layer;
