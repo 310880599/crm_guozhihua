@@ -47,6 +47,12 @@ class Ship extends Common
     /** 审核失败再次提交 CSRF Token 长度 */
     const RESUBMIT_CSRF_TOKEN_HEX_LEN = 64;
 
+    /** 审核失败受控软删除 CSRF：Session 键（与 submit / decide / rejected_edit / resubmit 严格分离） */
+    const DELETE_REJECTED_CSRF_SESSION_KEY = 'ship_delete_rejected_csrf';
+
+    /** 审核失败受控软删除 CSRF Token 长度 */
+    const DELETE_REJECTED_CSRF_TOKEN_HEX_LEN = 64;
+
     /**
      * @return ShippingConfigService
      */
@@ -223,10 +229,11 @@ class Ship extends Common
     }
 
     /**
-     * 审核失败（M4-2C-1B 只读列表；匹配菜单 Ship/failedShip）
-     * GET：列表页
-     * POST：op=list → listFailedApplies（仅本人当前 status IN 20/40）
-     * 编辑入口由前端按钮打开 editRejectedShip；保存走 saveRejectedApply。
+     * 审核失败（M4-2C-1B / M4-2C-5-2）
+     * GET：列表页；指定 admin 签发独立删除 CSRF
+     * POST：op=list → listFailedApplies（普通本人；指定 admin 全公司失败申请）
+     * 编辑入口由前端按钮打开 editRejectedShip；保存走 saveRejectedApply；
+     * 删除走独立接口 deleteRejectedApply。
      */
     public function failedShip()
     {
@@ -248,7 +255,129 @@ class Ship extends Common
             }
         }
 
+        $sessionAid = $this->normalizeSubmitSessionAid($this->getSubmitSessionAid());
+        $deleteRejectedCsrfToken = '';
+        $isDesignatedFailedAdmin = 0;
+        if ($sessionAid > 0 && $service->isDesignatedFailedApplyAdmin($sessionAid)) {
+            $isDesignatedFailedAdmin = 1;
+            try {
+                $deleteRejectedCsrfToken = $this->ensureDeleteRejectedCsrfToken($sessionAid);
+            } catch (\Throwable $e) {
+                $deleteRejectedCsrfToken = '';
+            }
+        }
+        $this->assign('isDesignatedFailedAdmin', $isDesignatedFailedAdmin);
+        $this->assign(
+            'deleteRejectedCsrfTokenJson',
+            json_encode((string)$deleteRejectedCsrfToken, JSON_UNESCAPED_SLASHES)
+        );
+        $this->assign(
+            'deleteRejectedUrlJson',
+            json_encode((string)url('Ship/deleteRejectedApply'), JSON_UNESCAPED_SLASHES)
+        );
+
         return $this->fetch('ship/failed_ship');
+    }
+
+    /**
+     * 审核失败申请受控软删除（仅 POST；独立 CSRF；仅指定 admin_id=1）
+     *
+     * @return \think\response\Json
+     */
+    public function deleteRejectedApply()
+    {
+        if (!$this->request->isPost()) {
+            return json([
+                'code' => -200,
+                'msg'  => '仅支持 POST 提交',
+                'data' => [],
+            ]);
+        }
+
+        $aidRaw = $this->getSubmitSessionAid();
+        $aid = $this->normalizeSubmitSessionAid($aidRaw);
+        if ($aid <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => ($aidRaw === null || $aidRaw === '' || $aidRaw === false)
+                    ? '请先登录'
+                    : '登录状态无效',
+                'data' => [],
+            ]);
+        }
+
+        $service = $this->getShippingApplyService();
+        if (!$service->isDesignatedFailedApplyAdmin($aid)) {
+            return json([
+                'code' => -200,
+                'msg'  => '无权删除该发货申请',
+                'data' => [],
+            ]);
+        }
+
+        $csrfRaw = $this->request->post('csrf_token');
+        $csrfCheck = $this->validateDeleteRejectedCsrfToken($csrfRaw, $aid);
+        if ($csrfCheck['ok'] !== true) {
+            return json([
+                'code' => -200,
+                'msg'  => $csrfCheck['msg'],
+                'data' => [],
+            ]);
+        }
+
+        $params = $this->request->post();
+        if (!is_array($params)) {
+            $params = [];
+        }
+        unset(
+            $params['csrf_token'],
+            $params['applicant_id'],
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['status'],
+            $params['approval_round'],
+            $params['deleted_by'],
+            $params['is_deleted'],
+            $params['is_designated_failed_admin'],
+            $params['can_delete']
+        );
+
+        $applyId = $this->parseDecidePositiveInt(
+            array_key_exists('apply_id', $params) ? $params['apply_id'] : null
+        );
+        if ($applyId <= 0) {
+            return json([
+                'code' => -200,
+                'msg'  => '申请ID无效',
+                'data' => [],
+            ]);
+        }
+
+        $deleteReason = array_key_exists('delete_reason', $params) ? $params['delete_reason'] : '';
+
+        try {
+            $result = $service->softDeleteRejectedApply($applyId, $deleteReason);
+            if (!is_array($result)) {
+                return json([
+                    'code' => -200,
+                    'msg'  => '删除失败，请稍后重试',
+                    'data' => [],
+                ]);
+            }
+            return json($result);
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write('[Ship::deleteRejectedApply] ' . $e->getMessage(), 'error');
+            }
+            return json([
+                'code' => -200,
+                'msg'  => '删除失败，请稍后重试',
+                'data' => [],
+            ]);
+        }
     }
 
     /**
@@ -1692,6 +1821,117 @@ class Ship extends Common
 
         if ((int)$record['aid'] !== $aid) {
             return ['ok' => false, 'msg' => '登录身份已变化，请刷新页面后重新打开编辑'];
+        }
+
+        if (!hash_equals((string)$record['token'], $raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        return ['ok' => true, 'msg' => ''];
+    }
+
+    // -------------------------------------------------------------------------
+    // M4-2C-5-2：审核失败受控软删除独立 CSRF（Session 键 ship_delete_rejected_csrf）
+    // -------------------------------------------------------------------------
+
+    /**
+     * @return mixed
+     */
+    protected function getDeleteRejectedCsrfSessionRecord()
+    {
+        return session(self::DELETE_REJECTED_CSRF_SESSION_KEY);
+    }
+
+    /**
+     * @param array $record
+     * @return void
+     */
+    protected function setDeleteRejectedCsrfSessionRecord(array $record)
+    {
+        session(self::DELETE_REJECTED_CSRF_SESSION_KEY, $record);
+    }
+
+    /**
+     * @param mixed $token
+     * @return bool
+     */
+    protected function isValidDeleteRejectedCsrfTokenFormat($token)
+    {
+        if (!is_string($token)) {
+            return false;
+        }
+        if (strlen($token) !== self::DELETE_REJECTED_CSRF_TOKEN_HEX_LEN) {
+            return false;
+        }
+        return (bool)preg_match('/^[a-fA-F0-9]{' . self::DELETE_REJECTED_CSRF_TOKEN_HEX_LEN . '}$/', $token);
+    }
+
+    /**
+     * @param int $aid
+     * @return string
+     * @throws \RuntimeException
+     */
+    protected function ensureDeleteRejectedCsrfToken($aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            throw new \RuntimeException('登录状态无效');
+        }
+
+        $record = $this->getDeleteRejectedCsrfSessionRecord();
+        if (is_array($record)
+            && isset($record['aid'], $record['token'])
+            && (int)$record['aid'] === $aid
+            && $this->isValidDeleteRejectedCsrfTokenFormat($record['token'])
+        ) {
+            return (string)$record['token'];
+        }
+
+        try {
+            $token = bin2hex(random_bytes(32));
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+        if (!$this->isValidDeleteRejectedCsrfTokenFormat($token)) {
+            throw new \RuntimeException('无法生成安全 CSRF Token');
+        }
+
+        $this->setDeleteRejectedCsrfSessionRecord([
+            'aid'   => $aid,
+            'token' => $token,
+        ]);
+
+        return $token;
+    }
+
+    /**
+     * @param mixed $raw
+     * @param int   $aid
+     * @return array{ok:bool,msg:string}
+     */
+    protected function validateDeleteRejectedCsrfToken($raw, $aid)
+    {
+        $aid = (int)$aid;
+        if ($aid <= 0) {
+            return ['ok' => false, 'msg' => '登录状态无效'];
+        }
+        if ($raw === null || is_array($raw) || is_object($raw) || is_bool($raw) || is_int($raw) || is_float($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+        if (!is_string($raw) || $raw === '' || !$this->isValidDeleteRejectedCsrfTokenFormat($raw)) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        $record = $this->getDeleteRejectedCsrfSessionRecord();
+        if (!is_array($record)
+            || !isset($record['aid'], $record['token'])
+            || !$this->isValidDeleteRejectedCsrfTokenFormat($record['token'])
+        ) {
+            return ['ok' => false, 'msg' => '安全校验失败，请刷新页面后重试'];
+        }
+
+        if ((int)$record['aid'] !== $aid) {
+            return ['ok' => false, 'msg' => '登录身份已变化，请刷新页面后重试'];
         }
 
         if (!hash_equals((string)$record['token'], $raw)) {

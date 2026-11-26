@@ -93,6 +93,57 @@ class ShippingApplyService
     }
 
     /**
+     * M4-2C-5-2：审核失败全员查看 / 全公司角标 / 受控软删除的指定超级管理员。
+     * 仅 admin_id === 1（且账号仍启用）；不得复用 isShippingApplySuperAdmin()；
+     * 不接受客户端伪造身份；不因 group_id=1 / username=admin 自动继承。
+     *
+     * @param int $adminId 0 时取 Session aid
+     * @param array|null $adminMeta 可选已查身份（含 is_open），避免重复查库
+     * @return bool
+     */
+    public function isDesignatedFailedApplyAdmin($adminId = 0, $adminMeta = null)
+    {
+        $adminId = (int)$adminId;
+        $isOpen = null;
+        $metaProvided = is_array($adminMeta);
+        if ($metaProvided) {
+            if ($adminId <= 0) {
+                $adminId = (int)($adminMeta['admin_id'] ?? 0);
+            }
+            if (array_key_exists('is_open', $adminMeta)) {
+                $isOpen = (int)$adminMeta['is_open'];
+            }
+        }
+        if ($adminId <= 0) {
+            // 已显式传入元数据仍无有效 aid：直接拒绝，避免无 Session 环境误触发会话初始化
+            if ($metaProvided) {
+                return false;
+            }
+            $admin = $this->getCurrentAdminInfo();
+            $adminId = (int)$admin['admin_id'];
+            $isOpen = (int)($admin['is_open'] ?? 0);
+        }
+        if ($adminId !== self::DESIGNATED_FAILED_APPLY_ADMIN_ID) {
+            return false;
+        }
+        if ($isOpen === null) {
+            try {
+                $row = Db::name('admin')
+                    ->where('admin_id', self::DESIGNATED_FAILED_APPLY_ADMIN_ID)
+                    ->field('admin_id,is_open')
+                    ->find();
+            } catch (\Throwable $e) {
+                return false;
+            }
+            if (empty($row) || (int)($row['admin_id'] ?? 0) !== self::DESIGNATED_FAILED_APPLY_ADMIN_ID) {
+                return false;
+            }
+            $isOpen = (int)($row['is_open'] ?? 0);
+        }
+        return (int)$isOpen === 1;
+    }
+
+    /**
      * 获取当前登录管理员信息
      *
      * @return array
@@ -101,17 +152,18 @@ class ShippingApplyService
     {
         $adminId = (int)session('aid');
         if ($adminId <= 0) {
-            return ['admin_id' => 0, 'username' => ''];
+            return ['admin_id' => 0, 'username' => '', 'group_id' => 0, 'is_open' => 0];
         }
         $row = Db::name('admin')
             ->where('admin_id', $adminId)
-            ->field('admin_id,username,group_id')
+            ->field('admin_id,username,group_id,is_open')
             ->find();
 
         return [
             'admin_id' => (int)($row['admin_id'] ?? 0),
             'username' => trim((string)($row['username'] ?? '')),
             'group_id' => (int)($row['group_id'] ?? 0),
+            'is_open' => (int)($row['is_open'] ?? 0),
         ];
     }
 
@@ -6560,6 +6612,15 @@ class ShippingApplyService
      */
     const FAILED_APPLY_LIST_STATUSES = [20, 40];
 
+    /** M4-2C-5-2：审核失败特权仅授予稳定身份 admin_id=1 */
+    const DESIGNATED_FAILED_APPLY_ADMIN_ID = 1;
+
+    /** 审核失败受控软删除审计 action */
+    const DELETE_REJECTED_AUDIT_ACTION = 'delete_rejected';
+
+    /** 删除原因最大字符数（服务端严格校验，不静默截断） */
+    const DELETE_REJECTED_REASON_MAX = 200;
+
     /** 统一详情拒绝文案（无权限 / 不存在 / 已删 / 非正式申请统一） */
     const APPLY_VIEW_DENY_MSG = '无权查看或记录不存在';
 
@@ -6782,6 +6843,8 @@ class ShippingApplyService
         if ($adminId <= 0) {
             return ['code' => -200, 'msg' => '请先登录', 'count' => 0, 'data' => []];
         }
+        // M4-2C-5-2：仅指定 admin_id=1 放开全员；其他身份（含 group_id=1）仍仅本人
+        $isDesignatedAdmin = $this->isDesignatedFailedApplyAdmin($adminId, $admin);
 
         $page = (int)($params['page'] ?? 1);
         if ($page < 1) {
@@ -6842,11 +6905,13 @@ class ShippingApplyService
             return ['code' => -200, 'msg' => '开始日期不能晚于结束日期', 'count' => 0, 'data' => []];
         }
 
-        // P0：本人过滤对超管同样强制；仅审核失败白名单；排除软删
+        // 失败状态白名单 + 排除软删；指定 admin 不限申请人，其余强制本人
         $query = Db::name('crm_shipping_apply')
-            ->where('applicant_id', $adminId)
             ->where('is_deleted', 0)
             ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES);
+        if (!$isDesignatedAdmin) {
+            $query->where('applicant_id', $adminId);
+        }
 
         if ($statusFilter !== null) {
             $query->where('status', $statusFilter);
@@ -6873,11 +6938,14 @@ class ShippingApplyService
                     'msg' => '获取成功',
                     'count' => 0,
                     'data' => [],
+                    'meta' => [
+                        'is_designated_failed_admin' => $isDesignatedAdmin ? 1 : 0,
+                    ],
                 ];
             }
 
             $rows = (clone $query)
-                ->field('id,apply_no,order_no,customer_name,order_amount,shipping_date,submit_time,status,approval_round,approval_route,approval_threshold,applicant_name')
+                ->field('id,apply_no,order_no,customer_name,order_amount,shipping_date,submit_time,status,approval_round,approval_route,approval_threshold,applicant_id,applicant_name')
                 ->order('submit_time', 'desc')
                 ->order('id', 'desc')
                 ->page($page, $limit)
@@ -6905,6 +6973,12 @@ class ShippingApplyService
         foreach ($rows as $row) {
             $id = (int)($row['id'] ?? 0);
             $status = (int)($row['status'] ?? 0);
+            $rowApplicantId = (int)($row['applicant_id'] ?? 0);
+            // 编辑：本轮 submit 快照 + 必须本人（admin 看他人不可代编）
+            $canEdit = (!empty($snapshotEditMap[$id]) && $rowApplicantId === $adminId) ? 1 : 0;
+            // 删除按钮：仅指定 admin + 当前失败未删（列表已过滤）；非授权依据
+            $canDelete = ($isDesignatedAdmin
+                && in_array($status, self::FAILED_APPLY_LIST_STATUSES, true)) ? 1 : 0;
             $data[] = [
                 'id' => $id,
                 'apply_no' => trim((string)($row['apply_no'] ?? '')),
@@ -6918,9 +6992,11 @@ class ShippingApplyService
                 'approval_round' => (int)($row['approval_round'] ?? 0),
                 'approval_route' => (int)($row['approval_route'] ?? 0),
                 'approval_route_text' => $this->mapApprovalRouteText((int)($row['approval_route'] ?? 0)),
+                'applicant_id' => $rowApplicantId,
+                'applicant_name' => trim((string)($row['applicant_name'] ?? '')),
                 'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
-                // UX：有本轮 submit 快照才显示编辑入口；服务端保存仍完整校验
-                'can_edit_rejected' => !empty($snapshotEditMap[$id]) ? 1 : 0,
+                'can_edit_rejected' => $canEdit,
+                'can_delete' => $canDelete,
             ];
         }
 
@@ -6929,15 +7005,19 @@ class ShippingApplyService
             'msg' => '获取成功',
             'count' => $count,
             'data' => $data,
+            'meta' => [
+                'is_designated_failed_admin' => $isDesignatedAdmin ? 1 : 0,
+            ],
         ];
     }
 
     /**
-     * 审核失败菜单数字角标只读 COUNT（M4-2C-4-2）
+     * 审核失败菜单数字角标只读 COUNT（M4-2C-4-2 / M4-2C-5-2）
      *
      * 口径与 listFailedApplies 空筛选总数一致：
-     * applicant_id = 当前 Session 身份；status IN FAILED_APPLY_LIST_STATUSES；is_deleted = 0。
-     * 任意登录身份（含超管）仅统计本人；禁止信任客户端 applicant_id。
+     * - 普通业务员：applicant_id = Session aid；status IN (20,40)；is_deleted = 0
+     * - 指定 admin_id=1：全公司 status IN (20,40)；is_deleted = 0（不限申请人）
+     * 禁止信任客户端 applicant_id；不得复用 isShippingApplySuperAdmin()。
      * 仅执行 COUNT(*)，不加载明细，不写库，不改审计。
      * 数据库异常不得伪装成 total=0。
      *
@@ -6950,13 +7030,16 @@ class ShippingApplyService
         if ($adminId <= 0) {
             return ['code' => -200, 'msg' => '请先登录', 'data' => []];
         }
+        $isDesignatedAdmin = $this->isDesignatedFailedApplyAdmin($adminId, $admin);
 
         try {
-            $total = (int)Db::name('crm_shipping_apply')
-                ->where('applicant_id', $adminId)
+            $query = Db::name('crm_shipping_apply')
                 ->where('is_deleted', 0)
-                ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES)
-                ->count('id');
+                ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES);
+            if (!$isDesignatedAdmin) {
+                $query->where('applicant_id', $adminId);
+            }
+            $total = (int)$query->count('id');
             if ($total < 0) {
                 $total = 0;
             }
@@ -6978,6 +7061,592 @@ class ShippingApplyService
             }
             return ['code' => -200, 'msg' => '获取失败，请稍后重试', 'data' => []];
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // M4-2C-5-2：审核失败申请受控软删除（仅指定 admin_id=1；锁申请主表；同事务审计）
+    // -------------------------------------------------------------------------
+
+    /**
+     * 软删除当前审核失败发货申请（status IN 20/40 且未删）。
+     * 仅指定 admin；禁止物理 DELETE；不改 status/round/明细/任务/历史日志/快照。
+     * 事务内只锁申请主表，避免与 save/resubmit 的订单→申请锁序反向死锁。
+     *
+     * @param mixed $applyId
+     * @param mixed $deleteReason
+     * @return array{code:int,msg:string,data:array}
+     */
+    public function softDeleteRejectedApply($applyId, $deleteReason = '')
+    {
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return $this->buildDeleteRejectedFailResult('请先登录');
+        }
+        if (!$this->isDesignatedFailedApplyAdmin($adminId, $admin)) {
+            return $this->buildDeleteRejectedFailResult('无权删除该发货申请');
+        }
+
+        try {
+            $applyId = $this->parsePositiveInt($applyId, '申请ID无效');
+        } catch (Exception $e) {
+            return $this->buildDeleteRejectedFailResult($e->getMessage());
+        }
+
+        try {
+            $reason = $this->normalizeDeleteRejectedReason($deleteReason);
+        } catch (Exception $e) {
+            return $this->buildDeleteRejectedFailResult($e->getMessage());
+        }
+
+        $operatorName = trim((string)($admin['username'] ?? ''));
+        if ($operatorName === '') {
+            $operatorName = 'admin#' . $adminId;
+        }
+
+        $committed = false;
+        $beforeStatus = 0;
+        $approvalRound = 0;
+        $applyNo = '';
+        $originalApplicantId = 0;
+        $deletedAt = '';
+
+        try {
+            $this->beginDeleteRejectedTransaction();
+
+            $apply = $this->findDeleteRejectedApplyForUpdate($applyId);
+            if (empty($apply) || !is_array($apply)) {
+                throw new Exception('发货申请不存在或无权删除');
+            }
+
+            // 事务内再次校验指定 admin（Session 身份，不信任客户端）
+            if (!$this->isDesignatedFailedApplyAdmin($adminId, $admin)) {
+                throw new Exception('无权删除该发货申请');
+            }
+
+            if ((int)($apply['is_deleted'] ?? 0) !== 0) {
+                throw new Exception('该发货申请已删除');
+            }
+
+            $beforeStatus = (int)($apply['status'] ?? -1);
+            if (!in_array($beforeStatus, self::FAILED_APPLY_LIST_STATUSES, true)) {
+                throw new Exception('仅审核失败的发货申请可以删除');
+            }
+
+            $approvalRound = (int)($apply['approval_round'] ?? 0);
+            $applyNo = trim((string)($apply['apply_no'] ?? ''));
+            $originalApplicantId = (int)($apply['applicant_id'] ?? 0);
+            $deletedAt = date('Y-m-d H:i:s');
+
+            $affected = $this->updateSoftDeleteRejectedApplyRow($applyId, $adminId, $deletedAt);
+            if ($affected !== 1) {
+                throw new Exception('删除失败，申请状态已变化，请刷新后重试');
+            }
+
+            $opinionPayload = [
+                'apply_no' => $applyNo,
+                'original_applicant_id' => $originalApplicantId,
+                'operator_admin_id' => $adminId,
+                'before_status' => $beforeStatus,
+                'after_status' => $beforeStatus,
+                'approval_round' => $approvalRound,
+                'delete_reason' => $reason,
+                'deleted_at' => $deletedAt,
+                'is_deleted_before' => 0,
+                'is_deleted_after' => 1,
+            ];
+            $opinionJson = json_encode($opinionPayload, JSON_UNESCAPED_UNICODE);
+            if ($opinionJson === false) {
+                throw new Exception('删除审计信息编码失败');
+            }
+            if (strlen($opinionJson) > self::APPROVAL_LOG_OPINION_MAX
+                || mb_strlen($opinionJson, 'UTF-8') > self::APPROVAL_LOG_OPINION_MAX
+            ) {
+                throw new Exception('删除审计信息过长');
+            }
+
+            $logId = $this->insertDeleteRejectedAuditLog([
+                'shipping_apply_id' => $applyId,
+                'task_id' => null,
+                'operator_id' => $adminId,
+                'operator_name' => mb_substr($operatorName, 0, 100, 'UTF-8'),
+                'operator_role' => 'system_admin',
+                'action' => self::DELETE_REJECTED_AUDIT_ACTION,
+                'before_status' => $beforeStatus,
+                'after_status' => $beforeStatus,
+                'opinion' => $opinionJson,
+                'create_time' => $deletedAt,
+            ]);
+            if ($logId <= 0) {
+                throw new Exception('删除审计日志写入失败');
+            }
+
+            try {
+                $this->commitDeleteRejectedTransaction();
+                $committed = true;
+            } catch (\Throwable $commitErr) {
+                // COMMIT 结果不确定：仅 Db::commit() 正常返回才算成功。
+                // 禁止同连接恢复查询确认成功（可能读到本事务未提交数据）；禁止自动重试写库。
+                // 不 rollback：rollback 成败不能证明 COMMIT 结果；清理不得改变 uncertain 结论。
+                // 日志写入失败不得向外传播，否则会落入外层 catch 并覆盖 result_uncertain。
+                try {
+                    if (class_exists('\\think\\facade\\Log')) {
+                        \think\facade\Log::write(
+                            '[ShippingApplyService::softDeleteRejectedApply.commit_uncertain] '
+                            . $commitErr->getMessage(),
+                            'error'
+                        );
+                    }
+                } catch (\Throwable $logErr) {
+                    // 日志写入失败不能覆盖 COMMIT 不确定结果。
+                    // 不在此处递归尝试写日志。
+                }
+                return $this->buildDeleteRejectedUncertainResult($applyId);
+            }
+
+            return [
+                'code' => 0,
+                'msg' => '审核失败申请已删除',
+                'data' => [
+                    'apply_id' => $applyId,
+                    'apply_no' => $applyNo,
+                    'status' => $beforeStatus,
+                    'approval_round' => $approvalRound,
+                    'is_deleted' => 1,
+                    'result_uncertain' => false,
+                ],
+            ];
+        } catch (Exception $e) {
+            if (!$committed) {
+                try {
+                    $this->rollbackDeleteRejectedTransaction();
+                } catch (\Throwable $rollErr) {
+                    // ignore
+                }
+            }
+            return $this->buildDeleteRejectedFailResult($e->getMessage());
+        } catch (\Throwable $e) {
+            if (!$committed) {
+                try {
+                    $this->rollbackDeleteRejectedTransaction();
+                } catch (\Throwable $rollErr) {
+                    // ignore
+                }
+            }
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::softDeleteRejectedApply] ' . $e->getMessage(),
+                    'error'
+                );
+            }
+            return $this->buildDeleteRejectedFailResult('删除失败，请稍后重试');
+        }
+    }
+
+    /**
+     * 删除原因：必填字符串 1～200 字符；拒数组/对象；去 HTML/控制字符；不静默截断。
+     *
+     * @param mixed $raw
+     * @return string
+     * @throws Exception
+     */
+    public function normalizeDeleteRejectedReason($raw)
+    {
+        if ($raw === null || is_array($raw) || is_object($raw) || is_bool($raw)
+            || is_int($raw) || is_float($raw)
+        ) {
+            throw new Exception('删除原因无效');
+        }
+        if (!is_string($raw)) {
+            throw new Exception('删除原因无效');
+        }
+        $text = strip_tags($raw);
+        $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $text);
+        if (!is_string($text)) {
+            throw new Exception('删除原因无效');
+        }
+        $text = trim($text);
+        $len = mb_strlen($text, 'UTF-8');
+        if ($len < 1) {
+            throw new Exception('请填写删除原因');
+        }
+        if ($len > self::DELETE_REJECTED_REASON_MAX) {
+            throw new Exception('删除原因不能超过' . self::DELETE_REJECTED_REASON_MAX . '个字符');
+        }
+        return $text;
+    }
+
+    /**
+     * [DEAD / 不再调用] COMMIT 不确定后的只读证据核验（P1 遗留）。
+     *
+     * M4-2C-5-2-P1-2：softDeleteRejectedApply 在 COMMIT 异常时不再调用本方法，
+     * 统一返回 result_uncertain。同连接查询无法证明已提交可见性，可能误读未提交数据。
+     * 任何未来重新启用必须先证明独立连接的已提交可见性；禁止自动重试写库。
+     *
+     * @param int $applyId
+     * @param int $adminId
+     * @param int $beforeStatus
+     * @param int $approvalRound
+     * @param string $deletedAt
+     * @param int $auditLogId 本次事务 insertGetId 结果；禁止事后新造
+     * @param string $applyNo 持锁读取的申请编号
+     * @param int $originalApplicantId 持锁读取的原申请人
+     * @param string $deleteReason 本次规范化删除原因
+     * @return array|null
+     */
+    protected function recoverDeleteRejectedAfterCommitUncertainty(
+        $applyId,
+        $adminId,
+        $beforeStatus,
+        $approvalRound,
+        $deletedAt,
+        $auditLogId = 0,
+        $applyNo = '',
+        $originalApplicantId = 0,
+        $deleteReason = ''
+    ) {
+        $intent = [
+            'apply_id' => (int)$applyId,
+            'admin_id' => (int)$adminId,
+            'before_status' => (int)$beforeStatus,
+            'approval_round' => (int)$approvalRound,
+            'deleted_at' => (string)$deletedAt,
+            'audit_log_id' => (int)$auditLogId,
+            'apply_no' => trim((string)$applyNo),
+            'original_applicant_id' => (int)$originalApplicantId,
+            'delete_reason' => (string)$deleteReason,
+        ];
+        if ($intent['apply_id'] <= 0
+            || $intent['admin_id'] !== self::DESIGNATED_FAILED_APPLY_ADMIN_ID
+            || $intent['audit_log_id'] <= 0
+            || !$this->isValidDeleteRejectedDatetime($intent['deleted_at'])
+            || $intent['apply_no'] === ''
+            || $intent['delete_reason'] === ''
+        ) {
+            return null;
+        }
+
+        try {
+            $row = Db::name('crm_shipping_apply')
+                ->where('id', $intent['apply_id'])
+                ->field('id,apply_no,status,approval_round,is_deleted,deleted_by,deleted_at,applicant_id')
+                ->find();
+            if (empty($row) || !is_array($row)) {
+                return null;
+            }
+
+            // 仅按本次事务审计主键读取，禁止 order desc 取“最新相似审计”冒充本次证据
+            $log = Db::name('crm_shipping_approval_log')
+                ->where('id', $intent['audit_log_id'])
+                ->find();
+            if (empty($log) || !is_array($log)) {
+                return null;
+            }
+
+            if (!$this->matchesDeleteRejectedCommitEvidence($intent, $row, $log)) {
+                return null;
+            }
+
+            return [
+                'code' => 0,
+                'msg' => '审核失败申请已删除',
+                'data' => [
+                    'apply_id' => $intent['apply_id'],
+                    'apply_no' => trim((string)($row['apply_no'] ?? '')),
+                    'status' => $intent['before_status'],
+                    'approval_round' => $intent['approval_round'],
+                    'is_deleted' => 1,
+                    'result_uncertain' => false,
+                    'recovered_after_commit_uncertain' => true,
+                ],
+            ];
+        } catch (\Throwable $e) {
+            if (class_exists('\\think\\facade\\Log')) {
+                \think\facade\Log::write(
+                    '[ShippingApplyService::recoverDeleteRejectedAfterCommitUncertainty] '
+                    . $e->getMessage(),
+                    'error'
+                );
+            }
+            return null;
+        }
+    }
+
+    /**
+     * 删除时间 DATETIME 精确格式（秒级；不做区间模糊匹配）。
+     *
+     * @param mixed $value
+     * @return bool
+     */
+    public function isValidDeleteRejectedDatetime($value)
+    {
+        if (!is_string($value)) {
+            return false;
+        }
+        $value = trim($value);
+        if ($value === '' || !preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $value)) {
+            return false;
+        }
+        $dt = \DateTime::createFromFormat('Y-m-d H:i:s', $value);
+        if (!($dt instanceof \DateTime)) {
+            return false;
+        }
+        $errors = \DateTime::getLastErrors();
+        if (is_array($errors) && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0)) {
+            return false;
+        }
+        return $dt->format('Y-m-d H:i:s') === $value;
+    }
+
+    /**
+     * [DEAD 辅助 / 当前删除流程不再用于确认 COMMIT 成功]
+     * 纯证据比对（无 DB 写操作）。保留供历史测试与静态核对；
+     * 不得再次接入 softDeleteRejectedApply 的 COMMIT 异常成功确认路径。
+     *
+     * @param array $intent
+     * @param array $row
+     * @param array $log
+     * @return bool
+     */
+    public function matchesDeleteRejectedCommitEvidence(array $intent, array $row, array $log)
+    {
+        $applyId = (int)($intent['apply_id'] ?? 0);
+        $adminId = (int)($intent['admin_id'] ?? 0);
+        $beforeStatus = (int)($intent['before_status'] ?? -1);
+        $approvalRound = (int)($intent['approval_round'] ?? -1);
+        $deletedAt = trim((string)($intent['deleted_at'] ?? ''));
+        $auditLogId = (int)($intent['audit_log_id'] ?? 0);
+        $applyNo = trim((string)($intent['apply_no'] ?? ''));
+        $originalApplicantId = (int)($intent['original_applicant_id'] ?? 0);
+        $deleteReason = (string)($intent['delete_reason'] ?? '');
+
+        if ($applyId <= 0
+            || $adminId !== self::DESIGNATED_FAILED_APPLY_ADMIN_ID
+            || $auditLogId <= 0
+            || !$this->isValidDeleteRejectedDatetime($deletedAt)
+            || $applyNo === ''
+            || $deleteReason === ''
+        ) {
+            return false;
+        }
+
+        if ((int)($row['id'] ?? 0) !== $applyId) {
+            return false;
+        }
+        if ((int)($row['is_deleted'] ?? 0) !== 1) {
+            return false;
+        }
+        if ((int)($row['deleted_by'] ?? 0) !== $adminId) {
+            return false;
+        }
+        if ((int)($row['status'] ?? -1) !== $beforeStatus) {
+            return false;
+        }
+        if ((int)($row['approval_round'] ?? -1) !== $approvalRound) {
+            return false;
+        }
+        $rowDeletedAt = trim((string)($row['deleted_at'] ?? ''));
+        if ($rowDeletedAt !== $deletedAt) {
+            return false;
+        }
+        $rowApplyNo = trim((string)($row['apply_no'] ?? ''));
+        if ($rowApplyNo === '' || $rowApplyNo !== $applyNo) {
+            return false;
+        }
+        if ((int)($row['applicant_id'] ?? -1) !== $originalApplicantId) {
+            return false;
+        }
+
+        if ((int)($log['id'] ?? 0) !== $auditLogId) {
+            return false;
+        }
+        if ((int)($log['shipping_apply_id'] ?? 0) !== $applyId) {
+            return false;
+        }
+        if ((string)($log['action'] ?? '') !== self::DELETE_REJECTED_AUDIT_ACTION) {
+            return false;
+        }
+        if ((int)($log['operator_id'] ?? 0) !== $adminId) {
+            return false;
+        }
+        if ((int)($log['before_status'] ?? -1) !== $beforeStatus) {
+            return false;
+        }
+        if ((int)($log['after_status'] ?? -1) !== $beforeStatus) {
+            return false;
+        }
+        $logCreateTime = trim((string)($log['create_time'] ?? ''));
+        if ($logCreateTime !== $deletedAt) {
+            return false;
+        }
+
+        $opinionRaw = trim((string)($log['opinion'] ?? ''));
+        if ($opinionRaw === '' || $opinionRaw[0] !== '{') {
+            return false;
+        }
+        $opinion = json_decode($opinionRaw, true);
+        if (!is_array($opinion)) {
+            return false;
+        }
+
+        $requiredKeys = [
+            'apply_no',
+            'original_applicant_id',
+            'operator_admin_id',
+            'before_status',
+            'after_status',
+            'approval_round',
+            'delete_reason',
+            'deleted_at',
+            'is_deleted_before',
+            'is_deleted_after',
+        ];
+        foreach ($requiredKeys as $key) {
+            if (!array_key_exists($key, $opinion)) {
+                return false;
+            }
+        }
+
+        if (trim((string)$opinion['apply_no']) !== $applyNo) {
+            return false;
+        }
+        if ((int)$opinion['original_applicant_id'] !== $originalApplicantId) {
+            return false;
+        }
+        if ((int)$opinion['operator_admin_id'] !== $adminId) {
+            return false;
+        }
+        if ((int)$opinion['before_status'] !== $beforeStatus) {
+            return false;
+        }
+        if ((int)$opinion['after_status'] !== $beforeStatus) {
+            return false;
+        }
+        if ((int)$opinion['approval_round'] !== $approvalRound) {
+            return false;
+        }
+        if ((string)$opinion['delete_reason'] !== $deleteReason) {
+            return false;
+        }
+        if (trim((string)$opinion['deleted_at']) !== $deletedAt) {
+            return false;
+        }
+        if ((int)$opinion['is_deleted_before'] !== 0) {
+            return false;
+        }
+        if ((int)$opinion['is_deleted_after'] !== 1) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param string $msg
+     * @return array
+     */
+    protected function buildDeleteRejectedFailResult($msg)
+    {
+        $msg = trim((string)$msg);
+        if ($msg === '') {
+            $msg = '删除失败，请稍后重试';
+        }
+        if (preg_match('/SQLSTATE|Duplicate entry|Integrity constraint|PDOException/i', $msg)) {
+            $msg = '删除失败，请稍后重试';
+        }
+        return [
+            'code' => -200,
+            'msg' => $msg,
+            'data' => ['result_uncertain' => false],
+        ];
+    }
+
+    /**
+     * @param int $applyId
+     * @return array
+     */
+    protected function buildDeleteRejectedUncertainResult($applyId)
+    {
+        return [
+            'code' => -200,
+            'msg' => '删除结果待确认，请刷新列表或查看申请状态后核验，勿重复删除',
+            'data' => [
+                'apply_id' => (int)$applyId,
+                'result_uncertain' => true,
+            ],
+        ];
+    }
+
+    /**
+     * FOR UPDATE 读取待删除申请主表（可注入 Mock）。
+     *
+     * @param int $applyId
+     * @return array|null
+     */
+    protected function findDeleteRejectedApplyForUpdate($applyId)
+    {
+        $row = Db::name('crm_shipping_apply')
+            ->where('id', (int)$applyId)
+            ->lock(true)
+            ->find();
+        return (empty($row) || !is_array($row)) ? null : $row;
+    }
+
+    /**
+     * 条件软删除主表；返回 affected rows（可注入 Mock）。
+     *
+     * @param int $applyId
+     * @param int $adminId
+     * @param string $deletedAt
+     * @return int
+     */
+    protected function updateSoftDeleteRejectedApplyRow($applyId, $adminId, $deletedAt)
+    {
+        return (int)Db::name('crm_shipping_apply')
+            ->where('id', (int)$applyId)
+            ->where('is_deleted', 0)
+            ->whereIn('status', self::FAILED_APPLY_LIST_STATUSES)
+            ->update([
+                'is_deleted' => 1,
+                'deleted_by' => (int)$adminId,
+                'deleted_at' => (string)$deletedAt,
+                'update_time' => (string)$deletedAt,
+            ]);
+    }
+
+    /**
+     * 同事务写入 delete_rejected 审计；返回 insertGetId（可注入 Mock）。
+     *
+     * @param array $row
+     * @return int
+     */
+    protected function insertDeleteRejectedAuditLog(array $row)
+    {
+        return (int)Db::name('crm_shipping_approval_log')->insertGetId($row);
+    }
+
+    /**
+     * @return void
+     */
+    protected function beginDeleteRejectedTransaction()
+    {
+        Db::startTrans();
+    }
+
+    /**
+     * @return void
+     */
+    protected function commitDeleteRejectedTransaction()
+    {
+        Db::commit();
+    }
+
+    /**
+     * @return void
+     */
+    protected function rollbackDeleteRejectedTransaction()
+    {
+        Db::rollback();
     }
 
     // -------------------------------------------------------------------------
@@ -11546,6 +12215,7 @@ class ShippingApplyService
             if (strpos($action, 'pm_substitute_') === 0
                 || $action === 'submit_finance_cc_anomaly'
                 || $action === 'delete_draft'
+                || $action === self::DELETE_REJECTED_AUDIT_ACTION
             ) {
                 continue;
             }
@@ -11690,7 +12360,20 @@ class ShippingApplyService
             }
         }
 
-        // 超管本轮不额外开放跨人查看
+        // M4-2C-5-2：指定 admin 仅可只读查看当前失败且未软删申请（不获编辑/再提/审批权）
+        if (in_array($status, self::FAILED_APPLY_LIST_STATUSES, true)
+            && (int)($apply['is_deleted'] ?? 0) === 0
+            && $this->isDesignatedFailedApplyAdmin($viewerId)
+        ) {
+            return [
+                'ok' => true,
+                'role' => 'designated_failed_admin',
+                'can_view_all_purchase' => true,
+                'viewer_manager_id' => 0,
+            ];
+        }
+
+        // 其他身份不额外开放跨人查看
         return $deny;
     }
 

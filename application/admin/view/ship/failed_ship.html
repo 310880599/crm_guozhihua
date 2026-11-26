@@ -89,6 +89,33 @@
         font-size: 12px;
         margin-left: 4px;
     }
+    .failed-ship-wrap .failed-ship-delete-btn {
+        background-color: #FF5722 !important;
+        color: #fff !important;
+        border: 1px solid #FF5722 !important;
+        border-radius: 2px;
+        margin-left: 4px;
+    }
+    .failed-ship-wrap .failed-ship-delete-btn:hover {
+        background-color: #e04b1a !important;
+        border-color: #e04b1a !important;
+        color: #fff !important;
+    }
+    .failed-ship-delete-dialog .failed-ship-delete-tip {
+        color: #666;
+        line-height: 1.7;
+        margin: 0 0 10px;
+    }
+    .failed-ship-delete-dialog .failed-ship-delete-apply-no {
+        font-weight: 600;
+        color: #333;
+    }
+    .failed-ship-delete-dialog textarea {
+        width: 100%;
+        min-height: 88px;
+        resize: vertical;
+        box-sizing: border-box;
+    }
 </style>
 </head>
 <body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
@@ -146,6 +173,9 @@
     {{# } else { }}
     <span class="failed-ship-edit-disabled" title="尚未完成历史审批数据保护，暂时不能编辑">不可编辑</span>
     {{# } }}
+    {{# if (d.can_delete == 1) { }}
+    <a class="layui-btn layui-btn-xs failed-ship-delete-btn" lay-event="deleteRejected">删除</a>
+    {{# } }}
 </script>
 
 {include file="common/foot"/}
@@ -160,6 +190,10 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
     var listUrl = '{:url("Ship/failedShip")}';
     var detailUrlBase = '{:url("Ship/applyDetail")}';
     var editRejectedUrlBase = '{:url("Ship/editRejectedShip")}';
+    var deleteRejectedUrl = {$deleteRejectedUrlJson|default='""'|raw};
+    var deleteRejectedCsrfToken = {$deleteRejectedCsrfTokenJson|default='""'|raw};
+    var isDesignatedFailedAdmin = parseInt('{$isDesignatedFailedAdmin|default="0"}', 10) === 1;
+    var deletingRejected = false;
 
     function escapeHtml(str) {
         return String(str == null ? '' : str)
@@ -186,6 +220,28 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
             start_time: $.trim($('#start_time').val() || ''),
             end_time: $.trim($('#end_time').val() || '')
         };
+    }
+
+    function notifyParentFailedShipBadgeRefresh() {
+        var win = window;
+        var depth = 0;
+        while (win && depth < 8) {
+            try {
+                if (typeof win.crmRefreshFailedShipBadge === 'function') {
+                    win.crmRefreshFailedShipBadge();
+                    return;
+                }
+            } catch (ignoreLevel) {}
+            try {
+                if (!win.parent || win.parent === win) {
+                    break;
+                }
+                win = win.parent;
+            } catch (crossOrigin) {
+                break;
+            }
+            depth++;
+        }
     }
 
     function openDetail(id) {
@@ -222,6 +278,108 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
         });
     }
 
+    function openDeleteRejected(row) {
+        if (!isDesignatedFailedAdmin || parseInt(row.can_delete, 10) !== 1) {
+            layer.msg('无权删除该发货申请', { icon: 2 });
+            return;
+        }
+        if (deletingRejected) {
+            return;
+        }
+        var applyId = parseInt(row.id, 10);
+        var applyNo = String(row.apply_no || '');
+        if (!applyId || applyId <= 0 || String(applyId) !== String(row.id)) {
+            layer.msg('申请ID无效', { icon: 2 });
+            return;
+        }
+        if (!deleteRejectedUrl || !deleteRejectedCsrfToken) {
+            layer.msg('删除权限未就绪，请刷新页面后重试', { icon: 2 });
+            return;
+        }
+
+        var dialogHtml = ''
+            + '<div class="failed-ship-delete-dialog" style="padding:16px 18px 8px;">'
+            + '<p class="failed-ship-delete-tip">即将软删除发货申请 <span class="failed-ship-delete-apply-no">'
+            + escapeHtml(applyNo) + '</span>。</p>'
+            + '<p class="failed-ship-delete-tip">软删除后列表不再显示；历史审批记录、Round 快照与明细仍保留，不会物理删除。</p>'
+            + '<p class="failed-ship-delete-tip">请填写删除原因（必填，1～200 字）：</p>'
+            + '<textarea id="failed-ship-delete-reason" class="layui-textarea" maxlength="200" placeholder="请输入删除原因"></textarea>'
+            + '</div>';
+
+        layer.open({
+            type: 1,
+            title: '确认软删除',
+            area: ['480px', '360px'],
+            shadeClose: false,
+            content: dialogHtml,
+            btn: ['确认删除', '取消'],
+            yes: function (index) {
+                if (deletingRejected) {
+                    return false;
+                }
+                var reason = $.trim($('#failed-ship-delete-reason').val() || '');
+                if (!reason) {
+                    layer.msg('请填写删除原因', { icon: 0 });
+                    return false;
+                }
+                if (reason.length > 200) {
+                    layer.msg('删除原因不能超过200个字符', { icon: 0 });
+                    return false;
+                }
+                layer.confirm(
+                    '确认软删除发货申请「' + escapeHtml(applyNo) + '」吗？此操作不可在本页撤销。',
+                    { icon: 3, title: '二次确认' },
+                    function (confirmIndex) {
+                        layer.close(confirmIndex);
+                        doDeleteRejected(applyId, reason, index);
+                    }
+                );
+                return false;
+            }
+        });
+    }
+
+    function doDeleteRejected(applyId, reason, dialogIndex) {
+        if (deletingRejected) {
+            return;
+        }
+        deletingRejected = true;
+        var loadingIndex = layer.load(1, { shade: [0.15, '#000'] });
+        $.ajax({
+            url: deleteRejectedUrl,
+            type: 'POST',
+            dataType: 'json',
+            data: {
+                apply_id: applyId,
+                delete_reason: reason,
+                csrf_token: deleteRejectedCsrfToken
+            }
+        }).done(function (res) {
+            var code = res && typeof res.code !== 'undefined' ? parseInt(res.code, 10) : -1;
+            var data = res && res.data && typeof res.data === 'object' ? res.data : {};
+            var uncertain = data.result_uncertain === true || data.result_uncertain === 1 || data.result_uncertain === '1';
+            if (code === 0) {
+                layer.close(dialogIndex);
+                layer.msg((res && res.msg) ? res.msg : '删除成功', { icon: 1 });
+                reloadTable(false);
+                try {
+                    notifyParentFailedShipBadgeRefresh();
+                } catch (ignoreBadge) {}
+                return;
+            }
+            if (uncertain) {
+                layer.msg((res && res.msg) ? res.msg : '删除结果待确认，请刷新后核验', { icon: 0, time: 4000 });
+                return;
+            }
+            layer.msg((res && res.msg) ? res.msg : '删除失败', { icon: 2 });
+        }).fail(function () {
+            layer.msg('删除请求失败，请稍后重试', { icon: 2 });
+        }).always(function () {
+            deletingRejected = false;
+            layer.close(loadingIndex);
+        });
+    }
+
     laydate.render({
         elem: '#start_time',
         type: 'date',
@@ -236,6 +394,80 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
         format: 'yyyy-MM-dd'
     });
 
+    var cols = [
+        {
+            field: 'apply_no',
+            title: '发货申请编号',
+            minWidth: 160,
+            templet: function (d) {
+                var no = escapeHtml(d.apply_no || '');
+                return '<a class="failed-ship-apply-no-link" lay-event="viewDetail" title="查看详情">' + no + '</a>';
+            }
+        },
+        {
+            field: 'order_no',
+            title: '原订单编号',
+            minWidth: 150,
+            templet: function (d) { return escapeHtml(d.order_no || ''); }
+        },
+        {
+            field: 'customer_name',
+            title: '客户名称',
+            minWidth: 130,
+            templet: function (d) { return escapeHtml(d.customer_name || ''); }
+        }
+    ];
+    if (isDesignatedFailedAdmin) {
+        cols.push({
+            field: 'applicant_name',
+            title: '申请人',
+            minWidth: 110,
+            templet: function (d) { return escapeHtml(d.applicant_name || ''); }
+        });
+    }
+    cols = cols.concat([
+        {
+            field: 'order_amount',
+            title: '原订单总金额',
+            width: 120,
+            templet: function (d) { return escapeHtml(formatAmount(d.order_amount)); }
+        },
+        {
+            field: 'product_summary',
+            title: '发货产品摘要',
+            minWidth: 200,
+            templet: function (d) {
+                var text = d.product_summary || '';
+                return '<span class="failed-ship-product-summary" title="' + escapeHtml(text) + '">'
+                    + escapeHtml(text) + '</span>';
+            }
+        },
+        {
+            field: 'shipping_date',
+            title: '预计发货日期',
+            width: 120,
+            templet: function (d) { return escapeHtml(d.shipping_date || ''); }
+        },
+        {
+            field: 'submit_time',
+            title: '正式提交时间',
+            width: 170,
+            templet: function (d) { return escapeHtml(d.submit_time || ''); }
+        },
+        {
+            field: 'status_text',
+            title: '审核失败状态',
+            width: 140,
+            templet: function (d) { return escapeHtml(d.status_text || ''); }
+        },
+        {
+            title: '操作',
+            width: isDesignatedFailedAdmin ? 260 : 180,
+            fixed: 'right',
+            toolbar: '#failed-ship-action-tpl'
+        }
+    ]);
+
     var tableIns = table.render({
         elem: '#failed-ship-table',
         id: 'failed-ship-table',
@@ -246,69 +478,7 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
         limits: [10, 20, 50],
         text: { none: '暂无审核失败的发货申请' },
         where: buildWhere(),
-        cols: [[
-            {
-                field: 'apply_no',
-                title: '发货申请编号',
-                minWidth: 160,
-                templet: function (d) {
-                    var no = escapeHtml(d.apply_no || '');
-                    return '<a class="failed-ship-apply-no-link" lay-event="viewDetail" title="查看详情">' + no + '</a>';
-                }
-            },
-            {
-                field: 'order_no',
-                title: '原订单编号',
-                minWidth: 150,
-                templet: function (d) { return escapeHtml(d.order_no || ''); }
-            },
-            {
-                field: 'customer_name',
-                title: '客户名称',
-                minWidth: 130,
-                templet: function (d) { return escapeHtml(d.customer_name || ''); }
-            },
-            {
-                field: 'order_amount',
-                title: '原订单总金额',
-                width: 120,
-                templet: function (d) { return escapeHtml(formatAmount(d.order_amount)); }
-            },
-            {
-                field: 'product_summary',
-                title: '发货产品摘要',
-                minWidth: 200,
-                templet: function (d) {
-                    var text = d.product_summary || '';
-                    return '<span class="failed-ship-product-summary" title="' + escapeHtml(text) + '">'
-                        + escapeHtml(text) + '</span>';
-                }
-            },
-            {
-                field: 'shipping_date',
-                title: '预计发货日期',
-                width: 120,
-                templet: function (d) { return escapeHtml(d.shipping_date || ''); }
-            },
-            {
-                field: 'submit_time',
-                title: '正式提交时间',
-                width: 170,
-                templet: function (d) { return escapeHtml(d.submit_time || ''); }
-            },
-            {
-                field: 'status_text',
-                title: '审核失败状态',
-                width: 140,
-                templet: function (d) { return escapeHtml(d.status_text || ''); }
-            },
-            {
-                title: '操作',
-                width: 180,
-                fixed: 'right',
-                toolbar: '#failed-ship-action-tpl'
-            }
-        ]],
+        cols: [cols],
         done: function (res) {
             if (res && typeof res.code !== 'undefined' && parseInt(res.code, 10) !== 0) {
                 layer.msg(res.msg || '加载失败', { icon: 2 });
@@ -363,6 +533,8 @@ layui.use(['table', 'form', 'layer', 'laydate'], function () {
                 return;
             }
             openEditRejected(id);
+        } else if (obj.event === 'deleteRejected') {
+            openDeleteRejected(obj.data || {});
         }
     });
 });
