@@ -144,6 +144,20 @@ class ShippingApplyService
     }
 
     /**
+     * 全部发货申请只读列表 / 详情扩展：指定超级管理员（与失败列表同一严格口径）
+     *
+     * 仅复用 isDesignatedFailedApplyAdmin，避免复制出第二套宽松判断。
+     *
+     * @param int $adminId 0 时取 Session aid
+     * @param array|null $adminMeta 可选已查身份（含 is_open）
+     * @return bool
+     */
+    public function isDesignatedAllApplyAdmin($adminId = 0, $adminMeta = null)
+    {
+        return $this->isDesignatedFailedApplyAdmin($adminId, $adminMeta);
+    }
+
+    /**
      * 获取当前登录管理员信息
      *
      * @return array
@@ -6615,6 +6629,18 @@ class ShippingApplyService
     /** M4-2C-5-2：审核失败特权仅授予稳定身份 admin_id=1 */
     const DESIGNATED_FAILED_APPLY_ADMIN_ID = 1;
 
+    /**
+     * 「全部发货申请」列表专用正式状态白名单（M4-2C-6-2）
+     * 仅正式申请；不含草稿 0；独立于 MY_APPLY / FAILED 列表白名单。
+     */
+    const ALL_FORMAL_APPLY_LIST_STATUSES = [10, 20, 30, 40, 50, 60];
+
+    /** 全部发货申请列表：显式「全部正式申请」协议值 */
+    const ALL_FORMAL_APPLY_STATUS_ALL = 'all';
+
+    /** 全部发货申请列表：未传状态时的默认值 */
+    const ALL_FORMAL_APPLY_STATUS_DEFAULT = 50;
+
     /** 审核失败受控软删除审计 action */
     const DELETE_REJECTED_AUDIT_ACTION = 'delete_rejected';
 
@@ -7009,6 +7035,315 @@ class ShippingApplyService
                 'is_designated_failed_admin' => $isDesignatedAdmin ? 1 : 0,
             ],
         ];
+    }
+
+    /**
+     * 全部发货申请只读列表（M4-2C-6-2；Layui 分页）
+     *
+     * 仅指定 admin_id=1 且 is_open=1 可查全公司正式申请。
+     * 默认 status=50；显式 status=all 查白名单全集；非法状态拒绝（不得扩大）。
+     * 强制 is_deleted=0；禁止信任前端 admin_id / is_admin / applicant_id 冒充操作人。
+     * 申请人筛选：applicant_id 精确匹配合法正整数，或 applicant_name 模糊匹配主表快照姓名。
+     * 本方法只读，不写库、不改状态机。
+     *
+     * @param array $params
+     * @return array{code:int,msg:string,count:int,data:array}
+     */
+    public function listAllApplies($params = [])
+    {
+        $params = is_array($params) ? $params : [];
+        // 显式丢弃前端伪造身份 / 写操作相关字段，避免后续误用
+        unset(
+            $params['user_id'],
+            $params['admin_id'],
+            $params['is_admin'],
+            $params['group_id'],
+            $params['role'],
+            $params['username'],
+            $params['can_view'],
+            $params['viewer_role'],
+            $params['can_approve'],
+            $params['can_delete'],
+            $params['can_edit'],
+            $params['is_deleted'],
+            $params['is_designated_failed_admin'],
+            $params['is_designated_all_apply_admin']
+        );
+
+        $admin = $this->getCurrentAdminInfo();
+        $adminId = (int)$admin['admin_id'];
+        if ($adminId <= 0) {
+            return ['code' => -200, 'msg' => '请先登录', 'count' => 0, 'data' => []];
+        }
+        // Service 独立鉴权：不因 Controller 已校验而省略
+        if (!$this->isDesignatedAllApplyAdmin($adminId, $admin)) {
+            return ['code' => -200, 'msg' => '无权访问全部发货申请', 'count' => 0, 'data' => []];
+        }
+
+        // P1-1：分页类型闸门（复用 status/applicant_id 同类拒绝方式；合法缺省仍回落默认）
+        if (array_key_exists('page', $params) && $params['page'] !== null && $params['page'] !== '') {
+            $pageRaw = $params['page'];
+            if (is_bool($pageRaw) || is_array($pageRaw) || is_object($pageRaw) || is_float($pageRaw)) {
+                return ['code' => -200, 'msg' => '分页参数无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if (array_key_exists('limit', $params) && $params['limit'] !== null && $params['limit'] !== '') {
+            $limitRaw = $params['limit'];
+            if (is_bool($limitRaw) || is_array($limitRaw) || is_object($limitRaw) || is_float($limitRaw)) {
+                return ['code' => -200, 'msg' => '分页参数无效', 'count' => 0, 'data' => []];
+            }
+        }
+        $page = (int)($params['page'] ?? 1);
+        if ($page < 1) {
+            $page = 1;
+        }
+        $limit = (int)($params['limit'] ?? 10);
+        if ($limit < 1) {
+            $limit = 10;
+        }
+        if ($limit > self::MY_APPLY_LIST_LIMIT_MAX) {
+            $limit = self::MY_APPLY_LIST_LIMIT_MAX;
+        }
+
+        // P1-1：关键字拒绝数组/对象/布尔，避免 (string) Array to string conversion
+        if (array_key_exists('keyword', $params) && $params['keyword'] !== null) {
+            $keywordRaw = $params['keyword'];
+            if (is_bool($keywordRaw) || is_array($keywordRaw) || is_object($keywordRaw)) {
+                return ['code' => -200, 'msg' => '关键字参数无效', 'count' => 0, 'data' => []];
+            }
+        }
+        $keyword = trim((string)($params['keyword'] ?? ''));
+        if (mb_strlen($keyword, 'UTF-8') > self::MY_APPLY_KEYWORD_MAX) {
+            return ['code' => -200, 'msg' => '关键字过长', 'count' => 0, 'data' => []];
+        }
+
+        // 状态协议：未传/空 → 默认 50；all → 白名单全集；单状态白名单内；非法拒绝
+        $statusMode = 'default';
+        $statusFilter = self::ALL_FORMAL_APPLY_STATUS_DEFAULT;
+        if (array_key_exists('status', $params) && $params['status'] !== '' && $params['status'] !== null) {
+            $statusRaw = $params['status'];
+            if (is_bool($statusRaw) || is_array($statusRaw) || is_object($statusRaw) || is_float($statusRaw)) {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+            if (is_string($statusRaw)) {
+                $statusRaw = trim($statusRaw);
+                if ($statusRaw === '') {
+                    $statusMode = 'default';
+                    $statusFilter = self::ALL_FORMAL_APPLY_STATUS_DEFAULT;
+                } elseif (strcasecmp($statusRaw, self::ALL_FORMAL_APPLY_STATUS_ALL) === 0) {
+                    $statusMode = 'all';
+                    $statusFilter = null;
+                } elseif (!preg_match('/^(0|[1-9]\d*)$/', $statusRaw)) {
+                    return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+                } else {
+                    $statusFilter = (int)$statusRaw;
+                    if (!in_array($statusFilter, self::ALL_FORMAL_APPLY_LIST_STATUSES, true)) {
+                        return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+                    }
+                    $statusMode = 'single';
+                }
+            } elseif (is_int($statusRaw)) {
+                if (!in_array($statusRaw, self::ALL_FORMAL_APPLY_LIST_STATUSES, true)) {
+                    return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+                }
+                $statusFilter = $statusRaw;
+                $statusMode = 'single';
+            } else {
+                return ['code' => -200, 'msg' => '审批状态无效', 'count' => 0, 'data' => []];
+            }
+        }
+
+        // 申请人：优先精确 applicant_id；否则 applicant_name 模糊（主表快照，不冒充操作人）
+        $filterApplicantId = null;
+        if (array_key_exists('applicant_id', $params) && $params['applicant_id'] !== '' && $params['applicant_id'] !== null) {
+            $aidRaw = $params['applicant_id'];
+            if (is_bool($aidRaw) || is_array($aidRaw) || is_object($aidRaw) || is_float($aidRaw)) {
+                return ['code' => -200, 'msg' => '申请人无效', 'count' => 0, 'data' => []];
+            }
+            if (is_int($aidRaw)) {
+                if ($aidRaw < 1) {
+                    return ['code' => -200, 'msg' => '申请人无效', 'count' => 0, 'data' => []];
+                }
+                $filterApplicantId = $aidRaw;
+            } elseif (is_string($aidRaw)) {
+                $aidRaw = trim($aidRaw);
+                if ($aidRaw === '' || !preg_match('/^[1-9]\d*$/', $aidRaw)) {
+                    return ['code' => -200, 'msg' => '申请人无效', 'count' => 0, 'data' => []];
+                }
+                $filterApplicantId = (int)$aidRaw;
+            } else {
+                return ['code' => -200, 'msg' => '申请人无效', 'count' => 0, 'data' => []];
+            }
+        }
+
+        if (array_key_exists('applicant_name', $params) && $params['applicant_name'] !== null) {
+            $applicantNameRaw = $params['applicant_name'];
+            if (is_bool($applicantNameRaw) || is_array($applicantNameRaw) || is_object($applicantNameRaw)) {
+                return ['code' => -200, 'msg' => '申请人姓名参数无效', 'count' => 0, 'data' => []];
+            }
+        }
+        $applicantName = trim((string)($params['applicant_name'] ?? ''));
+        if (mb_strlen($applicantName, 'UTF-8') > self::MY_APPLY_KEYWORD_MAX) {
+            return ['code' => -200, 'msg' => '申请人姓名过长', 'count' => 0, 'data' => []];
+        }
+        // 有精确 ID 时忽略姓名模糊，避免条件冲突扩大范围
+        if ($filterApplicantId !== null) {
+            $applicantName = '';
+        }
+
+        if (array_key_exists('start_time', $params) && $params['start_time'] !== null) {
+            $startTimeRaw = $params['start_time'];
+            if (is_bool($startTimeRaw) || is_array($startTimeRaw) || is_object($startTimeRaw)) {
+                return ['code' => -200, 'msg' => '开始日期参数无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if (array_key_exists('end_time', $params) && $params['end_time'] !== null) {
+            $endTimeRaw = $params['end_time'];
+            if (is_bool($endTimeRaw) || is_array($endTimeRaw) || is_object($endTimeRaw)) {
+                return ['code' => -200, 'msg' => '结束日期参数无效', 'count' => 0, 'data' => []];
+            }
+        }
+        $startTime = trim((string)($params['start_time'] ?? ''));
+        $endTime = trim((string)($params['end_time'] ?? ''));
+        $startBound = null;
+        $endBound = null;
+        if ($startTime !== '') {
+            $startBound = $this->parseMyApplyDateBound($startTime, true);
+            if ($startBound === null) {
+                return ['code' => -200, 'msg' => '开始日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($endTime !== '') {
+            $endBound = $this->parseMyApplyDateBound($endTime, false);
+            if ($endBound === null) {
+                return ['code' => -200, 'msg' => '结束日期格式无效', 'count' => 0, 'data' => []];
+            }
+        }
+        if ($startBound !== null && $endBound !== null && strcmp($startBound, $endBound) > 0) {
+            return ['code' => -200, 'msg' => '开始日期不能晚于结束日期', 'count' => 0, 'data' => []];
+        }
+
+        // 全公司正式申请；强制软删排除；状态白名单兜底
+        $query = Db::name('crm_shipping_apply')
+            ->where('is_deleted', 0)
+            ->whereIn('status', self::ALL_FORMAL_APPLY_LIST_STATUSES);
+
+        if ($statusMode !== 'all' && $statusFilter !== null) {
+            $query->where('status', (int)$statusFilter);
+        }
+        if ($filterApplicantId !== null) {
+            $query->where('applicant_id', $filterApplicantId);
+        }
+        if ($applicantName !== '') {
+            $query->whereLike('applicant_name', '%' . $applicantName . '%');
+        }
+        if ($keyword !== '') {
+            $query->where(function ($q) use ($keyword) {
+                $q->whereLike('apply_no', '%' . $keyword . '%')
+                    ->whereOr('order_no', 'like', '%' . $keyword . '%')
+                    ->whereOr('customer_name', 'like', '%' . $keyword . '%');
+            });
+        }
+        if ($startBound !== null) {
+            $query->where('submit_time', '>=', $startBound);
+        }
+        if ($endBound !== null) {
+            $query->where('submit_time', '<=', $endBound);
+        }
+
+        try {
+            $count = (int)(clone $query)->count('id');
+            if ($count <= 0) {
+                return [
+                    'code' => 0,
+                    'msg' => '获取成功',
+                    'count' => 0,
+                    'data' => [],
+                ];
+            }
+
+            $rows = (clone $query)
+                ->field('id,apply_no,order_no,customer_name,order_amount,shipping_date,submit_time,approved_time,status,approval_round,approval_route,approval_threshold,applicant_id,applicant_name,team_name')
+                ->order('submit_time', 'desc')
+                ->order('id', 'desc')
+                ->page($page, $limit)
+                ->select();
+            $rows = (array)$rows;
+        } catch (\Throwable $e) {
+            try {
+                if (class_exists('\\think\\facade\\Log')) {
+                    \think\facade\Log::write('[ShippingApplyService::listAllApplies] ' . $e->getMessage(), 'error');
+                }
+            } catch (\Throwable $ignore) {
+                // 日志失败不得覆盖原安全错误响应
+            }
+            return ['code' => -200, 'msg' => '列表加载失败，请稍后重试', 'count' => 0, 'data' => []];
+        }
+
+        $applyIds = [];
+        $roundMap = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) {
+                $applyIds[] = $id;
+                $roundMap[$id] = (int)($row['approval_round'] ?? 0);
+            }
+        }
+
+        // P1-2：产品摘要 / 当前审批人 / 组装异常隔离；失败不得伪装 code=0
+        try {
+            $summaryMap = $this->buildDraftProductSummaries($applyIds);
+            $approverMap = $this->loadCurrentApproverMap($applyIds, $roundMap, $rows, true);
+
+            $data = [];
+            foreach ($rows as $row) {
+                $id = (int)($row['id'] ?? 0);
+                $status = (int)($row['status'] ?? 0);
+                $approverInfo = isset($approverMap[$id]) && is_array($approverMap[$id])
+                    ? $approverMap[$id]
+                    : [
+                        'current_approver_text' => '',
+                        'next_stage_text' => '',
+                    ];
+                $data[] = [
+                    'id' => $id,
+                    'apply_no' => trim((string)($row['apply_no'] ?? '')),
+                    'order_no' => trim((string)($row['order_no'] ?? '')),
+                    'customer_name' => trim((string)($row['customer_name'] ?? '')),
+                    'applicant_id' => (int)($row['applicant_id'] ?? 0),
+                    'applicant_name' => trim((string)($row['applicant_name'] ?? '')),
+                    'team_name' => trim((string)($row['team_name'] ?? '')),
+                    'order_amount' => round((float)($row['order_amount'] ?? 0), 2),
+                    'shipping_date' => trim((string)($row['shipping_date'] ?? '')),
+                    'submit_time' => trim((string)($row['submit_time'] ?? '')),
+                    'approved_time' => trim((string)($row['approved_time'] ?? '')),
+                    'status' => $status,
+                    'status_text' => $this->mapApplyStatusText($status),
+                    'approval_round' => (int)($row['approval_round'] ?? 0),
+                    'approval_route' => (int)($row['approval_route'] ?? 0),
+                    'approval_route_text' => $this->mapApprovalRouteText((int)($row['approval_route'] ?? 0)),
+                    'product_summary' => isset($summaryMap[$id]) ? $summaryMap[$id] : '',
+                    'current_approver_text' => (string)($approverInfo['current_approver_text'] ?? ''),
+                    'next_stage_text' => (string)($approverInfo['next_stage_text'] ?? ''),
+                ];
+            }
+
+            return [
+                'code' => 0,
+                'msg' => '获取成功',
+                'count' => $count,
+                'data' => $data,
+            ];
+        } catch (\Throwable $e) {
+            try {
+                if (class_exists('\\think\\facade\\Log')) {
+                    \think\facade\Log::write('[ShippingApplyService::listAllApplies] ' . $e->getMessage(), 'error');
+                }
+            } catch (\Throwable $ignore) {
+                // 日志失败不得覆盖原安全错误响应
+            }
+            return ['code' => -200, 'msg' => '列表加载失败，请稍后重试', 'count' => 0, 'data' => []];
+        }
     }
 
     /**
@@ -11956,9 +12291,10 @@ class ShippingApplyService
      * @param int[] $applyIds
      * @param array<int,int> $roundMap apply_id => approval_round
      * @param array $applyRows 当前页主表行（含 status/approval_route）
+     * @param bool $throwOnError true 时查询异常上抛（供 listAllApplies 统一非零 code）；默认 false 保持静默空映射
      * @return array<int,array{current_approver_text:string,next_stage_text:string}>
      */
-    public function loadCurrentApproverMap(array $applyIds, array $roundMap, array $applyRows = [])
+    public function loadCurrentApproverMap(array $applyIds, array $roundMap, array $applyRows = [], $throwOnError = false)
     {
         $applyIds = array_values(array_unique(array_filter(array_map('intval', $applyIds), function ($id) {
             return $id > 0;
@@ -11997,8 +12333,16 @@ class ShippingApplyService
                 ->select();
             $tasks = (array)$tasks;
         } catch (\Throwable $e) {
-            if (class_exists('\\think\\facade\\Log')) {
-                \think\facade\Log::write('[ShippingApplyService::loadCurrentApproverMap] ' . $e->getMessage(), 'error');
+            try {
+                if (class_exists('\\think\\facade\\Log')) {
+                    \think\facade\Log::write('[ShippingApplyService::loadCurrentApproverMap] ' . $e->getMessage(), 'error');
+                }
+            } catch (\Throwable $ignore) {
+                // 日志失败不影响后续返回/抛出
+            }
+            // 默认保持原静默空映射（我的申请等列表）；listAllApplies 传 true 上抛由外层统一非零 code
+            if ($throwOnError) {
+                throw $e;
             }
             return $result;
         }
@@ -12360,14 +12704,15 @@ class ShippingApplyService
             }
         }
 
-        // M4-2C-5-2：指定 admin 仅可只读查看当前失败且未软删申请（不获编辑/再提/审批权）
-        if (in_array($status, self::FAILED_APPLY_LIST_STATUSES, true)
+        // M4-2C-6-2：指定 admin 可只读查看全公司有效正式申请（含原失败 20/40）
+        // 不获编辑 / 再提 / 审批 / 冻结 / 取消权；审批按钮仍由 resolveViewerApprovalActionContext 独立判定
+        if (in_array($status, self::ALL_FORMAL_APPLY_LIST_STATUSES, true)
             && (int)($apply['is_deleted'] ?? 0) === 0
-            && $this->isDesignatedFailedApplyAdmin($viewerId)
+            && $this->isDesignatedAllApplyAdmin($viewerId)
         ) {
             return [
                 'ok' => true,
-                'role' => 'designated_failed_admin',
+                'role' => 'designated_all_apply_admin',
                 'can_view_all_purchase' => true,
                 'viewer_manager_id' => 0,
             ];

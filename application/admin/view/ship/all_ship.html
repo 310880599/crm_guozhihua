@@ -1,0 +1,367 @@
+{include file="common/head"/}
+<style>
+    .all-ship-wrap {
+        padding: 12px 16px 20px;
+    }
+    .all-ship-wrap .layui-card {
+        box-shadow: none;
+        margin-top: 8px;
+    }
+    .all-ship-table-box {
+        overflow-x: auto;
+    }
+    .all-ship-product-summary {
+        display: inline-block;
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+    .all-ship-apply-no-link {
+        color: #1E9FFF;
+        cursor: pointer;
+    }
+    .all-ship-apply-no-link:hover {
+        text-decoration: underline;
+    }
+    /*
+     * M4-2C-6-2：右侧固定操作列可见时，隐藏主表重复「查看详情」，保留 td 占位。
+     * Layui 正常会镜像生成固定列节点；scrollPatch 无横向溢出时会给
+     * .layui-table-fixed-r 加 .layui-hide，此时 :has 不匹配，主表按钮自动恢复。
+     * 不得删除固定列镜像 DOM。
+     */
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"]:has(.layui-table-fixed-r:not(.layui-hide))
+        .layui-table-main a[lay-event="viewDetail"].all-ship-detail-btn {
+        visibility: hidden;
+        pointer-events: none;
+    }
+
+    /* 右侧固定操作列不透明白底，避免主表文字/按钮透出 */
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r,
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r .layui-table-body,
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r table,
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r td,
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r .layui-table-cell {
+        background-color: #fff;
+    }
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r .layui-table-header,
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r .layui-table-header th {
+        background-color: #f2f2f2;
+    }
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r tbody tr:hover > td,
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r tbody tr.layui-table-hover > td {
+        background-color: #f2f2f2;
+    }
+    /* 固定列左侧细边框 + 轻阴影，区分滚动区与操作列 */
+    .all-ship-wrap .layui-table-view[lay-id="all-ship-table"] .layui-table-fixed-r {
+        box-shadow: -2px 0 6px rgba(0, 0, 0, 0.08);
+        border-left: 1px solid #e6e6e6;
+    }
+
+    /* 操作列「查看详情」：不透明蓝底白字 */
+    .all-ship-wrap .all-ship-detail-btn {
+        background-color: #1E9FFF !important;
+        color: #fff !important;
+        border: 1px solid #1E9FFF !important;
+        border-radius: 2px;
+        opacity: 1 !important;
+    }
+    .all-ship-wrap .all-ship-detail-btn:hover {
+        background-color: #0b83e6 !important;
+        border-color: #0b83e6 !important;
+        color: #fff !important;
+    }
+</style>
+</head>
+<body class="skin-<?php if(!empty($_COOKIE['skin'])){echo $_COOKIE['skin'];}else{echo '0';setcookie('skin','0');}?>">
+<div class="admin-main layui-anim layui-anim-upbit all-ship-wrap">
+    <fieldset class="layui-elem-field">
+        <legend>全部发货申请</legend>
+        <div class="layui-card">
+            <div class="layui-form layui-card-header layuiadmin-card-header-auto" style="border-bottom: transparent; height: auto;">
+                <div class="layui-form-item" style="margin-bottom: 0;">
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="width: 70px;">关键字</label>
+                        <div class="layui-input-inline" style="width: 220px;">
+                            <input type="text" id="keyword" name="keyword" placeholder="申请编号 / 订单编号 / 客户名称" autocomplete="off" class="layui-input" maxlength="100">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="width: 70px;">审核状态</label>
+                        <div class="layui-input-inline" style="width: 160px;">
+                            <select id="status" name="status" lay-search="">
+                                <option value="all">全部正式申请</option>
+                                <option value="10">待产品经理审核</option>
+                                <option value="20">产品经理驳回</option>
+                                <option value="30">待产品总监审核</option>
+                                <option value="40">产品总监驳回</option>
+                                <option value="50" selected>审批通过</option>
+                                <option value="60">已取消</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="width: 70px;">申请人</label>
+                        <div class="layui-input-inline" style="width: 140px;">
+                            <input type="text" id="applicant_name" name="applicant_name" placeholder="姓名模糊匹配" autocomplete="off" class="layui-input" maxlength="100" title="按申请单上的申请人姓名快照模糊筛选；同名可能命中多人">
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <label class="layui-form-label" style="width: 90px;">正式提交日期</label>
+                        <div class="layui-input-inline" style="width: 120px;">
+                            <input type="text" id="start_time" name="start_time" placeholder="开始日期" autocomplete="off" class="layui-input" readonly>
+                        </div>
+                        <div class="layui-form-mid">-</div>
+                        <div class="layui-input-inline" style="width: 120px;">
+                            <input type="text" id="end_time" name="end_time" placeholder="结束日期" autocomplete="off" class="layui-input" readonly>
+                        </div>
+                    </div>
+                    <div class="layui-inline">
+                        <button type="button" class="layui-btn layuiadmin-btn-list" id="btn-search">
+                            <i class="layui-icon layui-icon-search" style="vertical-align: sub;"></i>查询
+                        </button>
+                        <button type="button" class="layui-btn layui-btn-primary" id="btn-reset">重置</button>
+                    </div>
+                </div>
+            </div>
+            <div class="layui-card-body all-ship-table-box">
+                <table class="layui-table" id="all-ship-table" lay-filter="all-ship-table"></table>
+            </div>
+        </div>
+    </fieldset>
+</div>
+
+<script type="text/html" id="all-ship-action-tpl">
+    <a class="layui-btn layui-btn-xs all-ship-detail-btn" lay-event="viewDetail">查看详情</a>
+</script>
+
+{include file="common/foot"/}
+<script>
+layui.use(['table', 'form', 'layer', 'laydate'], function () {
+    var table = layui.table;
+    var layer = layui.layer;
+    var form = layui.form;
+    var laydate = layui.laydate;
+    var $ = layui.$;
+
+    var listUrl = '{:url("Ship/allShip")}';
+    var detailUrlBase = '{:url("Ship/applyDetail")}';
+    var DEFAULT_STATUS = '50';
+
+    function escapeHtml(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatAmount(v) {
+        var n = parseFloat(v);
+        if (isNaN(n)) {
+            return '0.00';
+        }
+        return n.toFixed(2);
+    }
+
+    function buildWhere() {
+        var statusVal = $('#status').val();
+        if (statusVal === null || typeof statusVal === 'undefined' || statusVal === '') {
+            statusVal = DEFAULT_STATUS;
+        }
+        return {
+            op: 'list',
+            keyword: $.trim($('#keyword').val() || ''),
+            status: statusVal,
+            applicant_name: $.trim($('#applicant_name').val() || ''),
+            start_time: $.trim($('#start_time').val() || ''),
+            end_time: $.trim($('#end_time').val() || '')
+        };
+    }
+
+    function openDetail(id) {
+        id = parseInt(id, 10);
+        if (!id || id <= 0) {
+            layer.msg('申请ID无效', { icon: 2 });
+            return;
+        }
+        var url = detailUrlBase + (detailUrlBase.indexOf('?') >= 0 ? '&' : '?') + 'id=' + id;
+        layer.open({
+            type: 2,
+            title: '发货申请详情',
+            area: ['92%', '92%'],
+            maxmin: true,
+            shadeClose: true,
+            content: url
+        });
+    }
+
+    laydate.render({
+        elem: '#start_time',
+        type: 'date',
+        format: 'yyyy-MM-dd',
+        done: function () {
+            // 筛选变更由查询按钮统一触发，避免输入过程连发
+        }
+    });
+    laydate.render({
+        elem: '#end_time',
+        type: 'date',
+        format: 'yyyy-MM-dd'
+    });
+
+    var tableIns = table.render({
+        elem: '#all-ship-table',
+        id: 'all-ship-table',
+        url: listUrl,
+        method: 'post',
+        page: true,
+        limit: 10,
+        limits: [10, 20, 50],
+        text: { none: '暂无正式发货申请' },
+        where: buildWhere(),
+        cols: [[
+            {
+                field: 'apply_no',
+                title: '发货申请编号',
+                minWidth: 160,
+                templet: function (d) {
+                    var no = escapeHtml(d.apply_no || '');
+                    return '<a class="all-ship-apply-no-link" lay-event="viewDetail" title="查看详情">' + no + '</a>';
+                }
+            },
+            {
+                field: 'order_no',
+                title: '原订单编号',
+                minWidth: 150,
+                templet: function (d) { return escapeHtml(d.order_no || ''); }
+            },
+            {
+                field: 'customer_name',
+                title: '客户名称',
+                minWidth: 130,
+                templet: function (d) { return escapeHtml(d.customer_name || ''); }
+            },
+            {
+                field: 'applicant_name',
+                title: '申请人',
+                minWidth: 110,
+                templet: function (d) { return escapeHtml(d.applicant_name || ''); }
+            },
+            {
+                field: 'team_name',
+                title: '所属团队',
+                minWidth: 110,
+                templet: function (d) { return escapeHtml(d.team_name || '-'); }
+            },
+            {
+                field: 'order_amount',
+                title: '原订单金额',
+                width: 120,
+                templet: function (d) { return escapeHtml(formatAmount(d.order_amount)); }
+            },
+            {
+                field: 'product_summary',
+                title: '发货产品摘要',
+                minWidth: 200,
+                templet: function (d) {
+                    var text = d.product_summary || '';
+                    return '<span class="all-ship-product-summary" title="' + escapeHtml(text) + '">'
+                        + escapeHtml(text) + '</span>';
+                }
+            },
+            {
+                field: 'shipping_date',
+                title: '预计发货日期',
+                width: 120,
+                templet: function (d) { return escapeHtml(d.shipping_date || ''); }
+            },
+            {
+                field: 'submit_time',
+                title: '正式提交时间',
+                width: 170,
+                templet: function (d) { return escapeHtml(d.submit_time || ''); }
+            },
+            {
+                field: 'approved_time',
+                title: '审批通过时间',
+                width: 170,
+                templet: function (d) { return escapeHtml(d.approved_time || '-'); }
+            },
+            {
+                field: 'status_text',
+                title: '当前审批状态',
+                width: 140,
+                templet: function (d) { return escapeHtml(d.status_text || ''); }
+            },
+            {
+                field: 'approval_round',
+                title: '审批轮次',
+                width: 90,
+                templet: function (d) {
+                    var r = parseInt(d.approval_round, 10);
+                    if (!r || r < 1) {
+                        return '-';
+                    }
+                    return escapeHtml(String(r));
+                }
+            },
+            {
+                title: '操作',
+                width: 100,
+                fixed: 'right',
+                toolbar: '#all-ship-action-tpl'
+            }
+        ]],
+        done: function (res) {
+            if (res && typeof res.code !== 'undefined' && parseInt(res.code, 10) !== 0) {
+                layer.msg(res.msg || '加载失败', { icon: 2 });
+            }
+        }
+    });
+
+    function reloadTable(resetPage) {
+        var opts = { where: buildWhere() };
+        if (resetPage) {
+            opts.page = { curr: 1 };
+        }
+        tableIns.reload(opts);
+    }
+
+    $('#btn-search').on('click', function () {
+        reloadTable(true);
+    });
+
+    $('#btn-reset').on('click', function () {
+        $('#keyword').val('');
+        $('#status').val(DEFAULT_STATUS);
+        $('#applicant_name').val('');
+        $('#start_time').val('');
+        $('#end_time').val('');
+        form.render('select');
+        reloadTable(true);
+    });
+
+    $('#keyword, #applicant_name').on('keydown', function (e) {
+        if (e.keyCode === 13) {
+            e.preventDefault();
+            reloadTable(true);
+        }
+    });
+
+    table.on('tool(all-ship-table)', function (obj) {
+        var id = parseInt(obj.data && obj.data.id, 10);
+        if (!id || id <= 0 || String(id) !== String(obj.data.id)) {
+            layer.msg('申请ID无效', { icon: 2 });
+            return;
+        }
+        if (obj.event === 'viewDetail') {
+            openDetail(id);
+        }
+    });
+});
+</script>
+</body>
+</html>

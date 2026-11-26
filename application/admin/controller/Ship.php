@@ -229,6 +229,79 @@ class Ship extends Common
     }
 
     /**
+     * 全部发货申请（M4-2C-6-2 指定 admin 只读列表）
+     * GET：仅 admin_id=1 且启用账号可打开页面
+     * POST：仅 op=list → listAllApplies；拒绝任何写操作分发
+     * 菜单节点权限不能代替本方法身份校验。
+     */
+    public function allShip()
+    {
+        $service = $this->getShippingApplyService();
+        $aidRaw = $this->getSubmitSessionAid();
+        $aid = $this->normalizeSubmitSessionAid($aidRaw);
+
+        $denyMsg = '无权访问全部发货申请';
+        if ($aid <= 0) {
+            $denyMsg = ($aidRaw === null || $aidRaw === '' || $aidRaw === false)
+                ? '请先登录'
+                : '登录状态无效';
+            if (request()->isPost()) {
+                return json(['code' => -200, 'msg' => $denyMsg, 'count' => 0, 'data' => []]);
+            }
+            return $this->error($denyMsg);
+        }
+
+        // GET/POST 均拦截：菜单可见 ≠ 数据授权；身份仅来自 Session
+        if (!$service->isDesignatedAllApplyAdmin($aid)) {
+            if (request()->isPost()) {
+                return json(['code' => -200, 'msg' => $denyMsg, 'count' => 0, 'data' => []]);
+            }
+            return $this->error($denyMsg);
+        }
+
+        if (request()->isPost()) {
+            // P1-1：拒绝数组/对象/布尔，避免 (string) 触发 Array to string conversion
+            $opRaw = Request::param('op', '');
+            if (is_array($opRaw) || is_object($opRaw) || is_bool($opRaw)) {
+                return json(['code' => -200, 'msg' => '参数类型无效', 'count' => 0, 'data' => []]);
+            }
+            $op = trim((string)$opRaw);
+            $params = Request::param();
+            if (!is_array($params)) {
+                $params = [];
+            }
+            // 丢弃客户端伪造身份字段；申请人筛选字段由 Service 另行校验
+            unset(
+                $params['user_id'],
+                $params['admin_id'],
+                $params['is_admin'],
+                $params['group_id'],
+                $params['role'],
+                $params['username'],
+                $params['can_view'],
+                $params['viewer_role'],
+                $params['can_approve'],
+                $params['can_delete'],
+                $params['can_edit'],
+                $params['is_deleted'],
+                $params['is_designated_failed_admin'],
+                $params['is_designated_all_apply_admin']
+            );
+
+            switch ($op) {
+                case '':
+                case 'list':
+                    return json($service->listAllApplies($params));
+                default:
+                    // 未知 op 一律拒绝；不转发 delete/freeze/cancel 等到其他写接口
+                    return json(['code' => -200, 'msg' => '无效的操作', 'count' => 0, 'data' => []]);
+            }
+        }
+
+        return $this->fetch('ship/all_ship');
+    }
+
+    /**
      * 审核失败（M4-2C-1B / M4-2C-5-2）
      * GET：列表页；指定 admin 签发独立删除 CSRF
      * POST：op=list → listFailedApplies（普通本人；指定 admin 全公司失败申请）
