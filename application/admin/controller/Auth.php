@@ -157,6 +157,10 @@ class Auth extends Common
                     : array_filter(array_map('trim', explode(',', $data['port_id'])));
                 if (!empty($ports)) {
                     $inquiryId = $data['inquiry_id'] ?? 0;
+                    $bindCheck = $this->validateAdminChannelBinding($inquiryId, $ports, 0, []);
+                    if (!$bindCheck['ok']) {
+                        return ['code' => 0, 'msg' => $bindCheck['msg']];
+                    }
                     if (!empty($inquiryId)) {
                         $used = $this->checkPortsUsed($ports, $inquiryId, 0);
                         if (!empty($used)) {
@@ -175,6 +179,10 @@ class Auth extends Common
             
             // 新增: 若选择了渠道，将渠道名称赋值到旧 channel 字段（兼容旧逻辑）
             if (!empty($data['inquiry_id'])) {
+                $bindCheck = $this->validateAdminChannelBinding($data['inquiry_id'], [], 0, []);
+                if (!$bindCheck['ok']) {
+                    return ['code' => 0, 'msg' => $bindCheck['msg']];
+                }
                 $data['channel'] = Db::name('crm_inquiry')->where('id', $data['inquiry_id'])->value('inquiry_name') ?? '';
             }
 
@@ -347,12 +355,20 @@ class Auth extends Common
             }
 
             // 处理运营端口数据（现在存储的是店铺名称，不是ID）
+            $oldInquiryId = (int)($info['inquiry_id'] ?? 0);
+            $oldPortIds = !empty($info['port_id'])
+                ? array_filter(array_map('trim', explode(',', (string)$info['port_id'])))
+                : [];
             if (isset($data['port_id']) && $data['port_id'] !== '') {
                 $ports = is_array($data['port_id'])
                     ? array_filter(array_map('trim', $data['port_id']))
                     : array_filter(array_map('trim', explode(',', $data['port_id'])));
                 if (!empty($ports)) {
                     $inquiryId = $data['inquiry_id'] ?? 0;
+                    $bindCheck = $this->validateAdminChannelBinding($inquiryId, $ports, $oldInquiryId, $oldPortIds);
+                    if (!$bindCheck['ok']) {
+                        return ['code' => 0, 'msg' => $bindCheck['msg']];
+                    }
                     if (!empty($inquiryId)) {
                         $used = $this->checkPortsUsed($ports, $inquiryId, $data['admin_id']);
                         if (!empty($used)) {
@@ -370,6 +386,15 @@ class Auth extends Common
 
             // 新增: 若提交了渠道ID，查询渠道名称并赋值到 channel 字段
             if (!empty($data['inquiry_id'])) {
+                $bindCheck = $this->validateAdminChannelBinding(
+                    $data['inquiry_id'],
+                    [],
+                    $oldInquiryId,
+                    $oldPortIds
+                );
+                if (!$bindCheck['ok']) {
+                    return ['code' => 0, 'msg' => $bindCheck['msg']];
+                }
                 $data['channel'] = Db::name('crm_inquiry')->where('id', $data['inquiry_id'])->value('inquiry_name') ?? '';
             }
 
@@ -664,13 +689,23 @@ class Auth extends Common
 
 
     public function getChannels() {
-        // 查询 crm_inquiry 表中 status=0 的渠道
-        $list = Db::name('crm_inquiry')->where('status', 0)->field('id, inquiry_name')->select();
+        // 查询 crm_inquiry 表中 status=0 的渠道；编辑时可带 include_id 兜底已绑停用渠道
+        $list = Db::name('crm_inquiry')->where('status', 0)->field('id, inquiry_name, status')->select();
+        if (!is_array($list)) {
+            $list = $list ? $list->toArray() : [];
+        }
+        $includeId = input('include_id/d', 0);
+        if ($includeId > 0) {
+            $svc = new \app\admin\service\InquiryChannelStatusService();
+            $extra = Db::name('crm_inquiry')->where('id', $includeId)->field('id, inquiry_name, status')->find();
+            $list = $svc->mergeDisabledCurrent($list, $extra, 'inquiry_name');
+        }
         $channels = [];
         foreach ($list as $li) {
+            $name = (string)$li['inquiry_name'];
             $channels[] = [
                 'id'   => $li['id'],
-                'name' => $li['inquiry_name']
+                'name' => $name
             ];
         }
         return json(['code' => 1, 'msg' => '获取成功!', 'data' => $channels]);
@@ -684,22 +719,32 @@ class Auth extends Common
             return json(['code' => 0, 'msg' => '渠道ID不能为空', 'data' => []]);
         }
         try {
-            // 查询指定渠道下 status=0 的端口列表
+            // 查询指定渠道下 status=0 的端口列表；编辑时合并当前管理员已绑停用端口
             $portList = Db::name('crm_inquiry_port')
                 ->where('inquiry_id', $inquiry_id)
                 ->where('status', 0)
-                ->field('id, port_name')
+                ->field('id, port_name, status, inquiry_id')
                 ->select();
-            if (!$portList) {
-                return json(['code' => 0, 'msg' => '该渠道暂无端口数据', 'data' => []]);
+            if (!is_array($portList)) {
+                $portList = $portList ? $portList->toArray() : [];
             }
             // 获取当前管理员已选的端口ID列表（编辑时用来解禁自己已选的端口）
             $currentPortIds = [];
             if ($admin_id) {
                 $currentAdmin = Admin::get($admin_id);
                 if ($currentAdmin && !empty($currentAdmin['port_id'])) {
-                    $currentPortIds = array_filter(explode(',', $currentAdmin['port_id']));
+                    $currentPortIds = array_filter(array_map('trim', explode(',', $currentAdmin['port_id'])));
                 }
+            }
+            if (!empty($currentPortIds)) {
+                $svc = new \app\admin\service\InquiryChannelStatusService();
+                $portList = $svc->mergeDisabledPortsByIds($portList, $currentPortIds);
+                $portList = array_values(array_filter($portList, function ($p) use ($inquiry_id) {
+                    return (int)($p['inquiry_id'] ?? 0) === (int)$inquiry_id;
+                }));
+            }
+            if (!$portList) {
+                return json(['code' => 0, 'msg' => '该渠道暂无端口数据', 'data' => []]);
             }
             // 收集同渠道下其他管理员已占用的端口ID
             $usedPortIds = [];
@@ -728,16 +773,68 @@ class Auth extends Common
                 if ($is_used && in_array($id, $currentPortIds)) {
                     $is_used = 0;  // 自己已选的端口视为可用
                 }
+                $portName = (string)$port['port_name'];
                 $data[] = [
                     'id'        => $port['id'],
-                    'port_name' => $port['port_name'],
+                    'port_name' => $portName,
                     'is_used'   => $is_used
                 ];
             }
             return json(['code' => 1, 'msg' => '获取成功!', 'data' => $data]);
         } catch (\Exception $e) {
-            return json(['code' => 0, 'msg' => '获取端口列表失败:' . $e->getMessage(), 'data' => []]);
+            return json(['code' => 0, 'msg' => '获取端口列表失败', 'data' => []]);
         }
+    }
+
+    /**
+     * 运营账号新绑定渠道/端口仅允许启用记录；保留原绑定停用值
+     *
+     * @param int $inquiryId
+     * @param array $portIds
+     * @param int $oldInquiryId
+     * @param array $oldPortIds
+     * @return array{ok:bool,msg:string}
+     */
+    private function validateAdminChannelBinding($inquiryId, array $portIds, $oldInquiryId = 0, array $oldPortIds = [])
+    {
+        $inquiryId = (int)$inquiryId;
+        if ($inquiryId <= 0) {
+            return ['ok' => true, 'msg' => ''];
+        }
+        $inquiry = Db::name('crm_inquiry')->where('id', $inquiryId)->find();
+        if (!$inquiry) {
+            return ['ok' => false, 'msg' => '所属渠道不存在'];
+        }
+        $oldInquiryId = (int)$oldInquiryId;
+        if ((int)($inquiry['status'] ?? 0) !== 0 && $inquiryId !== $oldInquiryId) {
+            return ['ok' => false, 'msg' => '所选渠道已停用，请选择启用中的渠道'];
+        }
+        $oldPortSet = array_fill_keys(array_map('strval', $oldPortIds), true);
+        if (!empty($portIds)) {
+            $rows = Db::name('crm_inquiry_port')
+                ->where('inquiry_id', $inquiryId)
+                ->whereIn('id', $portIds)
+                ->field('id, status')
+                ->select();
+            $map = [];
+            foreach ($rows as $r) {
+                $map[(string)$r['id']] = (int)($r['status'] ?? 0);
+            }
+            if (count($map) !== count($portIds)) {
+                return ['ok' => false, 'msg' => '运营端口数据无效'];
+            }
+            foreach ($portIds as $pid) {
+                $pid = (string)$pid;
+                if ($map[$pid] === 0) {
+                    continue;
+                }
+                if ($inquiryId === $oldInquiryId && isset($oldPortSet[$pid])) {
+                    continue;
+                }
+                return ['ok' => false, 'msg' => '所选运营端口已停用，请选择启用中的端口'];
+            }
+        }
+        return ['ok' => true, 'msg' => ''];
     }
 
     // 检查店铺（店铺名称）是否已被使用

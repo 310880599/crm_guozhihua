@@ -426,7 +426,11 @@
         
         function getChannelList(ele) {
             var url = "{:url('getChannels')}";
-            $.get(url, function(res) {
+            var channelParams = {};
+            if (info && info.inquiry_id) {
+                channelParams.include_id = info.inquiry_id;
+            }
+            $.get(url, channelParams, function(res) {
                 if (res.code > 0) {
                     // 构建“所属渠道”下拉选择框 HTML
                     var channelHtml = '<div class="layui-form-item" id="channel-item">'

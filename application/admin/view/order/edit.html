@@ -1076,7 +1076,7 @@
                             <select name="source" id="source" lay-filter="kh_status" lay-search="" lay-verify="required">
                                 <option value="">请选择询盘来源</option>
                                 {volist name='sourceList' id='vo'}
-                                <option value="{$vo|htmlentities}">{$vo|htmlentities}</option>
+                                <option value="{$vo.value|htmlentities}">{$vo.text|htmlentities}</option>
                                 {/volist}
                             </select>
                         </div>
@@ -1996,8 +1996,10 @@
                         }
                     });
                     if (!matched) {
+                        var wantName = String(anyValue).replace(/（已停用）$/, '');
                         $sourcePort.find('option').each(function() {
-                            if ($(this).text() === String(anyValue)) {
+                            var optText = String($(this).text() || '').replace(/（已停用）$/, '');
+                            if ($(this).text() === String(anyValue) || optText === wantName) {
                                 $sourcePort.val($(this).val());
                                 return false;
                             }
@@ -2021,7 +2023,8 @@
                     return;
                 }
             }
-            var sourceName = $(data.elem).find("option:selected").text();
+            // 必须用 option value（原始来源名），不能用带「（已停用）」的展示 text，否则 shopList/yyList 键对不上
+            var sourceName = String(data.value || '').trim();
             var users = yyList[sourceName] || [];
             var $oper = $('select[name="oper_user"]');
             $oper.empty().append('<option value="">请选择运营人员</option>');

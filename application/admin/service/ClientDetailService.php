@@ -75,8 +75,18 @@ class ClientDetailService
         }
 
         $productList = $this->buildProductList($client);
+        $svc = new InquiryChannelStatusService();
         $channelList = Db::table('crm_inquiry')->where('status', 0)->select();
+        $channelList = is_array($channelList) ? $channelList : ($channelList ? $channelList->toArray() : []);
+        if (!empty($client['inquiry_id'])) {
+            $curInquiry = Db::table('crm_inquiry')->where('id', (int)$client['inquiry_id'])->find();
+            $channelList = $svc->mergeDisabledCurrent($channelList, $curInquiry, 'inquiry_name');
+        }
         $portList = Db::table('crm_inquiry_port')->where('status', 0)->select();
+        $portList = is_array($portList) ? $portList : ($portList ? $portList->toArray() : []);
+        if (!empty($selectedPorts)) {
+            $portList = $svc->mergeDisabledPortsByIds($portList, $selectedPorts);
+        }
         $clientRankList = $this->buildClientRankListForEdit($client['kh_rank'] ?? '');
         $khRankValue = $this->normalizeKhRankToId($client['kh_rank'] ?? '', $clientRankList);
         $shopList = $this->buildShopList();

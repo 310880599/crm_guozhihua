@@ -5,10 +5,22 @@ namespace app\admin\controller;
 use think\Db;
 use think\facade\Request;
 use app\admin\model\Admin;
+use app\admin\service\InquiryChannelStatusService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class Inquiry extends Common
 {
+    /** @var InquiryChannelStatusService|null */
+    private $channelStatusService = null;
+
+    private function channelStatusService(): InquiryChannelStatusService
+    {
+        if ($this->channelStatusService === null) {
+            $this->channelStatusService = new InquiryChannelStatusService();
+        }
+        return $this->channelStatusService;
+    }
+
     public function index()
     {
         if (request()->isPost()) {
@@ -27,6 +39,12 @@ class Inquiry extends Common
 
         if (!empty($inquiry_name)) {
             $query->where('inquiry_name', 'like', '%' . $inquiry_name . '%');
+        }
+
+        // 状态筛选：空=全部；0=启用；1=已停用
+        $status = Request::param('status', '');
+        if ($status !== '' && $status !== null) {
+            $query->where('status', (int)$status);
         }
 
         $list = $query->where([$this->getOrgWhere($current_admin['org'])])->order('id desc')->paginate([
@@ -62,6 +80,7 @@ class Inquiry extends Common
                 $data = [
                     'inquiry_name' => $inquiry_name,
                     'org' => $current_admin['org'],
+                    'status' => InquiryChannelStatusService::STATUS_ENABLED,
                     'add_time' => time(),
                     'edit_time' => time(),
                     'submit_person' => $current_admin['username']
@@ -143,144 +162,74 @@ class Inquiry extends Common
         return $this->fetch();
     }
 
+    /**
+     * 停用询盘来源（原删除入口，改为 status=1，保留历史关联）
+     */
     public function del()
     {
-        $id = (int)\think\facade\Request::param('id');
-        if ($id <= 0) {
+        if (!request()->isPost()) {
+            return $this->result([], 500, '非法请求');
+        }
+        $id = $this->channelStatusService()->parseStrictPositiveInt(Request::param('id'));
+        if ($id === null) {
             return $this->result([], 500, '参数错误');
         }
-
-        $current_admin = \app\admin\model\Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin');
-
-        // 查记录 + 按权限限制
-        $rowQuery = \think\Db::name('crm_inquiry')->where('id', $id);
-        if (!$isSuper) {
-            $rowQuery->where('submit_person', $current_admin['username']);
-        }
-        $row = $rowQuery->find();
-        if (!$row) {
-            return $this->result([], 500, '无权限或记录不存在');
-        }
-
-        // 被运营端口引用则禁止删除，并提示询盘来源名称
-        $hasProduct = \think\Db::name('crm_inquiry_port')->where('inquiry_id', $id)->limit(1)->value('id');
-        if ($hasProduct) {
-            $name = $row['inquiry_name'] ?: ('ID#' . $id);
-            return $this->result([
-                'blocked_ids'   => [$id],
-                'blocked_names' => [$name],
-            ], 500, '该询盘来源下存在运营端口，禁止删除：' . $name);
-        }
-
-        $aff = \think\Db::name('crm_inquiry')->where('id', $id)->delete();
-        return $aff ? $this->result([], 200, '删除成功')
-            : $this->result([], 500, '删除失败');
+        $current_admin = Admin::getMyInfo();
+        $ret = $this->channelStatusService()->disableInquiry($id, $current_admin ?: []);
+        return $this->result($ret['data'] ?? [], $ret['code'], $ret['msg']);
     }
 
-
-
-
-    // 批量删除
+    /**
+     * 批量停用询盘来源
+     */
     public function batchDel()
     {
         if (!request()->isPost()) {
             return json(['code' => -200, 'msg' => '非法请求']);
         }
         $ids = input('post.ids/a', []);
-        if (empty($ids)) {
-            return json(['code' => -200, 'msg' => '未选择任何记录']);
+        $current_admin = Admin::getMyInfo();
+        $ret = $this->channelStatusService()->batchDisableInquiry($ids, $current_admin ?: []);
+        return json([
+            'code' => $ret['code'],
+            'msg' => $ret['msg'],
+            'data' => $ret['data'] ?? [],
+        ]);
+    }
+
+    /**
+     * 启用询盘来源
+     */
+    public function enable()
+    {
+        if (!request()->isPost()) {
+            return $this->result([], 500, '非法请求');
         }
-
-        // 去重+转整型
-        $ids = array_values(array_unique(array_map('intval', $ids)));
-
-        $current_admin = \app\admin\model\Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || (($current_admin['username'] ?? '') === 'admin');
-
-        try {
-            // 1) 按权限过滤：只保留“存在且自己提交（或超管）”的ID
-            $base = \think\Db::name('crm_inquiry')->whereIn('id', $ids);
-            if (!$isSuper) {
-                $base->where('submit_person', $current_admin['username']);
-            }
-            // id => inquiry_name
-            $allowedMap = $base->column('inquiry_name', 'id');
-            $allowedIds = array_map('intval', array_keys($allowedMap));
-            if (empty($allowedIds)) {
-                return json(['code' => -200, 'msg' => '无可删除的记录（仅能删除本人提交的记录）']);
-            }
-
-            // 2) 找出被运营端口引用的询盘来源（这些不得删除）
-            $usedMap = \think\Db::name('crm_inquiry_port')
-                ->whereIn('inquiry_id', $allowedIds)
-                ->group('inquiry_id')
-                ->column('COUNT(1)', 'inquiry_id'); // [inquiry_id => cnt]
-            $usedIds = array_map('intval', array_keys($usedMap));
-
-            // 被阻止的名称（完整）
-            $blockedNames = [];
-            if (!empty($usedIds)) {
-                foreach ($usedIds as $uid) {
-                    if (isset($allowedMap[$uid])) {
-                        $blockedNames[] = (string)$allowedMap[$uid];
-                    }
-                }
-            }
-
-            // 预览最多 30 个名称
-            $previewLimit = 30;
-            $blockedPreview = array_slice($blockedNames, 0, $previewLimit);
-            $blockedPreviewText = implode('、', $blockedPreview);
-            $hasMoreBlocked = count($blockedNames) > $previewLimit;
-
-            // 3) 计算可删除ID = 有权限IDs - 被引用IDs
-            $deletableIds = array_values(array_diff($allowedIds, $usedIds));
-
-            // 4) 执行删除
-            $deleted = 0;
-            if (!empty($deletableIds)) {
-                $deleted = \think\Db::name('crm_inquiry')->whereIn('id', $deletableIds)->delete();
-            }
-
-            // 5) 统计与消息
-            $skippedPermission = count($ids) - count($allowedIds);
-            $skippedUsed       = count($usedIds);
-
-            $parts = [];
-            $parts[] = '删除成功：' . $deleted . ' 条';
-            if ($skippedUsed > 0) {
-                $p = '跳过(存在运营端口)：' . $skippedUsed . ' 条';
-                if ($blockedPreviewText !== '') {
-                    // 名称预览附在消息里；完整数组放 data
-                    if ($hasMoreBlocked) {
-                        $p .= '（' . $blockedPreviewText . ' 等' . count($blockedNames) . '个）';
-                    } else {
-                        $p .= '（' . $blockedPreviewText . '）';
-                    }
-                }
-                $parts[] = $p;
-            }
-            if ($skippedPermission > 0) {
-                $parts[] = '跳过(无权限/不存在)：' . $skippedPermission . ' 条';
-            }
-
-            return json([
-                'code' => 0,
-                'msg'  => implode('，', $parts),
-                'data' => [
-                    'deleted'                    => (int)$deleted,
-                    'skipped_used'               => $skippedUsed,
-                    'skipped_permission'         => $skippedPermission,
-                    'blocked_ids'                => array_values($usedIds),
-                    'blocked_names'              => $blockedNames,       // 完整名称数组
-                    'blocked_names_preview'      => $blockedPreview,     // 预览名称数组（<=30个）
-                    'blocked_names_preview_limit' => $previewLimit,
-                ],
-            ]);
-        } catch (\Throwable $e) {
-            return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
+        $id = $this->channelStatusService()->parseStrictPositiveInt(Request::param('id'));
+        if ($id === null) {
+            return $this->result([], 500, '参数错误');
         }
+        $current_admin = Admin::getMyInfo();
+        $ret = $this->channelStatusService()->enableInquiry($id, $current_admin ?: []);
+        return $this->result($ret['data'] ?? [], $ret['code'], $ret['msg']);
+    }
+
+    /**
+     * 批量启用询盘来源
+     */
+    public function batchEnable()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => -200, 'msg' => '非法请求']);
+        }
+        $ids = input('post.ids/a', []);
+        $current_admin = Admin::getMyInfo();
+        $ret = $this->channelStatusService()->batchEnableInquiry($ids, $current_admin ?: []);
+        return json([
+            'code' => $ret['code'],
+            'msg' => $ret['msg'],
+            'data' => $ret['data'] ?? [],
+        ]);
     }
 
 
@@ -423,6 +372,7 @@ class Inquiry extends Common
             $ok = \think\Db::name('crm_inquiry')->insert([
                 'inquiry_name' => $inquiry_name,
                 'org'           => $orgToUse,
+                'status'        => InquiryChannelStatusService::STATUS_ENABLED,
                 'add_time'      => $now,
                 'edit_time'     => $now,
                 'submit_person' => $user,

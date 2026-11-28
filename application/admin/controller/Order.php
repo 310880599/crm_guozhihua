@@ -53,6 +53,163 @@ class Order extends Common
     }
 
     /**
+     * 去掉渠道展示后缀「（已停用）」，避免写入订单快照字段
+     *
+     * @param string $name
+     * @return string
+     */
+    private function stripDisabledChannelLabel($name)
+    {
+        $name = trim((string)$name);
+        if ($name === '') {
+            return '';
+        }
+        $suffix = '（已停用）';
+        $suffixLen = mb_strlen($suffix, 'UTF-8');
+        $nameLen = mb_strlen($name, 'UTF-8');
+        if ($nameLen >= $suffixLen && mb_substr($name, -$suffixLen, null, 'UTF-8') === $suffix) {
+            return trim(mb_substr($name, 0, $nameLen - $suffixLen, 'UTF-8'));
+        }
+        return $name;
+    }
+
+    /**
+     * 订单编辑保存：渠道启停用保护
+     * - 来源+端口均与原快照一致：允许保留停用历史
+     * - 主动改选：目标必须启用，且端口须挂在对应来源下
+     * - 空提交且原有快照：回填原值，避免清空
+     *
+     * @param string $newSource 已去后缀的提交来源名
+     * @param string $sourcePortInput 原始提交（多为端口 ID）
+     * @param string $resolvedPortName 已解析的端口名
+     * @param array|null $resolvedPortRow 按 ID 查到的端口行
+     * @param string $oldSource 原订单 source
+     * @param string $oldSourcePort 原订单 source_port
+     * @return array{ok:bool,msg:string,preserve_source?:string,preserve_source_port?:string}
+     */
+    private function validateOrderEditChannelSnapshot(
+        $newSource,
+        $sourcePortInput,
+        $resolvedPortName,
+        $resolvedPortRow,
+        $oldSource,
+        $oldSourcePort
+    ) {
+        $newSource = $this->stripDisabledChannelLabel(trim((string)$newSource));
+        $sourcePortInput = $this->stripDisabledChannelLabel(trim((string)$sourcePortInput));
+        $resolvedPortName = $this->stripDisabledChannelLabel(trim((string)$resolvedPortName));
+        $oldSource = $this->stripDisabledChannelLabel(trim((string)$oldSource));
+        $oldSourcePort = $this->stripDisabledChannelLabel(trim((string)$oldSourcePort));
+
+        // 未提交渠道但订单原有快照：视为未改动，强制保留
+        if ($newSource === '' && $oldSource !== '') {
+            $newSource = $oldSource;
+        }
+        if ($resolvedPortName === '' && $sourcePortInput === '' && $oldSourcePort !== '') {
+            $resolvedPortName = $oldSourcePort;
+        }
+
+        if ($newSource === '') {
+            return ['ok' => false, 'msg' => '请选择询盘来源'];
+        }
+        if ($resolvedPortName === '' && $sourcePortInput === '') {
+            return ['ok' => false, 'msg' => '请选择运营端口'];
+        }
+
+        $sourceUnchanged = ($oldSource !== '' && $newSource === $oldSource);
+        $portUnchanged = ($oldSourcePort !== '' && $resolvedPortName === $oldSourcePort);
+
+        // 来源+端口均未变：允许停用历史快照直接保留
+        if ($sourceUnchanged && $portUnchanged) {
+            return [
+                'ok' => true,
+                'msg' => '',
+                'preserve_source' => $oldSource,
+                'preserve_source_port' => $oldSourcePort,
+            ];
+        }
+
+        // —— 以下为「主动改选」路径：目标必须启用 ——
+        $portRow = is_array($resolvedPortRow) ? $resolvedPortRow : null;
+        if (!$portRow && $sourcePortInput !== '') {
+            $isNumericId = ctype_digit($sourcePortInput)
+                || (is_numeric($sourcePortInput) && (int)$sourcePortInput > 0 && strpos($sourcePortInput, '.') === false);
+            if ($isNumericId) {
+                $portRow = Db::name('crm_inquiry_port')
+                    ->where('id', (int)$sourcePortInput)
+                    ->field('id, inquiry_id, port_name, status')
+                    ->find();
+            }
+        }
+
+        // 名称兜底：仅当能唯一匹配到「父来源名=提交来源」的端口时才采用，禁止任意取第一条
+        if (!$portRow && $resolvedPortName !== '') {
+            $parentIds = Db::name('crm_inquiry')->where('inquiry_name', $newSource)->column('id');
+            if (!empty($parentIds)) {
+                $nameHits = Db::name('crm_inquiry_port')
+                    ->where('port_name', $resolvedPortName)
+                    ->whereIn('inquiry_id', $parentIds)
+                    ->field('id, inquiry_id, port_name, status')
+                    ->select();
+                if (is_array($nameHits) && count($nameHits) === 1) {
+                    $portRow = $nameHits[0];
+                } elseif (is_array($nameHits) && count($nameHits) > 1) {
+                    return [
+                        'ok' => false,
+                        'msg' => '运营端口存在同名记录，无法唯一确认，请重新选择启用中的端口',
+                    ];
+                }
+            }
+        }
+
+        if (!$portRow || empty($portRow['id'])) {
+            return ['ok' => false, 'msg' => '运营端口数据无效，请重新选择'];
+        }
+
+        $parent = Db::name('crm_inquiry')
+            ->where('id', (int)$portRow['inquiry_id'])
+            ->field('id, inquiry_name, status')
+            ->find();
+        if (!$parent) {
+            return ['ok' => false, 'msg' => '运营端口所属询盘来源不存在，请重新选择'];
+        }
+
+        $parentName = $this->stripDisabledChannelLabel(trim((string)($parent['inquiry_name'] ?? '')));
+        if ($parentName !== $newSource) {
+            return ['ok' => false, 'msg' => '运营端口与询盘来源不匹配，请重新选择'];
+        }
+
+        // 来源改选：目标来源必须启用
+        if (!$sourceUnchanged && (int)($parent['status'] ?? 0) !== 0) {
+            return ['ok' => false, 'msg' => '所选询盘来源已停用，请选择启用中的来源'];
+        }
+        // 来源未改但仍挂在停用父来源上：仅允许搭配「原端口」；改选其他端口时父来源也须启用
+        if ($sourceUnchanged && (int)($parent['status'] ?? 0) !== 0 && !$portUnchanged) {
+            // 允许在同一停用来源下改选「启用」子端口；若父已停用且子也非启用则拒绝
+            if ((int)($portRow['status'] ?? 0) !== 0) {
+                return ['ok' => false, 'msg' => '所选运营端口已停用，请选择启用中的端口'];
+            }
+            // 父停用时改选其他启用端口：产品上仍拒绝跨到「其他停用」，启用子端口可接受
+            // 但父停用时启用子端口通常不存在；若存在则允许
+        }
+
+        // 端口改选：目标端口必须启用（保留原端口已在上方短路）
+        if (!$portUnchanged && (int)($portRow['status'] ?? 0) !== 0) {
+            return ['ok' => false, 'msg' => '所选运营端口已停用，请选择启用中的端口'];
+        }
+
+        // 来源未改、端口改到启用端口：若父停用，上面已处理；若父启用则通过
+        // 额外：来源改选时父必须启用（已查）；再确认无「只改来源名但端口仍指向旧停用」的漏洞——端口校验已覆盖
+
+        return [
+            'ok' => true,
+            'msg' => '',
+            'preserve_source' => $newSource,
+            'preserve_source_port' => $this->stripDisabledChannelLabel(trim((string)($portRow['port_name'] ?? $resolvedPortName))),
+        ];
+    }
+
+    /**
      * 合同附件：读取请求并解析写入结果（不信任前端 profit）
      *
      * @param array $profitCalcParams
@@ -2256,7 +2413,8 @@ class Order extends Common
             $data['city']             = Request::param('city', '');
             $data['country']          = Request::param('country');        // 发货地址
             $data['customer_type']    = Request::param('customer_type');  // 公司类别
-            $data['source']           = Request::param('source');         // 询盘来源（运营渠道，存储为文字）
+            // 询盘来源：入库必须为原始名称，禁止把「（已停用）」展示后缀写入快照
+            $data['source']           = $this->stripDisabledChannelLabel(trim((string)Request::param('source', '')));
             $data['bank_account']     = Request::param('bank_account');  // 收款账户 ID (as string)
             
             // 【收款账户快照模式】根据 bank_account ID 查询账户名称并更新快照字段
@@ -2292,22 +2450,25 @@ class Order extends Common
             $data['team_name']        = Request::param('team_name');      // 团队名称
             
             // 处理运营端口：优先识别端口ID并反查名称；查不到时按名称兜底
-            $sourcePortInput = trim((string)Request::param('source_port', ''));
+            $sourcePortInput = $this->stripDisabledChannelLabel(trim((string)Request::param('source_port', '')));
             $sourcePortName = '';
+            $resolvedPortRow = null;
             $data['source_port'] = '';
             if ($sourcePortInput !== '') {
                 $isNumericId = ctype_digit($sourcePortInput) || (is_numeric($sourcePortInput) && (int)$sourcePortInput > 0);
                 if ($isNumericId) {
                     $portInfo = Db::name('crm_inquiry_port')
                         ->where('id', (int)$sourcePortInput)
-                        ->field('id, port_name')
+                        ->field('id, inquiry_id, port_name, status')
                         ->find();
                     if (!empty($portInfo['port_name'])) {
-                        $sourcePortName = trim((string)$portInfo['port_name']);
+                        $resolvedPortRow = $portInfo;
+                        $sourcePortName = $this->stripDisabledChannelLabel(trim((string)$portInfo['port_name']));
                     }
                 }
                 if ($sourcePortName === '') {
                     $sourcePortName = mb_substr($sourcePortInput, 0, 100, 'UTF-8');
+                    $sourcePortName = $this->stripDisabledChannelLabel($sourcePortName);
                 }
                 $data['source_port'] = $sourcePortName;
             }
@@ -2361,6 +2522,30 @@ class Order extends Common
                 ->find();
             if (!$originalOrder) {
                 $originalOrder = [];
+            }
+
+            // P1：渠道启停用保存保护（保留原停用快照 / 拒绝主动改选其他停用渠道）
+            // 不改动产品明细保存链路；仅拦截非法 source / source_port
+            $channelGuard = $this->validateOrderEditChannelSnapshot(
+                (string)($data['source'] ?? ''),
+                (string)$sourcePortInput,
+                (string)($data['source_port'] ?? ''),
+                $resolvedPortRow,
+                trim((string)($originalOrder['source'] ?? '')),
+                trim((string)($originalOrder['source_port'] ?? ''))
+            );
+            if (empty($channelGuard['ok'])) {
+                return json([
+                    'code' => -200,
+                    'msg' => (string)($channelGuard['msg'] ?? '询盘来源或运营端口校验失败，请重新选择'),
+                ]);
+            }
+            // 未改渠道时强制回写原快照，防止空值/歧义解析清空历史
+            if (!empty($channelGuard['preserve_source'])) {
+                $data['source'] = (string)$channelGuard['preserve_source'];
+            }
+            if (!empty($channelGuard['preserve_source_port'])) {
+                $data['source_port'] = (string)$channelGuard['preserve_source_port'];
             }
 
             // 口径：purchase_price = 【进价合计】（整行，非单价），统一走 Service
@@ -2829,6 +3014,7 @@ class Order extends Common
         $this->assign('team_name', $currentAdmin['team_name'] ?? Session::get('team_name'));
 
         // 从 crm_inquiry 表获取询盘来源列表（客户渠道）
+        // 编辑页：启用集 + 仅追加当前订单历史停用渠道（名称作 value，展示可带「已停用」）
         $inquiryWhere = [];
         if ($currentAdmin['org'] && strpos($currentAdmin['org'], 'admin') === false) {
             $inquiryWhere[] = $this->getOrgWhere($currentAdmin['org']);
@@ -2839,10 +3025,79 @@ class Order extends Common
         }
         $inquiryList = $inquiryQuery
             ->where('status', '=', 0)
-            ->field('id, inquiry_name')
+            ->field('id, inquiry_name, status')
             ->order('inquiry_name', 'asc')
             ->select();
-        $sourceList = array_column($inquiryList, 'inquiry_name');
+
+        // 订单自身渠道快照（优先于客户 leads，避免客户改渠道覆盖历史订单回显）
+        $orderSourceName = $this->stripDisabledChannelLabel(trim((string)($order['source'] ?? '')));
+        $orderSourcePortSnapshot = $this->stripDisabledChannelLabel(trim((string)($order['source_port'] ?? '')));
+
+        // 按名称反查历史询盘（含停用）；同名时用端口父子关系消歧，无法唯一则不强行取第一条
+        $historicalInquiry = null;
+        $historicalInquiryAmbiguous = false;
+        if ($orderSourceName !== '') {
+            $histInquiryQuery = Db::name('crm_inquiry')->where('inquiry_name', $orderSourceName);
+            if (!empty($inquiryWhere)) {
+                $histInquiryQuery->where($inquiryWhere);
+            }
+            $histCandidates = $histInquiryQuery->field('id, inquiry_name, status')->select();
+            $histCount = is_array($histCandidates) ? count($histCandidates) : 0;
+            if ($histCount === 1) {
+                $historicalInquiry = $histCandidates[0];
+            } elseif ($histCount > 1) {
+                $resolved = false;
+                if ($orderSourcePortSnapshot !== '') {
+                    $candidateIds = array_map('intval', array_column($histCandidates, 'id'));
+                    $portHits = Db::name('crm_inquiry_port')
+                        ->where('port_name', $orderSourcePortSnapshot)
+                        ->whereIn('inquiry_id', $candidateIds)
+                        ->field('id, inquiry_id')
+                        ->select();
+                    $hitInquiryIds = array_values(array_unique(array_map('intval', array_column($portHits ?: [], 'inquiry_id'))));
+                    if (count($hitInquiryIds) === 1) {
+                        foreach ($histCandidates as $cand) {
+                            if ((int)$cand['id'] === $hitInquiryIds[0]) {
+                                $historicalInquiry = $cand;
+                                $resolved = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!$resolved) {
+                    $disabledOnly = [];
+                    foreach ($histCandidates as $cand) {
+                        if ((int)($cand['status'] ?? 0) !== 0) {
+                            $disabledOnly[] = $cand;
+                        }
+                    }
+                    if (count($disabledOnly) === 1) {
+                        $historicalInquiry = $disabledOnly[0];
+                    } else {
+                        $historicalInquiryAmbiguous = true;
+                    }
+                }
+            }
+        }
+
+        // sourceList：value/text 分离；键与 value 永不为带后缀的展示名
+        $sourceList = [];
+        $enabledSourceNames = [];
+        foreach ($inquiryList as $inquiry) {
+            $name = (string)($inquiry['inquiry_name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $sourceList[] = ['value' => $name, 'text' => $name];
+            $enabledSourceNames[$name] = true;
+        }
+        if ($orderSourceName !== '' && !isset($enabledSourceNames[$orderSourceName])) {
+            $sourceList[] = [
+                'value' => $orderSourceName,
+                'text'  => $orderSourceName . '（已停用）',
+            ];
+        }
         $this->assign('sourceList', $sourceList);
 
         // 获取运营人员列表（以及按询盘来源分类的映射，用于联动下拉）
@@ -2974,8 +3229,9 @@ class Order extends Common
         $this->assign('managerList', $managerList);
 
 
-        // 获取来源端口列表（按来源名称分组，与订单新增页一致）
+        // 获取来源端口列表（按来源名称分组；shopList 键必须为原始来源名）
         $shopList = [];
+        $shopPortRowsBySource = []; // 原始名 => [['id','port_name','status'], ...]
         foreach ($inquiryList as $inquiry) {
             $inquiryName = $inquiry['inquiry_name'];
             $inquiryId = $inquiry['id'];
@@ -2983,12 +3239,18 @@ class Order extends Common
             $ports = Db::name('crm_inquiry_port')
                 ->where('inquiry_id', $inquiryId)
                 ->where('status', '=', 0)
-                ->field('id, port_name')
+                ->field('id, port_name, status')
                 ->order('port_name', 'asc')
                 ->select();
 
+            $rows = [];
             $shops = [];
             foreach ($ports as $port) {
+                $rows[] = [
+                    'id' => $port['id'],
+                    'port_name' => $port['port_name'],
+                    'status' => (int)($port['status'] ?? 0),
+                ];
                 $shops[] = [
                     'id' => $port['id'],
                     'name' => $port['port_name']
@@ -2997,26 +3259,22 @@ class Order extends Common
 
             if (!empty($shops)) {
                 $shopList[$inquiryName] = $shops;
+                $shopPortRowsBySource[$inquiryName] = $rows;
             }
         }
-        $this->assign('shopList', json_encode($shopList, JSON_UNESCAPED_UNICODE));
 
-        // 根据订单的 contact 字段，从 crm_leads 表获取 source_port 值
-        $orderSourcePort = '';
-        if (!empty($order['contact'])) {
+        // 端口回显：优先订单自身 source_port 快照，仅在订单为空时才回退 leads（避免客户改渠道抢占）
+        $orderSourcePort = $orderSourcePortSnapshot;
+        if ($orderSourcePort === '' && !empty($order['contact'])) {
             try {
-                // 通过联系方式查找 crm_contacts 表
                 $custphone = OrderService::normalizeContact($order['contact']);
                 $coninfo = Db::name('crm_contacts')->where('is_delete', 0)->where('contact_value', $custphone)->find();
-                
                 if ($coninfo && !empty($coninfo['leads_id'])) {
-                    // 从 crm_leads 表获取 source_port
                     $custinfo = Db::name('crm_leads')->where('id', $coninfo['leads_id'])->find();
                     if ($custinfo) {
-                        // 检查 source_port 字段是否存在
                         $columns = Db::query("SHOW COLUMNS FROM `crm_leads` LIKE 'source_port'");
                         if (!empty($columns) && isset($custinfo['source_port']) && !empty($custinfo['source_port'])) {
-                            $orderSourcePort = $custinfo['source_port'];
+                            $orderSourcePort = $this->stripDisabledChannelLabel(trim((string)$custinfo['source_port']));
                         }
                     }
                 }
@@ -3024,35 +3282,98 @@ class Order extends Common
                 // 忽略错误，保持为空
             }
         }
-        
-        // 如果订单表本身有 source_port 字段，优先使用订单表的（如果订单表字段存在且不为空）
-        if (empty($orderSourcePort)) {
-            try {
-                $columns = Db::query("SHOW COLUMNS FROM `crm_client_order` LIKE 'source_port'");
-                if (!empty($columns) && isset($order['source_port']) && !empty($order['source_port'])) {
-                    $orderSourcePort = $order['source_port'];
-                }
-            } catch (\Exception $e) {
-                // 忽略错误
-            }
-        }
-        
-        // 如果 source_port 是端口名称（文字），需要找到对应的端口ID以便前端下拉框能正确选中
+
+        // 历史端口 ID：限定父来源后按名反查；无法唯一确定时不任意取第一条
         $orderSourcePortId = '';
-        if (!empty($orderSourcePort)) {
-            // 尝试通过端口名称查找端口ID
-            $portInfo = Db::name('crm_inquiry_port')
-                ->where('port_name', $orderSourcePort)
-                ->field('id')
-                ->find();
-            if ($portInfo && !empty($portInfo['id'])) {
-                $orderSourcePortId = $portInfo['id'];
+        $historicalPortRow = null;
+        if ($orderSourcePort !== '') {
+            $portLookup = Db::name('crm_inquiry_port')->where('port_name', $orderSourcePort);
+            if ($historicalInquiry && !empty($historicalInquiry['id'])) {
+                $portLookup->where('inquiry_id', (int)$historicalInquiry['id']);
+            } elseif ($orderSourceName !== '' && !$historicalInquiryAmbiguous) {
+                // 无唯一历史 inquiry 行时，仍可按「父来源名」收窄，避免跨来源同名端口误绑
+                $nameScopedIds = Db::name('crm_inquiry')->where('inquiry_name', $orderSourceName);
+                if (!empty($inquiryWhere)) {
+                    $nameScopedIds->where($inquiryWhere);
+                }
+                $scoped = $nameScopedIds->column('id');
+                if (!empty($scoped)) {
+                    $portLookup->whereIn('inquiry_id', $scoped);
+                }
+            }
+            $portHits = $portLookup->field('id, inquiry_id, port_name, status')->select();
+            $portHitCount = is_array($portHits) ? count($portHits) : 0;
+            if ($portHitCount === 1) {
+                $historicalPortRow = $portHits[0];
+                $orderSourcePortId = (string)$historicalPortRow['id'];
+                if (!$historicalInquiry && !empty($historicalPortRow['inquiry_id'])) {
+                    $historicalInquiry = Db::name('crm_inquiry')
+                        ->where('id', (int)$historicalPortRow['inquiry_id'])
+                        ->field('id, inquiry_name, status')
+                        ->find();
+                }
+            }
+            // portHitCount!==1：保持空 ID，前端仍可用名称兜底匹配；不误绑
+        }
+
+        // 仅把「当前订单所需」的历史停用端口并入对应来源分组（不把全部停用端口灌进下拉）
+        if ($orderSourceName !== '' && $orderSourcePortId !== '') {
+            $svc = new \app\admin\service\InquiryChannelStatusService();
+            $baseRows = $shopPortRowsBySource[$orderSourceName] ?? [];
+            // 若历史来源本身不在启用集，先把其启用子端口载入（通常为空），再 merge 当前停用端口
+            if (empty($baseRows) && $historicalInquiry && !empty($historicalInquiry['id'])) {
+                $extraEnabled = Db::name('crm_inquiry_port')
+                    ->where('inquiry_id', (int)$historicalInquiry['id'])
+                    ->where('status', '=', 0)
+                    ->field('id, port_name, status')
+                    ->order('port_name', 'asc')
+                    ->select();
+                foreach ($extraEnabled ?: [] as $ep) {
+                    $baseRows[] = [
+                        'id' => $ep['id'],
+                        'port_name' => $ep['port_name'],
+                        'status' => (int)($ep['status'] ?? 0),
+                    ];
+                }
+            }
+            $mergedRows = $svc->mergeDisabledPortsByIds($baseRows, [(int)$orderSourcePortId]);
+            $shops = [];
+            foreach ($mergedRows as $row) {
+                $shops[] = [
+                    'id' => $row['id'],
+                    'name' => $row['port_name'], // merge 已对停用端口追加「（已停用）」展示名；id 不变
+                ];
+            }
+            if (!empty($shops)) {
+                $shopList[$orderSourceName] = $shops;
+            }
+        } elseif ($orderSourceName !== '' && $orderSourcePort !== '' && $orderSourcePortId === '') {
+            // 无法唯一反查端口 ID：仍保证 shopList 有该来源键，用名称作 value 兜底回显（POST 侧按名称保留）
+            $shops = $shopList[$orderSourceName] ?? [];
+            $exists = false;
+            foreach ($shops as $shop) {
+                if ((string)($shop['name'] ?? '') === $orderSourcePort
+                    || (string)($shop['id'] ?? '') === $orderSourcePort) {
+                    $exists = true;
+                    break;
+                }
+            }
+            if (!$exists) {
+                $shops[] = [
+                    'id' => $orderSourcePort,
+                    'name' => $orderSourcePort . '（已停用）',
+                ];
+                $shopList[$orderSourceName] = $shops;
             }
         }
-        
+
+        $this->assign('shopList', json_encode($shopList, JSON_UNESCAPED_UNICODE));
+
         // 将 source_port 值（端口名称）和 source_port_id（端口ID，用于前端回显）添加到订单信息中
-        $order['source_port'] = $orderSourcePort;  // 端口名称（文字）
-        $order['source_port_id'] = $orderSourcePortId;  // 端口ID（用于前端下拉框选中）
+        // 强制回写订单快照名，避免被 leads 覆盖后前端 form.val 与 option 对不上
+        $order['source'] = $orderSourceName !== '' ? $orderSourceName : ($order['source'] ?? '');
+        $order['source_port'] = $orderSourcePort;
+        $order['source_port_id'] = $orderSourcePortId;
 
         // 将订单主表和明细数据分配给模板
         $this->assign('orderInfo', $order);

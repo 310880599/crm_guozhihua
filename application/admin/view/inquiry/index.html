@@ -83,6 +83,16 @@
                                     class="layui-input">
                             </div>
                         </div>
+                        <div class="layui-inline">
+                            <label class="layui-form-label" style="margin-left: 5px">状态：</label>
+                            <div class="layui-input-inline">
+                                <select name="status" id="status" lay-filter="status">
+                                    <option value="">全部</option>
+                                    <option value="0">启用</option>
+                                    <option value="1">已停用</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                     <div class="layui-inline" style="float: right;padding-bottom: 15px">
                         <button class="layui-btn layuiadmin-btn-list" lay-submit lay-filter="LAY-app-contlist-search">
@@ -97,14 +107,18 @@
     </div>
     <script type="text/html" id="action">
         <a class="layui-btn layui-btn-xs" lay-event="edit"><i class="layui-icon">&#xe642;</i>编辑</a>
-        <a class="layui-btn layui-btn-danger layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe640;</i>删除</a>
+        {{# if(parseInt(d.status) === 1){ }}
+        <a class="layui-btn layui-btn-normal layui-btn-xs" lay-event="enable"><i class="layui-icon">&#xe605;</i>启用</a>
+        {{# } else { }}
+        <a class="layui-btn layui-btn-warm layui-btn-xs" lay-event="del"><i class="layui-icon">&#xe620;</i>停用</a>
+        {{# } }}
     </script>
 
     <script type="text/html" id="topBtn">
         <button type="button" class="layui-btn layui-btn-primary layui-btn-radius layui-btn-sm" id="add"><i class="layui-icon">&#xe608;</i>添加询盘来源</button>
-        <button class="layui-btn layui-btn-danger layui-btn-sm" lay-event="batchDel"><i class="layui-icon">&#xe640;</i> 批量删除</button>
+        <button class="layui-btn layui-btn-warm layui-btn-sm" lay-event="batchDel"><i class="layui-icon">&#xe620;</i> 批量停用</button>
+        <button class="layui-btn layui-btn-normal layui-btn-sm" lay-event="batchEnable"><i class="layui-icon">&#xe605;</i> 批量启用</button>
         <button class="layui-btn layui-btn-warm layui-btn-sm" lay-event="importExcel"><i class="layui-icon">&#xe67c;</i> 导入Excel</button>
-        <!-- ★ 新增：下载模板 -->
         <button class="layui-btn layui-btn-normal layui-btn-sm" lay-event="downloadTpl"><i class="layui-icon">&#xe601;</i> 下载模板</button>
     </script>
 
@@ -121,34 +135,38 @@
                 toolbar: '#topBtn',
                 cols: [[
                     { checkbox: true, fixed: true, hide: false },
-                    { field: 'id', title: 'ID', width: '10%', fixed: true, hide: false },
-                    { field: 'inquiry_name', title: '询盘来源', width: '20%', fixed: true, hide: false },
+                    { field: 'id', title: 'ID', width: '8%', fixed: true, hide: false },
+                    { field: 'inquiry_name', title: '询盘来源', width: '18%', fixed: true, hide: false },
+                    {
+                        field: 'status', title: '状态', width: '10%', fixed: true, hide: false,
+                        templet: function (d) {
+                            return parseInt(d.status) === 1
+                                ? '<span class="layui-badge">已停用</span>'
+                                : '<span class="layui-badge layui-bg-green">启用</span>';
+                        }
+                    },
                     { field: 'submit_person', title: '提交人', width: '10%', fixed: true, hide: false },
                     {
-                        field: 'add_time', title: '添加时间', width: '18%', fixed: true, hide: false,
+                        field: 'add_time', title: '添加时间', width: '16%', fixed: true, hide: false,
                         templet: function (d) {
                             var v = d.add_time;
                             if (!v) return '';
-                            // 如果是纯数字（秒级时间戳）
                             if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
-                            // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
                             return v;
                         }
                     },
                     {
-                        field: 'edit_time', title: '修改时间', width: '18%', fixed: true, hide: false,
+                        field: 'edit_time', title: '修改时间', width: '16%', fixed: true, hide: false,
                         templet: function (d) {
                             var v = d.edit_time;
                             if (!v) return '';
-                            // 如果是纯数字（秒级时间戳）
                             if (/^\d+$/.test(v)) return layui.util.toDateString(v * 1000);
-                            // 已经是 'YYYY-MM-DD HH:mm:ss' 字符串，直接显示
                             return v;
                         }
                     },
-                    { align: 'center', toolbar: '#action', width: '20%', fixed: true, hide: false }
+                    { align: 'center', toolbar: '#action', width: '18%', fixed: true, hide: false }
                 ]],
-                limit: 50, //每页默认显示的数量
+                limit: 50,
                 page: { limits: [10, 20, 30, 40, 50, 100, 9999999] },
             });
 
@@ -157,23 +175,43 @@
                 var data = obj.data;
 
                 if (obj.event === 'del') {
-                    layer.confirm('您确定要删除这个询盘来源吗？', function (index) {
+                    layer.confirm('确认停用该询盘来源？历史客户与订单数据将保留，新业务将不可再选此来源。若仍有启用中的子端口，需先停用子端口。', function (index) {
                         var loading = layer.load(1, { shade: [0.1, '#fff'] });
                         $.post(
                             "{:url('Inquiry/del')}",
                             { id: data.id },
                             function (res) {
                                 layer.close(loading);
-                                // 后端：成功 code=200；失败 code=500，msg里已带阻止原因与名称
                                 if (res.code === 200) {
-                                    layer.msg(res.msg || '删除成功', { time: 1000, icon: 1 }, function () {
+                                    layer.msg(res.msg || '停用成功', { time: 1000, icon: 1 }, function () {
                                         tableIn.reload({ page: { curr: 1 } });
                                     });
                                 } else {
-                                    layer.msg(res.msg || '删除失败', { time: 2000, icon: 2 });
+                                    layer.msg(res.msg || '停用失败', { time: 2000, icon: 2 });
                                 }
                             },
-                            'json' // 明确按 JSON 解析
+                            'json'
+                        );
+                        layer.close(index);
+                    });
+                }
+                else if (obj.event === 'enable') {
+                    layer.confirm('确认启用该询盘来源？启用后新业务可再次选择；不会自动恢复其子端口。', function (index) {
+                        var loading = layer.load(1, { shade: [0.1, '#fff'] });
+                        $.post(
+                            "{:url('Inquiry/enable')}",
+                            { id: data.id },
+                            function (res) {
+                                layer.close(loading);
+                                if (res.code === 200) {
+                                    layer.msg(res.msg || '启用成功', { time: 1000, icon: 1 }, function () {
+                                        tableIn.reload({ page: { curr: 1 } });
+                                    });
+                                } else {
+                                    layer.msg(res.msg || '启用失败', { time: 2000, icon: 2 });
+                                }
+                            },
+                            'json'
                         );
                         layer.close(index);
                     });
@@ -188,27 +226,48 @@
             table.on('toolbar(table-list)', function (obj) {
                 if (obj.event === 'batchDel') {
                     var rows = table.checkStatus('table-list').data || [];
-                    if (!rows.length) return layer.msg('请先勾选要删除的记录', { icon: 0 });
+                    if (!rows.length) return layer.msg('请先勾选要停用的记录', { icon: 0 });
 
                     var ids = rows.map(function (r) { return r.id; });
-                    layer.confirm('确认删除选中的 ' + ids.length + ' 条记录吗？', function (index) {
+                    layer.confirm('确认停用选中的 ' + ids.length + ' 条询盘来源？历史数据保留，新业务不可再选；有启用子端口的将跳过。', function (index) {
                         var loading = layer.load(1, { shade: [0.1, '#fff'] });
                         $.post(
                             "{:url('Inquiry/batchDel')}",
                             { ids: ids },
                             function (res) {
                                 layer.close(loading);
-                                // 后端：code=0 表示已处理（成功数/跳过数都在 msg）；其他 code 表示失败
                                 if (res.code === 0) {
-                                    layer.msg(res.msg || '删除完成', { icon: 1, time: 1400 }, function () {
+                                    layer.msg(res.msg || '停用完成', { icon: 1, time: 1800 }, function () {
                                         tableIn.reload({ page: { curr: 1 } });
                                     });
                                 } else {
-                                    // 失败/无可删权限/异常：msg 已包含原因；若后端带了 blocked_names 也会在 msg 中预览展示
-                                    layer.msg(res.msg || '删除失败', { icon: 2, time: 2200 });
+                                    layer.msg(res.msg || '停用失败', { icon: 2, time: 2200 });
                                 }
                             },
-                            'json' // 明确按 JSON 解析
+                            'json'
+                        );
+                        layer.close(index);
+                    });
+                } else if (obj.event === 'batchEnable') {
+                    var rows = table.checkStatus('table-list').data || [];
+                    if (!rows.length) return layer.msg('请先勾选要启用的记录', { icon: 0 });
+                    var ids = rows.map(function (r) { return r.id; });
+                    layer.confirm('确认启用选中的 ' + ids.length + ' 条询盘来源？不会自动恢复其子端口。', function (index) {
+                        var loading = layer.load(1, { shade: [0.1, '#fff'] });
+                        $.post(
+                            "{:url('Inquiry/batchEnable')}",
+                            { ids: ids },
+                            function (res) {
+                                layer.close(loading);
+                                if (res.code === 0) {
+                                    layer.msg(res.msg || '启用完成', { icon: 1, time: 1800 }, function () {
+                                        tableIn.reload({ page: { curr: 1 } });
+                                    });
+                                } else {
+                                    layer.msg(res.msg || '启用失败', { icon: 2, time: 2200 });
+                                }
+                            },
+                            'json'
                         );
                         layer.close(index);
                     });
@@ -221,11 +280,7 @@
                         content: ["{:url('Inquiry/import')}", 'no']
                     });
                 } else if (obj.event === 'downloadTpl') {
-                    // 方式一：当前窗口直接下载
                     window.location.href = "{:url('Inquiry/tpl')}";
-
-                    // （可选）方式二：新标签下载
-                    // window.open("{:url('InquirySource/tpl')}", "_blank");
                 }
             });
 
@@ -234,17 +289,16 @@
                 var indexOpen = layer.open({
                     type: 2,
                     title: '添加询盘来源',
-                    closeBtn: 1, //是否显示关闭按钮
+                    closeBtn: 1,
                     area: ['100%', '86%'],
-                    anim: 2,  //动画
-                    shadeClose: false,  //点击空白处是否关闭
-                    maxmin: false, //开启最大化最小化按钮
+                    anim: 2,
+                    shadeClose: false,
+                    maxmin: false,
                     content: ["{:url('Inquiry/add')}"]
                 });
             })
 
 
-            //监听搜索
             form.on('submit(LAY-app-contlist-search)', function (data) {
                 table.reload('table-list', {
                     url: "{:url('Inquiry/inquirySearch')}",
@@ -267,11 +321,11 @@
             var indexOpen = layer.open({
                 type: 2,
                 title: title,
-                closeBtn: 1, //是否显示关闭按钮
+                closeBtn: 1,
                 area: ['100%', '80%'],
-                anim: 2,  //动画
-                shadeClose: false,  //点击空白处是否关闭
-                maxmin: true, //开启最大化最小化按钮
+                anim: 2,
+                shadeClose: false,
+                maxmin: true,
                 content: [url]
             });
         }

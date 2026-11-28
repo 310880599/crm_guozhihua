@@ -437,13 +437,20 @@ class Common extends Controller
         return $list;
     }
 
-    //询盘来源列表
-    public function getInquiryList()
+    /**
+     * 询盘来源列表
+     * @param bool $onlyEnabled true=仅启用（新增/挂靠端口下拉）；false=全部（管理筛选）
+     */
+    public function getInquiryList($onlyEnabled = false)
     {
         $current_admin = Admin::getMyInfo();
         $where = [];
         if ($current_admin['org'] && strpos($current_admin['org'], 'admin') === false) $where[] = $this->getOrgWhere($current_admin['org']);
-        $list = Db::name('crm_inquiry')->where($where)->select();
+        $query = Db::name('crm_inquiry')->where($where);
+        if ($onlyEnabled) {
+            $query->where('status', 0);
+        }
+        $list = $query->select();
         return $list;
     }
 

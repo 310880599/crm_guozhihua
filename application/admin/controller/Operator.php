@@ -1775,11 +1775,10 @@ private function exportToExcel($data)
         $current_admin = Admin::getMyInfo();
         $stats = [];
         
-        // 获取所有渠道（启用状态的）
+        // 获取全部渠道（含停用），避免停用后历史分桶消失；展示名对停用渠道加标注
         $inquiries = Db::table('crm_inquiry')
             ->where($this->getOrgWhere($current_admin['org']))
-            ->where('status', '=', 0)
-            ->field('id, inquiry_name')
+            ->field('id, inquiry_name, status')
             ->order('inquiry_name', 'asc')
             ->select();
         
@@ -1788,14 +1787,20 @@ private function exportToExcel($data)
         }
         
         $inquiry_ids = array_column($inquiries, 'id');
-        $inquiry_map = array_column($inquiries, 'inquiry_name', 'id');
+        $inquiry_map = [];
+        foreach ($inquiries as $inq) {
+            $name = (string)$inq['inquiry_name'];
+            if ((int)($inq['status'] ?? 0) !== 0) {
+                $name .= '（已停用）';
+            }
+            $inquiry_map[$inq['id']] = $name;
+        }
         
-        // 批量获取所有端口（启用状态的）
+        // 批量获取全部端口（含停用），保留历史统计桶
         $all_ports = Db::table('crm_inquiry_port')
             ->where($this->getOrgWhere($current_admin['org']))
             ->where('inquiry_id', 'in', $inquiry_ids)
-            ->where('status', '=', 0)
-            ->field('id, inquiry_id, port_name')
+            ->field('id, inquiry_id, port_name, status')
             ->order('inquiry_id, port_name', 'asc')
             ->select();
         
@@ -1852,16 +1857,20 @@ private function exportToExcel($data)
                 // 如果有端口，按端口统计
                 foreach ($ports_by_inquiry[$inquiry_id] as $port) {
                     $port_id = $port['id'];
-                    $port_name = $port['port_name'];
+                    $port_name = (string)$port['port_name'];
+                    if ((int)($port['status'] ?? 0) !== 0 && mb_strpos($port_name, '已停用') === false) {
+                        $port_name .= '（已停用）';
+                    }
+                    $channel_name = isset($inquiry_map[$inquiry_id]) ? $inquiry_map[$inquiry_id] : $inquiry_name;
                     $key = "{$inquiry_id}_{$port_id}";
                     
                     $count = isset($count_map[$key]) ? $count_map[$key] : 0;
                     
                     if ($count > 0) {
                         $stats[] = [
-                            'channel_name' => $inquiry_name,
+                            'channel_name' => $channel_name,
                             'port_name' => $port_name,
-                            'display_name' => $inquiry_name . ' - ' . $port_name,
+                            'display_name' => $channel_name . ' - ' . $port_name,
                             'count' => $count
                         ];
                     }
@@ -1870,12 +1879,13 @@ private function exportToExcel($data)
                 // 如果没有端口，统计整个渠道的询盘数量
                 $key = "{$inquiry_id}_";
                 $count = isset($count_map[$key]) ? $count_map[$key] : 0;
+                $channel_name = isset($inquiry_map[$inquiry_id]) ? $inquiry_map[$inquiry_id] : $inquiry_name;
                 
                 if ($count > 0) {
                     $stats[] = [
-                        'channel_name' => $inquiry_name,
+                        'channel_name' => $channel_name,
                         'port_name' => '',
-                        'display_name' => $inquiry_name,
+                        'display_name' => $channel_name,
                         'count' => $count
                     ];
                 }

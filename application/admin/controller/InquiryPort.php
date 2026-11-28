@@ -6,17 +6,32 @@ use think\Db;
 use think\facade\Request;
 use think\Queue; 
 use think\facade\Session;
+use think\facade\Log;
+use think\exception\HttpResponseException;
 use app\admin\model\Admin;
+use app\admin\service\InquiryChannelStatusService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class InquiryPort extends Common
 {
+    /** @var InquiryChannelStatusService|null */
+    private $channelStatusService = null;
+
+    private function channelStatusService(): InquiryChannelStatusService
+    {
+        if ($this->channelStatusService === null) {
+            $this->channelStatusService = new InquiryChannelStatusService();
+        }
+        return $this->channelStatusService;
+    }
+
     public function index()
     {
         if (request()->isPost()) {
             return $this->inquiryPortSearch();
         }
-        $inquiry_list = $this->getInquiryList();
+        // 管理页筛选保留全部来源（含停用），便于按历史父来源过滤
+        $inquiry_list = $this->getInquiryList(false);
         $this->assign('inquiry_list', $inquiry_list);
         return $this->fetch();
     }
@@ -33,6 +48,10 @@ class InquiryPort extends Common
         $inquiry_id = Request::param('inquiry_id');
         if (!empty($inquiry_id)) {
             $query->where('p.inquiry_id', $inquiry_id);
+        }
+        $status = Request::param('status', '');
+        if ($status !== '' && $status !== null) {
+            $query->where('p.status', (int)$status);
         }
         $list = $query->field('p.*, c.inquiry_name')->where([$this->getOrgWhere($current_admin['org'], 'p')])->order('p.id desc')->paginate([
             'list_rows' => $pageSize,
@@ -52,27 +71,64 @@ class InquiryPort extends Common
         if (request()->isPost()) {
             //新增运营端口
             $port_name = Request::param('port_name');
-            $inquiry_id = (int)Request::param('inquiry_id');
+            $inquiry_id = $this->channelStatusService()->parseStrictPositiveInt(Request::param('inquiry_id'));
 
             if (empty($port_name)) {
                 return $this->result([], 500, '运营端口不能为空');
             }
-            $port = $this->checkPortInquiry($port_name, $inquiry_id);
-            if (!$port) {
+            if ($inquiry_id === null) {
+                return $this->result([], 500, '请选择询盘来源');
+            }
+
+            Db::startTrans();
+            $stage = 'init';
+            try {
+                $stage = 'parent_check';
+                $parentCheck = $this->channelStatusService()->assertParentInquiryEnabledForWrite($inquiry_id);
+                if (!$parentCheck['ok']) {
+                    Db::rollback();
+                    return $this->result([], 500, $parentCheck['msg']);
+                }
+                $stage = 'dup_check';
+                $port = $this->checkPortInquiry($port_name, $inquiry_id);
+                if ($port) {
+                    Db::rollback();
+                    return $this->result([], 500, '运营端口已存在');
+                }
                 $current_admin = Admin::getMyInfo();
-                $data['org'] = $current_admin['org'];
-                $data['port_name'] = $port_name;
-                $data['inquiry_id'] = $inquiry_id;
-                $data['add_time'] = time();
-                $data['edit_time'] = time();
-                $data['submit_person'] = $current_admin['username'];
-                $res = Db::name('crm_inquiry_port')->insert($data);
+                $data = [
+                    'org' => $current_admin['org'],
+                    'port_name' => $port_name,
+                    'inquiry_id' => $inquiry_id,
+                    'status' => InquiryChannelStatusService::STATUS_ENABLED,
+                    'add_time' => time(),
+                    'edit_time' => time(),
+                    'submit_person' => $current_admin['username'],
+                ];
+                $stage = 'insert';
+                Db::name('crm_inquiry_port')->insert($data);
+                $stage = 'commit';
+                Db::commit();
                 return $this->result([], 200, '操作成功');
-            } else {
-                return $this->result([], 500, '运营端口已存在');
+            } catch (HttpResponseException $e) {
+                // result()/success() 通过抛 HttpResponseException 结束请求，不得当作业务失败吞掉
+                throw $e;
+            } catch (\Throwable $e) {
+                Db::rollback();
+                Log::error(
+                    '[inquiry_port_add] ' .
+                    json_encode([
+                        'stage' => $stage ?? 'unknown',
+                        'exception' => get_class($e),
+                        'message' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ], JSON_UNESCAPED_UNICODE)
+                );
+                return $this->result([], 500, '操作失败，请稍后重试');
             }
         }
-        $inquiry_rows = $this->getInquiryList();
+        $inquiry_rows = $this->getInquiryList(true);
         $inquiry_list = array_map(function ($row) {
             return [
                 'id'   => (int)$row['id'],
@@ -102,45 +158,76 @@ class InquiryPort extends Common
 
         if (request()->isPost()) {
             $port_name = Request::param('port_name');
-            $inquiry_id  = (int)Request::param('inquiry_id');
+            $inquiry_id = $this->channelStatusService()->parseStrictPositiveInt(Request::param('inquiry_id'));
 
             if (empty($port_name)) {
                 return $this->result([], 500, '运营端口名称不能为空');
             }
-
-            // 同组织 + 同询盘来源 下运营端口名不可重复（排除当前ID）
-            $exists = Db::name('crm_inquiry_port')
-                ->where('port_name', $port_name)
-                ->where('inquiry_id', '=', $inquiry_id)
-                ->where([$this->getOrgWhere($current_admin['org'])])
-                ->where('id', '<>', $id)
-                ->find();
-            if ($exists) {
-                return $this->result([], 500, '运营端口已存在');
+            if ($inquiry_id === null) {
+                return $this->result([], 500, '请选择询盘来源');
             }
 
-            $current_time = time();
+            Db::startTrans();
+            try {
+                // 仅当改挂其他父来源时，目标父来源必须启用；同来源改名允许（即使父已停用）
+                if ($inquiry_id !== (int)($result['inquiry_id'] ?? 0)) {
+                    $parentCheck = $this->channelStatusService()->assertParentInquiryEnabledForWrite($inquiry_id);
+                    if (!$parentCheck['ok']) {
+                        Db::rollback();
+                        return $this->result([], 500, $parentCheck['msg']);
+                    }
+                }
 
-            // 非超管：限制只能修改自己提交的记录
-            $updateQuery = Db::name('crm_inquiry_port')->where('id', $id);
-            if (!$isSuper) {
-                $updateQuery->where('submit_person', $current_admin['username']);
-            }
+                // 同组织 + 同询盘来源 下运营端口名不可重复（排除当前ID）
+                $exists = Db::name('crm_inquiry_port')
+                    ->where('port_name', $port_name)
+                    ->where('inquiry_id', '=', $inquiry_id)
+                    ->where([$this->getOrgWhere($current_admin['org'])])
+                    ->where('id', '<>', $id)
+                    ->find();
+                if ($exists) {
+                    Db::rollback();
+                    return $this->result([], 500, '运营端口已存在');
+                }
 
-            $aff = $updateQuery->update([
-                'port_name' => $port_name,
-                'inquiry_id'  => $inquiry_id,
-                'edit_time'    => $current_time
-            ]);
+                $current_time = time();
 
-            if ($aff) {
-                return $this->result([], 200, '操作成功');
-            } else {
-                // 可能是无权限或未变更
+                // 非超管：限制只能修改自己提交的记录
+                $updateQuery = Db::name('crm_inquiry_port')->where('id', $id);
+                if (!$isSuper) {
+                    $updateQuery->where('submit_person', $current_admin['username']);
+                }
+
+                $aff = $updateQuery->update([
+                    'port_name' => $port_name,
+                    'inquiry_id'  => $inquiry_id,
+                    'edit_time'    => $current_time
+                ]);
+
+                if ($aff) {
+                    Db::commit();
+                    return $this->result([], 200, '操作成功');
+                }
+                Db::rollback();
                 if (!$isSuper && $result['submit_person'] !== $current_admin['username']) {
                     return $this->result([], 500, '无权限操作他人记录');
                 }
                 return $this->result([], 500, '操作失败');
+            } catch (HttpResponseException $e) {
+                // result() 正常结束请求，不得当作业务失败吞掉
+                throw $e;
+            } catch (\Throwable $e) {
+                Db::rollback();
+                Log::error(
+                    '[inquiry_port_edit] ' .
+                    json_encode([
+                        'exception' => get_class($e),
+                        'message' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ], JSON_UNESCAPED_UNICODE)
+                );
+                return $this->result([], 500, '操作失败，请稍后重试');
             }
         }
 
@@ -149,9 +236,12 @@ class InquiryPort extends Common
             return $this->error('无权限编辑他人记录');
         }
 
-        // 非提交：准备下拉数据为 {id,name} + 默认ID
+        // 非提交：准备下拉数据为 {id,name} + 默认ID（仅启用父来源 + 当前已选兜底）
         $defaultInquiryId = (int)$result['inquiry_id'];
-        $inquiry_rows = $this->getInquiryList();
+        $svc = $this->channelStatusService();
+        $inquiry_rows = $this->getInquiryList(true);
+        $currentInquiry = Db::name('crm_inquiry')->where('id', $defaultInquiryId)->find();
+        $inquiry_rows = $svc->mergeDisabledCurrent($inquiry_rows ?: [], $currentInquiry, 'inquiry_name');
         $inquiry_list = array_map(function ($row) {
             return [
                 'id'   => (int)$row['id'],
@@ -165,76 +255,74 @@ class InquiryPort extends Common
         return $this->fetch();
     }
 
+    /**
+     * 停用运营端口（原删除入口，改为 status=1）
+     */
     public function del()
     {
-        $id = Request::param('id');
-        if (empty($id)) {
+        if (!request()->isPost()) {
+            return $this->result([], 500, '非法请求');
+        }
+        $id = $this->channelStatusService()->parseStrictPositiveInt(Request::param('id'));
+        if ($id === null) {
             return $this->result([], 500, '参数错误');
         }
-
         $current_admin = Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin');
-
-        $query = Db::name('crm_inquiry_port')->where('id', $id);
-        if (!$isSuper) {
-            $query->where('submit_person', $current_admin['username']);
-        }
-
-        $aff = $query->delete();
-        if ($aff) {
-            return $this->result([], 200, '删除成功');
-        } else {
-            // 可能是记录不存在或无权限
-            return $this->result([], 500, '无权限或记录不存在');
-        }
+        $ret = $this->channelStatusService()->disablePort($id, $current_admin ?: []);
+        return $this->result($ret['data'] ?? [], $ret['code'], $ret['msg']);
     }
 
-
-    // 批量删除
+    /**
+     * 批量停用运营端口
+     */
     public function batchDel()
     {
         if (!request()->isPost()) {
             return json(['code' => -200, 'msg' => '非法请求']);
         }
         $ids = input('post.ids/a', []);
-        if (empty($ids)) {
-            return json(['code' => -200, 'msg' => '未选择任何记录']);
-        }
-
         $current_admin = Admin::getMyInfo();
-        $isSuper = (session('aid') == 1) || ($current_admin['username'] === 'admin');
+        $ret = $this->channelStatusService()->batchDisablePort($ids, $current_admin ?: []);
+        return json([
+            'code' => $ret['code'],
+            'msg' => $ret['msg'],
+            'data' => $ret['data'] ?? [],
+        ]);
+    }
 
-        try {
-            if ($isSuper) {
-                $delCount = Db::name('crm_inquiry_port')->whereIn('id', $ids)->delete();
-                if ($delCount > 0) {
-                    return json(['code' => 0, 'msg' => '删除成功', 'data' => ['count' => $delCount]]);
-                }
-                return json(['code' => -200, 'msg' => '删除失败或记录不存在']);
-            } else {
-                // 仅允许删除本人提交的记录
-                $ownIds = Db::name('crm_inquiry_port')
-                    ->whereIn('id', $ids)
-                    ->where('submit_person', $current_admin['username'])
-                    ->column('id');
-
-                if (empty($ownIds)) {
-                    return json(['code' => -200, 'msg' => '无可删除的记录（仅能删除本人提交的记录）']);
-                }
-
-                $delCount = Db::name('crm_inquiry_port')->whereIn('id', $ownIds)->delete();
-                $skipped  = count($ids) - $delCount;
-
-                if ($delCount > 0) {
-                    $msg = '删除成功：' . $delCount . ' 条';
-                    if ($skipped > 0) $msg .= '，跳过(非本人记录)：' . $skipped . ' 条';
-                    return json(['code' => 0, 'msg' => $msg, 'data' => ['count' => $delCount, 'skipped' => $skipped]]);
-                }
-                return json(['code' => -200, 'msg' => '删除失败或记录不存在（或无权限）']);
-            }
-        } catch (\Throwable $e) {
-            return json(['code' => -200, 'msg' => '删除异常：' . $e->getMessage()]);
+    /**
+     * 启用运营端口
+     */
+    public function enable()
+    {
+        if (!request()->isPost()) {
+            return $this->result([], 500, '非法请求');
         }
+        $id = $this->channelStatusService()->parseStrictPositiveInt(Request::param('id'));
+        if ($id === null) {
+            return $this->result([], 500, '参数错误');
+        }
+        $current_admin = Admin::getMyInfo();
+        $ret = $this->channelStatusService()->enablePort($id, $current_admin ?: []);
+        return $this->result($ret['data'] ?? [], $ret['code'], $ret['msg']);
+    }
+
+    /**
+     * 批量启用运营端口
+     */
+    public function batchEnable()
+    {
+        if (!request()->isPost()) {
+            return json(['code' => -200, 'msg' => '非法请求']);
+        }
+        $ids = input('post.ids/a', []);
+        $current_admin = Admin::getMyInfo();
+        $ret = $this->channelStatusService()->batchEnablePort($ids, $current_admin ?: []);
+        return json([
+            'code' => $ret['code'],
+            'msg' => $ret['msg'],
+            'data' => $ret['data'] ?? [],
+        ]);
     }
 
 
@@ -345,8 +433,12 @@ class InquiryPort extends Common
         $inserted = 0;
         $skippedExist = 0;
         $skippedEmpty = 0;
+        $skippedInvalidStatus = 0;
+        $skippedParentDisabled = 0;
+        $failed = 0;
         $createdCats = 0;
         $seenKeys = []; // 防止同一批次文件内重复
+        $svc = $this->channelStatusService();
 
         $current_admin = \app\admin\model\Admin::getMyInfo();
         $org = $current_admin['org'] ?? '';
@@ -360,35 +452,11 @@ class InquiryPort extends Common
                 continue;
             }
 
-            // 解析 status（可选，默认0）
-            $status = ($status_raw === '' ? 0 : (int)$status_raw);
-
-            // 解析 inquiry_id：优先C列ID，否则用B列名称在当前组织下查找/创建
-            $inquiry_id = 0;
-            if ($inquiry_id_raw !== '' && is_numeric($inquiry_id_raw)) {
-                $inquiry_id = (int)$inquiry_id_raw;
-            } elseif ($inquiry_name !== '') {
-                $cat = \think\Db::name('crm_inquiry')
-                    ->where('inquiry_name', $inquiry_name)
-                    ->where([$this->getOrgWhere($org)])
-                    ->find();
-
-                if (!$cat) {
-                    // 自动创建该供应商（分类）
-                    $cid = \think\Db::name('crm_inquiry')->insertGetId([
-                        'inquiry_name' => $inquiry_name,
-                        'org'           => $org,
-                        'add_time'      => $now,
-                        'edit_time'     => $now,
-                        'submit_person' => $user,
-                    ]);
-                    if ($cid) {
-                        $inquiry_id = (int)$cid;
-                        $createdCats++;
-                    }
-                } else {
-                    $inquiry_id = (int)$cat['id'];
-                }
+            // 解析 status（可选，空→0；仅允许明确 0/1）
+            $status = $svc->parseImportStatus($status_raw);
+            if ($status === null) {
+                $skippedInvalidStatus++;
+                continue;
             }
 
             // 运营端口必填
@@ -396,43 +464,129 @@ class InquiryPort extends Common
                 $skippedEmpty++;
                 continue;
             }
-            // 仍未拿到询盘来源ID，跳过
-            if ($inquiry_id <= 0) {
-                $skippedEmpty++;
-                continue;
-            }
 
-            // 组合唯一键（同组织+同询盘来源+同运营端口 视为同一条）
-            $key = md5($org . '|' . $inquiry_id . '|' . $port_name);
-            if (isset($seenKeys[$key])) {
-                $skippedExist++;
-                continue;
-            }
+            Db::startTrans();
+            try {
+                // 解析 inquiry_id：优先C列严格正整数ID，否则用B列名称在当前组织下查找/创建
+                // 统一锁序：写入前锁父来源并校验启用，禁止挂靠停用父来源，也禁止与父停用并发绕过
+                $inquiry_id = 0;
+                $createdThisRow = false;
 
-            // DB去重：同 org 范围 + inquiry_id + port_name
-            $exists = \think\Db::name('crm_inquiry_port')
-                ->where('port_name', $port_name)
-                ->where('inquiry_id', $inquiry_id)
-                ->where([$this->getOrgWhere($org)])
-                ->find();
-            if ($exists) {
-                $skippedExist++;
-                continue;
-            }
+                $strictInquiryId = $svc->parseStrictPositiveInt($inquiry_id_raw);
+                if ($strictInquiryId !== null) {
+                    $parentCheck = $svc->assertParentInquiryEnabledForWrite($strictInquiryId);
+                    if (!$parentCheck['ok']) {
+                        Db::rollback();
+                        if (strpos($parentCheck['msg'], '已停用') !== false) {
+                            $skippedParentDisabled++;
+                        } else {
+                            $skippedEmpty++;
+                        }
+                        continue;
+                    }
+                    $catById = Db::name('crm_inquiry')
+                        ->where('id', $strictInquiryId)
+                        ->where([$this->getOrgWhere($org)])
+                        ->find();
+                    if (!$catById) {
+                        Db::rollback();
+                        $skippedEmpty++;
+                        continue;
+                    }
+                    $inquiry_id = $strictInquiryId;
+                } elseif ($inquiry_name !== '') {
+                    $cat = Db::name('crm_inquiry')
+                        ->where('inquiry_name', $inquiry_name)
+                        ->where([$this->getOrgWhere($org)])
+                        ->find();
 
-            // 插入
-            $ok = \think\Db::name('crm_inquiry_port')->insert([
-                'port_name'  => $port_name,
-                'org'           => $org,
-                'inquiry_id'   => $inquiry_id,
-                'status'        => $status,
-                'add_time'      => $now,
-                'edit_time'     => $now,
-                'submit_person' => $user,
-            ]);
-            if ($ok) {
-                $inserted++;
-                $seenKeys[$key] = 1;
+                    if (!$cat) {
+                        // 自动创建该询盘来源（默认启用），再加行锁与启用校验
+                        $cid = Db::name('crm_inquiry')->insertGetId([
+                            'inquiry_name' => $inquiry_name,
+                            'org'           => $org,
+                            'status'        => InquiryChannelStatusService::STATUS_ENABLED,
+                            'add_time'      => $now,
+                            'edit_time'     => $now,
+                            'submit_person' => $user,
+                        ]);
+                        if (!$cid) {
+                            Db::rollback();
+                            $failed++;
+                            continue;
+                        }
+                        $inquiry_id = (int)$cid;
+                        $createdThisRow = true;
+                        $parentCheck = $svc->assertParentInquiryEnabledForWrite($inquiry_id);
+                        if (!$parentCheck['ok']) {
+                            Db::rollback();
+                            $failed++;
+                            continue;
+                        }
+                    } else {
+                        $inquiry_id = (int)$cat['id'];
+                        $parentCheck = $svc->assertParentInquiryEnabledForWrite($inquiry_id);
+                        if (!$parentCheck['ok']) {
+                            Db::rollback();
+                            if (strpos($parentCheck['msg'], '已停用') !== false) {
+                                $skippedParentDisabled++;
+                            } else {
+                                $skippedEmpty++;
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                if ($inquiry_id <= 0) {
+                    Db::rollback();
+                    $skippedEmpty++;
+                    continue;
+                }
+
+                // 组合唯一键（同组织+同询盘来源+同运营端口 视为同一条）
+                $key = md5($org . '|' . $inquiry_id . '|' . $port_name);
+                if (isset($seenKeys[$key])) {
+                    Db::rollback();
+                    $skippedExist++;
+                    continue;
+                }
+
+                // DB去重：同 org 范围 + inquiry_id + port_name
+                $exists = Db::name('crm_inquiry_port')
+                    ->where('port_name', $port_name)
+                    ->where('inquiry_id', $inquiry_id)
+                    ->where([$this->getOrgWhere($org)])
+                    ->find();
+                if ($exists) {
+                    Db::rollback();
+                    $skippedExist++;
+                    continue;
+                }
+
+                $ok = Db::name('crm_inquiry_port')->insert([
+                    'port_name'     => $port_name,
+                    'org'           => $org,
+                    'inquiry_id'    => $inquiry_id,
+                    'status'        => $status,
+                    'add_time'      => $now,
+                    'edit_time'     => $now,
+                    'submit_person' => $user,
+                ]);
+                if ($ok) {
+                    Db::commit();
+                    $inserted++;
+                    $seenKeys[$key] = 1;
+                    if ($createdThisRow) {
+                        $createdCats++;
+                    }
+                } else {
+                    Db::rollback();
+                    $failed++;
+                }
+            } catch (\Throwable $e) {
+                Db::rollback();
+                $failed++;
             }
         }
 
@@ -443,6 +597,9 @@ class InquiryPort extends Common
                 'inserted' => $inserted,
                 'skipped_exist' => $skippedExist,
                 'skipped_empty' => $skippedEmpty,
+                'skipped_invalid_status' => $skippedInvalidStatus,
+                'skipped_parent_disabled' => $skippedParentDisabled,
+                'failed' => $failed,
                 'created_cats' => $createdCats,
             ],
         ]);

@@ -172,15 +172,18 @@ class ExcelImport
                         Client::addOperLog(null, '数据导入', $logData);
                         continue;
                     }
-                    // 处理所属渠道：名称转ID
+                    // 处理所属渠道：名称转ID（仅允许启用 status=0，禁止导入挂到停用渠道）
                     $inquiry_id = 0;
                     if (!empty($rowAssoc['所属渠道'])) {
-                        $channel = Db::name('crm_inquiry')->where('inquiry_name', $rowAssoc['所属渠道'])->find();
+                        $channel = Db::name('crm_inquiry')
+                            ->where('inquiry_name', $rowAssoc['所属渠道'])
+                            ->where('status', 0)
+                            ->find();
                         if (!$channel) {
                             $fail_count++;
                             $logData = [
                                 'message'       => "第{$index}条数据导入失败",
-                                'error_message' => '所属渠道不存在',
+                                'error_message' => '所属渠道不存在或已停用',
                                 'task_data'     => $row
                             ];
                             Client::addOperLog(null, '数据导入', $logData);
@@ -188,20 +191,23 @@ class ExcelImport
                         }
                         $inquiry_id = $channel['id'];
                     }
-                    // 处理运营端口：支持ID或名称，多个以逗号分隔
+                    // 处理运营端口：支持ID或名称，多个以逗号分隔（仅启用）
                     $port_id_str = '';
                     if (!empty($rowAssoc['运营端口'])) {
                         $portsInput = $rowAssoc['运营端口'];
                         if (preg_match('/^[\d,]+$/', $portsInput)) {
                             // 纯数字ID列表
                             $portIds = array_filter(explode(',', $portsInput));
-                            // 验证端口ID是否存在
-                            $validPorts = Db::name('crm_inquiry_port')->whereIn('id', $portIds)->column('id');
+                            // 验证端口ID存在且启用
+                            $validPorts = Db::name('crm_inquiry_port')
+                                ->whereIn('id', $portIds)
+                                ->where('status', 0)
+                                ->column('id');
                             if (count($validPorts) != count($portIds)) {
                                 $fail_count++;
                                 $logData = [
                                     'message'       => "第{$index}条数据导入失败",
-                                    'error_message' => '运营端口ID不存在',
+                                    'error_message' => '运营端口ID不存在或已停用',
                                     'task_data'     => $row
                                 ];
                                 Client::addOperLog(null, '数据导入', $logData);
@@ -209,12 +215,14 @@ class ExcelImport
                             }
                             $port_id_str = implode(',', $portIds);
                         } else {
-                            // 按名称查找端口ID（默认限定所属渠道）
+                            // 按名称查找端口ID（默认限定所属渠道，仅启用）
                             $portNames = array_map('trim', explode(',', $portsInput));
                             $foundIds = [];
                             foreach ($portNames as $pname) {
                                 if ($pname === '') continue;
-                                $portQuery = Db::name('crm_inquiry_port')->where('port_name', $pname);
+                                $portQuery = Db::name('crm_inquiry_port')
+                                    ->where('port_name', $pname)
+                                    ->where('status', 0);
                                 if ($inquiry_id) {
                                     $portQuery->where('inquiry_id', $inquiry_id);
                                 }
@@ -223,7 +231,7 @@ class ExcelImport
                                     $fail_count++;
                                     $logData = [
                                         'message'       => "第{$index}条数据导入失败",
-                                        'error_message' => "运营端口{$pname}不存在",
+                                        'error_message' => "运营端口{$pname}不存在或已停用",
                                         'task_data'     => $row
                                     ];
                                     Client::addOperLog(null, '数据导入', $logData);

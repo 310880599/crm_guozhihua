@@ -192,11 +192,28 @@ class Client extends Common
                 // 若未提供渠道ID参数，返回错误信息
                 return json(['code' => 500, 'msg' => '缺少渠道ID', 'data' => []]);
             }
-            // 查询对应渠道的所有运营端口（仅获取id和port_name字段）
+            // 查询对应渠道的启用运营端口；编辑态可带 include_ids 兜底已停用历史端口
             $ports = Db::table('crm_inquiry_port')
                         ->where(['inquiry_id' => $inquiryId, 'status' => 0])
-                        ->field('id, port_name')
+                        ->field('id, port_name, status, inquiry_id')
                         ->select();
+            if (!is_array($ports)) {
+                $ports = $ports ? $ports->toArray() : [];
+            }
+            $includeRaw = Request::param('include_ids', '');
+            $includeIds = [];
+            if (is_array($includeRaw)) {
+                $includeIds = $includeRaw;
+            } elseif ($includeRaw !== '' && $includeRaw !== null) {
+                $includeIds = explode(',', (string)$includeRaw);
+            }
+            if (!empty($includeIds)) {
+                $svc = new \app\admin\service\InquiryChannelStatusService();
+                $ports = $svc->mergeDisabledPortsByIds($ports, $includeIds);
+                $ports = array_values(array_filter($ports, function ($p) use ($inquiryId) {
+                    return (int)($p['inquiry_id'] ?? 0) === (int)$inquiryId;
+                }));
+            }
             // 返回JSON数据：code为0表示成功，data中是端口列表
             return json(['code' => 0, 'msg' => '获取成功', 'data' => $ports]);
         }
@@ -2825,7 +2842,18 @@ class Client extends Common
     }
 
     // 校验所属渠道 + 运营端口（必填 + 合法组合）
-    private function validateInquiryAndPortData($inquiryId, $portIds): array
+    /**
+     * 校验所属渠道与运营端口
+     * - 新增：渠道/端口必须启用(status=0)
+     * - 编辑：未变更的历史值即使已停用也允许保留；主动改到其他停用渠道/端口则拒绝
+     *
+     * @param mixed $inquiryId
+     * @param mixed $portIds
+     * @param int $oldInquiryId 编辑时原 inquiry_id，新增传 0
+     * @param array $oldPortIds 编辑时原 port_id 列表，新增传 []
+     * @return array
+     */
+    private function validateInquiryAndPortData($inquiryId, $portIds, $oldInquiryId = 0, $oldPortIds = []): array
     {
         $inquiryId = (int)preg_replace('/\D/', '', (string)$inquiryId);
         if ($inquiryId <= 0) {
@@ -2837,17 +2865,48 @@ class Client extends Common
             return [false, '请选择运营端口', $inquiryId, []];
         }
 
+        $oldInquiryId = (int)$oldInquiryId;
+        $oldPortIds = $this->normalizePortIds($oldPortIds);
+        $oldPortSet = array_fill_keys($oldPortIds, true);
+
         $inquiryExists = Db::table('crm_inquiry')->where('id', $inquiryId)->find();
         if (!$inquiryExists) {
             return [false, '请选择所属渠道', $inquiryId, []];
         }
 
-        $validCount = Db::table('crm_inquiry_port')
+        $inquiryStatus = (int)($inquiryExists['status'] ?? 0);
+        // 主动改选其他渠道时，目标必须启用；保留原停用渠道允许
+        if ($inquiryStatus !== 0 && $inquiryId !== $oldInquiryId) {
+            return [false, '所选渠道已停用，请选择启用中的渠道', $inquiryId, []];
+        }
+        // 新增场景（无旧值）必须启用
+        if ($inquiryStatus !== 0 && $oldInquiryId <= 0) {
+            return [false, '所选渠道已停用，请选择启用中的渠道', $inquiryId, []];
+        }
+
+        $portRows = Db::table('crm_inquiry_port')
             ->where('inquiry_id', $inquiryId)
             ->whereIn('id', $portIds)
-            ->count();
-        if ((int)$validCount !== count($portIds)) {
+            ->field('id, status')
+            ->select();
+        $portMap = [];
+        foreach ($portRows as $pr) {
+            $portMap[(int)$pr['id']] = (int)($pr['status'] ?? 0);
+        }
+        if (count($portMap) !== count($portIds)) {
             return [false, '运营端口数据无效，请重新选择', $inquiryId, []];
+        }
+
+        foreach ($portIds as $pid) {
+            $st = $portMap[$pid];
+            if ($st === 0) {
+                continue;
+            }
+            // 停用端口：仅当属于原历史绑定且渠道未改选时可保留
+            if ($inquiryId === $oldInquiryId && isset($oldPortSet[$pid])) {
+                continue;
+            }
+            return [false, '所选运营端口已停用，请选择启用中的端口', $inquiryId, []];
         }
 
         return [true, '', $inquiryId, $portIds];
@@ -3285,7 +3344,7 @@ class Client extends Common
 
             $clientForPermission = Db::table('crm_leads')
                 ->where('id', $id)
-                ->field('id,pr_user,joint_person')
+                ->field('id,pr_user,joint_person,inquiry_id,port_id')
                 ->find();
             if (!$clientForPermission) {
                 $this->redisUnLock();
@@ -3373,7 +3432,14 @@ class Client extends Common
             if ($portIdsRaw === null) {
                 $portIdsRaw = Request::param('port_id');
             }
-            list($validInquiryPort, $inquiryPortMsg, $cleanInquiryId, $cleanPortIds) = $this->validateInquiryAndPortData($inquiryId, $portIdsRaw);
+            $oldInquiryId = (int)($clientForPermission['inquiry_id'] ?? 0);
+            $oldPortIds = $this->normalizePortIds($clientForPermission['port_id'] ?? '');
+            list($validInquiryPort, $inquiryPortMsg, $cleanInquiryId, $cleanPortIds) = $this->validateInquiryAndPortData(
+                $inquiryId,
+                $portIdsRaw,
+                $oldInquiryId,
+                $oldPortIds
+            );
             if (!$validInquiryPort) {
                 $this->redisUnLock();
                 return fail($inquiryPortMsg);
@@ -3747,12 +3813,6 @@ class Client extends Common
         $this->assign('positionTitleList', $positionTitleList);
         $this->assign('positionTitleListJson', json_encode($positionTitleList, JSON_UNESCAPED_UNICODE));
 
-        $channelList = Db::table('crm_inquiry')->where('status', 0)->select();
-        $portList    = Db::table('crm_inquiry_port')->where('status', 0)->select();
-
-        $this->assign('channelList', $channelList);
-        $this->assign('portList', $portList);
-
         // GET 加载老数据
         $result = Db::table('crm_leads')->where('id', $id)->find();
         $this->assign('result', $result);
@@ -3761,9 +3821,25 @@ class Client extends Common
         $this->assign('clientRankList', $clientRankList);
         $this->assign('khRankValue', $khRankValue);
 
-        // 端口多选回显
-        $selectedPorts = $result ? explode(',', $result['port_id']) : [];
+        // 端口多选回显（兼容多端口 CSV）
+        $selectedPorts = $result ? array_values(array_filter(array_map('trim', explode(',', (string)$result['port_id'])))) : [];
         $this->assign('selectedPorts', $selectedPorts);
+
+        // 启用渠道/端口 + 当前历史值兜底（已停用标「已停用」）
+        $svc = new \app\admin\service\InquiryChannelStatusService();
+        $channelList = Db::table('crm_inquiry')->where('status', 0)->select();
+        $channelList = is_array($channelList) ? $channelList : ($channelList ? $channelList->toArray() : []);
+        if (!empty($result['inquiry_id'])) {
+            $curInquiry = Db::table('crm_inquiry')->where('id', (int)$result['inquiry_id'])->find();
+            $channelList = $svc->mergeDisabledCurrent($channelList, $curInquiry, 'inquiry_name');
+        }
+        $portList = Db::table('crm_inquiry_port')->where('status', 0)->select();
+        $portList = is_array($portList) ? $portList : ($portList ? $portList->toArray() : []);
+        if (!empty($selectedPorts)) {
+            $portList = $svc->mergeDisabledPortsByIds($portList, $selectedPorts);
+        }
+        $this->assign('channelList', $channelList);
+        $this->assign('portList', $portList);
         
         return $this->fetch('client/edit');
     }
